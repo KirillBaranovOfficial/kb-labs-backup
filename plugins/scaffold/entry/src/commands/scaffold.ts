@@ -1,4 +1,4 @@
-import { dirname, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
@@ -7,7 +7,7 @@ import {
   validationError,
   handleError,
   type CommandResult,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CLIInput,
 } from '@kb-labs/sdk';
 import {
@@ -23,10 +23,7 @@ import {
 import type {
   RenderContext,
 } from '@kb-labs/scaffold-contracts';
-import { formatCommandHelp } from '@kb-labs/shared-cli-ui';
-import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
-import { findProjectConfigRoot } from '@kb-labs/core-workspace';
-import type { GatewayCredentials, SessionCredentials } from '@kb-labs/cli-runtime/gateway';
+import { writeScaffoldTransaction } from './scaffold-transaction.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_ROOT = resolve(here, '..', '..', 'templates');
@@ -130,7 +127,7 @@ function parsePositional(argv: string[] | undefined): {
 }
 
 async function runDefault(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   rawInput: CLIInput<ScaffoldFlags>,
 ): Promise<CommandResult<ScaffoldResult>> {
   const start = Date.now();
@@ -140,40 +137,24 @@ async function runDefault(
 
   const available = await listEntities(TEMPLATES_ROOT);
   if (available.length === 0) {
-    validationError(ctx, 'No scaffold templates found. Reinstall @kb-labs/scaffold.');
-    return { ok: false, error: 'No scaffold templates found' };
+    return validationError('No scaffold templates found. Reinstall @kb-labs/scaffold.');
   }
 
   if (!entityArg) {
-    ctx.ui?.write?.(formatCommandHelp({
-      title: 'kb scaffold run',
-      description: 'Scaffold a new plugin, adapter, or other entity from a template.',
-      examples: available.map((e) => `kb scaffold run ${e} my-${e}`),
-      flags: SCAFFOLD_FLAGS,
-    }) + '\n');
-    ctx.ui?.info?.(`Available entities: ${available.join(', ')}`);
-    return { ok: false, error: `Unknown entity "${entityArg}"` };
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'An entity type is required.', hint: 'Run `kb scaffold run --help` to list entity types, then rerun `kb scaffold run <entity> <name>`.' } };
   }
 
   if (!available.includes(entityArg)) {
-    validationError(ctx, `Unknown entity "${entityArg}". Available: ${available.join(', ')}`);
-    return { ok: false, error: 'An entity name is required' };
+    return validationError(`Unknown entity "${entityArg}". Available: ${available.join(', ')}`);
   }
 
   if (!nameArg) {
-    ctx.ui?.write?.(formatCommandHelp({
-      title: `kb scaffold run ${entityArg} <name>`,
-      description: `Scaffold a new ${entityArg}. Provide a name to continue.`,
-      examples: [`kb scaffold run ${entityArg} my-${entityArg}`],
-      flags: SCAFFOLD_FLAGS,
-    }) + '\n');
-    return { ok: false, error: 'An entity name is required' };
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'An entity name is required.', hint: 'Provide an entity and name, for example `kb scaffold run plugin my-plugin`.' } };
   }
 
   const problem = runValidator('npmName', nameArg);
   if (problem) {
-    validationError(ctx, `Invalid name "${nameArg}": ${problem}`, 'Name must be lowercase, no spaces, valid npm package name.');
-    return { ok: false, error: `Invalid name "${nameArg}": ${problem}` };
+    return validationError(`Invalid name "${nameArg}": ${problem}`, 'Name must be lowercase, no spaces, valid npm package name.');
   }
 
   const entity = await loadEntity(TEMPLATES_ROOT, entityArg);
@@ -202,8 +183,7 @@ async function runDefault(
   try {
     resolveBlocks(entity.blocks, selectedBlocks);
   } catch (e) {
-    handleError(ctx, e);
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return handleError(e);
   }
 
   for (const blockId of selectedBlocks) {
@@ -250,28 +230,30 @@ async function runDefault(
         { header: 'Files', items: formatTree(result.files).split('\n').filter(Boolean) },
       ],
     });
-    return { ok: true, result: { outRoot, files: result.files.length } };
+    return { outRoot, files: result.files.length };
   }
 
   if (state.exists && !state.empty) {
     if (input.force) {
       ctx.ui?.warn?.(`--force: overwriting ${outRoot}`);
     } else {
-      validationError(ctx, `Output directory "${outRoot}" already exists and is not empty.`, 'Use --force to overwrite.');
-      return { ok: false, error: `Output directory "${outRoot}" already exists and is not empty` };
+      return validationError(`Output directory "${outRoot}" already exists and is not empty.`, 'Use --force to overwrite.');
     }
   }
 
-  await writeFiles({ outRoot, files: result.files, force: input.force });
+  try {
+    await writeScaffoldTransaction(
+      outRoot,
+      () => writeFiles({ outRoot, files: result.files, force: input.force }),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return validationError(message, 'Check the platform with `kb-create status`, then start it with `kb-create start`.');
+  }
 
-  const entryPkgDir =
-    entityArg === 'plugin'
-      ? `${outRoot}/packages/${nameArg}-entry`
-      : outRoot;
-
-  await linkWithMarketplace(entryPkgDir, ctx.cwd, result.manifest);
-
-  const registrationNote = 'Registered in .kb/marketplace.lock';
+  const linkPath = relative(ctx.cwd, entityArg === 'plugin'
+    ? resolve(outRoot, 'packages', `${nameArg}-entry`)
+    : outRoot);
 
   const timing = Date.now() - start;
 
@@ -283,98 +265,27 @@ async function runDefault(
         items: [outRoot],
       },
       {
-        header: 'Marketplace',
-        items: [registrationNote],
-      },
-      {
         header: 'Next steps',
-        items: [
+        items: entityArg === 'plugin' ? [
           `cd ${outRoot}`,
           'pnpm install',
           'pnpm -w build',
-          `pnpm kb ${nameArg} hello   # try it`,
+          `kb marketplace plugins add --link ${linkPath}`,
+          `kb ${nameArg} hello`,
           `pnpm kb scaffold doctor --path ${dirname(outRoot)}`,
+        ] : [
+          `cd ${outRoot}`,
+          'pnpm install',
+          'pnpm -w build',
+          `kb marketplace plugins add --scope platform --link ${linkPath}`,
+          `kb adapter bind <slot> ${scope ? `${scope}/` : ''}${nameArg}`,
         ],
       },
     ],
     timing,
   });
 
-  return { ok: true, result: { outRoot, files: result.files.length } };
-}
-
-type MarketplaceCredentials = GatewayCredentials | SessionCredentials;
-type MarketplaceAuth = {
-  credentials: MarketplaceCredentials;
-  refresh: () => Promise<MarketplaceAuth>;
-};
-
-function createMarketplaceAuth(
-  credentials: MarketplaceCredentials,
-  refresh: (credentials: MarketplaceCredentials) => Promise<MarketplaceCredentials>,
-): MarketplaceAuth {
-  return {
-    credentials,
-    refresh: async () => createMarketplaceAuth(await refresh(credentials), refresh),
-  };
-}
-
-async function loadMarketplaceCredentials(): Promise<MarketplaceAuth | null> {
-	try {
-		const sessions = new SessionManager();
-		const session = await sessions.load();
-		if (session) {
-			const current = sessions.isExpired(session) ? await sessions.refresh(session) : session;
-			return createMarketplaceAuth(current, (value) => sessions.refresh(value as SessionCredentials));
-		}
-		const manager = new CredentialsManager();
-		const credentials = await manager.load();
-		if (!credentials) {
-			return null;
-		}
-		const current = manager.isExpired(credentials) ? await manager.refresh(credentials) : credentials;
-		return createMarketplaceAuth(current, (value) => manager.refresh(value as GatewayCredentials));
-	} catch {
-		// Local marketplace linking is allowed without a user session. A stale
-		// credential must not turn a completed local scaffold into a failure;
-		// protected endpoints still reject the subsequent link request explicitly.
-		return null;
-	}
-}
-
-/** Register through the canonical marketplace API; the daemon owns lock format and integrity. */
-async function linkWithMarketplace(entryPkgDir: string, cwd: string, manifest: Record<string, unknown>): Promise<void> {
-  const projectRoot = await findProjectConfigRoot(cwd);
-  if (!projectRoot) {
-    throw new Error(`Cannot register scaffolded plugin: no project config found from ${cwd}`);
-  }
-
-  let auth = await loadMarketplaceCredentials();
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const marketplaceUrl = process.env.KB_MARKETPLACE_URL;
-    const gatewayUrl = auth?.credentials.gatewayUrl ?? process.env.KB_GATEWAY_URL ?? 'http://127.0.0.1:4000';
-    const endpoint = marketplaceUrl
-      ? `${marketplaceUrl.replace(/\/+$/, '')}/api/v1/marketplace/packages/link`
-      : `${gatewayUrl.replace(/\/+$/, '')}/api/v1/marketplace/packages/link`;
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(auth ? { Authorization: `Bearer ${auth.credentials.accessToken}` } : {}),
-      },
-      body: JSON.stringify({ path: resolve(entryPkgDir), scope: 'project', projectRoot, manifest }),
-    });
-    if (response.status === 401 && auth && attempt === 0) {
-      auth = await auth.refresh();
-      continue;
-    }
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`Marketplace registration failed (${response.status}): ${detail}`);
-    }
-    return;
-  }
-  throw new Error('Marketplace registration failed after refreshing authentication');
+  return { outRoot, files: result.files.length };
 }
 
 export default defineCommand({

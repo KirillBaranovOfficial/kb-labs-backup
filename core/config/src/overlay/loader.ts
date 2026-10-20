@@ -1,7 +1,8 @@
 /**
  * @module @kb-labs/core/config/overlay/loader
  *
- * Discovers and reads `.kb/overlays/*.jsonc` files from a project root, in
+ * Discovers and reads `*.jsonc` overlay files from a platform-owned project
+ * state directory, in
  * stable lexicographic order. Each overlay is parsed via the existing
  * `readJsonWithDiagnostics` (so JSONC comments and trailing commas are
  * supported). Files that fail to parse are reported as diagnostics but do not
@@ -30,7 +31,7 @@ export interface LoadOverlaysResult {
 }
 
 /**
- * Read `.kb/overlays/*.jsonc` from the given project root.
+ * Read `*.jsonc` files from the supplied overlay directory.
  *
  * - Returns `{ overlays: [], diagnostics: [] }` when the directory does not
  *   exist (the common case in projects that don't use overlays).
@@ -38,8 +39,7 @@ export interface LoadOverlaysResult {
  *   the call site is the same order — later files override earlier ones.
  * - Non-`.jsonc` files in the directory are ignored silently.
  */
-export async function loadOverlays(projectRoot: string): Promise<LoadOverlaysResult> {
-  const dir = path.join(projectRoot, '.kb', 'overlays');
+export async function loadOverlays(dir: string): Promise<LoadOverlaysResult> {
   const diagnostics: Diagnostic[] = [];
 
   let entries: string[];
@@ -55,6 +55,7 @@ export async function loadOverlays(projectRoot: string): Promise<LoadOverlaysRes
       code: 'OVERLAYS_DIR_READ_FAILED',
       message: `Failed to read overlays directory: ${dir}`,
       detail: String(e),
+      path: dir,
     });
     return { overlays: [], diagnostics };
   }
@@ -65,7 +66,7 @@ export async function loadOverlays(projectRoot: string): Promise<LoadOverlaysRes
   for (const name of jsoncFiles) {
     const full = path.join(dir, name);
     const read = await readJsonWithDiagnostics<unknown>(full);
-    diagnostics.push(...read.diagnostics);
+    diagnostics.push(...read.diagnostics.map((diagnostic) => ({ ...diagnostic, path: diagnostic.path ?? full })));
     if (!read.ok) {
       continue;
     }
@@ -75,6 +76,7 @@ export async function loadOverlays(projectRoot: string): Promise<LoadOverlaysRes
         level: 'error',
         code: 'OVERLAY_NOT_OBJECT',
         message: `Overlay must be a JSON object at top level: ${full}`,
+        path: full,
       });
       continue;
     }

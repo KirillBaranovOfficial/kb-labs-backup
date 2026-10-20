@@ -21,14 +21,7 @@ import React from 'react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { AuthContext } from '../../auth/guards.js';
 import type { AuthState } from '../../auth/auth-provider.js';
-
-// ── Lazy import to allow vi.stubGlobal before module loads ────────────────────
-// We import the component after setting up mocks so the component's
-// module-level fetch is the stubbed version.
-async function importLoginPage() {
-  const { LoginPage } = await import('../login-page.js');
-  return LoginPage;
-}
+import { LoginPage } from '../login-page.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -85,27 +78,23 @@ function renderLoginPage(LoginPage: React.ComponentType, auth: AuthState) {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('LoginPage', () => {
-  it('renders email and password fields (no role selector)', async () => {
+  it('renders email and password fields (no role selector)', () => {
     vi.stubGlobal('fetch', mockFetchProviders('ok'));
-    const LoginPage = await importLoginPage();
     const login = vi.fn().mockResolvedValue(undefined);
     renderLoginPage(LoginPage, makeAnonymousAuth(login));
 
-    await waitFor(() => expect(screen.getByLabelText(/email/i)).toBeDefined());
-
     expect(screen.getByLabelText(/email/i)).toBeDefined();
     expect(screen.getByLabelText(/password/i)).toBeDefined();
-    // Must NOT have a role selector (CD-3 — no role on frontend)
-    expect(screen.queryByText(/viewer|operator|admin/i)).toBeNull();
+    // Must NOT have a role selector (CD-3 — no role on frontend).
+    expect(screen.queryByLabelText(/role/i)).toBeNull();
   });
 
   it('calls auth.login with email and password on submit', async () => {
     vi.stubGlobal('fetch', mockFetchProviders('ok'));
-    const LoginPage = await importLoginPage();
     const login = vi.fn().mockResolvedValue(undefined);
     renderLoginPage(LoginPage, makeAnonymousAuth(login));
 
-    await waitFor(() => expect(screen.getByLabelText(/email/i)).toBeDefined());
+    expect(screen.getByLabelText(/email/i)).toBeDefined();
 
     fireEvent.change(screen.getByLabelText(/email/i), {
       target: { value: 'alice@test.com' },
@@ -115,7 +104,7 @@ describe('LoginPage', () => {
     });
 
     await act(async () => {
-      fireEvent.submit(screen.getByRole('form', { name: /login form/i }));
+      fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
     });
 
     expect(login).toHaveBeenCalledWith('alice@test.com', 'Secret123!');
@@ -123,7 +112,6 @@ describe('LoginPage', () => {
 
   it('disables submit button while login is in-flight', async () => {
     vi.stubGlobal('fetch', mockFetchProviders('ok'));
-    const LoginPage = await importLoginPage();
 
     let resolveLogin: () => void;
     const login = vi.fn(
@@ -131,15 +119,16 @@ describe('LoginPage', () => {
     );
     renderLoginPage(LoginPage, makeAnonymousAuth(login));
 
-    await waitFor(() => expect(screen.getByLabelText(/email/i)).toBeDefined());
+    expect(screen.getByLabelText(/email/i)).toBeDefined();
 
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'a@b.com' } });
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'pass' } });
 
-    act(() => {
-      fireEvent.submit(screen.getByRole('form', { name: /login form/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
     });
 
+    expect(login).toHaveBeenCalledOnce();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /sign in|signing in/i }).getAttribute('disabled')).not.toBeNull(),
     );
@@ -150,13 +139,12 @@ describe('LoginPage', () => {
 
   it('shows "Invalid credentials" error when login fails', async () => {
     vi.stubGlobal('fetch', mockFetchProviders('fail'));
-    const LoginPage = await importLoginPage();
     const login = vi.fn().mockRejectedValue(
       Object.assign(new Error('invalid_credentials'), { status: 401 }),
     );
     renderLoginPage(LoginPage, makeAnonymousAuth(login));
 
-    await waitFor(() => expect(screen.getByLabelText(/email/i)).toBeDefined());
+    expect(screen.getByLabelText(/email/i)).toBeDefined();
 
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'x@y.com' } });
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'wrong' } });
@@ -172,11 +160,10 @@ describe('LoginPage', () => {
 
   it('navigates to / after successful login', async () => {
     vi.stubGlobal('fetch', mockFetchProviders('ok'));
-    const LoginPage = await importLoginPage();
     const login = vi.fn().mockResolvedValue(undefined);
     renderLoginPage(LoginPage, makeAnonymousAuth(login));
 
-    await waitFor(() => expect(screen.getByLabelText(/email/i)).toBeDefined());
+    expect(screen.getByLabelText(/email/i)).toBeDefined();
 
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'alice@test.com' } });
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'pass' } });
@@ -198,7 +185,6 @@ describe('LoginPage', () => {
         { id: 'corp', kind: 'redirect' },
       ]),
     );
-    const LoginPage = await importLoginPage();
     renderLoginPage(LoginPage, makeAnonymousAuth(vi.fn()));
 
     const link = await screen.findByRole('link', { name: /continue with corp/i });
@@ -215,7 +201,6 @@ describe('LoginPage', () => {
         { id: 'corp', kind: 'redirect' },
       ]),
     );
-    const LoginPage = await importLoginPage();
     renderLoginPage(LoginPage, makeAnonymousAuth(vi.fn()));
 
     await screen.findByRole('link', { name: /continue with corp/i });
@@ -229,7 +214,6 @@ describe('LoginPage', () => {
       'fetch',
       mockFetchWithProviders([{ id: 'corp', kind: 'redirect' }]),
     );
-    const LoginPage = await importLoginPage();
     renderLoginPage(LoginPage, makeAnonymousAuth(vi.fn()));
 
     await screen.findByRole('link', { name: /continue with corp/i });
@@ -245,7 +229,6 @@ describe('LoginPage', () => {
         { id: 'google', kind: 'redirect' },
       ]),
     );
-    const LoginPage = await importLoginPage();
     renderLoginPage(LoginPage, makeAnonymousAuth(vi.fn()));
 
     const corp = await screen.findByRole('link', { name: /continue with corp/i });

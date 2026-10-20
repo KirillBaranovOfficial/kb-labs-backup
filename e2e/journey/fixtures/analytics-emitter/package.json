@@ -1,0 +1,14 @@
+{
+  "name": "@kb-labs/e2e-analytics-emitter",
+  "version": "1.0.0",
+  "description": "Installed journey plugin that emits analytics and exercises configured LLM providers",
+  "type": "module",
+  "main": "./manifest.js",
+  "exports": {
+    ".": "./manifest.js"
+  },
+  "files": ["manifest.js", "dist/commands/*.js", "dist/manifest.json"],
+  "kb": { "manifest": "./manifest.js", "requiredOutputs": ["./dist/manifest.json", "./dist/commands/*.js"] },
+  "peerDependencies": { "@kb-labs/sdk": "^2.120.1" },
+  "license": "UNLICENSED"
+}

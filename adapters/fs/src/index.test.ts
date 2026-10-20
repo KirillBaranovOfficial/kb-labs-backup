@@ -4,10 +4,19 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createAdapter } from "./index.js";
+import { manifest } from "./manifest.js";
+import { resolveRuntimeStatePath } from "@kb-labs/sdk/adapters";
+
+describe("FilesystemStorageAdapter manifest", () => {
+  it("declares storage as a built-in provider default", () => {
+    expect(manifest.defaultFor).toEqual({ storage: [] });
+  });
+});
 
 describe("FilesystemStorageAdapter", () => {
   let tmpDir: string;
@@ -20,6 +29,27 @@ describe("FilesystemStorageAdapter", () => {
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("stores default data under the platform state directory for an unregistered project", async () => {
+    const previousCwd = process.cwd();
+    const previousKbHome = process.env.KB_HOME;
+    const kbHome = join(tmpDir, "platform-state");
+    process.env.KB_HOME = kbHome;
+    process.chdir(tmpDir);
+    try {
+      const defaultStorage = createAdapter();
+      await defaultStorage.write("default-path.txt", Buffer.from("state"));
+
+      const stateFile = resolveRuntimeStatePath(tmpDir, ["storage", "default-path.txt"], { root: kbHome });
+      expect(existsSync(stateFile)).toBe(true);
+      expect(await defaultStorage.read("default-path.txt")).toEqual(Buffer.from("state"));
+      expect(existsSync(join(tmpDir, ".kb"))).toBe(false);
+    } finally {
+      process.chdir(previousCwd);
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
   });
 
   describe("Basic Operations", () => {

@@ -16,7 +16,7 @@ interface TestLockEntry {
   version: string;
   integrity: string;
   resolvedPath: string;
-  source: 'local' | 'marketplace';
+  source: 'local' | 'marketplace' | 'platform';
   primaryKind: 'adapter' | 'plugin';
   provides: string[];
   enabled?: boolean;
@@ -26,23 +26,25 @@ async function writeLock(root: string, entries: Record<string, TestLockEntry>): 
   const kbDir = path.join(root, '.kb');
   await fs.mkdir(kbDir, { recursive: true });
 
-  const installed: Record<string, any> = {};
+  const plugins: Record<string, unknown> = {};
+  const adapters: Record<string, unknown> = {};
   for (const [id, entry] of Object.entries(entries)) {
-    installed[id] = {
-      version: entry.version,
-      integrity: entry.integrity,
-      resolvedPath: entry.resolvedPath,
-      installedAt: new Date().toISOString(),
-      source: entry.source,
-      primaryKind: entry.primaryKind,
-      provides: entry.provides,
-      enabled: entry.enabled ?? true,
-    };
+    const serialized = entry.source === 'local'
+      ? { link: entry.resolvedPath, enabled: entry.enabled ?? true, source: 'local' }
+      : {
+        version: entry.version,
+        integrity: entry.integrity,
+        ...(entry.primaryKind === 'plugin' ? { package: id } : {}),
+        resolvedPath: entry.resolvedPath,
+        source: 'platform',
+        enabled: entry.enabled ?? true,
+      };
+    (entry.primaryKind === 'adapter' ? adapters : plugins)[id] = serialized;
   }
 
   await fs.writeFile(
     path.join(kbDir, 'marketplace.lock'),
-    JSON.stringify({ schema: 'kb.marketplace/2', installed }, null, 2),
+    JSON.stringify({ schema: 'kb.marketplace/3', plugins, ...(Object.keys(adapters).length ? { adapters } : {}) }, null, 2),
   );
 }
 
@@ -108,8 +110,8 @@ describe('platformSync', () => {
         integrity: 'sha256-stale',
         resolvedPath: './packages/fake-adapter',
         source: 'local',
-        primaryKind: 'adapter',
-        provides: ['adapter'],
+        primaryKind: 'plugin',
+        provides: ['plugin'],
       },
     });
 
@@ -128,8 +130,8 @@ describe('platformSync', () => {
         integrity: 'sha256-abc',
         resolvedPath: './packages/missing',
         source: 'local',
-        primaryKind: 'adapter',
-        provides: ['adapter'],
+        primaryKind: 'plugin',
+        provides: ['plugin'],
       },
     });
 
@@ -186,7 +188,7 @@ describe('platformSync', () => {
     expect(result.mismatched).toEqual([]);
   });
 
-  it('validate mode: empty integrity is allowed (future prod-lock case)', async () => {
+  it('validate mode: rejects an entry with empty integrity', async () => {
     const pkg = { name: '@kb-labs/no-integrity', version: '1.0.0' };
     await writePackage(tmpDir, 'node_modules/@kb-labs/no-integrity', pkg);
 
@@ -202,7 +204,7 @@ describe('platformSync', () => {
     });
 
     const result = await platformSync({ root: tmpDir, mode: 'validate' });
-    expect(result.ok).toBe(true);
+    expect(result.lockMissing).toBe(true);
   });
 
   it('validate mode: skips disabled entries', async () => {
@@ -213,7 +215,7 @@ describe('platformSync', () => {
         integrity: 'sha256-abc',
         resolvedPath: './packages/never-existed',
         source: 'local',
-        primaryKind: 'adapter',
+        primaryKind: 'plugin',
         provides: ['adapter'],
         enabled: false,
       },
@@ -230,7 +232,7 @@ describe('platformSync', () => {
     await writeLock(tmpDir, {
       '@kb-labs/missing-mp': {
         version: '2.1.0',
-        integrity: '',
+        integrity: 'sha256-abc',
         resolvedPath: './node_modules/@kb-labs/missing-mp',
         source: 'marketplace',
         primaryKind: 'adapter',
@@ -259,7 +261,7 @@ describe('platformSync', () => {
     await writeLock(tmpDir, {
       '@kb-labs/broken': {
         version: '1.0.0',
-        integrity: '',
+        integrity: 'sha256-abc',
         resolvedPath: './node_modules/@kb-labs/broken',
         source: 'marketplace',
         primaryKind: 'adapter',
@@ -290,7 +292,7 @@ describe('platformSync', () => {
         integrity: 'sha256-abc',
         resolvedPath: './infra/gone',
         source: 'local',
-        primaryKind: 'adapter',
+        primaryKind: 'plugin',
         provides: ['adapter'],
       },
     });
@@ -312,7 +314,7 @@ describe('platformSync', () => {
     await writeLock(tmpDir, {
       '@kb-labs/dry': {
         version: '1.0.0',
-        integrity: '',
+        integrity: 'sha256-abc',
         resolvedPath: './node_modules/@kb-labs/dry',
         source: 'marketplace',
         primaryKind: 'adapter',

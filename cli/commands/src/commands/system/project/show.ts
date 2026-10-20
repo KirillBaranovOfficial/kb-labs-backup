@@ -4,7 +4,12 @@ import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
 import type { ProjectSummary } from '@kb-labs/core-contracts';
-import { projectErrorEnvelope, showProject } from '@kb-labs/core-project-registry';
+import { requireProjectContext } from '@kb-labs/core-runtime';
+import {
+  findProjectContainingPath,
+  projectErrorEnvelope,
+  showProject,
+} from '@kb-labs/core-project-registry';
 import { failWithEnvelope, openRegistry, projectRef } from './project-support';
 
 type ShowFlags = {
@@ -17,6 +22,8 @@ export type ProjectShowResult = CommandResult & {
 
 export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
   name: 'show',
+  scope: 'platform',
+  jsonTest: { safeArgs: ["__fixture_project_id__"] },
   description: 'Show one registered project',
   longDescription:
     'Shows a project by id, name or path. Without an argument the current folder is looked up. ' +
@@ -34,10 +41,18 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
   async handler(ctx, argv, flags) {
     const json = Boolean(flags.json);
     try {
-      const project = await showProject(openRegistry(), projectRef(argv[0], getContextCwd(ctx)));
-      if (json) {
-        ctx.ui?.json({ ok: true, project });
-      } else {
+      const registry = openRegistry();
+      const cwd = getContextCwd(ctx);
+      let ref = argv[0] === undefined ? undefined : projectRef(argv[0], cwd);
+      if (ref === undefined) {
+        const match = await findProjectContainingPath(registry, cwd);
+        if (!match) {
+          requireProjectContext(undefined, cwd);
+        }
+        ref = match.project.id;
+      }
+      const project = await showProject(registry, ref);
+      if (!json) {
         ctx.ui?.write(`${project.name} (${project.id})\n`);
         ctx.ui?.write(`  path:        ${project.path}${project.pathExists ? '' : '  (folder missing)'}\n`);
         ctx.ui?.write(`  status:      ${project.status}\n`);
@@ -46,9 +61,9 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
         ctx.ui?.write(`  last used:   ${project.lastUsedAt ?? 'never'}\n`);
         ctx.ui?.write(`  state dir:   ${project.stateDir}\n`);
       }
-      return { ok: true, project };
+      return {  project };
     } catch (error) {
-      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
+      return failWithEnvelope(projectErrorEnvelope(error));
     }
   },
 });

@@ -3,6 +3,7 @@ package checks
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,19 +19,37 @@ type externalRule struct {
 	fix           string
 	phase         string
 	language      string
+	categories    []string
+	scope         string
 	workspaceRoot string
 	checkConfig   config.CheckPackConfig
 }
 
 type externalInput struct {
-	Package       workspace.Package `json:"package"`
-	Preset        config.Preset     `json:"preset"`
-	WorkspaceRoot string            `json:"workspaceRoot"`
-	Check         string            `json:"check"`
-	Phase         string            `json:"phase"`
-	DryRun        bool              `json:"dryRun,omitempty"`
-	Config        map[string]any    `json:"config,omitempty"`
-	Issues        []Issue           `json:"issues,omitempty"`
+	Package       workspace.Package  `json:"package"`
+	Workspace     *externalWorkspace `json:"workspace,omitempty"`
+	Preset        config.Preset      `json:"preset"`
+	WorkspaceRoot string             `json:"workspaceRoot"`
+	Check         string             `json:"check"`
+	Phase         string             `json:"phase"`
+	DryRun        bool               `json:"dryRun,omitempty"`
+	Config        map[string]any     `json:"config,omitempty"`
+	Issues        []Issue            `json:"issues,omitempty"`
+}
+
+type externalWorkspace struct {
+	Root     string                     `json:"root"`
+	Packages []externalWorkspacePackage `json:"packages"`
+}
+
+type externalWorkspacePackage struct {
+	Name        string `json:"name"`
+	Dir         string `json:"dir"`
+	RelPath     string `json:"relPath"`
+	Category    string `json:"category"`
+	Preset      string `json:"preset"`
+	Language    string `json:"language"`
+	BuildTarget bool   `json:"buildTarget"`
 }
 
 type externalCheckOutput struct {
@@ -41,9 +60,36 @@ type externalFixOutput struct {
 	Actions []string `json:"actions"`
 }
 
-func (r *externalRule) Name() string { return r.name }
+func (r *externalRule) Name() string  { return r.name }
+func (r *externalRule) Scope() string { return r.scope }
+
+func (r *externalRule) appliesToCategory(category string) bool {
+	if len(r.categories) == 0 {
+		return true
+	}
+	for _, candidate := range r.categories {
+		if candidate == category {
+			return true
+		}
+	}
+	return false
+}
+
+// AppliesToPackage is the package-level category predicate used by execution,
+// selection validation, and reporting through Registry.ApplicableRulesFor.
+func (r *externalRule) AppliesToPackage(pkg workspace.Package) bool {
+	return r.scope == "workspace" || r.appliesToCategory(pkg.Category)
+}
+
+// ApplicableCategories describes a package-scoped external check's category filter.
+func (r *externalRule) ApplicableCategories() []string {
+	return append([]string(nil), r.categories...)
+}
 
 func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issue {
+	if r.scope == "workspace" {
+		return nil
+	}
 	out, err := r.runCommand(r.run, pkg, preset, nil, false)
 	if err == nil {
 		return out.Issues
@@ -52,11 +98,37 @@ func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issu
 		return out.Issues
 	}
 	return []Issue{{
-		Check:    r.name,
-		Severity: SeverityError,
-		Message:  err.Error(),
-		File:     pkg.Dir,
+		Check:        r.name,
+		Severity:     SeverityError,
+		Message:      "External check could not complete.",
+		CheckFailure: true,
+		Cause:        safeExternalCause(err),
+		File:         pkg.Dir,
 	}}
+}
+
+func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
+	packages := make([]externalWorkspacePackage, 0, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		packages = append(packages, externalWorkspacePackage{
+			Name: pkg.Name, Dir: pkg.Dir, RelPath: pkg.RelPath,
+			Category: pkg.Category, Preset: pkg.Preset, Language: pkg.Language, BuildTarget: pkg.BuildTarget,
+		})
+	}
+	out, err := r.runCommandWithInput(r.run, externalInput{
+		WorkspaceRoot: r.workspaceRoot,
+		Check:         r.name,
+		Phase:         r.phase,
+		Workspace:     &externalWorkspace{Root: ws.Root, Packages: packages},
+		Config:        r.checkConfig.Config,
+	})
+	if err == nil {
+		return out.Issues
+	}
+	if len(out.Issues) > 0 {
+		return out.Issues
+	}
+	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root}}
 }
 
 func (r *externalRule) Apply(pkg workspace.Package, issues []Issue, dryRun bool) error {
@@ -78,25 +150,29 @@ func (r *externalRule) runCommand(command string, pkg workspace.Package, preset 
 		Config:        r.checkConfig.Config,
 		Issues:        issues,
 	}
+	return r.runCommandWithInput(command, input)
+}
+
+func (r *externalRule) runCommandWithInput(command string, input externalInput) (externalCheckOutput, error) {
 	payload, err := json.Marshal(input)
 	if err != nil {
 		return externalCheckOutput{}, fmt.Errorf("marshal external check input for %s: %w", r.name, err)
 	}
 
-	cmd := exec.Command("sh", "-lc", command)
+	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = r.workspaceRoot
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Env = append(os.Environ(),
-		"KB_DEVKIT_MODE="+modeForCommand(issues),
+		"KB_DEVKIT_MODE="+modeForCommand(input.Issues),
 		"KB_DEVKIT_CHECK_NAME="+r.name,
 		"KB_DEVKIT_WORKSPACE_ROOT="+r.workspaceRoot,
-		"KB_DEVKIT_PACKAGE_NAME="+pkg.Name,
-		"KB_DEVKIT_PACKAGE_DIR="+pkg.Dir,
-		"KB_DEVKIT_PACKAGE_REL="+pkg.RelPath,
-		"KB_DEVKIT_PACKAGE_CATEGORY="+pkg.Category,
-		"KB_DEVKIT_PACKAGE_PRESET="+pkg.Preset,
-		"KB_DEVKIT_PACKAGE_LANGUAGE="+pkg.Language,
-		"KB_DEVKIT_DRY_RUN="+fmt.Sprintf("%t", dryRun),
+		"KB_DEVKIT_PACKAGE_NAME="+input.Package.Name,
+		"KB_DEVKIT_PACKAGE_DIR="+input.Package.Dir,
+		"KB_DEVKIT_PACKAGE_REL="+input.Package.RelPath,
+		"KB_DEVKIT_PACKAGE_CATEGORY="+input.Package.Category,
+		"KB_DEVKIT_PACKAGE_PRESET="+input.Package.Preset,
+		"KB_DEVKIT_PACKAGE_LANGUAGE="+input.Package.Language,
+		"KB_DEVKIT_DRY_RUN="+fmt.Sprintf("%t", input.DryRun),
 	)
 
 	var stdout, stderr bytes.Buffer
@@ -111,18 +187,19 @@ func (r *externalRule) runCommand(command string, pkg workspace.Package, preset 
 		}
 	}
 
-	if runErr != nil && len(parsed.Issues) == 0 {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = strings.TrimSpace(stdout.String())
-		}
-		if msg == "" {
-			msg = runErr.Error()
-		}
-		return externalCheckOutput{}, fmt.Errorf("external check %s failed: %s", r.name, msg)
+	if runErr != nil {
+		return parsed, fmt.Errorf("external command exited unsuccessfully: %w", runErr)
 	}
 
 	return parsed, nil
+}
+
+func safeExternalCause(err error) string {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return fmt.Sprintf("external command exited with status %d", exitErr.ExitCode())
+	}
+	return "external check output could not be read or decoded"
 }
 
 func modeForCommand(issues []Issue) string {

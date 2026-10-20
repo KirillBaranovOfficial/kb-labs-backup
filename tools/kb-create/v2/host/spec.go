@@ -43,7 +43,7 @@ type Tool struct {
 func LoadSpec(platformRoot string) (Spec, error) {
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
-		return Spec{}, contracts.NewLauncherError(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
+		return Spec{}, contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
 	}
 	if active.Plan.Host == nil {
 		return Spec{}, specInvalid(fmt.Errorf("the receipt declares no host"))

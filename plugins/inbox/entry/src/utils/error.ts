@@ -1,4 +1,4 @@
-import type { PluginContextV3 } from '@kb-labs/sdk';
+import type { CommandFailure } from '@kb-labs/sdk';
 import { InboxError, type InboxErrorCode } from '@kb-labs/inbox-core';
 
 // HTTP status codes for REST layer
@@ -53,46 +53,37 @@ function getHint(code: InboxErrorCode, message: string): string | undefined {
 }
 
 /**
- * Output a structured error for CLI commands.
- *
- * JSON mode  → { ok: false, error: { code, message, hint? } }  — agent-parseable
- * Human mode → ctx.ui.error() with hint and cause fields
- *
- * Call right before `return { ok: false, error: 'Command failed', result: null }`.
+ * Build a structured failure for the shared CLI result renderer.
  */
-export function handleError(ctx: PluginContextV3, err: unknown, isJson?: boolean): void {
+export function handleError(err: unknown): CommandFailure {
   if (err instanceof InboxError) {
     const hint = getHint(err.code, err.message);
-
-    if (isJson) {
-      ctx.ui?.json?.({
+    if (err.code === 'ENV_MISSING' || err.code === 'ACCOUNT_NOT_FOUND' || err.code === 'VALIDATION_ERROR') {
+      return {
         ok: false,
         error: {
-          code: err.code,
+          code: 'KB_RUNTIME_INPUT_INVALID',
           message: err.message,
-          ...(hint && { hint }),
+          hint: hint ?? 'Run `kb inbox --help` to review command inputs and retry.',
+          details: { field: err.code, inboxCode: err.code },
         },
-      });
-    } else {
-      ctx.ui?.error?.(err.message, {
-        ...(hint && { hint }),
-        cause: `InboxError [${err.code}]`,
-      });
+      };
     }
-    return;
+    return {
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        message: err.message,
+        hint: hint ?? 'Run `kb inbox --help` to review command inputs and retry.',
+        details: { inboxCode: err.code },
+      },
+    };
   }
 
   // Unknown error
   const message = err instanceof Error ? err.message : String(err);
 
-  if (isJson) {
-    ctx.ui?.json?.({
-      ok: false,
-      error: { code: 'INTERNAL_ERROR', message },
-    });
-  } else {
-    ctx.ui?.error?.(message);
-  }
+  return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message, hint: 'Run `kb inbox --help` to review command inputs and retry.' } };
 }
 
 /**

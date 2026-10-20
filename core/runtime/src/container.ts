@@ -24,8 +24,8 @@ import type {
   INotifier,
   RawMiddlewareDecl,
 } from '@kb-labs/core-platform';
-import type { IExecutionBackend } from '@kb-labs/core-contracts';
-import type { IDocumentDatabase, IKVStore, IProcessExecutor } from '@kb-labs/core-platform/adapters';
+import type { ExecutionBackend } from '@kb-labs/plugin-execution-factory';
+import type { IDocumentDatabase, IKVStore, IProcessExecutor, IWebSocketHostOperations } from '@kb-labs/core-platform/adapters';
 
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import type { EnvironmentManager } from './environment-manager.js';
@@ -112,7 +112,6 @@ export type PlatformLifecyclePhase =
 export interface PlatformLifecycleContext {
   phase: PlatformLifecyclePhase;
   cwd?: string;
-  isChildProcess?: boolean;
   reason?: string;
   error?: unknown;
   metadata?: Record<string, unknown>;
@@ -397,7 +396,7 @@ export class PlatformContainer {
   }
 
   /**
-   * Get list of all configured services (adapters + core features).
+   * Get all configured adapters, core features, and initialized platform services.
    * Used for validating plugin platform requirements.
    */
   getConfiguredServices(): Set<string> {
@@ -419,6 +418,10 @@ export class PlatformContainer {
     // Resource broker (if initialized)
     if (this._resourceBroker) {
       services.add('resourceBroker');
+    }
+
+    if (this._executionBackend) {
+      services.add('executionBackend');
     }
 
     if (this._environmentManager) {
@@ -515,6 +518,11 @@ export class PlatformContainer {
     return this.adapters.get('notifier') as INotifier | undefined;
   }
 
+  /** Host WebSocket operations used by plugin handler runtime. */
+  get websocket(): IWebSocketHostOperations | undefined {
+    return this.adapters.get('websocket') as IWebSocketHostOperations | undefined;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // SERVICES (derived from adapters, lazy-initialized)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -559,8 +567,7 @@ export class PlatformContainer {
   private _cron?: ICronManager;
   private _resources?: IResourceManager;
   private _resourceBroker?: IResourceBroker;
-  private _socketServer?: { getSocketPath(): string };
-  private _executionBackend?: IExecutionBackend;
+  private _executionBackend?: ExecutionBackend;
   private _environmentManager?: EnvironmentManager;
   private _workspaceManager?: WorkspaceManager;
   private _snapshotManager?: SnapshotManager;
@@ -666,34 +673,18 @@ export class PlatformContainer {
   }
 
   /**
-   * Initialize Unix socket server.
-   * Called internally by initPlatform() in parent process.
-   */
-  initSocketServer(server: { getSocketPath(): string }): void {
-    this._socketServer = server;
-  }
-
-  /**
-   * Get socket path for IPC communication.
-   * Returns undefined if not running in parent process.
-   */
-  getSocketPath(): string | undefined {
-    return this._socketServer?.getSocketPath();
-  }
-
-  /**
    * Initialize execution backend.
    * Called internally by initPlatform() AFTER adapters, BEFORE core features.
    *
    * @param backend - ExecutionBackend instance (from @kb-labs/plugin-execution)
    */
-  initExecutionBackend(backend: IExecutionBackend): void {
+  initExecutionBackend(backend: ExecutionBackend): void {
     if (this._executionBackend) {
       this.logger.warn('ExecutionBackend already initialized, replacing');
     }
     this._executionBackend = backend;
     this.logger.debug('ExecutionBackend initialized', {
-      mode: backend.constructor.name,
+      mode: backend.executionMode,
     });
   }
 
@@ -704,7 +695,7 @@ export class PlatformContainer {
    * @throws Error if ExecutionBackend not initialized via initPlatform()
    * @returns ExecutionBackend instance
    */
-  get executionBackend(): IExecutionBackend {
+  get executionBackend(): ExecutionBackend {
     if (!this._executionBackend) {
       throw new Error(
         'ExecutionBackend not initialized. ' +
@@ -815,7 +806,6 @@ export class PlatformContainer {
     this._cron = undefined;
     this._resources = undefined;
     this._resourceBroker = undefined;
-    this._socketServer = undefined;
     this._executionBackend = undefined;
     this._environmentManager = undefined;
     this._workspaceManager = undefined;
@@ -879,6 +869,9 @@ export class PlatformContainer {
         });
       }
     }
+
+    // Drain fire-and-forget logger extensions before closing their adapters.
+    await this.logger.flush();
 
     // Gracefully close adapters in reverse load order so dependents are closed before dependencies.
     const adaptersInReverseLoadOrder = Array.from(this.adapters.entries()).reverse();

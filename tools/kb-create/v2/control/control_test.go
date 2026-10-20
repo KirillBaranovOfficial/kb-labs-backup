@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -52,6 +54,11 @@ func (f *fakeRunner) Status(context.Context) (host.Status, error) {
 
 func startServer(t *testing.T) (*Server, *fakeRunner, host.State) {
 	t.Helper()
+	identity, err := host.NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(host.ProcessIdentityEnv, identity)
 	runner := &fakeRunner{}
 	state := host.State{Dir: filepath.Join(t.TempDir(), "state")}
 	server := &Server{Runner: runner, State: state, Version: "9.9.9-test"}
@@ -178,7 +185,9 @@ func TestRestartStopsThenStarts(t *testing.T) {
 
 func TestRestartFailureUsesTheEnvelope(t *testing.T) {
 	server, runner, _ := startServer(t)
-	runner.startEr = contracts.NewLauncherError("KB_INSTALL_PORT_IN_USE", "Port 1 is used by another application.", "Free the port.", nil)
+	failure := contracts.NewDiag("KB_INSTALL_PORT_IN_USE", "Port 1 is used by another application.", "Free the port.", nil)
+	failure.Meta = map[string]any{"port": "1", "pid": "7", "command": "fakehost", "operation": "restart"}
+	runner.startEr = failure
 	status, body, _ := call(t, server, http.MethodPost, "/v1/host/restart", server.Token(), nil, nil)
 	if status != http.StatusInternalServerError || !strings.Contains(string(body), "KB_INSTALL_PORT_IN_USE") {
 		t.Fatalf("status %d body %s", status, body)
@@ -262,7 +271,7 @@ func TestClientRoundTrip(t *testing.T) {
 		t.Fatalf("update: %+v %v", accepted, err)
 	}
 	_, err = client.RequestUpdate(context.Background(), UpdateRequestInput{})
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_RUNTIME_INPUT_INVALID" {
 		t.Fatalf("invalid update: %v", err)
 	}
@@ -273,12 +282,51 @@ func TestClientRoundTrip(t *testing.T) {
 	_ = server
 }
 
+func TestClientPreservesRemoteCodeForContractInvalidEnvelope(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"remote prose","hint":"remote hint"}}`)
+	}))
+	t.Cleanup(remote.Close)
+	client := &Client{
+		File: File{Address: strings.TrimPrefix(remote.URL, "http://"), Token: "token"},
+		HTTP: remote.Client(),
+	}
+	_, err := client.Status(context.Background())
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE" {
+		t.Fatalf("malformed remote diagnostic = %v, want typed protocol failure", err)
+	}
+	if typed.Meta["remoteCode"] != "KB_AUTH_FORBIDDEN" {
+		t.Fatalf("protocol diagnostic details = %#v, want remoteCode preserved", typed.Meta)
+	}
+}
+
+func TestDiagnosticResponseWriterEncodesBeforeCommittingStatus(t *testing.T) {
+	server := &Server{}
+	response := httptest.NewRecorder()
+	server.write(response, http.StatusOK, struct {
+		Unencodable chan int `json:"unencodable"`
+	}{Unencodable: make(chan int)})
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("response status = %d, want 500", response.Code)
+	}
+	var body ErrorResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode fallback body %q: %v", response.Body.String(), err)
+	}
+	if body.Error == nil || body.Error.Code != "KB_RUNTIME_UNEXPECTED" {
+		t.Fatalf("fallback body = %+v, want a typed 500 diagnostic", body)
+	}
+}
+
 func TestConnectIgnoresControlFileOfDeadLauncher(t *testing.T) {
 	state := host.State{Dir: t.TempDir()}
 	data, _ := json.Marshal(File{Protocol: 1, Address: "127.0.0.1:1", Token: "t", PID: 2147483646, Version: "x"})
 	_ = os.WriteFile(state.Control(), data, 0o600)
 	_, err := Connect(state)
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_HOST_CONTROL_UNAVAILABLE" {
 		t.Fatalf("connect: %v", err)
 	}

@@ -5,7 +5,7 @@
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import type { WorkflowInfo } from '@kb-labs/workflow-contracts';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
 
 interface WorkflowDetailParams {
   id: string;
@@ -23,11 +23,11 @@ export default defineHandler({
       throw new Error('Missing id parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/workflows/${encodeURIComponent(id)}`;
+    const url = `${daemonUrl}/workflows/${encodeURIComponent(id)}`;
     ctx.platform.logger.info(`[workflow-detail-handler] Fetching workflow ${id} from ${url}`);
 
     try {
-      const response = await fetch(url);
+      const response = await fetchWorkflowApi(url);
 
       if (!response.ok) {
         if (response.status === 404) {

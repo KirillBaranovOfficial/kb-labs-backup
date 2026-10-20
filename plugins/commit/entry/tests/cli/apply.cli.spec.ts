@@ -74,7 +74,7 @@ describe('commit:apply', () => {
 
     const result = await applyCommand.execute(ctx as never, { force: false, json: false, scope: 'root' } as ApplyInput);
 
-    expect(result.exitCode).toBe(0);
+    expect(result).not.toHaveProperty('ok');
     expect(applyCommitPlan).toHaveBeenCalledOnce();
     expect(captured.success.length).toBeGreaterThan(0);
   });
@@ -85,9 +85,7 @@ describe('commit:apply', () => {
 
     const result = await applyCommand.execute(ctx as never, { force: false, json: true, scope: 'root' } as ApplyInput);
 
-    expect(result.exitCode).toBe(0);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect((captured.json[0] as Record<string, unknown>)?.success).toBe(true);
+    expect(result).toMatchObject({ success: true });
   });
 
   it('APPLY-03: --dry-run shows intent without executing', async () => {
@@ -96,7 +94,7 @@ describe('commit:apply', () => {
 
     const result = await applyCommand.execute(ctx as never, mockCLIInput<ApplyFlags>({ flags: { 'dry-run': true } }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result).toMatchObject({ summary: expect.stringContaining('Apply current commit plan'), operations: expect.any(Array) });
     expect(applyCommitPlan).not.toHaveBeenCalled();
     expect(captured.infos.length).toBeGreaterThan(0);
     expect(captured.infos[0]?.message).toContain('Dry-run');
@@ -109,7 +107,7 @@ describe('commit:apply', () => {
 
     const result = await applyCommand.execute(ctx as never, { force: false, json: false, scope: 'root' } as ApplyInput);
 
-    expect(result.exitCode).toBe(1);
+    expect(result.ok).toBe(false);
     expect(applyCommitPlan).not.toHaveBeenCalled();
   });
 
@@ -120,7 +118,7 @@ describe('commit:apply', () => {
 
     const result = await applyCommand.execute(ctx as never, { force: false, json: false, scope: 'root' } as ApplyInput);
 
-    expect(result.exitCode).toBe(0);
+    expect(result).toMatchObject({ success: true, commits: [], errors: [] });
     expect(applyCommitPlan).not.toHaveBeenCalled();
   });
 });

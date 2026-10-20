@@ -1,12 +1,63 @@
+FROM golang:1.26-bookworm AS release-index-sealer
+
+WORKDIR /src/kb-create
+COPY tools/clikit /src/clikit
+COPY tools/kb-create /src/kb-create
+RUN go build -trimpath -o /out/kb-create-release-index ./v2/cmd/kb-create-release-index
+
 FROM node:24-bookworm
+
+ARG KB_JOURNEY_GIT_REVISION=unknown
+ENV KB_JOURNEY_GIT_REVISION=${KB_JOURNEY_GIT_REVISION}
 
 RUN apt-get update -qq && apt-get install -y -qq ca-certificates curl git jq python3 procps iproute2 lsof \
     && npm install -g pnpm@12.8.1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV NODE_PATH=/opt/kb-studio-playwright/node_modules
+ENV KB_JOURNEY_RESOURCE_LAYOUT=runner-image
+
+COPY .journey/runner-inputs/studio-playwright-version /tmp/studio-playwright-version
+RUN npm install --prefix /opt/kb-studio-playwright "@playwright/test@$(cat /tmp/studio-playwright-version)" \
+    && /opt/kb-studio-playwright/node_modules/.bin/playwright install --with-deps chromium
+RUN rm /tmp/studio-playwright-version
+
 ENV PATH="/root/.local/bin:/root/.local/share/pnpm:$PATH"
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
-COPY e2e/journey/runner.py /usr/local/bin/kb-journey-runner
-RUN chmod +x /usr/local/share/kb-create/install.sh /usr/local/bin/kb-journey-runner
+COPY --from=release-index-sealer /out/kb-create-release-index /usr/local/bin/kb-create-release-index
+COPY e2e/journey /opt/kb-journey/e2e/journey
+COPY .journey/runner-inputs/config-jsonc-edit.mjs /opt/kb-journey/core/config/dist/jsonc-edit.mjs
+COPY .journey/runner-inputs/project-service-path.js /opt/kb-journey/core/plugin-contracts/dist/project-service-path.js
+COPY docs/qa/scenarios /opt/kb-journey/docs/qa/scenarios
+COPY e2e/platform/fixtures/installer-cases /opt/kb-journey/e2e/platform/fixtures/installer-cases
+COPY e2e/platform/journey-update-packages.mjs /opt/kb-journey/e2e/platform/journey-update-packages.mjs
+COPY e2e/platform/package-provenance.mjs /opt/kb-journey/e2e/platform/package-provenance.mjs
+COPY e2e/platform/registry-manifest.json /opt/kb-journey/e2e/platform/registry-manifest.json
+COPY e2e/publisher/publish.sh /opt/kb-journey/e2e/publisher/publish.sh
+COPY contracts/ux-result /opt/kb-journey/contracts/ux-result
+COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-journey/core/platform/src/error-envelope/error-envelope.schema.json
+COPY core/platform/src/error-envelope/errors.catalog.json /opt/kb-journey/core/platform/src/error-envelope/errors.catalog.json
+COPY tools/kb-create/v2/contracts/platform-layout.json /opt/kb-journey/tools/kb-create/v2/contracts/platform-layout.json
+COPY tools/clikit/diag/gen/main.go /opt/kb-journey/tools/clikit/diag/gen/main.go
+COPY tools/kb-create/main.go /opt/kb-journey/tools/kb-create/main.go
+COPY tools/kb-create/v2/testsupport/wizard-pty/main.go /opt/kb-journey/tools/kb-create/v2/testsupport/wizard-pty/main.go
+COPY tools/kb-create/v2/testsupport/identity-supervisor/main.go /opt/kb-journey/tools/kb-create/v2/testsupport/identity-supervisor/main.go
+COPY tools/kb-create/v2/internal/fakehost/main.go /opt/kb-journey/tools/kb-create/v2/internal/fakehost/main.go
+COPY tools/kb-create/v2/cmd/gen-gateway-bootstrap/main.go /opt/kb-journey/tools/kb-create/v2/cmd/gen-gateway-bootstrap/main.go
+COPY tools/kb-create/v2/cmd/kb-create-release-index/main.go /opt/kb-journey/tools/kb-create/v2/cmd/kb-create-release-index/main.go
+COPY tools/kb-create/v2/cmd/kb-create-v2/main.go /opt/kb-journey/tools/kb-create/v2/cmd/kb-create-v2/main.go
+COPY tools/kb-deploy/main.go /opt/kb-journey/tools/kb-deploy/main.go
+COPY tools/kb-devkit/main.go /opt/kb-journey/tools/kb-devkit/main.go
+COPY tools/kb-env/main.go /opt/kb-journey/tools/kb-env/main.go
+COPY tools/kb-dev/main.go /opt/kb-journey/tools/kb-dev/main.go
+COPY tools/kb-monitor/main.go /opt/kb-journey/tools/kb-monitor/main.go
+COPY contracts/ux-result /opt/kb-contracts/ux-result
+COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-contracts/error-envelope.schema.json
+COPY e2e/journey/entrypoint.py /usr/local/bin/kb-journey-runner
+ENV PYTHONPATH="/opt/kb-journey/e2e/journey"
+COPY e2e/journey/studio-playwright.config.mjs /opt/kb-studio-playwright/playwright.config.mjs
+COPY .journey/runner-inputs/studio-specs /opt/kb-studio-playwright/specs
+RUN chmod +x /usr/local/share/kb-create/install.sh /usr/local/bin/kb-journey-runner /usr/local/bin/kb-create-release-index
 
 ENTRYPOINT ["python3", "/usr/local/bin/kb-journey-runner"]

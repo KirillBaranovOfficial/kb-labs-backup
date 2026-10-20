@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type { RouteOptions } from 'fastify';
 import fastifyCookie from "@fastify/cookie";
 import fastifyCors from "@fastify/cors";
 import fastifyHttpProxy from "@fastify/http-proxy";
@@ -10,17 +11,22 @@ import {
 } from "@kb-labs/shared-http";
 import {
   logDiagnosticEvent,
+  type PlatformAuditStore,
   type ICache,
   type ILogger,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
 import type { GatewayConfig } from "@kb-labs/gateway-contracts";
+import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
+import type { ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
 import { HostRegistrationSchema } from "@kb-labs/gateway-contracts";
 import {
   AuthService,
   type JwtConfig,
   type UsersStore,
+  type MembershipsStore,
   type SessionsStore,
+  type ApiTokensStore,
   type InvitesStore,
   type ProviderRegistry,
   type IPolicyDecisionPoint,
@@ -31,12 +37,12 @@ import {
 } from "@kb-labs/gateway-auth";
 import { resolveAccess } from "./access.js";
 import { createAuthMiddleware } from "./auth/middleware.js";
+import { sendAuthError } from "./auth/error-response.js";
 import { registerAuthHealthRoute } from "./auth/health-route.js";
 import {
   registerAuthRoutes,
   type MachineAuthRoutesUserExt,
 } from "./auth/routes.js";
-import { createUserAuthMiddleware } from "./auth/user-auth-middleware.js";
 import {
   registerUserAuthRoutes,
   createUserRefreshFn,
@@ -51,6 +57,7 @@ import { HostRegistry } from "./hosts/registry.js";
 import { attachGatewayWs, type SocketWsUpstream } from "./ws/gateway-ws.js";
 import { GatewayObservabilityCollector } from "./observability/collector.js";
 import { randomUUID } from "node:crypto";
+import { registerGatewayUxBoundary } from './ux-boundary.js';
 import { registerInternalRoutes } from "./internal/routes.js";
 import {
   createPressureOnRequest,
@@ -63,6 +70,7 @@ import {
   createStudioUrlRewriter,
 } from "./studio/static.js";
 import { registerWebhookAdminRoutes } from "./webhook/admin-routes.js";
+import { WebhookHistoryStore } from './webhook/history-store.js';
 import {
   registerWebhookRoutes,
   type WebhookManifestEntry,
@@ -80,8 +88,11 @@ import type { HostRoutes } from "./host-routes.js";
 export interface UserAuthServerDeps {
   userAuthService: UserAuthServiceForRoutes;
   users: UsersStore;
+  memberships: MembershipsStore;
   sessions: SessionsStore;
+  apiTokens: ApiTokensStore;
   invites: InvitesStore;
+  authAudit: PlatformAuditStore;
   providers: ProviderRegistry;
   pdp: IPolicyDecisionPoint;
   tenantResolver: TenantResolver;
@@ -131,6 +142,10 @@ export async function createServer(
   webhookManifests?: WebhookManifestEntry[],
   projectRouting?: ProjectRouting,
   hostRoutes?: HostRoutes,
+  routeObserver?: (route: RouteOptions) => void,
+  installationIdentity?: { installationId?: string },
+  projectServices?: readonly ProjectServiceDeclaration[],
+  projectServiceTransport?: Pick<IServiceTransport, "resolveProjectService">,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -141,11 +156,19 @@ export async function createServer(
   // Studio hosting (task 2.3): validated first so a missing bundle fails startup
   // with KB_HOST_STUDIO_ASSETS_MISSING before anything is bound.
   const studioEnabled = config.studio?.enabled === true;
+  const access = resolveAccess(config);
+  const pressureConfig = resolveGatewayPressureConfig(config, access.authEnabled);
+  const pressureGatewayConfig = pressureConfig
+    ? { ...config, pressure: pressureConfig }
+    : config;
   const studioStatic = studioEnabled
     ? await createStudioStatic(config)
     : undefined;
+  const bodyLimitBytes = 1024 * 1024;
   const app = Fastify({
     logger: false,
+    bodyLimit: bodyLimitBytes,
+    ajv: { customOptions: { removeAdditional: false } },
     // CD-10: gateway sits behind nginx; parse X-Forwarded-For for real client IPs.
     trustProxy: true,
     // Studio calls auth under /api/auth/*; route it to the gateway's /auth/*.
@@ -156,11 +179,41 @@ export async function createServer(
         }
       : {}),
   });
+  registerGatewayUxBoundary(app, gatewayLogger, { bodyLimitBytes });
+  if (routeObserver) {
+    app.addHook("onRoute", (route) => {
+      if (route.url) {
+        routeObserver(route);
+      }
+    });
+  }
 
-  // Cookie parsing — required by user-auth middleware and cookie-based sessions.
+  // Cookie parsing must run before the gate so secured cookie sessions are
+  // visible when the global auth hook validates the request.
   await app.register(fastifyCookie);
 
+  // Install the deny-by-default gate before OpenAPI, observability, Studio,
+  // proxy, project, and plugin routes are registered.
+  app.addHook("onRequest", createAuthMiddleware(cache, jwtConfig, {
+    authEnabled: access.authEnabled,
+    studioEnabled,
+    internalSecret: process.env.GATEWAY_INTERNAL_SECRET,
+    webhookManifests,
+    ...(studioStatic ? { studioPublicAsset: studioStatic.isPublicAsset } : {}),
+    ...(userAuth ? { userAuth: {
+      users: userAuth.users,
+      sessions: userAuth.sessions,
+      apiTokens: userAuth.apiTokens,
+      pdp: userAuth.pdp,
+      tenantResolver: userAuth.tenantResolver,
+      jwtConfig,
+    } } : {}),
+  }));
+
   const isProduction = process.env.NODE_ENV === "production";
+  const webhookHistoryStore = platform.hasResourceBroker
+    ? new WebhookHistoryStore(platform.documentDatabase)
+    : undefined;
 
   // OpenAPI / Swagger UI — must be registered before routes
   await registerOpenAPI(app, {
@@ -172,9 +225,9 @@ export async function createServer(
     ui: !isProduction,
   });
 
-  // CORS disabled at gateway level — browser clients (Studio) connect via same-origin or
-  // have CORS handled at the reverse-proxy / CDN layer. Reflecting arbitrary origins
-  // (origin: true) would allow any attacker site to make credentialed cross-origin requests.
+  // The gateway does not enable credentialed cross-origin requests. The global
+  // auth hook answers protocol preflight without dispatch; deployed reverse proxy
+  // or CDN policy controls CORS on the actual request/response.
   await app.register(fastifyCors, { origin: false });
   const observability = new GatewayObservabilityCollector(config);
   observability.register(app);
@@ -187,13 +240,14 @@ export async function createServer(
 
   // ── Pressure control (ADR-0056) ────────────────────────────────────
   // Registered BEFORE upstream proxies so 429 is returned before the request
-  // is forwarded. No-op when `config.pressure` is absent or disabled.
+  // is forwarded. Secured mode supplies the default tenant budget; pressure
+  // stays inactive without config in local mode.
   if (
-    config.pressure &&
-    config.pressure.enabled !== false &&
+    pressureConfig &&
+    pressureConfig.enabled !== false &&
     platform.hasResourceBroker
   ) {
-    const deps = { broker: platform.resourceBroker, logger, config };
+    const deps = { broker: platform.resourceBroker, logger, config: pressureGatewayConfig };
     app.addHook("onRequest", createPressureOnRequest(deps));
     app.addHook("onResponse", createPressureOnResponse());
   }
@@ -234,42 +288,6 @@ export async function createServer(
       "http.status_code": reply.statusCode,
     });
   });
-
-  // ── Auth (B-023 fix) ────────────────────────────────────────────────
-  // Registered globally on `app`, BEFORE the proxy upstreams below, so it
-  // actually covers proxied routes (/api/v1/*, /api/exec/*, etc.) and not
-  // just the gateway's own /auth/* routes. A prior version scoped these
-  // hooks inside the `gatewayRoutes` child plugin registered AFTER the
-  // proxy loop — Fastify hook encapsulation meant they never ran for
-  // proxied requests, and rest-api/workflow/marketplace do not enforce
-  // auth themselves, so every proxied route was reachable with no token
-  // at all (confirmed: garbage Bearer token still got 200 on
-  // /api/v1/studio/registry). Mirrors the pressure-hook precedent above,
-  // which already runs globally ahead of the proxy loop for the same reason.
-  //
-  // User-auth middleware runs FIRST (before machine Bearer check).
-  // Validates kb_access cookie, cross-tenant guard, CD-1 status check.
-  // No-op when no cookie is present — machine auth takes over.
-  if (userAuth) {
-    app.addHook(
-      "onRequest",
-      createUserAuthMiddleware({
-        users: userAuth.users,
-        tenantResolver: userAuth.tenantResolver,
-        jwtConfig,
-      }),
-    );
-  }
-
-  // Machine Bearer middleware — skips if userAuthContext already set by above.
-  // When auth is disabled (solo/local), the middleware runs every request as
-  // the local admin (B-023).
-  app.addHook(
-    "onRequest",
-    createAuthMiddleware(cache, jwtConfig, {
-      authEnabled: resolveAccess(config).authEnabled,
-    }),
-  );
 
   // ── Proxy upstreams ────────────────────────────────────────────────
   // Connection details (baseUrl, socketPath) come from IServiceTransport.
@@ -328,10 +346,15 @@ export async function createServer(
   // `/api/v1/projects/{projectId}/*` is resolved per request by the embedding
   // host, unlike the static upstreams above. Registered after the global auth
   // hooks, so it is covered by the same authentication.
-  if (projectRouting) {
-    await registerProjectRoutes(app, projectRouting);
+  if (projectServices) {
+    await registerProjectRoutes(
+      app,
+      projectServices,
+      projectServiceTransport ?? serviceTransport,
+      config.projectRequestTimeoutMs ?? 30_000,
+    );
     gatewayLogger.info(
-      "Project routing enabled: /api/v1/projects/{projectId}/*",
+      "Project routing enabled: /api/v1/projects/{projectId}/{serviceId}/*",
     );
   }
 
@@ -351,7 +374,9 @@ export async function createServer(
   await app.register(async function gatewayRoutes(scope) {
     // Per-tenant pressure (ADR-0056). Runs after auth so AuthContext is set.
     if (
-      config.pressure?.perTenant?.enabled === true &&
+      access.authEnabled &&
+      pressureConfig?.enabled !== false &&
+      pressureConfig?.perTenant?.enabled === true &&
       platform.hasResourceBroker
     ) {
       scope.addHook(
@@ -359,7 +384,7 @@ export async function createServer(
         createPressurePreHandler({
           broker: platform.resourceBroker,
           logger,
-          config,
+          config: pressureGatewayConfig,
         }),
       );
     }
@@ -373,6 +398,7 @@ export async function createServer(
             userAuthService: userAuth.userAuthService,
             cookieOpts: { cookieSecure: userAuth.cookieSecure },
           }),
+          userLogoutFn: (refreshToken) => userAuth.userAuthService.logout(refreshToken),
           pdp: userAuth.pdp,
         }
       : undefined;
@@ -389,8 +415,11 @@ export async function createServer(
         {
           userAuthService: userAuth.userAuthService,
           users: userAuth.users,
+          memberships: userAuth.memberships,
           sessions: userAuth.sessions,
+          apiTokens: userAuth.apiTokens,
           invites: userAuth.invites,
+          authAudit: userAuth.authAudit,
           providers: userAuth.providers,
           pdp: userAuth.pdp,
           tenantResolver: userAuth.tenantResolver,
@@ -535,8 +564,16 @@ export async function createServer(
     };
 
     scope.get(
+      "/health/identity",
+      { schema: { tags: ["System"], summary: "Gateway installation identity", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { installationId: { type: 'string' } }, additionalProperties: false } } } },
+      async () => ({
+        ...(installationIdentity?.installationId ? { installationId: installationIdentity.installationId } : {}),
+      }),
+    );
+
+    scope.get(
       "/health",
-      { schema: { tags: ["System"], summary: "Gateway health check" } },
+      { schema: { tags: ["System"], summary: "Gateway health check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] }, version: { type: 'string' }, uptime: { type: 'number' }, timestamp: { type: 'string', format: 'date-time' }, adapters: { type: 'object', additionalProperties: { type: 'object', properties: { available: { type: 'boolean' }, latencyMs: { type: 'number' } }, required: ['available'] } }, upstreams: { type: 'object', additionalProperties: { type: 'object', properties: { status: { type: 'string' }, latencyMs: { type: 'number' } }, required: ['status'] } }, projectRuntimes: { type: 'object', properties: { limit: { type: 'number' }, active: { type: 'number' }, runtimes: { type: 'array', items: { type: 'object', properties: { projectId: { type: 'string' }, state: { type: 'string' }, lastUsedAt: { type: 'string', format: 'date-time' }, inflight: { type: 'number' }, restarts: { type: 'number' }, keptRunningSchedules: { type: 'number' } }, required: ['projectId', 'state', 'lastUsedAt', 'inflight', 'restarts'], additionalProperties: false } } }, required: ['limit', 'active', 'runtimes'], additionalProperties: false } }, required: ['status', 'version', 'uptime', 'timestamp', 'adapters', 'upstreams'] } } } },
       async () => {
         const snapshot = await collectHealthSnapshot();
         // Runtime state changes faster than the cached snapshot lives: read it live.
@@ -552,7 +589,9 @@ export async function createServer(
         schema: {
           tags: ["System"],
           summary:
-            "Platform adapter status — mode (real | inmemory | noop) per slot",
+            "Platform adapter status — mode (real | inmemory | noop | degraded) per slot",
+          querystring: { type: 'object', properties: {}, additionalProperties: false },
+          response: { 200: { type: 'array', items: { type: 'object', properties: { slot: { type: 'string' }, mode: { type: 'string', enum: ['real', 'inmemory', 'noop', 'degraded'] }, implementation: { type: 'string' }, configuredPackage: { type: 'string' }, reason: { type: 'string' }, correlationId: { type: 'string' }, action: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' }, command: { type: 'string' } }, required: ['id', 'label', 'command'] }, recordedAt: { type: 'string', format: 'date-time' } }, required: ['slot', 'mode', 'implementation', 'recordedAt'] } } },
         },
       },
       async () => {
@@ -564,9 +603,41 @@ export async function createServer(
       registerAuthHealthRoute(scope, userAuth.authReadiness);
     }
 
+    const readyResponseSchema = {
+      type: "object",
+      properties: {
+        schema: { type: "string", const: "kb.ready/1" },
+        ts: { type: "string", format: "date-time" },
+        ready: { type: "boolean" },
+        status: { type: "string", enum: ["ready", "degraded", "initializing"] },
+        reason: { type: "string" },
+        components: {
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            properties: {
+              ready: { type: "boolean" },
+              status: { type: "string" },
+            },
+            required: ["ready"],
+          },
+        },
+      },
+      required: ["schema", "ts", "ready", "status", "reason", "components"],
+      additionalProperties: false,
+    };
+
     scope.get(
       "/ready",
-      { schema: { tags: ["System"], summary: "Gateway readiness check" } },
+      {
+        config: { uxFixture: { validResult: "error-envelope" } },
+        schema: {
+          tags: ["System"],
+          summary: "Gateway readiness check",
+          querystring: { type: "object", properties: {}, additionalProperties: false },
+          response: { 200: readyResponseSchema, 503: readyResponseSchema },
+        },
+      },
       async (_request, reply) => {
         const health = await collectHealthSnapshot();
         const upstreams =
@@ -584,6 +655,15 @@ export async function createServer(
         );
         const ready = missingRequiredUpstreams.length === 0;
         const projectStatus = projectRouting?.status();
+        const upstreamComponents = Object.fromEntries(
+          requiredUpstreams.map((id) => [
+            `upstream:${id}`,
+            {
+              ready: (upstreams[id]?.status ?? "down") === "up",
+              status: upstreams[id]?.status ?? "down",
+            },
+          ]),
+        );
 
         return reply.code(ready ? 200 : 503).send(
           createServiceReadyResponse({
@@ -596,18 +676,7 @@ export async function createServer(
               gatewayAdapters: {
                 ready: true,
               },
-              restUpstream: {
-                ready: (upstreams.rest?.status ?? "down") === "up",
-                status: upstreams.rest?.status ?? "down",
-              },
-              workflowUpstream: {
-                ready: (upstreams.workflow?.status ?? "down") === "up",
-                status: upstreams.workflow?.status ?? "down",
-              },
-              marketplaceUpstream: {
-                ready: (upstreams.marketplace?.status ?? "down") === "up",
-                status: upstreams.marketplace?.status ?? "down",
-              },
+              ...upstreamComponents,
               ...(projectStatus
                 ? {
                     // Lazy: a project runtime is ready once started on demand,
@@ -627,6 +696,8 @@ export async function createServer(
     scope.get(
       "/metrics",
       {
+        // Prometheus text exposition is consumed by scrapers, not UX JSON clients.
+        config: { ux: 'raw' },
         schema: {
           tags: ["Observability"],
           summary: "Gateway metrics in Prometheus format",
@@ -651,6 +722,8 @@ export async function createServer(
         schema: {
           tags: ["Observability"],
           summary: "Gateway observability contract descriptor",
+          querystring: { type: 'object', properties: {}, additionalProperties: false },
+          response: { 200: { type: 'object' } },
         },
       },
       async () => observability.buildDescribe(),
@@ -662,6 +735,8 @@ export async function createServer(
         schema: {
           tags: ["Observability"],
           summary: "Gateway observability health snapshot",
+          querystring: { type: 'object', properties: {}, additionalProperties: false },
+          response: { 200: { type: 'object' } },
         },
       },
       async () => {
@@ -705,7 +780,7 @@ export async function createServer(
     const hostRegistry = registry ?? new HostRegistry(cache);
     scope.post(
       "/hosts/register",
-      { schema: { tags: ["Hosts"], summary: "Register a host" } },
+      { schema: { tags: ["Hosts"], summary: "Register a host", querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { name: { type: 'string' }, namespaceId: { type: 'string' }, capabilities: { type: 'array', items: { type: 'string', enum: ['filesystem', 'git', 'editor-context', 'execution'] } }, workspacePaths: { type: 'array', items: { type: 'string' } }, hostType: { type: 'string', enum: ['local', 'cloud'] } }, required: ['name', 'namespaceId', 'capabilities', 'workspacePaths'], additionalProperties: false }, response: { 201: { type: 'object', properties: { hostId: { type: 'string' }, machineToken: { type: 'string' }, status: { type: 'string' } }, required: ['hostId', 'machineToken', 'status'] }, 400: { type: 'object' } } } },
       async (request, reply) => {
         const parsed = HostRegistrationSchema.safeParse(request.body);
         if (!parsed.success) {
@@ -725,11 +800,11 @@ export async function createServer(
     // List hosts (auth required)
     scope.get(
       "/hosts",
-      { schema: { tags: ["Hosts"], summary: "List registered hosts" } },
+      { schema: { tags: ["Hosts"], summary: "List registered hosts", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { hosts: { type: 'array', items: { type: 'object' } } }, required: ['hosts'] }, 401: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
-          return reply.code(401).send({ error: "Unauthorized" });
+          return sendAuthError(reply, 401);
         }
         const hosts = await hostRegistry.list(auth.namespaceId);
         return { hosts };
@@ -739,11 +814,11 @@ export async function createServer(
     // Get host by ID (auth required)
     scope.get<{ Params: { hostId: string } }>(
       "/hosts/:hostId",
-      { schema: { tags: ["Hosts"], summary: "Get host by ID" } },
+      { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Hosts"], summary: "Get host by ID", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object' }, 401: { type: 'object' }, 404: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
-          return reply.code(401).send({ error: "Unauthorized" });
+          return sendAuthError(reply, 401);
         }
         const { hostId } = request.params;
         const host = await hostRegistry.get(hostId, auth.namespaceId);
@@ -757,11 +832,11 @@ export async function createServer(
     // Deregister host (auth required)
     scope.delete<{ Params: { hostId: string } }>(
       "/hosts/:hostId",
-      { schema: { tags: ["Hosts"], summary: "Deregister a host" } },
+      { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Hosts"], summary: "Deregister a host", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 204: { type: 'null' }, 401: { type: 'object' }, 404: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
-          return reply.code(401).send({ error: "Unauthorized" });
+          return sendAuthError(reply, 401);
         }
         const { hostId } = request.params;
         const deleted = await hostRegistry.deregister(hostId, auth.namespaceId);
@@ -815,7 +890,7 @@ export async function createServer(
     // Registered unconditionally when the resource broker is available so that the
     // admin API (GET /api/v1/webhooks, POST /api/v1/webhooks/provision, DELETE) works
     // even in environments where no webhook-enabled plugins are currently installed.
-    if (platform.hasResourceBroker) {
+    if (webhookHistoryStore) {
       const webhookBaseUrl =
         resolvePublicUrl(config.port);
       // Thin adapter: globalDispatcher.call() requires namespaceId — threaded via optional field
@@ -859,6 +934,7 @@ export async function createServer(
           manifests: webhookManifests ?? [],
           baseUrl: webhookBaseUrl,
           broker: platform.resourceBroker,
+          historyStore: webhookHistoryStore,
         },
       );
     }
@@ -868,7 +944,7 @@ export async function createServer(
   // Registered in a separate Fastify scope so both user-auth and machine-token
   // middleware (which live only inside gatewayRoutes) are bypassed automatically.
   // Delivery auth is handled by the webhook router itself (secret / hmac / custom).
-  if (webhookManifests?.length && platform.hasResourceBroker) {
+  if (webhookManifests?.length && webhookHistoryStore) {
     const webhookBaseUrl =
       resolvePublicUrl(config.port);
     await app.register(async (webhookScope) => {
@@ -878,6 +954,7 @@ export async function createServer(
         logger,
         manifests: webhookManifests,
         baseUrl: webhookBaseUrl,
+        historyStore: webhookHistoryStore,
       });
     });
   }

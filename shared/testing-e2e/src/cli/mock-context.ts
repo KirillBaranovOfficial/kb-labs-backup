@@ -24,6 +24,8 @@ export interface MockContextOptions {
   cwd?: string;
   /** Plugin id for trace context */
   pluginId?: string;
+  /** Raw platform configuration returned by platform.config.getRawConfig(). */
+  platformConfig?: unknown;
 }
 
 /**
@@ -53,10 +55,12 @@ export function createMockContext(opts: MockContextOptions = {}): PluginContextV
     child: vi.fn().mockReturnThis(),
   };
 
-  // Minimal platform — only logger is wired; everything else is an empty stub.
+  // Minimal platform — only logger and raw configuration are wired; other
+  // APIs remain empty stubs.
   // CLI commands that need LLM/cache/storage should use @kb-labs/shared-testing.
   const platform = {
     logger: noopLogger,
+    config: { getRawConfig: vi.fn().mockResolvedValue(opts.platformConfig ?? {}) },
   } as unknown as PluginContextV3['platform'];
 
   // Minimal runtime — covers fs.glob / fs.readFile used by some commands (e.g. review)
@@ -112,7 +116,7 @@ export function createMockContext(opts: MockContextOptions = {}): PluginContextV
       setAttribute: () => {},
       recordError: () => {},
     },
-    hostContext: { host: 'cli', argv: [] } as unknown as PluginContextV3['hostContext'],
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [] } as unknown as PluginContextV3['hostContext'],
     ui,
     platform,
     runtime,

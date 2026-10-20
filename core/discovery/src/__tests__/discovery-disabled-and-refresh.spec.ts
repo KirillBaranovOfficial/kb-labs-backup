@@ -40,7 +40,7 @@ describe('DiscoveryManager — disabled plugins', () => {
     const { integrity } = await createPlugin('my-plugin', '@kb-labs/my-plugin');
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/my-plugin'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/my-plugin'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity,
       resolvedPath: './plugins/my-plugin',
@@ -48,7 +48,7 @@ describe('DiscoveryManager — disabled plugins', () => {
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
-    lock.installed['@kb-labs/my-plugin']!.enabled = false;
+    lock.plugins['@kb-labs/my-plugin']!.enabled = false;
     await writeMarketplaceLock(tmpDir, lock);
 
     const dm = new DiscoveryManager({ root: tmpDir });
@@ -66,17 +66,17 @@ describe('DiscoveryManager — disabled plugins', () => {
     const { integrity: intB } = await createPlugin('disabled-one', '@kb-labs/disabled-one');
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/enabled-one'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/enabled-one'] = createMarketplaceEntry({
       version: '1.0.0', integrity: intA,
       resolvedPath: './plugins/enabled-one', source: 'local',
       primaryKind: 'plugin', provides: ['plugin'],
     });
-    lock.installed['@kb-labs/disabled-one'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/disabled-one'] = createMarketplaceEntry({
       version: '1.0.0', integrity: intB,
       resolvedPath: './plugins/disabled-one', source: 'local',
       primaryKind: 'plugin', provides: ['plugin'],
     });
-    lock.installed['@kb-labs/disabled-one']!.enabled = false;
+    lock.plugins['@kb-labs/disabled-one']!.enabled = false;
     await writeMarketplaceLock(tmpDir, lock);
 
     const dm = new DiscoveryManager({ root: tmpDir });
@@ -112,7 +112,7 @@ describe('DiscoveryManager — local integrity refresh', () => {
     const staleIntegrity = 'sha256-OLD_STALE_HASH';
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/local-pkg'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/local-pkg'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: staleIntegrity,
       resolvedPath: './plugins/local-pkg',
@@ -130,7 +130,8 @@ describe('DiscoveryManager — local integrity refresh', () => {
 
     // Lock NOT updated during discovery — integrity updates happen at install/sync time
     const lockAfter = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-    expect(lockAfter!.installed['@kb-labs/local-pkg']!.integrity).toBe(staleIntegrity);
+    expect(lockAfter!.plugins['@kb-labs/local-pkg']!.link).toBe('./plugins/local-pkg');
+    expect(lockAfter!.plugins['@kb-labs/local-pkg']!.integrity).toBeUndefined();
   });
 
   it('discovers local packages with matching integrity without touching lock', async () => {
@@ -146,7 +147,7 @@ describe('DiscoveryManager — local integrity refresh', () => {
     const correctIntegrity = `sha256-${crypto.createHash('sha256').update(Buffer.from(pkgJson)).digest('base64')}`;
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/matching'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/matching'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: correctIntegrity,
       resolvedPath: './plugins/matching',
@@ -161,7 +162,8 @@ describe('DiscoveryManager — local integrity refresh', () => {
 
     expect(result.plugins).toHaveLength(1);
     const lockAfter = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-    expect(lockAfter!.installed['@kb-labs/matching']!.integrity).toBe(correctIntegrity);
+    expect(lockAfter!.plugins['@kb-labs/matching']!.link).toBe('./plugins/matching');
+    expect(lockAfter!.plugins['@kb-labs/matching']!.integrity).toBeUndefined();
   });
 
   it('blocks marketplace packages with wrong integrity (not local)', async () => {
@@ -176,11 +178,12 @@ describe('DiscoveryManager — local integrity refresh', () => {
     );
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/remote-bad'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/remote-bad'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-WRONG',
+      package: '@kb-labs/remote-bad',
       resolvedPath: './plugins/remote-bad',
-      source: 'marketplace', // NOT local → integrity mismatch blocks
+      source: 'platform', // NOT local → integrity mismatch blocks
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -196,7 +199,8 @@ describe('DiscoveryManager — local integrity refresh', () => {
     expect(mismatch!.severity).toBe('error');
   });
 
-  it('warns about manifest ID mismatch but still discovers', async () => {
+  // case: S-203.21
+  it('rejects an enabled marketplace entry whose ID differs from its manifest ID', async () => {
     const pluginDir = path.join(tmpDir, 'plugins', 'id-mismatch');
     await fs.mkdir(pluginDir, { recursive: true });
     const pkgJson = JSON.stringify({ name: '@kb-labs/id-mismatch', version: '1.0.0' });
@@ -210,7 +214,7 @@ describe('DiscoveryManager — local integrity refresh', () => {
     const integrity = `sha256-${crypto.createHash('sha256').update(Buffer.from(pkgJson)).digest('base64')}`;
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/id-mismatch'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/id-mismatch'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity,
       resolvedPath: './plugins/id-mismatch',
@@ -223,14 +227,13 @@ describe('DiscoveryManager — local integrity refresh', () => {
     const dm = new DiscoveryManager({ root: tmpDir });
     const result = await dm.discover();
 
-    // Should still discover, using manifest's own ID
-    expect(result.plugins).toHaveLength(1);
-    expect(result.plugins[0]!.id).toBe('@kb-labs/actual-id');
-
-    // Should warn about mismatch
-    const warning = result.diagnostics.find(d => d.code === 'MANIFEST_VALIDATION_ERROR');
-    expect(warning).toBeDefined();
-    expect(warning!.severity).toBe('warning');
-    expect(warning!.message).toContain('does not match');
+    expect(result.plugins).toHaveLength(0);
+    const mismatch = result.diagnostics.find(d => d.code === 'PLUGIN_ID_MISMATCH');
+    expect(mismatch).toMatchObject({
+      severity: 'error',
+      context: { pluginId: '@kb-labs/id-mismatch' },
+      remediation: 'Correct the manifest id or reinstall the package with its canonical plugin ID.',
+    });
+    expect(mismatch?.message).toContain('does not match');
   });
 });

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
 
+vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+  GatewayApiError: class GatewayApiError extends Error {},
+  gatewayApiFetch: (input: string | URL, init?: RequestInit) => fetch(input, init),
+}));
+
 // Mock fs/promises to control workspace path validation and config writing
 vi.mock('node:fs/promises', () => ({
   stat: vi.fn().mockResolvedValue({ isDirectory: () => true }),
@@ -49,8 +54,8 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.result.configPath).toContain('agent.json');
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ configPath: expect.stringContaining('agent.json') });
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -69,8 +74,8 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'], json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({
       hostId: MOCK_REGISTER_RESPONSE.hostId,
       clientId: MOCK_REGISTER_RESPONSE.clientId,
     });
@@ -84,8 +89,8 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: '', workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-04: invalid gateway URL (no http/https prefix) returns exitCode 1', async () => {
@@ -96,8 +101,8 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: 'localhost:4000', workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-05: workspace path does not exist — exitCode 1, error reported', async () => {
@@ -110,8 +115,8 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/nonexistent/path'] } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-06: gateway returns HTTP 500 — exitCode 1, error reported', async () => {
@@ -128,8 +133,8 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-07: fetch throws (unreachable gateway) — exitCode 1, error reported', async () => {
@@ -142,8 +147,8 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-09: --dry-run shows intent, fetch and writeFile are NOT called', async () => {
@@ -154,7 +159,7 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'], 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
     expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
@@ -176,7 +181,7 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/config"
@@ -17,6 +19,73 @@ func writePkgJSON(t *testing.T, dir, content string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// case: S-179.19, S-179.37
+func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate scheduler test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "../../../.."))
+	cfg, err := config.LoadFile(filepath.Join(root, "devkit.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace devkit.yaml: %v", err)
+	}
+	ws, err := workspace.New(root, cfg)
+	if err != nil {
+		t.Fatalf("discover workspace packages: %v", err)
+	}
+	pkgs := expandBuildDependencyClosure(ws.Packages, ws.Packages)
+	nodes, err := buildDAG(pkgs, []string{"build"}, cfg, ws)
+	if err != nil {
+		t.Fatalf("build workspace task DAG: %v", err)
+	}
+	if len(pkgs) != len(ws.Packages) {
+		t.Fatalf("build dependency closure has %d packages; workspace has %d", len(pkgs), len(ws.Packages))
+	}
+
+	byName := make(map[string]workspace.Package, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		byName[pkg.Name] = pkg
+		def := ResolveTaskDef(cfg, "build", pkg.Category)
+		if def == nil {
+			if _, scheduled := nodes[nodeKey{pkg.Name, "build"}]; scheduled {
+				t.Errorf("package %s has a build node without a matching task definition", pkg.Name)
+			}
+			continue
+		}
+		if _, scheduled := nodes[nodeKey{pkg.Name, "build"}]; !scheduled {
+			t.Errorf("package %s has a build task definition but no build node", pkg.Name)
+		}
+	}
+
+	for key, node := range nodes {
+		def := ResolveTaskDef(cfg, "build", node.pkg.Category)
+		if def == nil || !containsTask(def.Deps, "^build") {
+			continue
+		}
+		for _, depName := range readWorkspaceDeps(node.pkg.Dir, byName) {
+			if depName == node.pkg.Name {
+				continue
+			}
+			depKey := nodeKey{pkg: depName, task: "build"}
+			if _, scheduled := nodes[depKey]; !scheduled {
+				t.Errorf("%s build depends on %s, but the dependency has no build task node", key.pkg, depName)
+				continue
+			}
+			found := false
+			for _, actual := range node.deps {
+				if actual == depKey {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("%s build node is missing declared workspace dependency %s", key.pkg, depName)
+			}
+		}
 	}
 }
 
@@ -71,6 +140,40 @@ func TestBuildPkgDepMapKeepsLegitDeps(t *testing.T) {
 	deps := depMap["@kb/app"]
 	if len(deps) != 1 || deps[0] != "@kb/types" {
 		t.Fatalf("@kb/app deps = %v, want [@kb/types]", deps)
+	}
+}
+
+// case: S-179.37
+func TestBuildDAGRejectsWorkspaceBuildDependencyWithoutTaskNode(t *testing.T) {
+	root := t.TempDir()
+	coreDir := filepath.Join(root, "core")
+	writePkgJSON(t, coreDir, `{"name":"@fixture/core"}`)
+	runtimeDir := filepath.Join(root, "runtime")
+	writePkgJSON(t, runtimeDir, `{"name":"@fixture/runtime","dependencies":{"@fixture/core":"workspace:*"}}`)
+	appDir := filepath.Join(root, "app")
+	writePkgJSON(t, appDir, `{"name":"@fixture/app","dependencies":{"@fixture/runtime":"workspace:*"}}`)
+
+	pkgs := []workspace.Package{
+		{Name: "@fixture/core", Dir: coreDir, Category: "libraries"},
+		{Name: "@fixture/runtime", Dir: runtimeDir, Category: "runtime"},
+		{Name: "@fixture/app", Dir: appDir, Category: "applications"},
+	}
+	cfg := &config.DevkitConfig{
+		Tasks: map[string]config.TaskConfig{
+			"build": {
+				{Categories: []string{"libraries", "applications"}, Command: "true", Deps: []string{"^build"}},
+			},
+		},
+	}
+
+	_, err := buildDAG(pkgs, []string{"build"}, cfg, &workspace.Workspace{Root: root, Packages: pkgs})
+	var graphErr *TaskGraphError
+	if !errors.As(err, &graphErr) {
+		t.Fatal("build DAG accepted @fixture/app -> @fixture/runtime -> @fixture/core without a runtime build task")
+	}
+	if graphErr.Package != "@fixture/app" || graphErr.Dependency != "@fixture/runtime" ||
+		graphErr.Task != "build" || graphErr.DependencyTask != "build" {
+		t.Fatalf("task graph error = %+v, want the omitted runtime build node", graphErr)
 	}
 }
 

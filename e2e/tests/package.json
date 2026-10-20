@@ -12,6 +12,7 @@
     "report":          "playwright show-report report"
   },
   "devDependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@playwright/test": "^1.52.0",
     "typescript": "^5.4.0"
   }

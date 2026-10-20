@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import type { DetailedDiscovery } from '../../registry/discover.js';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
@@ -90,13 +91,22 @@ function makeCtx(overrides: Partial<PluginContextV3['ui']> = {}): PluginContextV
     pluginId: '@kb-labs/system',
     pluginVersion: '1.0.0',
     cwd: '/test/workspace',
-    ui: { ...noopUI, ...overrides },
+    ui: {
+      ...noopUI,
+      ...overrides,
+    },
     platform: makeMockPlatform() as never,
     runtime: { fs: {} as never, fetch: vi.fn(), env: vi.fn() },
     api: {} as never,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
+}
+
+function readData<T>(jsonSpy: ReturnType<typeof vi.fn>): T {
+  const envelope = jsonSpy.mock.calls[0]?.[0] as { ok?: boolean; data?: T };
+  expect(envelope).toMatchObject({ ok: true });
+  return envelope.data as T;
 }
 
 // Lazy import after mocks are set up
@@ -115,6 +125,11 @@ async function getDiscoverMock() {
   return mod as unknown as { discoverManifests: ReturnType<typeof vi.fn> };
 }
 
+async function setDiscoveryResult(results: unknown[], diagnostics = discoverState.diagnostics): Promise<void> {
+  const state = await import('../../registry/discovery-state.js');
+  state.setRegisteredDiscovery({ results, diagnostics } as unknown as DetailedDiscovery);
+}
+
 async function getLockMock() {
   const mod = await import('@kb-labs/core-discovery');
   return mod.readMarketplaceLock as unknown as ReturnType<typeof vi.fn>;
@@ -128,9 +143,14 @@ async function getFsMock() {
 // ── Tests: base diag ──────────────────────────────────────────────────────────
 
 describe('diag — base (no --command)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mockCollectorInstance.getEvents.mockReturnValue([]);
+    discoverState.diagnostics = [];
+    await setDiscoveryResult([]);
+    const discovery = await getDiscoverMock();
+    discovery.discoverManifests.mockReset();
+    discovery.discoverManifests.mockResolvedValue([]);
   });
 
   it('exits 0 when everything is healthy', async () => {
@@ -140,8 +160,8 @@ describe('diag — base (no --command)', () => {
     const code = await diag.run(ctx, [], { json: true });
     expect(code).toBe(0);
     expect(jsonSpy).toHaveBeenCalledOnce();
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean };
-    expect(result.ok).toBe(true);
+    const result = readData<{ status: string }> (jsonSpy);
+    expect(result.status).toBe('degraded');
   });
 
   it('surfaces unavailable commands from registry with unavailableReason + hint', async () => {
@@ -162,7 +182,7 @@ describe('diag — base (no --command)', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { diagnostics: Array<{ code?: string; remediation?: string; status: string }> };
+    const result = readData<{ diagnostics: Array<{ code?: string; remediation?: string; status: string }> }> (jsonSpy);
     const unavailable = result.diagnostics.filter(d => d.code === 'REQUIRES_MISSING');
     expect(unavailable).toHaveLength(1);
     expect(unavailable[0]?.remediation).toBe('pnpm add @kb-labs/review-engine');
@@ -182,13 +202,13 @@ describe('diag — base (no --command)', () => {
     ]);
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} });
+    lockMock.mockResolvedValue({ plugins: {} });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { diagnostics: Array<{ code?: string; status: string }> };
+    const result = readData<{ diagnostics: Array<{ code?: string; status: string }> }> (jsonSpy);
     const lockEvents = result.diagnostics.filter(d => d.code === 'INTEGRITY_MISMATCH');
     expect(lockEvents).toHaveLength(1);
     expect(lockEvents[0]?.status).toBe('error');
@@ -196,7 +216,7 @@ describe('diag — base (no --command)', () => {
 
   it('surfaces synthetic manifests as manifest-load-failure with remediation', async () => {
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/quality-entry',
         manifestPath: '/test/workspace/plugins/quality/entry/dist/manifest.js',
@@ -210,22 +230,25 @@ describe('diag — base (no --command)', () => {
             id: 'manifest:quality-entry',
             group: 'quality',
             describe: 'Commands from @kb-labs/quality-entry are unavailable',
-            manifestVersion: '1.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0',
             loader: async () => { throw new Error('Cannot load'); },
           },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { diagnostics: Array<{ code?: string; status: string; remediation?: string }> };
+    const result = readData<{ diagnostics: Array<{ code?: string; status: string; remediation?: string }> }> (jsonSpy);
     const failures = result.diagnostics.filter(d => d.code === 'MANIFEST_LOAD_FAILED');
     expect(failures).toHaveLength(1);
     expect(failures[0]?.status).toBe('error');
     expect(failures[0]?.remediation).toMatch(/pnpm.*build/);
+    expect(discover.discoverManifests).not.toHaveBeenCalled();
   });
 
   it('includes code and remediation on all diagnostic items in --json output', async () => {
@@ -246,7 +269,7 @@ describe('diag — base (no --command)', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { diagnostics: Array<{ code?: string }> };
+    const result = readData<{ diagnostics: Array<{ code?: string }> }> (jsonSpy);
     const withCode = result.diagnostics.filter(d => d.code !== undefined);
     expect(withCode.length).toBeGreaterThan(0);
   });
@@ -273,10 +296,18 @@ describe('diag --command', () => {
       },
       rest: [],
     });
+    await setDiscoveryResult([{
+      packageName: '@kb-labs/marketplace-entry',
+      manifestPath: '/test/node_modules/@kb-labs/marketplace-entry/dist/manifest.js',
+      pkgRoot: '/test/node_modules/@kb-labs/marketplace-entry',
+      source: 'linked',
+      scope: 'platform',
+      manifests: [{ _synthetic: false, group: 'marketplace', segments: ['marketplace', 'plugins', 'list'], id: 'list', describe: 'List plugins', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
+    }]);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: {
+      plugins: {
         '@kb-labs/marketplace-entry': { enabled: true, resolvedPath: '/test/node_modules/@kb-labs/marketplace-entry' },
       },
     });
@@ -286,11 +317,34 @@ describe('diag --command', () => {
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'marketplace plugins list' });
 
     expect(code).toBe(0);
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean; stages: Array<{ code: string; status: string }>; verdict: { rootCause: string } };
-    expect(result.ok).toBe(true);
+    const result = readData<{ status: string; stages: Array<{ code: string; status: string }>; verdict: { rootCause: string } }> (jsonSpy);
+    expect(result.status).toBe('healthy');
     expect(result.verdict.rootCause).toBe('NONE');
     const registryStage = result.stages.find(s => s.code === 'REGISTRY_OK');
     expect(registryStage).toBeDefined();
+  });
+
+  it('reports when the shared discovered command is missing from the dispatch registry', async () => {
+    const reg = await getRegistryMock();
+    reg.resolve.mockReturnValue({ type: 'not-found', input: ['commit', 'open'], suggestions: [] });
+    const { discoverManifestsDetailed } = await import('../../registry/discover.js');
+    await setDiscoveryResult([{
+        packageName: '@kb-labs/commit-entry',
+        manifestPath: '/project/.kb/plugins/commit-entry/dist/manifest.json',
+        pkgRoot: '/project/.kb/plugins/commit-entry',
+        source: 'linked',
+        scope: 'project',
+        manifests: [{ _synthetic: false, group: 'commit', segments: ['commit', 'open'], id: 'open', describe: 'Open a change', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
+      }]);
+
+    const jsonSpy = vi.fn();
+    const diag = await getDiag();
+    await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'commit open' });
+
+    const result = readData<{ status: string; stages: Array<{ code: string }> }>(jsonSpy);
+    expect(result.status).toBe('unhealthy');
+    expect(result.stages.map(({ code }) => code)).toContain('COMMAND_REGISTRATION_MISSING');
+    expect(discoverManifestsDetailed).not.toHaveBeenCalled();
   });
 
   it('reports REQUIRES_MISSING when command is unavailable', async () => {
@@ -313,9 +367,9 @@ describe('diag --command', () => {
     const diag = await getDiag();
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'review run' });
 
-    expect(code).toBe(1);
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean; stages: Array<{ code: string; status: string; remediation?: string }>; verdict: { rootCause: string; remediation?: string } };
-    expect(result.ok).toBe(false);
+    expect(code).toBe(0);
+    const result = readData<{ status: string; stages: Array<{ code: string; status: string; remediation?: string }>; verdict: { rootCause: string; remediation?: string } }> (jsonSpy);
+    expect(result.status).toBe('unhealthy');
     const stage = result.stages.find(s => s.code === 'REQUIRES_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.status).toBe('error');
@@ -349,7 +403,7 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'deploy run' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; details?: Record<string, unknown> }> };
+    const result = readData<{ stages: Array<{ code: string; details?: Record<string, unknown> }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'SHADOWED_BY');
     expect(stage).toBeDefined();
     expect(stage?.details?.ownerPackage).toBe('@kb-labs/infra-worker-entry');
@@ -360,14 +414,14 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['nonexistent', 'foo'], suggestions: [] });
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} });
+    lockMock.mockResolvedValue({ plugins: {} });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'nonexistent foo' });
 
-    expect(code).toBe(1);
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string }> };
+    expect(code).toBe(0);
+    const result = readData<{ stages: Array<{ code: string }> }> (jsonSpy);
     const codes = result.stages.map(s => s.code);
     expect(codes).toContain('REGISTRY_NOT_FOUND');
     expect(codes).toContain('NOT_IN_LOCK');
@@ -379,7 +433,7 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: {
+      plugins: {
         '@kb-labs/workflow-entry': { enabled: false, resolvedPath: '/test/node_modules/@kb-labs/workflow-entry' },
       },
     });
@@ -388,8 +442,8 @@ describe('diag --command', () => {
     const diag = await getDiag();
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'workflow run' });
 
-    expect(code).toBe(1);
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; remediation?: string }>; verdict: { rootCause: string; remediation?: string } };
+    expect(code).toBe(0);
+    const result = readData<{ stages: Array<{ code: string; remediation?: string }>; verdict: { rootCause: string; remediation?: string } }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'PLUGIN_DISABLED');
     expect(stage).toBeDefined();
     expect(stage?.remediation).toMatch(/marketplace plugins enable/);
@@ -401,7 +455,7 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['quality', 'report'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/quality-entry',
         manifestPath: '/test/workspace/plugins/quality/entry/dist/manifest.js',
@@ -415,16 +469,18 @@ describe('diag --command', () => {
             segments: ['quality', 'manifest:quality-entry'],
             id: 'manifest:quality-entry',
             describe: 'Commands from @kb-labs/quality-entry are unavailable',
-            manifestVersion: '1.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0',
             loader: async () => { throw new Error('Cannot load'); },
           },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: {
+      plugins: {
         '@kb-labs/quality-entry': { enabled: true, resolvedPath: '/test/workspace/plugins/quality/entry' },
       },
     });
@@ -437,7 +493,7 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'quality report' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; remediation?: string; details?: Record<string, unknown> }> };
+    const result = readData<{ stages: Array<{ code: string; remediation?: string; details?: Record<string, unknown> }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'MANIFEST_LOAD_FAILED');
     expect(stage).toBeDefined();
     expect(stage?.remediation).toMatch(/pnpm.*build/);
@@ -449,7 +505,7 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['workflow', 'rum'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/workflow-entry',
         manifestPath: '/test/dist/manifest.js',
@@ -457,23 +513,25 @@ describe('diag --command', () => {
         source: 'workspace',
         scope: 'platform',
         manifests: [
-          { _synthetic: false, group: 'workflow', segments: ['workflow', 'run'],   id: 'run',   describe: 'Run a workflow',  manifestVersion: '1.0', loader: vi.fn() },
-          { _synthetic: false, group: 'workflow', segments: ['workflow', 'list'],  id: 'list',  describe: 'List workflows', manifestVersion: '1.0', loader: vi.fn() },
-          { _synthetic: false, group: 'workflow', segments: ['workflow', 'abort'], id: 'abort', describe: 'Abort workflow', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'workflow', segments: ['workflow', 'run'],   id: 'run',   describe: 'Run a workflow',  schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'workflow', segments: ['workflow', 'list'],  id: 'list',  describe: 'List workflows', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'workflow', segments: ['workflow', 'abort'], id: 'abort', describe: 'Abort workflow', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: { '@kb-labs/workflow-entry': { enabled: true, resolvedPath: '/test' } },
+      plugins: { '@kb-labs/workflow-entry': { enabled: true, resolvedPath: '/test' } },
     });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'workflow rum' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; details?: { availablePaths?: string[] } }> };
+    const result = readData<{ stages: Array<{ code: string; details?: { availablePaths?: string[] } }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'COMMAND_PATH_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.details?.availablePaths).toContain('workflow run');
@@ -485,7 +543,7 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['myplug', 'go'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/myplug-entry',
         manifestPath: '/test/dist/manifest.js',
@@ -494,10 +552,12 @@ describe('diag --command', () => {
         scope: 'platform',
         manifests: [
           // Non-synthetic but structurally invalid (missing describe)
-          { _synthetic: false, group: 'myplug', segments: ['myplug', 'go'], id: 'go', describe: '', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'myplug', segments: ['myplug', 'go'], id: 'go', describe: '', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const { preflightManifests } = await import('../../registry/register.js');
     (preflightManifests as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -507,16 +567,16 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: { '@kb-labs/myplug-entry': { enabled: true, resolvedPath: '/test' } },
+      plugins: { '@kb-labs/myplug-entry': { enabled: true, resolvedPath: '/test' } },
     });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'myplug go' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as {
+    const result = readData<{
       stages: Array<{ code: string; details?: { failures?: Array<{ command: string; reason: string }> } }>;
-    };
+    }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'MANIFEST_STRUCT_INVALID');
     expect(stage).toBeDefined();
     expect(stage?.details?.failures?.[0]?.reason).toContain('Missing describe');
@@ -536,9 +596,10 @@ describe('diag --command', () => {
       remediation: 'Remove it from plugins.block in .kb/kb.config.json',
       ts: 0,
     }];
+    await setDiscoveryResult([], discoverState.diagnostics);
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} });
+    lockMock.mockResolvedValue({ plugins: {} });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -548,7 +609,7 @@ describe('diag --command', () => {
       discoverState.diagnostics = [];
     }
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string }> };
+    const result = readData<{ stages: Array<{ code: string }> }> (jsonSpy);
     expect(result.stages.find(s => s.code === 'PLUGIN_BLOCKLISTED')).toBeDefined();
   });
 
@@ -557,7 +618,7 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['state', 'get'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/state-entry',
         manifestPath: '/missing/dist/manifest.js',
@@ -565,14 +626,16 @@ describe('diag --command', () => {
         source: 'workspace',
         scope: 'platform',
         manifests: [
-          { _synthetic: false, group: 'state', segments: ['state', 'get'], id: 'get', describe: 'Get state', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'state', segments: ['state', 'get'], id: 'get', describe: 'Get state', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: { '@kb-labs/state-entry': { enabled: true, resolvedPath: '/missing/node_modules/@kb-labs/state-entry' } },
+      plugins: { '@kb-labs/state-entry': { enabled: true, resolvedPath: '/missing/node_modules/@kb-labs/state-entry' } },
     });
 
     // resolvedPath does not exist
@@ -583,7 +646,7 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'state get' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; remediation?: string }> };
+    const result = readData<{ stages: Array<{ code: string; remediation?: string }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'PATH_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.remediation).toMatch(/pnpm install/);
@@ -636,12 +699,12 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'review run' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as {
+    const result = readData<{
       ok: boolean;
       command: string;
       stages: unknown[];
       verdict: { rootCause: string; remediation?: string };
-    };
+    }> (jsonSpy);
     expect(result.command).toBe('review run');
     expect(Array.isArray(result.stages)).toBe(true);
     expect(result.verdict.rootCause).toBe('REQUIRES_MISSING');
@@ -678,7 +741,7 @@ describe('diag --command (review-fix scenarios)', () => {
     });
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} }); // no entry for myplug
+    lockMock.mockResolvedValue({ plugins: {} }); // no entry for myplug
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -686,8 +749,8 @@ describe('diag --command (review-fix scenarios)', () => {
 
     // Command works — ok: true despite no lock entry
     expect(code).toBe(0);
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean; stages: Array<{ code: string; status: string }> };
-    expect(result.ok).toBe(true);
+    const result = readData<{ status: string; stages: Array<{ code: string; status: string }> }> (jsonSpy);
+    expect(result.status).toBe('healthy');
     const lockStage = result.stages.find(s => s.code === 'NOT_IN_MARKETPLACE');
     expect(lockStage).toBeDefined();
     expect(lockStage?.status).toBe('info');
@@ -704,9 +767,9 @@ describe('diag --command (review-fix scenarios)', () => {
     const diag = await getDiag();
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'missingplug cmd' });
 
-    expect(code).toBe(1);
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean; stages: Array<{ code: string; status: string }> };
-    expect(result.ok).toBe(false);
+    expect(code).toBe(0);
+    const result = readData<{ status: string; stages: Array<{ code: string; status: string }> }> (jsonSpy);
+    expect(result.status).toBe('degraded');
     const lockStage = result.stages.find(s => s.code === 'NO_LOCK');
     expect(lockStage).toBeDefined();
     expect(lockStage?.status).toBe('warning');
@@ -723,28 +786,30 @@ describe('diag --command (review-fix scenarios)', () => {
       segments: ['bigplug', `cmd${i}`],
       id: `cmd${i}`,
       describe: `Command ${i}`,
-      manifestVersion: '1.0' as const,
+      schema: 'kb.adapter/1', manifestVersion: '1.0' as const,
       loader: vi.fn(),
     }));
     // reset to clear any previous mockResolvedValue, then set fresh
     discoverMod.discoverManifests.mockReset();
-    discoverMod.discoverManifests.mockResolvedValue([{
+    const discovered = [{
       packageName: '@kb-labs/bigplug-entry',
       manifestPath: '/test/dist/manifest.js',
       pkgRoot: '/test',
       source: 'workspace' as const,
       scope: 'platform' as const,
       manifests: manyCommands,
-    }]);
+    }];
+    discoverMod.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: { '@kb-labs/bigplug-entry': { enabled: true, resolvedPath: '/test' } } });
+    lockMock.mockResolvedValue({ plugins: { '@kb-labs/bigplug-entry': { enabled: true, resolvedPath: '/test' } } });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'bigplug typo' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; remediation?: string }> };
+    const result = readData<{ stages: Array<{ code: string; remediation?: string }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'COMMAND_PATH_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.remediation).toMatch(/and 3 more/);
@@ -761,13 +826,13 @@ describe('diag --command (review-fix scenarios)', () => {
     });
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} });
+    lockMock.mockResolvedValue({ plugins: {} });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'workflow nonexistentleaf' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; details?: Record<string, unknown> }> };
+    const result = readData<{ stages: Array<{ code: string; details?: Record<string, unknown> }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'GROUP_EXISTS_LEAF_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.details?.availableChildren).toEqual(['run', 'list', 'abort']);
@@ -778,24 +843,26 @@ describe('diag --command (review-fix scenarios)', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['nopathplug', 'run'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([{
+    const discovered = [{
       packageName: '@kb-labs/nopathplug-entry',
       manifestPath: '/test/dist/manifest.js',
       pkgRoot: '/test',
       source: 'workspace',
       scope: 'platform',
-      manifests: [{ _synthetic: false, group: 'nopathplug', segments: ['nopathplug', 'run'], id: 'run', describe: 'Run', manifestVersion: '1.0' as const, loader: vi.fn() }],
-    }]);
+      manifests: [{ _synthetic: false, group: 'nopathplug', segments: ['nopathplug', 'run'], id: 'run', describe: 'Run', schema: 'kb.adapter/1', manifestVersion: '1.0' as const, loader: vi.fn() }],
+    }];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
     // Entry exists but resolvedPath is empty string
-    lockMock.mockResolvedValue({ installed: { '@kb-labs/nopathplug-entry': { enabled: true, resolvedPath: '' } } });
+    lockMock.mockResolvedValue({ plugins: { '@kb-labs/nopathplug-entry': { enabled: true, resolvedPath: '' } } });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'nopathplug run' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; status: string; stage: string }> };
+    const result = readData<{ stages: Array<{ code: string; status: string; stage: string }> }> (jsonSpy);
     const fsStage = result.stages.find(s => s.stage === 'filesystem');
     expect(fsStage?.code).toBe('FS_NO_PATH');
     expect(fsStage?.status).toBe('info');

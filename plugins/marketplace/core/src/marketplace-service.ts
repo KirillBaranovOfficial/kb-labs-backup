@@ -13,8 +13,12 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import { IntegrityMismatchError, type IExtensionStore } from '@kb-labs/core-extension-store';
+import type { ILogger } from '@kb-labs/core-platform';
+import { resolveMarketplaceLockScope } from '@kb-labs/core-discovery';
 import { glob } from 'glob';
-import type { EntityKind, MarketplaceEntry, MarketplaceLock } from '@kb-labs/core-discovery';
+import semver from 'semver';
+import type { EntityKind, MarketplaceLock, MarketplaceLockEntry } from '@kb-labs/core-discovery';
 import {
   readMarketplaceLock,
   writeMarketplaceLock,
@@ -25,8 +29,9 @@ import {
   enablePlugin,
   disablePlugin,
   DiagnosticCollector,
-  loadManifest,
+  loadManifestFile,
   extractEntityKinds,
+  DiscoveryManager,
 } from '@kb-labs/core-discovery';
 import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import type {
@@ -41,6 +46,7 @@ import type {
   MarketplaceDiagnostic,
   InstallResult,
   InstallResultEntry,
+  InstalledPackage,
   SyncResult,
   DoctorReport,
   DoctorIssue,
@@ -67,8 +73,31 @@ export interface MarketplaceServiceOptions {
   source: PackageSource;
   /** KB Registry package source — used for specs starting with 'kb:' */
   registrySource?: PackageSource;
+  /** Shared machine store. When set, packages never enter project node_modules. */
+  extensionStore?: IExtensionStore;
+  /** Platform logger used by lifecycle strategies. */
+  logger: ILogger;
   /** Additional strategies beyond built-in plugin/adapter */
   strategies?: EntityKindStrategy[];
+}
+
+export class MarketplaceVersionError extends Error {
+  readonly code: 'INTEGRITY_MISMATCH' | 'VERSION_NOT_HIGHER' | 'INVALID_VERSION';
+
+  constructor(
+    code: MarketplaceVersionError['code'],
+    readonly packageId: string,
+    readonly installedVersion: string,
+    readonly requestedVersion: string,
+  ) {
+    super(code === 'INTEGRITY_MISMATCH'
+      ? `Installed ${packageId}@${installedVersion} has an immutable integrity pin that differs from the registry.`
+      : code === 'VERSION_NOT_HIGHER'
+        ? `Marketplace update for ${packageId} resolved ${requestedVersion}, which is not higher than installed version ${installedVersion}.`
+        : `Marketplace resolved invalid version ${requestedVersion} for ${packageId}; installed version is ${installedVersion}.`);
+    this.name = 'MarketplaceVersionError';
+    this.code = code;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +108,8 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   private readonly roots: ServiceRoots;
   private readonly source: PackageSource;
   private readonly registrySource?: PackageSource;
+  private readonly extensionStore?: IExtensionStore;
+  private readonly logger: ILogger;
   private readonly strategies = new Map<EntityKind, EntityKindStrategy>();
   /**
    * Package-manager and marketplace-lock mutations share a scope root. They
@@ -93,10 +124,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     this.roots = { platformRoot: opts.platformRoot, projectRoot: opts.projectRoot };
     this.source = opts.source;
     this.registrySource = opts.registrySource;
+    this.extensionStore = opts.extensionStore;
+    this.logger = opts.logger;
 
     // Built-in strategies
     this.registerStrategy(new PluginStrategy());
-    this.registerStrategy(new AdapterStrategy());
+    this.registerStrategy(new AdapterStrategy(this.logger, opts.platformRoot));
 
     // User-supplied strategies
     if (opts.strategies) {
@@ -120,7 +153,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     opts?: { dev?: boolean; shareToken?: string },
   ): Promise<InstallResult> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, specs, opts));
+    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, specs, opts, false));
   }
 
   private async installInScope(
@@ -128,10 +161,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     scopeRoot: string,
     specs: string[],
     opts?: { dev?: boolean; shareToken?: string },
+    isUpdate = false,
   ): Promise<InstallResult> {
     const installed: InstallResultEntry[] = [];
     const warnings: string[] = [];
     const diagnostics: MarketplaceDiagnostic[] = [];
+    const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
 
     for (const spec of specs) {
       // Route kb: specs to registry source; fall back to npm source
@@ -146,7 +181,39 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
 
       const resolved = await source.resolve(spec);
-      const result = await source.install(resolved, scopeRoot, opts);
+      if (!resolved.primaryKind) {
+        throw new PackageClassificationError(
+          resolved.id,
+          resolved.version,
+        );
+      }
+      const installedPin = findInstalledPin(lock, resolved.id);
+      if (installedPin) {
+        const installedVersion = installedPin.version;
+        if (!semver.valid(installedVersion) || !semver.valid(resolved.version)) {
+          throw new MarketplaceVersionError('INVALID_VERSION', resolved.id, installedVersion, resolved.version);
+        }
+        const order = semver.compare(resolved.version, installedVersion);
+        if (order === 0 && resolved.integrity !== installedPin.integrity) {
+          throw new MarketplaceVersionError('INTEGRITY_MISMATCH', resolved.id, installedVersion, resolved.version);
+        }
+        if (order < 0 || (isUpdate && order === 0)) {
+          throw new MarketplaceVersionError('VERSION_NOT_HIGHER', resolved.id, installedVersion, resolved.version);
+        }
+      }
+      // Project plugin pins use the shared version store (ADR-0048). Marketplace
+      // plugin entry packages also use it at platform scope: adding them to the
+      // installed platform root would make pnpm re-resolve the sealed graph.
+      // Platform adapters remain in the platform graph for runtime resolution.
+      const usesExtensionStore = this.extensionStore !== undefined &&
+        (ctx.scope === 'project' || resolved.primaryKind === 'plugin');
+      const marketplaceState = usesExtensionStore ? [] : await snapshotMarketplaceState(scopeRoot);
+      const result = usesExtensionStore
+        ? await this.installInStore(resolved)
+        : await source.install(resolved, scopeRoot, opts);
+
+      let canonicalId: string | null | undefined;
+      try {
 
       // Detect primary kind via strategies. A null result means the installed
       // package is not a KB Labs entity (no plugin/adapter/... manifest) —
@@ -154,16 +221,23 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       // lock entry (B-021).
       const primaryKind = await this.detectKind(result.packageRoot);
       if (primaryKind === null) {
-        await source.remove(result.id, scopeRoot).catch(() => undefined);
         throw new InvalidEntityError(
           `Package "${result.id}" (resolved from "${spec}") is not a valid KB Labs entity — ` +
-          `no plugin/adapter/workflow manifest found. Nothing was installed. ` +
-          `Did you mean a scoped package such as "@kb-labs/${spec}-entry"?`,
+          `no plugin/adapter/workflow manifest found. Nothing was installed.`,
         );
       }
       this.assertScopeAllowsKind(ctx.scope, primaryKind);
 
       const strategy = this.strategies.get(primaryKind);
+      canonicalId = strategy?.resolveId
+        ? await strategy.resolveId(result.packageRoot)
+        : result.id;
+      if (!canonicalId) {
+        throw new InvalidEntityError(
+          `Package "${result.id}" (resolved from "${spec}") does not declare a canonical entity ID. ` +
+          'Declare the ID in its KB manifest and retry the install.',
+        );
+      }
       const provides = strategy
         ? await strategy.extractProvides(result.packageRoot)
         : [primaryKind];
@@ -172,40 +246,72 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       const trust: 'trusted' | 'untrusted' = resolved.signature ? 'trusted' : 'untrusted';
 
       // Write to marketplace.lock
-      const entry = createMarketplaceEntry({
+      const entryOptions = {
         version: result.version,
         integrity: result.integrity,
-        resolvedPath: relativeToRoot(scopeRoot, result.packageRoot),
-        source: resolved.source,
         primaryKind,
         provides,
         trust,
         signature: resolved.signature,
-        spec,
-      });
+      };
+      const packagePath = usesExtensionStore
+          ? `store:${encodeURIComponent(result.id)}@${encodeURIComponent(result.version)}`
+          : relativeToRoot(scopeRoot, result.packageRoot);
+      const entrySource = usesExtensionStore ? resolved.source
+        : ctx.scope === 'platform' && resolved.source === 'marketplace' ? 'platform' : resolved.source;
+      const entry = entrySource === 'platform'
+        ? createMarketplaceEntry({ ...entryOptions, source: 'platform', package: result.id, resolvedPath: packagePath })
+        : entrySource === 'marketplace'
+          ? createMarketplaceEntry({ ...entryOptions, source: 'marketplace', package: result.id, resolvedPath: packagePath })
+          : createMarketplaceEntry({ ...entryOptions, source: 'local', resolvedPath: packagePath });
 
-      await addToMarketplaceLock(scopeRoot, result.id, entry);
+      await addToMarketplaceLock(scopeRoot, canonicalId, entry, ctx.scope);
 
       // Cache manifest
-      await this.cacheManifest(scopeRoot, result.id, result.packageRoot, primaryKind, result.integrity);
+      if (!this.extensionStore) {
+        await this.cacheManifest(scopeRoot, canonicalId, result.packageRoot, primaryKind, result.integrity);
+      }
 
       // Run post-install hook
       if (strategy?.afterInstall) {
         try {
-          await strategy.afterInstall(result.id, result.packageRoot, this, ctx);
+          await strategy.afterInstall(canonicalId, result.packageRoot, this, ctx);
         } catch (err) {
-          warnings.push(`afterInstall for ${result.id}: ${(err as Error).message}`);
+          warnings.push(`afterInstall for ${canonicalId}: ${(err as Error).message}`);
         }
       }
 
       installed.push({
-        id: result.id,
+        id: canonicalId,
         version: result.version,
         primaryKind,
         provides,
         packageRoot: result.packageRoot,
         scope: ctx.scope,
       });
+      if (!usesExtensionStore) {await source.commitInstall(result.id, scopeRoot);}
+      } catch (error) {
+        if (!usesExtensionStore) {
+          const rollbackErrors: unknown[] = [];
+          try {
+            await source.rollbackInstall(result.id, scopeRoot);
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError);
+          }
+          try {
+            await restoreMarketplaceState(marketplaceState);
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError);
+          }
+          if (rollbackErrors.length > 0) {
+            throw new MarketplaceInstallRollbackError(
+              result.id, ctx.scope, scopeRoot, error,
+              new AggregateError(rollbackErrors, 'Marketplace install rollback failed'),
+            );
+          }
+        }
+        throw error;
+      }
     }
 
     return { installed, warnings, scope: ctx.scope, diagnostics: diagnostics.length ? diagnostics : undefined };
@@ -233,14 +339,20 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
 
       // Run pre-uninstall hook
-      const strategy = this.strategies.get(entry.primaryKind);
+      const packageRoot = await this.resolveEntryPath(scopeRoot, id, entry);
+      const kind = packageRoot ? await this.detectKind(packageRoot) : null;
+      const strategy = kind ? this.strategies.get(kind) : undefined;
       if (strategy?.beforeUninstall) {
         await strategy.beforeUninstall(id, this, ctx);
       }
 
-      await removeFromMarketplaceLock(scopeRoot, id);
+      const packageName = entry.source === 'local' ? undefined : ('package' in entry ? entry.package : id);
+
+      await removeFromMarketplaceLock(scopeRoot, id, ctx.scope);
       await removeCacheEntry(scopeRoot, id);
-      await this.source.remove(id, scopeRoot);
+      if (!this.extensionStore && packageName) {
+        await this.source.remove(packageName, scopeRoot);
+      }
     }
   }
 
@@ -307,8 +419,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       provides,
     });
 
-    const canonicalId = manifest?.id ?? id;
-    await addToMarketplaceLock(scopeRoot, canonicalId, entry);
+    const resolvedId = manifest?.id ?? (strategy?.resolveId ? await strategy.resolveId(absPath) : null);
+    const canonicalId = resolvedId ?? id;
+    await addToMarketplaceLock(scopeRoot, canonicalId, entry, ctx.scope);
     await this.cacheManifest(scopeRoot, canonicalId, absPath, primaryKind, integrity, manifest);
 
     if (strategy?.afterInstall) {
@@ -321,7 +434,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async unlink(ctx: ScopeContext, packageId: string): Promise<void> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     await this.withScopeMutation(scopeRoot, async () => {
-      await removeFromMarketplaceLock(scopeRoot, packageId);
+      await removeFromMarketplaceLock(scopeRoot, packageId, ctx.scope);
       await removeCacheEntry(scopeRoot, packageId);
     });
   }
@@ -332,16 +445,20 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
   async update(ctx: ScopeContext, packageIds?: string[]): Promise<InstallResult> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag);
-    if (!lock) {
-      return { installed: [], warnings: ['No marketplace.lock found'], scope: ctx.scope };
-    }
+    return this.withScopeMutation(scopeRoot, async () => {
+      const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
+      if (!lock) {
+        return { installed: [], warnings: ['No marketplace.lock found'], scope: ctx.scope };
+      }
 
-    const ids = packageIds ?? Object.keys(lock.installed);
-    const specs = ids.filter(id => id in lock.installed);
+      const ids = packageIds ?? Object.keys(lock.plugins);
+      const specs = ids.filter(id => id in lock.plugins).map(id => {
+        const entry = lock.plugins[id]!;
+        return entry.package!;
+      });
 
-    return this.install(ctx, specs);
+      return this.installInScope(ctx, scopeRoot, specs, undefined, true);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -351,7 +468,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async enable(ctx: ScopeContext, packageId: string): Promise<void> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     await this.withScopeMutation(scopeRoot, async () => {
-      const ok = await enablePlugin(scopeRoot, packageId);
+      const ok = await enablePlugin(scopeRoot, packageId, ctx.scope);
       if (!ok) {
         throw new Error(`Package "${packageId}" not found in ${ctx.scope} marketplace.lock`);
       }
@@ -361,7 +478,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async disable(ctx: ScopeContext, packageId: string): Promise<void> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     await this.withScopeMutation(scopeRoot, async () => {
-      const ok = await disablePlugin(scopeRoot, packageId);
+      const ok = await disablePlugin(scopeRoot, packageId, ctx.scope);
       if (!ok) {
         throw new Error(`Package "${packageId}" not found in ${ctx.scope} marketplace.lock`);
       }
@@ -386,6 +503,28 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     }
   }
 
+  private async installInStore(
+    resolved: Awaited<ReturnType<PackageSource['resolve']>>,
+  ): Promise<InstalledPackage> {
+    const store = this.extensionStore;
+    if (!store) {
+      throw new Error('Extension store is not configured. Restart the platform with `kb-create start`.');
+    }
+    const entry = await store.resolve({
+      name: resolved.id,
+      version: resolved.version,
+      kind: 'plugin',
+      ...(resolved.downloadUrl ? { spec: resolved.downloadUrl } : {}),
+      ...(resolved.integrity ? { expectedIntegrity: resolved.integrity } : {}),
+    });
+    return {
+      id: entry.entry.name,
+      version: entry.entry.version,
+      packageRoot: entry.packageRoot,
+      integrity: entry.entry.integrity,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // List / GetEntry (MarketplaceServiceAPI)
   // -------------------------------------------------------------------------
@@ -400,26 +539,30 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const perScope: Array<{ scope: MarketplaceScope; entries: MarketplaceEntryWithId[] }> = [];
     for (const { scope, root } of targets) {
       const diag = new DiagnosticCollector();
-      const lock = await readMarketplaceLock(root, diag);
+      const lock = await readMarketplaceLock(root, diag, scope);
       if (!lock) {
         perScope.push({ scope, entries: [] });
         continue;
       }
-      const entries = Object.entries(lock.installed).map(([id, entry]) => ({ ...entry, id }));
+      const entries = [...Object.entries(lock.plugins), ...Object.entries(lock.adapters ?? {})].map(([id, entry]) => ({ ...entry, id }));
       perScope.push({ scope, entries });
     }
 
     const merged = mergeScopedEntries(perScope);
-    return filter?.kind
-      ? merged.entries.filter(e => e.primaryKind === filter.kind)
-      : merged.entries;
+    if (!filter?.kind) {return merged.entries;}
+    const matching: ScopedMarketplaceEntry[] = [];
+    for (const entry of merged.entries) {
+      const packageRoot = await this.resolveEntryPath(resolveScopeRoot(this.roots, { scope: entry.scope, projectRoot: ctx.projectRoot }), entry.id, entry);
+      if (packageRoot && await this.detectKind(packageRoot) === filter.kind) {matching.push(entry);}
+    }
+    return matching;
   }
 
-  async getEntry(ctx: ScopeContext, packageId: string): Promise<MarketplaceEntry | null> {
+  async getEntry(ctx: ScopeContext, packageId: string): Promise<MarketplaceLockEntry | null> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag);
-    return lock?.installed[packageId] ?? null;
+    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope);
+    return lock?.plugins[packageId] ?? lock?.adapters?.[packageId] ?? null;
   }
 
   // -------------------------------------------------------------------------
@@ -443,8 +586,24 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       autoEnable?: boolean;
     },
   ): Promise<SyncResult> {
-    const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    return this.withScopeMutation(scopeRoot, () => this.syncInScope(ctx, scopeRoot, opts));
+    let effectiveCtx = ctx;
+    let scopeRoot: string;
+    if (ctx.scope === 'project') {
+      const projectRoot = ctx.projectRoot ?? this.roots.projectRoot;
+      if (projectRoot && path.isAbsolute(projectRoot)) {
+        const lockScope = await resolveMarketplaceLockScope(
+          { ...this.roots, projectRoot },
+          projectRoot,
+        );
+        if (lockScope === 'platform') {
+          // In development mode one physical lock can own both logical roots.
+          // Runtime adapter discovery treats that shared file as platform-owned.
+          effectiveCtx = { ...ctx, scope: 'platform' };
+        }
+      }
+    }
+    scopeRoot = resolveScopeRoot(this.roots, effectiveCtx);
+    return this.withScopeMutation(scopeRoot, () => this.syncInScope(effectiveCtx, scopeRoot, opts));
   }
 
   private async syncInScope(
@@ -458,8 +617,15 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   ): Promise<SyncResult> {
     const autoEnable = opts.autoEnable ?? false;
     const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag) ?? createEmptyLock();
-    const existingIds = new Set(Object.keys(lock.installed));
+    const readScope = ctx.scope === 'project' ? 'platform' : ctx.scope;
+    const lock = await readMarketplaceLock(scopeRoot, diag, readScope) ?? createEmptyLock();
+    if (ctx.scope === 'project') {
+      delete lock.adapters;
+    }
+    const existingIds = new Set([
+      ...Object.keys(lock.plugins),
+      ...Object.keys(lock.adapters ?? {}),
+    ]);
 
     const added: SyncResult['added'] = [];
     const skipped: SyncResult['skipped'] = [];
@@ -478,9 +644,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       await this._syncPackage(ctx.scope, scopeRoot, pkgDir, relPkgJson, existingIds, autoEnable, lock, added, skipped);
     }
 
-    await writeMarketplaceLock(scopeRoot, lock);
+    await writeMarketplaceLock(scopeRoot, lock, ctx.scope);
 
-    return { added, skipped, total: Object.keys(lock.installed).length };
+    return { added, skipped, total: Object.keys(lock.plugins).length + Object.keys(lock.adapters ?? {}).length };
   }
 
   private async _syncPackage(
@@ -535,18 +701,29 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       return;
     }
 
-    const entry = createMarketplaceEntry({
-      version: pkgVersion,
-      integrity,
-      resolvedPath: relativeToRoot(scopeRoot, pkgDir),
-      source: 'local',
-      primaryKind,
-      provides,
-    });
-
-    if (!autoEnable) { entry.enabled = false; }
-
-    lock.installed[resolvedId] = entry;
+    const resolvedPath = relativeToRoot(scopeRoot, pkgDir);
+    if (primaryKind === 'adapter') {
+      const adapters = (lock.adapters ??= {});
+      adapters[resolvedId] = {
+        source: 'platform',
+        version: pkgVersion,
+        integrity,
+        resolvedPath,
+        enabled: autoEnable ?? true,
+      };
+    } else {
+      const entry = createMarketplaceEntry({
+        version: pkgVersion,
+        integrity,
+        resolvedPath,
+        source: 'local',
+        primaryKind,
+        provides,
+      });
+      if (!autoEnable) { entry.enabled = false; }
+      lock.plugins[resolvedId] = entry;
+    }
+    existingIds.add(resolvedId);
     added.push({ id: resolvedId, primaryKind, version: pkgVersion });
   }
 
@@ -557,17 +734,35 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async doctor(ctx: ScopeContext): Promise<DoctorReport> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag);
+    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope);
     const issues: DoctorIssue[] = [];
 
     if (!lock) {
       return { ok: true, total: 0, issues: [{ severity: 'info', packageId: '', message: 'No marketplace.lock found' }] };
     }
 
-    const entries = Object.entries(lock.installed);
+    const entries = [...Object.entries(lock.plugins), ...Object.entries(lock.adapters ?? {})];
 
     for (const [id, entry] of entries) {
-      const pkgRoot = path.resolve(scopeRoot, entry.resolvedPath);
+      let pkgRoot: string | undefined;
+      try {
+        pkgRoot = await this.resolveEntryPath(scopeRoot, id, entry);
+      } catch (error) {
+        if (!(error instanceof IntegrityMismatchError)) { throw error; }
+        // Discovery below reports this same typed mismatch with its catalogue hint.
+        continue;
+      }
+
+      if (!pkgRoot) {
+        issues.push({
+          severity: 'error',
+          packageId: id,
+          diagnosticCode: 'PACKAGE_NOT_FOUND',
+          message: `Pinned package ${id}@${entry.version ?? 'unknown version'} is missing from its configured location`,
+          remediation: `Run "kb marketplace install ${id}" to restore`,
+        });
+        continue;
+      }
 
       try {
         await fs.access(pkgRoot);
@@ -575,25 +770,14 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         issues.push({
           severity: 'error',
           packageId: id,
+          diagnosticCode: 'PACKAGE_NOT_FOUND',
           message: `Package directory not found: ${pkgRoot}`,
           remediation: `Run "kb marketplace install ${id}" to restore`,
         });
         continue;
       }
 
-      if (entry.integrity) {
-        const computed = await computeIntegrity(pkgRoot);
-        if (computed && computed !== entry.integrity) {
-          issues.push({
-            severity: 'warning',
-            packageId: id,
-            message: `Integrity mismatch: expected ${entry.integrity}, got ${computed}`,
-            remediation: `Re-install: kb marketplace install ${id}`,
-          });
-        }
-      }
-
-      if (!entry.signature) {
+      if (!('signature' in entry) || !entry.signature) {
         issues.push({
           severity: 'info',
           packageId: id,
@@ -603,11 +787,50 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
     }
 
+    const discovery = await new DiscoveryManager({
+      root: scopeRoot,
+      scope: ctx.scope,
+      workspace: false,
+      extensionStore: this.extensionStore,
+    }).discover();
+    for (const failure of discovery.failures) {
+      const event = discovery.diagnostics.find(item => item.context?.pluginId === failure.id && item.severity === 'error');
+      issues.push({
+        severity: 'error',
+        packageId: failure.id,
+        diagnosticCode: failure.diagnosticCode ?? event?.code ?? 'PLUGIN_DISCOVERY_FAILED',
+        message: failure.message,
+        path: event?.context?.filePath,
+        remediation: failure.remediation ?? event?.remediation ?? `Run "kb marketplace plugins doctor --scope ${ctx.scope}" after correcting this plugin.`,
+      });
+    }
+    const failedPluginIds = new Set(discovery.failures.map(failure => failure.id));
+    for (const event of discovery.diagnostics) {
+      const pluginId = event.context?.pluginId;
+      if (event.severity !== 'error' || !pluginId || failedPluginIds.has(pluginId)) { continue; }
+      issues.push({
+        severity: 'error',
+        packageId: pluginId,
+        diagnosticCode: event.code,
+        message: event.message,
+        remediation: event.remediation ?? `Run "kb marketplace plugins doctor --scope ${ctx.scope}" after correcting this plugin.`,
+      });
+    }
+
     return {
       ok: issues.filter(i => i.severity === 'error').length === 0,
       total: entries.length,
       issues,
     };
+  }
+
+  private async resolveEntryPath(scopeRoot: string, id: string, entry: MarketplaceLockEntry): Promise<string | undefined> {
+    if (entry.source === 'marketplace' && this.extensionStore && entry.version) {
+      return (await this.extensionStore.lookup({ name: entry.package, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
+    }
+    if ('link' in entry && entry.link) {return path.resolve(scopeRoot, entry.link);}
+    if ('resolvedPath' in entry && entry.resolvedPath) {return path.resolve(scopeRoot, entry.resolvedPath);}
+    return undefined;
   }
 
   // -------------------------------------------------------------------------
@@ -663,11 +886,11 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           return;
         }
         const diag = new DiagnosticCollector();
-        const manifest = await loadManifest(packageRoot, diag);
-        if (manifest) {
+        const result = await loadManifestFile(packageRoot, diag);
+        if (result.kind === 'manifest') {
           await setCacheEntry(scopeRoot, packageId, {
             manifestType: 'plugin',
-            manifest,
+            manifest: result.loaded.manifest,
             cachedAt: new Date().toISOString(),
             integrity,
           });
@@ -690,6 +913,21 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   }
 }
 
+function findInstalledPin(
+  lock: MarketplaceLock | null,
+  packageId: string,
+): { version: string; integrity: string } | undefined {
+  if (!lock) { return undefined; }
+  const plugin = Object.entries(lock.plugins).find(([id, entry]) =>
+    id === packageId || (entry.source !== 'local' && entry.package === packageId),
+  )?.[1];
+  if (plugin && plugin.source !== 'local') {
+    return { version: plugin.version, integrity: plugin.integrity };
+  }
+  const adapter = lock.adapters?.[packageId];
+  return adapter ? { version: adapter.version, integrity: adapter.integrity } : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -699,6 +937,19 @@ export class AdapterScopeError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'AdapterScopeError';
+  }
+}
+
+export class MarketplaceInstallRollbackError extends Error {
+  readonly code = 'KB_MARKETPLACE_INSTALL_FAILED';
+  readonly hint: string;
+
+  constructor(readonly packageId: string, readonly scope: MarketplaceScope, scopeRoot: string, cause: unknown, rollbackCause: unknown) {
+    super(`Marketplace could not restore the platform after installing ${packageId}.`, {
+      cause: new AggregateError([cause, rollbackCause], 'Marketplace install rollback failed'),
+    });
+    this.name = 'MarketplaceInstallRollbackError';
+    this.hint = `Run "pnpm install --offline" in ${scopeRoot} to restore the package graph, then retry "kb marketplace install ${packageId} --scope ${scope}".`;
   }
 }
 
@@ -715,9 +966,53 @@ export class InvalidEntityError extends Error {
   }
 }
 
+/** Package metadata must classify an entity before marketplace install mutates a scope. */
+export class PackageClassificationError extends Error {
+  readonly code = 'MARKETPLACE_PACKAGE_KIND_UNKNOWN';
+  readonly hint: string;
+  constructor(packageId: string, version: string) {
+    super(`Package "${packageId}@${version}" has no declared KB Labs entity kind. Registry metadata must declare kb.manifest (plugin) or kb.adapter (adapter). Nothing was installed.`);
+    this.name = 'PackageClassificationError';
+    this.hint = `Publish ${packageId}@${version} with kb.manifest or kb.adapter metadata, then run "kb marketplace install ${packageId}@${version}".`;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+interface MarketplaceStateFile {
+  path: string;
+  contents?: Buffer;
+  mode?: number;
+}
+
+async function snapshotMarketplaceState(root: string): Promise<MarketplaceStateFile[]> {
+  return Promise.all(['.kb/marketplace.lock', '.kb/marketplace.manifests.json'].map(async relativePath => {
+    const filePath = path.join(root, relativePath);
+    try {
+      const [contents, stat] = await Promise.all([fs.readFile(filePath), fs.stat(filePath)]);
+      return { path: filePath, contents, mode: stat.mode & 0o777 };
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        return { path: filePath };
+      }
+      throw error;
+    }
+  }));
+}
+
+async function restoreMarketplaceState(snapshot: MarketplaceStateFile[]): Promise<void> {
+  for (const file of snapshot) {
+    if (file.contents === undefined) {
+      await fs.rm(file.path, { force: true });
+      continue;
+    }
+    await fs.mkdir(path.dirname(file.path), { recursive: true });
+    await fs.writeFile(file.path, file.contents, { mode: file.mode });
+    if (file.mode !== undefined) {await fs.chmod(file.path, file.mode);}
+  }
+}
 
 function relativeToRoot(root: string, absPath: string): string {
   const rel = path.relative(root, absPath);

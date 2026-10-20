@@ -3,7 +3,7 @@
  * Atomic step: reads plan, updates package.json versions, emits output marker for workflow.
  */
 
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3, useLoader, useConfig } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3, useLoader, useConfig } from '@kb-labs/sdk';
 import {
   planRelease,
   updatePackageVersions,
@@ -65,7 +65,7 @@ export default defineCommand({
   description: 'Bump package.json versions according to release plan',
 
   handler: {
-    async intent(ctx: PluginContextV3, input: CLIInput<VersionFlags>) {
+    async intent(ctx: PluginCommandContextV3, input: CLIInput<VersionFlags>) {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -95,7 +95,7 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<VersionFlags>): Promise<ReleaseVersionResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<VersionFlags>): Promise<ReleaseVersionResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -143,10 +143,9 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         const msg = `No packages found${flags.scope ? ` matching scope: ${flags.scope}` : ''}`;
-        if (flags.json) { ctx.ui?.json?.({ ok: true, updated: 0, updates: [], message: msg }); }
+        if (flags.json) { return { updated: 0, updates: [], message: msg }; }
         else { ctx.ui?.write?.(msg); }
-        console.log('::kb-output::' + JSON.stringify({ ok: true, updated: 0 }));
-        return { ok: true, result: { ok: true, updated: 0, updates: [] } };
+        return { ok: true, updated: 0, updates: [] };
       }
 
       const versionLoader = useLoader(`Bumping ${plan.packages.length} package version(s)...`);
@@ -162,11 +161,26 @@ export default defineCommand({
         versionLoader.fail(`${updates.filter(u => !u.updated).length} update(s) failed`);
       }
 
-      console.log('::kb-output::' + JSON.stringify({ ok, updated }));
+      const failedUpdates = updates.filter((update) => !update.updated);
+      const outcome = ok
+        ? { ok: true, updated, updates }
+        : {
+            ok: false as const,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: `Failed to update ${failedUpdates.length} package version(s).`,
+              hint: 'Review the failed package updates, resolve the reported issues, then rerun `kb release version`.',
+              diagnostics: failedUpdates.map((update) => ({
+                code: 'RELEASE_PACKAGE_VERSION_UPDATE_FAILED',
+                severity: 'error' as const,
+                path: update.package,
+                message: `Could not update ${update.package} from ${update.from} to ${update.to}.`,
+              })),
+            },
+          };
 
       if (flags.json) {
-        ctx.ui?.json?.({ ok, updated, updates });
-        return ok ? { ok: true, result: { ok, updated, updates } } : { ok: false, error: 'Command failed', result: { ok, updated, updates } };
+        return outcome;
       }
 
       ctx.ui?.sideBox?.({
@@ -175,7 +189,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok: true, result: { ok, updated, updates } } : { ok: false, error: 'Command failed', result: { ok, updated, updates } };
+      return outcome;
     },
   },
 });

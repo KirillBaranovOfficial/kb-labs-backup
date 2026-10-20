@@ -10,6 +10,8 @@ import type {
   LLMExecutionPolicy,
   PIIRedactionConfig,
 } from "@kb-labs/core-platform";
+import type { AdapterSlot } from "@kb-labs/core-platform";
+import type { ResolvedExecutionMode } from "@kb-labs/core-contracts";
 import type {
   RateLimitConfig,
   RateLimitPreset,
@@ -104,6 +106,10 @@ export interface AdaptersConfig {
   storage?: AdapterValue;
   /** Logger adapter package(s) (e.g., "@kb-labs/adapters-pino") */
   logger?: AdapterValue;
+  /** Document database adapter package(s) (e.g., "@kb-labs/adapters-sqlite"). */
+  documentDatabase?: AdapterValue;
+  /** Durable key-value store adapter package(s) (e.g., "@kb-labs/adapters-sqlite/kv"). */
+  kvStore?: AdapterValue;
   /** Optional durable log store. Without it logs remain available only in configured ephemeral readers. */
   logPersistence?: AdapterValue;
   /** Optional in-process live log buffer. It is never a cross-process store. */
@@ -119,6 +125,26 @@ export interface AdaptersConfig {
   /** Notifier router adapter (e.g., "@kb-labs/notifier-router"). Config goes in adapterOptions.notifier. */
   notifier?: AdapterValue;
 }
+
+/** The platform config keys that configure each plugin-visible adapter slot. */
+export const ADAPTER_CONFIG_KEYS = {
+  logger: ['logger'],
+  analytics: ['analytics'],
+  vectorStore: ['vectorStore'],
+  llm: ['llm'],
+  embeddings: ['embeddings'],
+  cache: ['cache'],
+  config: [],
+  storage: ['storage'],
+  eventBus: ['eventBus'],
+  invoke: [],
+  documentDatabase: ['documentDatabase'],
+  kvStore: ['kvStore'],
+  logs: ['logRingBuffer', 'logPersistence'],
+  artifacts: [],
+  snapshotManager: ['snapshot'],
+  notifier: ['notifier'],
+} as const satisfies Record<AdapterSlot, readonly (keyof AdaptersConfig)[]>;
 
 /**
  * Resource manager configuration.
@@ -150,7 +176,7 @@ export interface WorkflowsConfig {
 
 /**
  * Execution backend configuration.
- * Determines how plugins execute (in-process, worker-pool, remote).
+ * Determines how plugins execute.
  */
 export interface ExecutionConfig {
   /**
@@ -158,21 +184,9 @@ export interface ExecutionConfig {
    * - 'auto' (default): Auto-detect from environment (EXECUTION_MODE, KUBERNETES_SERVICE_HOST)
    * - 'in-process': Same process, no isolation (dev mode, fast iteration)
    * - 'worker-pool': Worker pool with fault isolation (production, single-node)
-   * - 'remote': Remote executor service (Phase 3, distributed fleet)
    * @default 'auto'
    */
-  mode?: "auto" | "in-process" | "worker-pool" | "remote" | "container";
-
-  /**
-   * Container execution options (used when mode=container).
-   * RoutingBackend dispatches via Gateway to isolated containers.
-   */
-  container?: {
-    /** URL for the Gateway's internal dispatch endpoint */
-    gatewayDispatchUrl: string;
-    /** Internal secret for the dispatch endpoint */
-    gatewayInternalSecret: string;
-  };
+  mode?: "auto" | ResolvedExecutionMode;
 
   /**
    * Workspace Agent routing options.
@@ -182,8 +196,6 @@ export interface ExecutionConfig {
   workspaceAgent?: {
     /** Enable workspace-agent routing (default: false) */
     enabled: boolean;
-    /** Gateway base URL (e.g., http://localhost:4000) */
-    gatewayUrl: string;
     /** Internal secret for Gateway endpoints */
     internalSecret: string;
     /** Fallback when no agent available: 'local' (default) or 'error' */
@@ -219,14 +231,6 @@ export interface ExecutionConfig {
       /** Max handlers to warmup (safety limit) @default 20 */
       maxHandlers?: number;
     };
-  };
-
-  /**
-   * Remote executor options (used when mode=remote, Phase 3).
-   */
-  remote?: {
-    /** Remote executor service endpoint (gRPC or HTTP) */
-    endpoint?: string;
   };
 }
 
@@ -307,6 +311,8 @@ export interface CoreFeaturesConfig {
 export interface PlatformDirConfig {
   /** Absolute or `~`-relative path to the platform workspace. */
   dir?: string;
+  /** Explicitly enables development workspace package resolution. */
+  mode?: "development" | "production";
 }
 
 /**
@@ -380,8 +386,8 @@ export const CONFIG_FIELD_SCOPE: Record<
   ConfigFieldScope
 > = {
   platform: "project-only",
-  adapters: "mergeable",
-  adapterOptions: "mergeable",
+  adapters: "platform-only",
+  adapterOptions: "platform-only",
   core: "platform-only",
   execution: "platform-only",
 };

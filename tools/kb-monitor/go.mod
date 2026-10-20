@@ -6,10 +6,14 @@ toolchain go1.26.8
 
 require (
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/kb-labs/clikit v0.0.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.56.0
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+// clikit is a workspace-local module (shared process status type).
+replace github.com/kb-labs/clikit => ../clikit
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

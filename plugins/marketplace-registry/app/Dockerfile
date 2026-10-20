@@ -16,7 +16,7 @@ COPY --chown=kb:nodejs .kb/deploy/marketplace-registry-app/dist ./dist
 # refuses to boot without both files.
 COPY --chown=kb:nodejs plugins/marketplace-registry/app/docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN mkdir -p .kb/storage && chown -R kb:nodejs .kb && \
+RUN mkdir -p .kb/data && chown -R kb:nodejs .kb && \
     chmod +x /app/docker-entrypoint.sh
 
 USER kb

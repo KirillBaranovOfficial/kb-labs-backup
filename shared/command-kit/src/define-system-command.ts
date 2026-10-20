@@ -4,15 +4,19 @@
  */
 
 import {
-  type CommandResult,
   type FlagSchemaDefinition,
   type InferFlags,
   defineFlags,
   validateFlags,
   FlagValidationError,
 } from './index';
-import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
+import type { PlatformContainer } from '@kb-labs/core-runtime';
 import { formatError } from './errors/index';
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, createValidatedErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
+import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
+import { isUxResult } from '@kb-labs/core-platform/ux-result';
+import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
 
 /**
  * Flag definition for Command interface
@@ -30,15 +34,80 @@ interface FlagDefinition {
 /**
  * Command definition for system commands
  */
+export type SystemCommandContext = PluginContextV3 & {
+  /** Internal system-command access to the already initialized execution backend. */
+  executionBackend?: PlatformContainer['executionBackend'];
+};
+
 export interface Command {
   name: string;
+  scope: 'platform' | 'project';
+  /** Public access is explicit; system commands otherwise require a user session. */
+  authProtection?: 'public' | 'session';
+  /** Registry test fixture for the command's safe JSON success path. */
+  jsonTest: SystemCommandJsonTest;
   describe: string;
   longDescription?: string;
   category?: string;
   aliases?: string[];
   flags?: FlagDefinition[];
   examples?: string[];
-  run: (ctx: PluginContextV3, argv: string[], flags: Record<string, unknown>) => Promise<number>;
+  run: (ctx: SystemCommandContext, argv: string[], flags: Record<string, unknown>) => Promise<number>;
+}
+
+export type SystemCommandJsonTest =
+  | { safeArgs: readonly string[] }
+  | { noSafeValidPath: string };
+
+const GLOBAL_FLAG_NAMES = new Set([
+  'debug', 'dryRun', 'dry-run', 'help', 'json', 'logLevel', 'mock', 'noColor',
+  'profile', 'profilesDir', 'quiet', 'recordMocks', 'saveSnapshot', 'verbose',
+  'version',
+]);
+
+function validateSystemFlags(
+  commandName: string,
+  rawFlags: Record<string, unknown>,
+  schema: FlagSchemaDefinition,
+): void {
+  const schemaNames = new Set(Object.keys(schema));
+  for (const flagName of Object.keys(schema)) {
+    schemaNames.add(flagName.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase()));
+  }
+  for (const flagName of Object.keys(rawFlags)) {
+    const normalizedName = flagName.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+    if (schemaNames.has(flagName) || schemaNames.has(normalizedName) || GLOBAL_FLAG_NAMES.has(flagName)) continue;
+    throw new FlagValidationError(
+      flagName,
+      `Unknown flag: --${flagName}`,
+      rawFlags[flagName],
+      schema,
+      commandName,
+    );
+  }
+}
+
+function renderSystemFlagError(
+  error: unknown,
+  commandName: string,
+  ctx: PluginContextV3,
+  jsonMode: boolean,
+  showStack: boolean,
+): void {
+  const formatted = formatError(error, { showStack, jsonMode });
+  if (jsonMode && error instanceof FlagValidationError) {
+    ctx.ui?.json({
+      ok: false,
+      error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+        cause: error.message,
+        details: { field: `--${error.flag}` },
+      }),
+    });
+  } else if (jsonMode) {
+    ctx.ui?.json(formatted.json);
+  } else {
+    ctx.ui?.error(formatted.message);
+  }
 }
 
 /**
@@ -65,12 +134,12 @@ function convertFlagSchema(schema: FlagSchemaDefinition): FlagDefinition[] {
       default: def.default,
       required: def.required,
     };
-    
+
     // Add choices if present (for string flags with choices)
     if (def.type === 'string' && 'choices' in def && Array.isArray(def.choices)) {
       result.choices = [...def.choices];
     }
-    
+
     return result;
   });
 }
@@ -92,6 +161,12 @@ export interface SystemCommandConfig<
 > {
   /** Command name (required for system commands) */
   name: string;
+  /** Startup scope required before command execution. */
+  scope: 'platform' | 'project';
+  /** Public access is explicit; system commands otherwise require a user session. */
+  authProtection?: 'public' | 'session';
+  /** Registry test fixture or explicit reason this command has no safe valid path. */
+  jsonTest: SystemCommandJsonTest;
   /** Command description (required for system commands) */
   description: string;
   /** Long description for help */
@@ -117,21 +192,21 @@ export interface SystemCommandConfig<
     includeFlags?: boolean;
   };
   /** Command handler - receives PluginContextV3 and must return TResult */
-  handler: (ctx: PluginContextV3, argv: TArgv, flags: InferFlags<TFlags>) => Promise<number | TResult> | number | TResult;
+  handler: (ctx: SystemCommandContext, argv: TArgv, flags: InferFlags<TFlags>) => Promise<number | TResult> | number | TResult;
   /** Optional formatter - receives TResult with inferred flags */
-  formatter?: (result: TResult, ctx: PluginContextV3, flags: InferFlags<TFlags>, argv?: TArgv) => void;
+  formatter?: (result: TResult, ctx: SystemCommandContext, flags: InferFlags<TFlags>, argv?: TArgv) => void;
 }
 
 /**
  * Define a system command with full privileges
- * 
+ *
  * System commands are KB Labs official commands that run with full system access,
  * bypassing sandbox restrictions. They are architecturally separated from plugin
  * commands - plugins can NEVER gain system privileges.
- * 
+ *
  * TResult is REQUIRED - every command must explicitly declare its result contract.
  * This ensures type safety and enables future contract validation.
- * 
+ *
  * @example
  * ```typescript
  * import { defineSystemCommand, type CommandResult, type FlagSchemaDefinition } from '@kb-labs/shared-command-kit';
@@ -159,14 +234,12 @@ export interface SystemCommandConfig<
  *           { items: [message] },
  *         ]);
  *       }
- *     } else {
- *       ctx.ui?.json({ message });
  *     }
  *
- *     return { ok: true, message };
+ *     return { message };
  *   },
  * });
- * 
+ *
  * // Command with explicit result type and automatic flag inference
  * type WorkflowListResult = CommandResult & {
  *   workflows: Array<{ id: string }>;
@@ -195,14 +268,12 @@ export interface SystemCommandConfig<
  *           { items: workflows.map(w => `• ${w.id}`) },
  *         ]);
  *       }
- *     } else {
- *       ctx.ui?.json({ workflows, total: workflows.length });
  *     }
  *
- *     return { ok: true, workflows, total: workflows.length };
+ *     return { workflows, total: workflows.length };
  *   },
  * });
- * 
+ *
  * // Command with explicit flag types (for complex cases)
  * export const wfRun = defineSystemCommand<
  *   { 'workflow-id': { type: 'string'; required: true } },
@@ -221,7 +292,7 @@ export interface SystemCommandConfig<
  *     const run = await executeWorkflow(flags['workflow-id']);
  *     ctx.ui?.completeProgress('running', 'Workflow started!');
  *
- *     return { ok: true, run };
+ *     return { run };
  *   },
  * });
  *
@@ -248,29 +319,33 @@ export function defineSystemCommand<
 >(
   config: SystemCommandConfig<TFlags, TResult, TArgv>
 ): Command {
-  const { name, description, longDescription, category, aliases, examples, flags, handler, formatter } = config;
+  const { name, scope, authProtection, jsonTest, description, longDescription, category, aliases, examples, flags, handler, formatter } = config;
 
   // Return command with direct handler (no wrapping needed - system commands don't use V3 defineCommand)
   return {
     name,
+    scope,
+    authProtection,
+    jsonTest,
     describe: description,
     longDescription,
     category: category || 'system',
     aliases: aliases || [],
     flags: flags ? convertFlagSchema(flags) : [],
     examples: examples || [],
-    run: async (ctx: PluginContextV3, argv: string[], rawFlags: Record<string, unknown>) => {
+    run: async (ctx: SystemCommandContext, argv: string[], rawFlags: Record<string, unknown>) => {
       const jsonMode = Boolean(rawFlags.json);
 
       // Log command start
       ctx.platform?.logger?.info?.(`Command ${name} started`);
 
-      // Validate flags only if schema is defined
+      // Validate command flags and reject unknown flags before running handlers.
       let validatedFlags: InferFlags<TFlags>;
 
       if (flags) {
         const flagSchema = defineFlags(flags);
         try {
+          validateSystemFlags(name, rawFlags, flags);
           validatedFlags = await validateFlags(rawFlags, flagSchema) as InferFlags<TFlags>;
         } catch (error) {
           // Enhance validation error with command name
@@ -279,45 +354,89 @@ export function defineSystemCommand<
           }
 
           // Show stack trace only in debug mode
-          const showStack = Boolean(rawFlags.debug);
-          const formatted = formatError(error, { showStack, jsonMode });
+          renderSystemFlagError(error, name, ctx, jsonMode, Boolean(rawFlags.debug));
 
-          if (jsonMode) {
-            ctx.ui?.json(formatted.json);
-          } else {
-            ctx.ui?.error(formatted.message);
-          }
-
-          // Return specific exit code for validation errors
-          return 3; // EXIT_CODES.INVALID_FLAGS
+          // An undeclared option is invalid CLI usage, matching the shared
+          // CLI usage exit code.
+          return error instanceof FlagValidationError && error.message.startsWith('Unknown flag:') ? 2 : 3;
         }
       } else {
-        // No schema defined - pass raw flags as-is
+        try {
+          validateSystemFlags(name, rawFlags, {});
+        } catch (error) {
+          renderSystemFlagError(error, name, ctx, jsonMode, Boolean(rawFlags.debug));
+          return 2;
+        }
         validatedFlags = rawFlags as InferFlags<TFlags>;
       }
 
-      // Call handler with error handling
+      const handlerContext = ctx.ui
+        ? {
+          ...ctx,
+          ui: {
+            ...ctx.ui,
+            json: () => { throw createContractViolation(); },
+            error: () => { throw createContractViolation(); },
+          },
+        }
+        : ctx;
+
+      // Handlers return result data. The command boundary owns serialization.
       let result: number | TResult;
       try {
-        result = await handler(ctx, argv as unknown as TArgv, validatedFlags);
-      } catch (error) {
-        // Log error to platform logger
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        ctx.platform?.logger?.error?.(`Command ${name} failed: ${errorMessage}`);
-
-        // Display error to user
-        if (jsonMode) {
-          ctx.ui?.json({ ok: false, error: errorMessage });
-        } else {
-          ctx.ui?.error(errorMessage);
+        result = await handler(handlerContext, argv as unknown as TArgv, validatedFlags);
+        if (isUxResult(result)) {
+          throw createContractViolation();
         }
-
-        // Return error exit code
-        return 1;
+        if (isFailureClaim(result) && !isCommandFailure(result)) {
+          throw createContractViolation();
+        }
+        if (isCommandFailure(result)) {
+          const envelope = toErrorEnvelope(result.error, {
+            correlationId: ctx.requestId,
+            ...(ctx.hostContext.host === 'cli' ? { binary: ctx.hostContext.binaryName } : {}),
+          });
+          if (jsonMode) {
+            ctx.ui?.json({ ok: false, error: envelope });
+          } else {
+            ctx.ui?.error(renderErrorEnvelope(envelope), { hint: envelope.hint });
+          }
+          return mapErrorEnvelopeToExitCode(envelope.code);
+        }
+      } catch (error) {
+        const envelope = toErrorEnvelope(error, {
+          correlationId: ctx.requestId,
+          ...(ctx.hostContext.host === 'cli' ? { binary: ctx.hostContext.binaryName } : {}),
+        });
+        if (envelope.code === 'KB_RUNTIME_UNEXPECTED') {
+          if (ctx.platform?.logger) {
+            const logger = createContextLogger(
+              ctx.platform.logger,
+              createProcessRootLogContext({
+                applicationId: 'kb',
+                serviceId: 'kb',
+                instanceId: `${process.pid}`,
+                layer: 'cli',
+              }),
+            ).forComponent('cli-error-boundary');
+            logUnexpectedCliError(logger, error, envelope.correlationId);
+          }
+        }
+        if (jsonMode) {
+          ctx.ui?.json({ ok: false, error: envelope });
+        } else {
+          ctx.ui?.error(
+            renderErrorEnvelope(envelope),
+            { hint: envelope.hint },
+          );
+        }
+        return mapErrorEnvelopeToExitCode(envelope.code);
       }
 
-      // Call formatter if provided and result is not a number
-      if (formatter && typeof result !== 'number') {
+      if (jsonMode) {
+        const output = typeof result === 'number' ? null : result ?? null;
+        ctx.ui?.json(normalizeJsonResult(output));
+      } else if (formatter && typeof result !== 'number' && result !== undefined && result !== null) {
         formatter(result as TResult, ctx, validatedFlags, argv as unknown as TArgv);
       }
 
@@ -328,17 +447,85 @@ export function defineSystemCommand<
       if (typeof result === 'number') {
         return result;
       }
-      return result.ok ? 0 : 1;
+      return 0;
     },
   };
 }
 
+function createContractViolation(): Error & { code: string; hint: string } {
+  return Object.assign(new Error('Command handlers must return plain command data instead of writing JSON or envelope output directly.'), {
+    code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+    hint: 'Return command data without an { ok: true, data: ... } envelope, or throw a typed command failure.',
+  });
+}
+
+function isFailureClaim(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && 'ok' in value && value.ok === false;
+}
+
+function isCommandFailure(value: unknown): value is { ok: false; error: { code: ErrorCode; message: string; hint: string } } {
+  return typeof value === 'object' && value !== null && 'ok' in value && value.ok === false
+    && 'error' in value && value.error !== null && typeof value.error === 'object'
+    && 'code' in value.error && typeof value.error.code === 'string'
+    && 'message' in value.error && typeof value.error.message === 'string'
+    && 'hint' in value.error && typeof value.error.hint === 'string';
+}
+
+export function throwSystemCommandError(
+  message: string,
+  hint: string,
+  details?: DetailsFor<'KB_RUNTIME_COMMAND_FAILED'>,
+  diagnostics?: ErrorEnvelope['diagnostics'],
+): never {
+  throw Object.assign(new Error(message), {
+    code: 'KB_RUNTIME_COMMAND_FAILED',
+    hint,
+    ...(details ? { details } : {}),
+    ...(diagnostics ? { diagnostics } : {}),
+  });
+}
+
+type RequiredKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K }[keyof T];
+type CataloguedDetailsArgument<C extends PlatformErrorCode> = [RequiredKeys<DetailsFor<C>>] extends [never]
+  ? [details?: DetailsFor<C>]
+  : [details: DetailsFor<C>];
+
+export function throwSystemCataloguedFailure<C extends PlatformErrorCode>(
+  code: C,
+  message: string,
+  hint: string,
+  ...details: CataloguedDetailsArgument<C>
+): never;
+export function throwSystemCataloguedFailure(
+  code: PlatformErrorCode,
+  message: string,
+  hint: string,
+  details?: unknown,
+): never {
+  throwSystemCataloguedError(createValidatedErrorEnvelope(code, {
+    message,
+    hint,
+    ...(details === undefined ? {} : { details }),
+  }));
+}
+
+export function throwSystemCataloguedError(envelope: ErrorEnvelope): never {
+  throw Object.assign(new Error(envelope.message), {
+    code: envelope.code,
+    hint: envelope.hint,
+    ...(envelope.cause ? { cause: envelope.cause } : {}),
+    ...(envelope.details ? { details: envelope.details } : {}),
+    ...(envelope.diagnostics ? { diagnostics: envelope.diagnostics } : {}),
+    ...(envelope.correlationId ? { correlationId: envelope.correlationId } : {}),
+  });
+}
+
 /**
  * Create a system command group
- * 
+ *
  * Groups organize related system commands for better help organization
  * and registration.
- * 
+ *
  * @example
  * ```typescript
  * export const systemInfoGroup = defineSystemCommandGroup(

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import type { IStorage, ICache, ILogger } from '@kb-labs/core-platform';
 import type { RegistryEntry } from '@kb-labs/marketplace-registry-contracts';
 import { RegistryService } from '../registry-service.js';
@@ -45,6 +45,7 @@ function createMemoryCache(): ICache {
 const noopLogger: ILogger = {
   trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(),
   error: vi.fn(), fatal: vi.fn(),
+  flush: vi.fn().mockResolvedValue(undefined),
   child: () => noopLogger,
 };
 
@@ -94,12 +95,37 @@ describe('RegistryService.publish', () => {
     expect(entry?.versions[0]?.version).toBe('1.0.0');
   });
 
-  it('RS-02: version already exists → throws VERSION_ALREADY_EXISTS', async () => {
+  // case: S-026.5
+  it('RS-02: version already exists → throws VERSION_ALREADY_EXISTS without replacing bytes', async () => {
     const svc = makeService();
     await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
 
-    const err = await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill').catch(e => e);
+    const replacement = Buffer.from('replacement tarball');
+    const err = await svc.publish(replacement, makePkg(), 'kirill', 'ns-kirill').catch(e => e);
     expect(err.code).toBe('VERSION_ALREADY_EXISTS');
+    expect(err.message).toContain('Versions are immutable');
+    const entry = await svc.getEntry('kirill', 'my-plugin');
+    expect(entry?.versions).toHaveLength(1);
+    expect(entry?.versions[0]?.integrity).toBe(`sha256-${createHash('sha256').update(SMALL_TARBALL).digest('base64')}`);
+    const original = await svc.getTarball('kirill', 'my-plugin', '1.0.0');
+    expect(original.tarball).toEqual(SMALL_TARBALL);
+  });
+
+  it('serializes concurrent publications so an immutable version wins only once', async () => {
+    const svc = makeService();
+    const replacement = Buffer.from('concurrent replacement tarball');
+    const results = await Promise.allSettled([
+      svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill'),
+      svc.publish(replacement, makePkg(), 'kirill', 'ns-kirill'),
+    ]);
+
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+    const entry = await svc.getEntry('kirill', 'my-plugin');
+    expect(entry?.versions).toHaveLength(1);
+    const stored = await svc.getTarball('kirill', 'my-plugin', '1.0.0');
+    expect(`sha256-${createHash('sha256').update(stored.tarball).digest('base64')}`)
+      .toBe(entry?.versions[0]?.integrity);
   });
 
   it('RS-03: tarball exceeds 50 MB → throws TARBALL_TOO_LARGE', async () => {

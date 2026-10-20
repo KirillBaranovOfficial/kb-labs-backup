@@ -68,7 +68,7 @@ describe('Wildcard Permissions - fs.read', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -118,7 +118,7 @@ describe('Wildcard Permissions - fs.read', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -164,7 +164,7 @@ describe('Wildcard Permissions - fs.read', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -215,7 +215,7 @@ describe('Wildcard Permissions - fs.write', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -267,7 +267,7 @@ describe('Wildcard Permissions - fs.write', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -311,7 +311,7 @@ describe('Wildcard Permissions - network.fetch', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -357,7 +357,7 @@ describe('Wildcard Permissions - network.fetch', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -394,7 +394,7 @@ describe('Wildcard Permissions - env', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -433,7 +433,7 @@ describe('Wildcard Permissions - env', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -506,7 +506,7 @@ describe('SYSTEM_UNRESTRICTED_PERMISSIONS', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions: SYSTEM_UNRESTRICTED_PERMISSIONS,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -564,7 +564,7 @@ describe('SYSTEM_UNRESTRICTED_PERMISSIONS', () => {
       pluginVersion: '1.0.0',
       requestId: 'test-req-wildcards',
       permissions: SYSTEM_UNRESTRICTED_PERMISSIONS,
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({

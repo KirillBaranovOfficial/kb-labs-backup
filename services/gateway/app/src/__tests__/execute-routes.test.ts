@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, type ILogger } from '@kb-labs/core-platform';
 
 // ── Mock heavy deps before importing routes ───────────────────────────────────
 // Use vi.hoisted() so variables are available when vi.mock() factory runs
@@ -41,6 +41,7 @@ vi.mock('../clients/subscription-registry.js', () => ({
 
 import { registerExecuteRoutes } from '../execute/routes.js';
 import { executionRegistry } from '../execute/execution-registry.js';
+import { registerGatewayUxErrorResponses } from '../ux-boundary.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ let app: FastifyInstance;
 
 beforeAll(async () => {
   app = Fastify({ logger: false });
+  registerGatewayUxErrorResponses(app);
 
   // Inject authContext via preHandler
   app.addHook('preHandler', async (request) => {
@@ -189,8 +191,7 @@ describe('POST /api/v1/execute — error cases', () => {
       payload: { handlerRef: 'h', input: {} },
     });
     expect(res.statusCode).toBe(400);
-    const body = res.json() as { error: string };
-    expect(body.error).toBe('Bad Request');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', correlationId: expect.any(String) } });
   });
 
   it('returns 400 when handlerRef is missing', async () => {
@@ -212,9 +213,7 @@ describe('POST /api/v1/execute — error cases', () => {
     });
 
     expect(res.statusCode).toBe(503);
-    const body = res.json() as { error: string; namespaceId: string };
-    expect(body.error).toBe('No execution host connected');
-    expect(body.namespaceId).toBe('ns-test');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
     expect(noopLogger.warn).toHaveBeenCalledWith(
       'No execution host connected for namespace',
       expect.objectContaining({
@@ -229,7 +228,10 @@ describe('POST /api/v1/execute — error cases', () => {
   });
 
   it('on dispatch failure: streams execution:error + execution:done(exitCode=1)', async () => {
-    mockDispatcher.call.mockRejectedValue(new Error('ECONNREFUSED connection refused'));
+    mockDispatcher.call.mockRejectedValue(new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+      correlationId: 'host-agent-handler-correlation',
+      details: { plugin: 'p', command: 'h', failureReason: 'failed unexpectedly' },
+    })));
 
     const res = await app.inject({
       method: 'POST',
@@ -242,16 +244,13 @@ describe('POST /api/v1/execute — error cases', () => {
 
     const errorEvent = events.find((e) => (e as { type: string }).type === 'execution:error');
     expect(errorEvent).toBeDefined();
-    expect((errorEvent as { code: string }).code).toBe('EXECUTION_FAILED');
-    expect(noopLogger.error).toHaveBeenCalledWith(
-      'Gateway execution dispatch failed',
-      expect.any(Error),
-      expect.objectContaining({
-        diagnosticEvent: 'gateway.execution.dispatch',
-        reasonCode: 'execution_dispatch_failed',
-        serviceId: 'gateway',
-      }),
-    );
+    const envelope = (errorEvent as { error: { code: string; correlationId: string; hint: string } }).error;
+    expect(envelope).toMatchObject({
+      code: 'KB_PLUGIN_COMMAND_FAILED',
+      correlationId: 'host-agent-handler-correlation',
+      hint: expect.any(String),
+    });
+    expect(noopLogger.error).not.toHaveBeenCalled();
 
     const doneEvent = events.find((e) => (e as { type: string }).type === 'execution:done');
     expect((doneEvent as { exitCode: number }).exitCode).toBe(1);
@@ -295,8 +294,7 @@ describe('POST /api/v1/execute/:id/cancel', () => {
     });
 
     expect(res.statusCode).toBe(404);
-    const body = res.json() as { error: string };
-    expect(body.error).toContain('not found');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED' } });
   });
 
   it('returns 403 when execution belongs to different namespace', async () => {
@@ -317,8 +315,9 @@ describe('POST /api/v1/execute/:id/cancel', () => {
     });
 
     expect(res.statusCode).toBe(403);
-    const body = res.json() as { error: string };
-    expect(body.error).toContain('Forbidden');
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_FORBIDDEN', cause: 'Execution belongs to another namespace',
+    } });
 
     executionRegistry.remove('exec-other-ns');
   });
@@ -342,8 +341,7 @@ describe('POST /api/v1/execute/:id/cancel', () => {
     });
 
     expect(res.statusCode).toBe(409);
-    const body = res.json() as { status: string };
-    expect(body.status).toBe('already_cancelled');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
 
     executionRegistry.remove('exec-already-cancelled');
   });
@@ -379,6 +377,7 @@ describe('POST /api/v1/execute — auth guard', () => {
 
   beforeAll(async () => {
     appNoAuth = Fastify({ logger: false });
+    registerGatewayUxErrorResponses(appNoAuth);
     // No preHandler — authContext stays undefined
     registerExecuteRoutes(appNoAuth, noopLogger);
     await appNoAuth.ready();

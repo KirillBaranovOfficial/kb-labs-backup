@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const execSyncMock = vi.fn();
-vi.mock('node:child_process', () => ({ execSync: execSyncMock }));
+const { execSyncMock } = vi.hoisted(() => ({ execSyncMock: vi.fn() }));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, execSync: execSyncMock };
+});
 
 // Regression test for the recurring GITHUB_WORKFLOW_TOKEN-goes-silently-empty
 // incident: when a daemon is restarted from a shell that never exported the

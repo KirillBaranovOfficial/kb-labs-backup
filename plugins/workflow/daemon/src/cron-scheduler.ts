@@ -8,10 +8,11 @@ import { CronExpressionParser } from 'cron-parser';
 import type { ILogger, IAnalytics } from '@kb-labs/core-platform';
 import type { JobBroker } from './job-broker.js';
 import type { WorkflowEngine } from '@kb-labs/workflow-engine';
+import { MissingWorkflowIdError } from '@kb-labs/workflow-contracts';
 import type {
   RegisteredCronJob,
   PluginCronJob,
-  UserCronJob,
+  UserCron,
   WorkflowSpec,
 } from '@kb-labs/workflow-contracts';
 
@@ -86,34 +87,35 @@ export class CronScheduler {
   /**
    * Register cron job from user YAML file.
    */
-  registerUserJob(fileName: string, job: UserCronJob): void {
-    const cronJobId = `user:${fileName}`;
-
-    if (this.registeredJobs.has(cronJobId)) {
-      this.logger.warn('Cron job already registered, skipping', { cronJobId });
-      return;
-    }
-
+  registerUserCron(job: UserCron, spec?: WorkflowSpec): void {
+    const cronJobId = job.id;
     const registered: RegisteredCronJob = {
       id: cronJobId,
       source: 'user',
       schedule: job.schedule,
       timezone: job.timezone ?? this.defaultTimezone,
-      priority: job.priority,
+      priority: 'normal',
       enabled: job.enabled,
-      workflowSpec: {
-        name: job.name,
-        jobs: job.jobs,
-        env: job.env,
-      },
-      metadata: job.metadata,
+      ...(job.handler
+        ? { handler: job.handler, input: job.input }
+        : {
+            workflowId: job.workflow,
+            workflowInput: job.input,
+            ...(spec ? { workflowSpec: {
+              name: spec.name,
+              version: spec.version,
+              on: { manual: true as const },
+              jobs: spec.jobs,
+              env: spec.env,
+            } } : {}),
+          }),
     };
 
-    this.registeredJobs.set(cronJobId, registered);
+    this.register(registered);
     this.logger.debug('User cron job registered', {
       cronJobId,
       schedule: job.schedule,
-      name: job.name,
+      ...(job.workflow ? { workflowId: job.workflow } : { handler: job.handler }),
     });
   }
 
@@ -225,19 +227,22 @@ export class CronScheduler {
     }).catch(() => {});
 
     try {
-      if (job.source === 'plugin' && job.handler) {
-        // Plugin cron job - submit via JobBroker
+      let runId: string;
+      let runStatus = 'queued';
+      if (job.handler) {
+        // Handler cron job (plugin manifest or project cron) - submit via JobBroker
         const result = await this.jobBroker.submit({
           handler: job.handler,
           input: job.input,
           priority: job.priority,
           metadata: {
             ...job.metadata,
-            cronJobId,
+            ...(job.source === 'plugin' ? { cronJobId } : { cronId: cronJobId }),
             scheduledBy: 'cron',
             scheduledAt: new Date().toISOString(),
           },
         });
+        runId = result.id;
 
         this.logger.info('Cron job submitted', {
           cronJobId,
@@ -246,13 +251,9 @@ export class CronScheduler {
       } else if (job.source === 'user' && job.workflowSpec) {
         // User cron job - run workflow directly via WorkflowEngine
         // Create complete WorkflowSpec from user job
-        const spec: WorkflowSpec = {
-          name: job.workflowSpec.name,
-          version: '1.0.0',
-          on: { manual: true }, // Cron-triggered workflows use manual trigger
-          jobs: job.workflowSpec.jobs,
-          env: job.workflowSpec.env,
-        };
+        const spec = job.workflowSpec;
+        const workflowId = job.workflowId;
+        if (!workflowId) { throw new MissingWorkflowIdError(job.id); }
 
         this.logger.debug('Running workflow from cron', {
           cronJobId,
@@ -267,14 +268,17 @@ export class CronScheduler {
               scheduledAt: new Date().toISOString(),
             },
           },
+          inputs: job.workflowInput ?? {},
           env: job.workflowSpec.env ?? {},
           metadata: {
-            ...job.metadata,
-            cronJobId,
+            workflowId,
+            cronId: cronJobId,
             scheduledBy: 'cron',
             scheduledAt: new Date().toISOString(),
           },
         });
+        runId = result.id;
+        runStatus = result.status;
 
         this.logger.info('Cron workflow submitted', {
           cronJobId,
@@ -284,14 +288,18 @@ export class CronScheduler {
       } else {
         throw new Error(`Invalid cron job configuration: ${cronJobId}`);
       }
+      job.lastRun = { id: runId, status: runStatus, time: new Date().toISOString() };
 
-      // Track successful cron job completion
-      const duration = Date.now() - startTime;
-      this.analytics?.track('workflow.cron.job.completed', {
+      // Submission does not imply the workflow has reached a terminal state.
+      this.analytics?.track('workflow.cron.job.submitted', {
         cronJobId,
+        runId,
         source: job.source,
-        durationMs: duration,
-      }).catch(() => {});
+      }).catch((error) => this.logger.warn('Failed to record cron submission analytics', {
+        cronJobId,
+        runId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      }));
     } catch (error) {
       const duration = Date.now() - startTime;
       this.logger.error(
@@ -515,7 +523,7 @@ export class CronScheduler {
    * stopped and removed so they can be re-registered by a fresh discovery pass.
    */
   clearUserJobs(): void {
-    const userJobIds = Array.from(this.registeredJobs.keys()).filter((id) => id.startsWith('user:'));
+    const userJobIds = Array.from(this.registeredJobs.values()).filter((job) => job.source === 'user').map((job) => job.id);
 
     for (const cronJobId of userJobIds) {
       const task = this.scheduledTasks.get(cronJobId);

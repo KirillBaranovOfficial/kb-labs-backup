@@ -4,7 +4,7 @@
 
 import * as React from 'react';
 import {
-  UICard, UIRow, UICol, UITag, UIStatistic, UISpin, UIAlert, UISpace, UISelect,
+  UICard, UIRow, UICol, UITag, UIStatistic, UISkeleton, UIAlert, UISpace, UISelect,
   UITimeline, UITimelineItem, UIEmptyState, UIIcon, UIStatisticsChart, UIFlex,
   useData, useTheme,
 } from '@kb-labs/sdk/studio';
@@ -88,7 +88,7 @@ export function TrendsTab() {
   const { data, isLoading } = useData<TrendAnalysis>(trendsUrl);
 
   if (isLoading) {
-    return <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />;
+    return <UISkeleton active lines={6} />;
   }
 
   if (!data || data.tasks.length === 0) {

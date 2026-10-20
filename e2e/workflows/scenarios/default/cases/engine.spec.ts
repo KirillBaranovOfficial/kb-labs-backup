@@ -58,7 +58,7 @@ test('WF-02: workflow catalog is populated (e2e-hello is present)', async ({ req
 
 test('WF-03: e2e-hello run reaches terminal state within 30s', async ({ request }) => {
   const wf = await findWorkflow(request, 'e2e-hello')
-  test.skip(!wf, 'e2e-hello workflow not found')
+  expect(!wf, 'e2e-hello workflow not found').toBe(false)
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
 
@@ -70,7 +70,7 @@ test('WF-03: e2e-hello run reaches terminal state within 30s', async ({ request 
 
 test('WF-04: runs list is accessible and includes recent run', async ({ request }) => {
   const wf = await findWorkflow(request, 'e2e-hello')
-  test.skip(!wf, 'e2e-hello workflow not found')
+  expect(!wf, 'e2e-hello workflow not found').toBe(false)
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
 
@@ -87,7 +87,7 @@ test('WF-04: runs list is accessible and includes recent run', async ({ request 
 
 test('WF-05: stats running count increases during active run', async ({ request }) => {
   const wf = await findWorkflow(request, 'e2e-hello')
-  test.skip(!wf, 'e2e-hello workflow not found')
+  expect(!wf, 'e2e-hello workflow not found').toBe(false)
 
   // Snapshot stats before starting a run
   const beforeStats = await (await request.get(`${WORKFLOW}/api/v1/stats`)).json()
@@ -103,7 +103,7 @@ test('WF-05: stats running count increases during active run', async ({ request 
 
 test('WF-06: e2e-fail workflow ends with failed status', async ({ request }) => {
   const wf = await findWorkflow(request, 'e2e-fail')
-  test.skip(!wf, 'e2e-fail workflow not found')
+  expect(!wf, 'e2e-fail workflow not found').toBe(false)
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
 

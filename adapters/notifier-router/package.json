@@ -5,6 +5,11 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "kb": {
+    "adapter": {
+      "manifest": "./dist/manifest.js"
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -39,10 +44,10 @@
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
-    "@kb-labs/sdk": "workspace:^"
+    "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "sideEffects": false

@@ -3,6 +3,16 @@
   "description": "REST API application for KB Labs, providing HTTP endpoints for plugin functionality",
   "version": "2.120.1",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "import": "./dist/manifest.js"
+    }
+  },
   "main": "./dist/index.js",
   "bin": {
     "rest-api-app": "./dist/bin.js"
@@ -69,7 +79,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "kb": {

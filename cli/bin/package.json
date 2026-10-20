@@ -35,12 +35,16 @@
     "@kb-labs/cli-commands": "workspace:*",
     "@kb-labs/cli-runtime": "workspace:*",
     "@kb-labs/core-config": "workspace:*",
+    "@kb-labs/core-ipc": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/core-resource-broker": "workspace:*",
     "@kb-labs/core-runtime": "workspace:*",
     "@kb-labs/core-sandbox": "workspace:*",
     "@kb-labs/core-sys": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",
+    "@kb-labs/llm-router": "workspace:*",
     "@kb-labs/shared-cli-ui": "workspace:*",
     "@kb-labs/shared-command-kit": "workspace:*",
     "ajv": "^8.17.1",
@@ -63,7 +67,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "publishConfig": {

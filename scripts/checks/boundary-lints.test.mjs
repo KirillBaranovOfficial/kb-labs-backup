@@ -11,10 +11,11 @@ import { dirname, join } from 'node:path';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { applyExceptions, loadExceptions } from './lib/boundary-common.mjs';
+import { applyExceptions, findPluginEntryPackages, loadExceptions } from './lib/boundary-common.mjs';
 import { collect as collectImports, findCoreImports } from './check-plugin-imports.mjs';
 import { collect as collectSpawns, findPlatformBinarySpawns } from './check-platform-spawn.mjs';
 import { collect as collectPeer, findPlatformRuntimeDeps, isPlatformPackage } from './check-plugin-peer-deps.mjs';
+import { collect as collectBrowserNodeBuiltins } from './check-browser-node-builtins.mjs';
 import { collect as collectManifests, RULES, validateManifest } from './check-manifest-command-naming.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +39,150 @@ function pluginEntry(dir, name, pkgExtra = {}) {
     [`${dir}/src/manifest.ts`]: `export const manifest = { schema: 'kb.plugin/3', id: '${name}' };\n`,
   };
 }
+
+describe('browser-node-builtins', () => {
+  test('fails when browser source imports a workspace entry whose built graph imports a Node builtin', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/node-only';\nvoid value;\n`,
+      'packages/node-only/package.json': {
+        name: '@fixture/node-only',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+      'packages/node-only/dist/index.js': `import { readFile } from 'node:fs/promises';\nexport const value = readFile;\n`,
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript', json: { name: '@fixture/studio-app' } },
+      { dir: 'packages/node-only', relDir: 'packages/node-only', language: 'typescript', json: { name: '@fixture/node-only' } },
+    ]);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].package, 'studio/app');
+    assert.equal(findings[0].target, '@fixture/node-only');
+    assert.equal(findings[0].builtin, 'node:fs/promises');
+  });
+
+  test('accepts a browser-safe package subpath when the package root is Node-only', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/platform/browser';\nvoid value;\n`,
+      'packages/platform/package.json': {
+        name: '@fixture/platform',
+        exports: {
+          '.': { import: './dist/index.js' },
+          './browser': { import: './dist/browser.js' },
+        },
+      },
+      'packages/platform/dist/index.js': `import { readFile } from 'node:fs/promises';\nexport const nodeValue = readFile;\n`,
+      'packages/platform/dist/browser.js': `export const value = 'browser-safe';\n`,
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/platform', relDir: 'packages/platform', language: 'typescript' },
+    ]);
+    assert.deepEqual(findings, []);
+  });
+
+  test('reports a workspace package entry whose built output is missing', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/unbuilt';\nvoid value;\n`,
+      'packages/unbuilt/package.json': {
+        name: '@fixture/unbuilt',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/unbuilt', relDir: 'packages/unbuilt', language: 'typescript' },
+    ]);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].kind, 'unbuilt-package-entry');
+    assert.match(findings[0].fix, /kb-devkit run build --packages @fixture\/unbuilt/);
+  });
+
+  test('reports an unexported subpath separately from an unbuilt entry', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/package/private';\nvoid value;\n`,
+      'packages/package/package.json': {
+        name: '@fixture/package',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+      'packages/package/dist/index.js': `export const value = true;\n`,
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/package', relDir: 'packages/package', language: 'typescript' },
+    ]);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].kind, 'unexported-package-subpath');
+  });
+
+  test('reports unresolvable relative and workspace imports in a built graph', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/outer';\nvoid value;\n`,
+      'packages/outer/package.json': {
+        name: '@fixture/outer',
+        exports: { '.': { import: './dist/index.js' } },
+        dependencies: { '@fixture/missing': 'workspace:*' },
+      },
+      'packages/outer/dist/index.js': `import './missing.js';\nimport { x } from '@fixture/inner';\nimport { y } from '@fixture/missing';\nexport { x, y };\n`,
+      'packages/inner/package.json': {
+        name: '@fixture/inner',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/outer', relDir: 'packages/outer', language: 'typescript' },
+      { dir: 'packages/inner', relDir: 'packages/inner', language: 'typescript' },
+    ]);
+    assert.deepEqual(findings.map((finding) => finding.kind).sort(), [
+      'unbuilt-package-entry',
+      'unresolved-relative-import',
+      'unresolved-workspace-import',
+    ]);
+  });
+
+  test('reports direct Node builtin imports in browser source', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': [
+        `import { readFile } from 'node:fs/promises';`,
+        `import fs = require('node:fs');`,
+        `void readFile; void fs;`,
+      ].join('\n'),
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+    ]);
+    assert.equal(findings.length, 2);
+    assert.deepEqual(findings.map((finding) => finding.builtin).sort(), ['node:fs', 'node:fs/promises']);
+    assert.ok(findings.every((finding) => finding.kind === 'direct-node-builtin'));
+  });
+
+  test('deliberately excludes erased type-only import and export forms', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': [
+        `import type { A } from '@fixture/node-only';`,
+        `import { type B } from '@fixture/node-only';`,
+        `export type { C } from '@fixture/node-only';`,
+      ].join('\n'),
+      'packages/node-only/package.json': {
+        name: '@fixture/node-only',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+      'packages/node-only/dist/index.js': `import 'node:fs';\nexport const value = true;\n`,
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/node-only', relDir: 'packages/node-only', language: 'typescript' },
+    ]);
+    assert.deepEqual(findings, []);
+  });
+});
 
 after(() => {
   for (const r of tmpRoots) rmSync(r, { recursive: true, force: true });
@@ -253,9 +398,40 @@ describe('manifest-command-naming (0.5)', () => {
         { path: 'foo list' },
         { path: 'foo bar-baz show' },
         { path: 'foo item delete', operationType: 'mutate', flags: [{ name: 'json', type: 'boolean' }] },
+        { path: 'foo run', examples: ['kb foo run --yes — run the command'] },
       ]),
     );
     assert.deepEqual(v, []);
+  });
+
+  test('failing fixture: every example command path must be declared in the manifest', () => {
+    const v = validateManifest(manifest([
+      { path: 'commit', examples: ['kb unknown open --dry-run'] },
+    ]));
+    assert.deepEqual(v.map((item) => item.rule), ['manifest-example-command-path']);
+    assert.match(v[0].message, /kb unknown open --dry-run/);
+
+    const root = fixtureRepo({
+      'plugins/commit/entry/package.json': { name: '@kb-labs/commit-entry', kb: { manifest: './dist/manifest.js' } },
+      'plugins/commit/entry/dist/manifest.json': manifest([
+        { path: 'commit', examples: ['kb unknown open --dry-run'] },
+      ]),
+      'plugins/nested/entry/package.json': { name: '@kb-labs/nested-entry', kb: { manifest: './dist/manifest.js' } },
+      'plugins/nested/entry/dist/manifest.json': manifest([
+        { path: 'nested run', examples: ['kb other run'] },
+      ]),
+    });
+    const expectedPackages = findPluginEntryPackages(root).map((pkg) => pkg.relDir).sort();
+    const violations = collectManifests(root).filter((item) => item.rule === 'manifest-example-command-path');
+    assert.deepEqual(violations.map((item) => item.package).sort(), expectedPackages);
+
+    const withComment = validateManifest(manifest([
+      { path: 'commit commit', examples: ['kb commit commit --dry-run # Preview without applying'] },
+    ]));
+    assert.deepEqual(withComment, []);
+    assert.deepEqual(validateManifest(manifest([
+      { path: 'impact run', examples: ['impact run # Full impact analysis'] },
+    ])), []);
   });
 
   test('failing fixture: verb outside the vocabulary', () => {
@@ -263,6 +439,10 @@ describe('manifest-command-naming (0.5)', () => {
     assert.equal(v.length, 1);
     assert.equal(v[0].rule, 'command-verb-vocabulary');
     assert.equal(v[0].target, 'foo frobnicate');
+  });
+
+  test('accepts validate as the reviewed static-check verb', () => {
+    assert.deepEqual(validateManifest(manifest([{ path: 'qa cases validate' }])), []);
   });
 
   test('failing fixture: path segments must be lowercase kebab-case', () => {
@@ -308,13 +488,19 @@ describe('manifest-command-naming (0.5)', () => {
     const root = fixtureRepo({
       'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
       'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
+      'plugins/v3/core/package.json': { name: '@kb-labs/v3-core', kb: { manifest: './dist/manifest.v3.js' } },
+      'plugins/v3/core/dist/manifest.json': manifest([{ path: 'v3 frobnicate' }]),
       ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
       'plugins/r/core/package.json': { name: '@kb-labs/r-core' }, // no kb.manifest: ignored
     });
     const v = collectManifests(root);
     assert.deepEqual(
       v.map((x) => `${x.package} ${x.rule}`).sort(),
-      ['(workspace) manifest-not-built', 'plugins/p/entry command-verb-vocabulary'],
+      [
+        '(workspace) manifest-not-built',
+        'plugins/p/entry command-verb-vocabulary',
+        'plugins/v3/core command-verb-vocabulary',
+      ],
     );
     const notBuilt = v.find((x) => x.rule === 'manifest-not-built');
     assert.equal(notBuilt.severity, 'warning');

@@ -275,28 +275,26 @@ export interface UIFacade {
   chain(items: ChainItem[]): void;
 
   /**
-   * Prompt for confirmation.
-   * In non-interactive contexts (worker, in-process, CI) returns defaultValue.
+   * Prompt for confirmation. A context without a prompt responder rejects with
+   * InteractiveInputRequiredError instead of substituting defaultValue.
    */
   confirm(message: string, options?: { defaultValue?: boolean }): Promise<boolean>;
 
   /**
-   * Prompt for text input.
-   * In non-interactive contexts returns options.default or ''.
+   * Prompt for text input. A context without a prompt responder rejects with
+   * InteractiveInputRequiredError instead of substituting a default.
    */
   prompt(message: string, options?: PromptOptions): Promise<string>;
 
   /**
-   * Prompt to select a single value from a list.
-   * In non-interactive contexts returns the first choice value.
-   * In worker pool, relayed via IPC to the host process.
+   * Prompt to select a single value from a list. A context without a prompt
+   * responder rejects with InteractiveInputRequiredError.
    */
   select<T = string>(message: string, choices: SelectChoice<T>[]): Promise<T>;
 
   /**
-   * Prompt to select multiple values from a list.
-   * In non-interactive contexts returns pre-checked values.
-   * In worker pool, relayed via IPC to the host process.
+   * Prompt to select multiple values from a list. A context without a prompt
+   * responder rejects with InteractiveInputRequiredError.
    */
   multiSelect<T = string>(message: string, choices: MultiSelectChoice<T>[]): Promise<T[]>;
 
@@ -314,6 +312,9 @@ export interface UIFacade {
    */
   log(entry: UILogEntry): void;
 }
+
+/** UI methods available to plugin handlers. Command results and failures are returned, not printed. */
+export type PluginHandlerUIFacade = Omit<UIFacade, 'json' | 'error'>;
 
 /**
  * Options for text prompts
@@ -414,6 +415,71 @@ export interface SideBoxOptions {
   timing?: number;
 }
 
+/** Structured representation of a single UIFacade output call. */
+export type UIOutput =
+  | { kind: 'message'; level: 'info' | 'success' | 'warn' | 'error'; message: string; options?: MessageOptions }
+  | { kind: 'sideBox'; options: SideBoxOptions }
+  | { kind: 'chain'; items: ChainItem[] }
+  | { kind: 'table'; data: Record<string, unknown>[]; columns?: TableColumn[] }
+  | { kind: 'json'; data: unknown; pretty?: boolean };
+
+function outputItemText(item: OutputSectionItem): string {
+  return typeof item === 'string' ? item : item.text;
+}
+
+function outputSectionsText(sections: OutputSection[] = []): string[] {
+  return sections.flatMap(section => [
+    ...(section.header ? [section.header] : []),
+    ...section.items.map(outputItemText),
+  ]);
+}
+
+/** Plain text rendering of the shared UI model for non-terminal consumers. */
+export function renderUIOutputText(output: UIOutput): string {
+  switch (output.kind) {
+    case 'message': {
+      const options = output.options;
+      const displayLevel = output.level === 'success' ? 'ok' : output.level;
+      const lines = [`[${displayLevel}] ${options?.title ?? output.message}`];
+      if (options?.title && options.title !== output.message) lines.push(output.message);
+      for (const [key, value] of Object.entries(options?.summary ?? {})) lines.push(`${key}: ${value}`);
+      lines.push(...outputSectionsText(options?.sections));
+      if (options?.cause) lines.push(`Cause: ${options.cause}`);
+      if (options?.hint) lines.push(`Hint: ${options.hint}`);
+      if (options?.command) lines.push(`$ ${options.command}`);
+      if (options?.timing !== undefined) lines.push(`Completed in ${options.timing}ms`);
+      return lines.join('\n');
+    }
+    case 'sideBox': {
+      const { options } = output;
+      return [
+        `[${options.title}]`,
+        ...Object.entries(options.summary ?? {}).map(([key, value]) => `${key}: ${value}`),
+        ...outputSectionsText(options.sections),
+        ...(options.timing === undefined ? [] : [`Completed in ${options.timing}ms`]),
+      ].join('\n');
+    }
+    case 'chain':
+      return output.items.map(item => [
+        `◆ ${item.title}`,
+        ...Object.entries(item.summary ?? {}).map(([key, value]) => `${key}: ${value}`),
+        ...outputSectionsText(item.sections),
+        ...(item.timing === undefined ? [] : [`Completed in ${item.timing}ms`]),
+      ].join('\n')).join('\n');
+    case 'table': {
+      if (output.data.length === 0) return '';
+      const columns = output.columns ?? Object.keys(output.data[0]!).map(key => ({ header: key, key }));
+      return [columns.map(column => column.header).join('\t'), ...output.data.map(row => columns.map(column => String(row[column.key] ?? '')).join('\t'))].join('\n');
+    }
+    case 'json':
+      return output.pretty ? JSON.stringify(output.data, null, 2) : JSON.stringify(output.data);
+    default: {
+      const exhaustive: never = output;
+      return exhaustive;
+    }
+  }
+}
+
 /**
  * No-op color functions (return text as-is)
  */
@@ -468,8 +534,27 @@ const noopSymbols: Symbols = {
   rightT: '┤',
 };
 
+/** Structured failure for a required prompt in an execution context without a responder. */
+export class InteractiveInputRequiredError extends Error {
+  readonly code = 'KB_RUNTIME_INPUT_INVALID';
+  override readonly cause: string;
+
+  constructor(readonly hint: string, cause: string) {
+    super();
+    this.cause = cause;
+  }
+}
+
+function unavailablePrompt(message: string): InteractiveInputRequiredError {
+  return new InteractiveInputRequiredError(
+    'Provide the value as workflow or request input, then run `kb workflow run --help`.',
+    `The prompt "${message}" cannot be answered in this execution context.`,
+  );
+}
+
 /**
- * No-op UI implementation (for testing or silent mode)
+ * Silent UI implementation. Output is discarded, but required prompts fail
+ * because this context has no responder that can collect their values.
  */
 export const noopUI: UIFacade = {
   colors: noopColors,
@@ -493,9 +578,9 @@ export const noopUI: UIFacade = {
   box: () => {},
   sideBox: () => {},
   chain: () => {},
-  confirm: async () => true,
-  prompt: async () => '',
-  select: async (_, choices) => choices[0]?.value as never,
-  multiSelect: async (_, choices) => choices.filter((c) => c.checked).map((c) => c.value) as never,
+  confirm: async (message) => { throw unavailablePrompt(message); },
+  prompt: async (message) => { throw unavailablePrompt(message); },
+  select: async (message) => { throw unavailablePrompt(message); },
+  multiSelect: async (message) => { throw unavailablePrompt(message); },
   log: () => {},
 };

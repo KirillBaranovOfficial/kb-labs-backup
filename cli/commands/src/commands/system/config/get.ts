@@ -1,25 +1,29 @@
 /**
  * config get — read one key, with the layer and file it came from.
  *
- * Without `--scope` the EFFECTIVE value is read (generated < platform user <
- * project user < overlays, ADR-0047/ADR-0012) and reported with its
+ * Without `--scope` the EFFECTIVE value is read (manifest defaults < generated
+ * < platform user < project store < overlays, ADR-0052) and reported with its
  * provenance. With `--scope platform|project` only that scope's user config
  * file is read. Raw secrets are redacted; `${ENV_VAR}` references are shown.
  */
 
 import {
   ConfigWriteError,
+  buildProvenance,
   configErrorEnvelope,
   loadEffectiveConfig,
+  mergeOverlay,
   parseJsonc,
+  projectSettingsPath,
+  readProjectSettings,
   redactValue,
   resolveKeyPath,
   type ConfigLayerName,
   type ValueProvenance,
 } from '@kb-labs/core-config';
-import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
+import { loadPlatformConfig, PlatformUserConfigSchema } from '@kb-labs/core-runtime';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCataloguedFailure, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { promises as fsp } from 'node:fs';
 
@@ -28,10 +32,10 @@ import {
   CONFIG_SCOPES,
   layerLabel,
   parseKeyPath,
-  renderErrorEnvelope,
   resolveConfigRoots,
   userConfigFileForScope,
   valueAtPath,
+  manifestSettingsLayers,
   type ConfigScope,
 } from './shared';
 
@@ -65,7 +69,7 @@ function provenanceFor(
     return exact;
   }
   // A container: report the highest-precedence layer among the leaves beneath it.
-  const order: ConfigLayerName[] = ['overlay', 'project', 'platform', 'generated'];
+  const order: ConfigLayerName[] = ['overlay', 'project', 'platform', 'generated', 'manifest'];
   const beneath = Object.entries(provenance).filter(([key]) => key.startsWith(`${dotted}.`));
   for (const layer of order) {
     const hit = beneath.find(([, value]) => value.layer === layer);
@@ -78,10 +82,12 @@ function provenanceFor(
 
 export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
   name: 'get',
+  scope: 'project',
+  jsonTest: { safeArgs: ["platform.adapters"] },
   description: 'Read a configuration value and show which layer it came from',
   longDescription:
     'Reads one key (dotted path, for example platform.adapters.llm). By default the effective value is ' +
-    'returned with its provenance (generated, platform, project or overlay layer). Use --scope to read ' +
+    'returned with its provenance (manifest, generated, platform, project or overlay layer). Use --scope to read ' +
     'only the user config file of one scope. Raw secrets are redacted; ${ENV_VAR} references are shown.',
   category: 'config',
   aliases: [],
@@ -104,26 +110,27 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       const key = segments.join('.');
 
       const resolution = resolveKeyPath(PlatformUserConfigSchema, segments);
-      if (resolution.status === 'unknown') {
+      if (resolution.status === 'unknown' && segments[0] !== 'plugins') {
         throw new ConfigWriteError('KB_CONFIG_UNKNOWN_KEY', `Unknown configuration key ${key}`, {
           path: key,
+          suggestion: resolution.suggestion ?? '',
+        }, {
           key: resolution.key,
           parent: resolution.parentPath,
-          suggestion: resolution.suggestion ?? '',
           knownKeys: resolution.knownKeys.join(','),
         });
       }
 
-      const roots = await resolveConfigRoots(getContextCwd(ctx));
+      const scope = flags.scope as ConfigScope | undefined;
+      const roots = await resolveConfigRoots(getContextCwd(ctx), scope === 'platform' ? 'platform' : 'required');
 
-      if (flags.scope) {
-        const scope = flags.scope as ConfigScope;
+      if (scope) {
         const file = await userConfigFileForScope(roots, scope);
         let text: string;
         try {
           text = await fsp.readFile(file, 'utf8');
         } catch {
-          return { ok: true, key, scope, found: false, source: file };
+          return {  key, scope, found: false, source: file };
         }
         let document: unknown;
         try {
@@ -135,7 +142,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
         }
         const hit = valueAtPath(document, segments);
         return {
-          ok: true,
+
           key,
           scope,
           found: hit.found,
@@ -145,16 +152,41 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
         };
       }
 
-      const effective = await loadEffectiveConfig(roots.projectRoot, {
-        platformRoot: roots.sameLocation ? undefined : roots.platformRoot,
-      });
-      const hit = valueAtPath(effective?.data, segments);
-      if (!hit.found || !effective) {
-        return { ok: true, key, scope: 'effective', found: false };
+      if (!roots.projectId) {
+        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config get".`, { path: roots.configRoot });
       }
-      const origin = provenanceFor(effective.provenance, segments);
+
+      const runtimeConfig = await loadPlatformConfig({
+        moduleUrl: import.meta.url,
+        startDir: getContextCwd(ctx),
+        loadEnvFile: false,
+        projectId: roots.projectId,
+      });
+      const platform = await loadEffectiveConfig(roots.configRoot, {
+        platformRoot: roots.platformRoot,
+        projectId: roots.projectId,
+        pluginDefaults: manifestSettingsLayers(runtimeConfig),
+      });
+      const projectSettings = await readProjectSettings({ projectId: roots.projectId });
+      const merged = mergeOverlay(platform?.data ?? {}, projectSettings) as Record<string, unknown>;
+      const hit = valueAtPath(merged, segments);
+      if (!hit.found) {
+        return {  key, scope: 'effective', found: false, value: null };
+      }
+      const projectFile = projectSettingsPath({ projectId: roots.projectId });
+      const projectHit = valueAtPath(projectSettings, segments);
+      const platformLayers = (platform?.layers ?? [])
+        .filter((layer) => layer.path !== projectFile)
+        .map((layer) => ({
+          ...layer,
+          layer: layer.layer === 'project' ? 'platform' as const : layer.layer,
+        }));
+      const layers = projectHit.found
+        ? [...platformLayers, { layer: 'project' as const, path: projectFile, data: projectSettings }]
+        : platformLayers;
+      const origin = provenanceFor(buildProvenance(layers, merged), segments);
       return {
-        ok: true,
+
         key,
         scope: 'effective',
         found: true,
@@ -165,27 +197,10 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: envelope.message, envelope };
+      throwSystemCataloguedError(envelope);
     }
   },
   formatter(result, ctx, flags) {
-    if (!result.ok && result.envelope) {
-      renderErrorEnvelope(ctx, result.envelope, Boolean(flags.json));
-      return;
-    }
-    if (flags.json) {
-      ctx.ui?.json?.({
-        ok: true,
-        key: result.key,
-        scope: result.scope,
-        found: result.found,
-        value: result.value ?? null,
-        layer: result.layer ?? null,
-        source: result.source ?? null,
-        contributors: result.contributors,
-      });
-      return;
-    }
     if (!result.found) {
       ctx.ui.info(`${result.key} is not set${result.scope === 'effective' ? '' : ` in the ${result.scope} scope`}.`);
       return;

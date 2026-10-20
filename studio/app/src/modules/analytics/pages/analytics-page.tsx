@@ -10,6 +10,7 @@ export function AnalyticsPage() {
         description="Event metrics and performance charts"
       />
       <EmptyState
+        kind="unconfigured"
         icon={<BarChart3 size={32} />}
         title="Coming Soon"
         description="Event metrics and performance charts will appear here."
@@ -17,4 +18,3 @@ export function AnalyticsPage() {
     </UIPage>
   );
 }
-

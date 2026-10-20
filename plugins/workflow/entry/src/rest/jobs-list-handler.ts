@@ -4,25 +4,14 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
+import type { JobStatusInfo } from '@kb-labs/workflow-contracts';
 
 interface JobsListQuery {
   type?: string;
   status?: string;
   limit?: string;
   offset?: string;
-}
-
-interface JobStatusInfo {
-  id: string;
-  type: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  tenantId?: string;
-  createdAt?: string;
-  startedAt?: string;
-  finishedAt?: string;
-  result?: unknown;
-  error?: string;
 }
 
 interface JobListResponse {
@@ -42,6 +31,10 @@ export default defineHandler({
   ): Promise<JobListResponse> {
     const daemonUrl = getWorkflowDaemonUrl();
     const { type, status, limit, offset } = input.query || {};
+    const validStatuses = ['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'dlq'];
+    if (status && !validStatuses.includes(status)) {
+      throw Object.assign(new Error(`Invalid job status: ${status}`), { statusCode: 400, code: 'KB_RUNTIME_INPUT_INVALID' });
+    }
 
     // Build query string
     const params = new URLSearchParams();
@@ -51,12 +44,12 @@ export default defineHandler({
     if (offset) {params.set('offset', offset);}
 
     const queryString = params.toString();
-    const url = `${daemonUrl}/api/v1/jobs${queryString ? `?${queryString}` : ''}`;
+    const url = `${daemonUrl}/jobs${queryString ? `?${queryString}` : ''}`;
 
     ctx.platform.logger.info(`[jobs-list-handler] Fetching jobs from ${url}`);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWorkflowApi(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

@@ -18,6 +18,8 @@ import (
 var (
 	applyYes    bool
 	applyDryRun bool
+	// This is the documented non-error status owned by `kb-deploy apply`.
+	applyChangesStatus = diag.DeployChangesAppliedStatus()
 )
 
 var applyCmd = &cobra.Command{
@@ -29,9 +31,8 @@ is consulted to detect drift; the new lock is written on success.
 
 Exit codes:
   0  no changes applied (or dry-run complete)
-  1  changes applied successfully
-  2  error (validation, SSH, build)
-  3  rollback fired and succeeded
+  1  changes applied successfully, or a catalogued operation failure (inspect the result envelope)
+  2  catalogued input refusal (inspect the result envelope)
 
 Examples:
   kb-deploy apply                  # uses .kb/deploy.yaml
@@ -54,7 +55,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	flow, err := loadFlow()
 	if err != nil {
-		return diag.Wrap(err, codeConfigLoad, "failed to load deploy configuration",
+		return diag.Wrap(err, "KB_CONFIG_LOAD_FAILED", "failed to load deploy configuration",
 			diag.WithReason(err.Error()))
 	}
 	defer flow.CloseAll()
@@ -99,7 +100,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	resolver := func(name string) (*remote.Host, error) {
 		h, ok := hosts[name]
 		if !ok {
-			return nil, diag.New(codeHostUndefined,
+			return nil, diag.New("KB_DEPLOY_HOST_UNDEFINED",
 				fmt.Sprintf("no SSH connection for host %q", name))
 		}
 		return h, nil
@@ -116,16 +117,16 @@ func runApply(cmd *cobra.Command, args []string) error {
 	})
 
 	if res.Err != nil {
-		// res.Err is a structured *diag.Diag (ERR_WAVE_FAILED) carrying every
+		// res.Err is a structured *diag.Diag (KB_DEPLOY_WAVE_FAILED) carrying every
 		// per-action failure in meta; let the top-level handler render it.
 		return res.Err
 	}
 	if err := writeLock(flow.Cfg, flow.CfgPath, flow.Plan, flow.Configs); err != nil {
-		return diag.Wrap(err, codeWriteLock, "apply succeeded but writing the lock failed",
+		return diag.Wrap(err, "KB_DEPLOY_LOCK_WRITE_FAILED", "apply succeeded but writing the lock failed",
 			diag.WithReason(err.Error()))
 	}
 	emit(cmd, result.Success("apply successful; lock updated", planData), mode)
-	return nil
+	return result.StreamComplete(applyChangesStatus)
 }
 
 // emit renders a successful CommandOutput. In human mode the inline progress was

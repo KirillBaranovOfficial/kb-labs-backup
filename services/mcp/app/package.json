@@ -3,6 +3,16 @@
   "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
+  "exports": {
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "import": "./dist/manifest.js"
+    },
+    "./project-module": {
+      "types": "./dist/project-module.d.ts",
+      "import": "./dist/project-module.js"
+    }
+  },
   "bin": {
     "mcp-app": "./dist/index.js"
   },
@@ -29,7 +39,6 @@
     "@kb-labs/core-registry": "workspace:*",
     "@kb-labs/core-runtime": "workspace:*",
     "@kb-labs/core-sys": "workspace:*",
-    "@kb-labs/gateway-auth": "workspace:*",
     "@kb-labs/gateway-contracts": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",

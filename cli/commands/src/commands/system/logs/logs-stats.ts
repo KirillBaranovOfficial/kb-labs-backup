@@ -4,6 +4,7 @@
 
 import {
   defineSystemCommand,
+  throwSystemCommandError,
   type CommandResult,
 } from "@kb-labs/shared-command-kit";
 import { generateExamples } from "../../../utils/generate-examples";
@@ -43,6 +44,8 @@ type Result = CommandResult & {
 
 export const logsStats = defineSystemCommand<Flags, Result>({
   name: "stats",
+  scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description: "Show log storage statistics and capabilities",
   category: "logs",
   examples: generateExamples("logs stats", "kb", [
@@ -55,17 +58,14 @@ export const logsStats = defineSystemCommand<Flags, Result>({
   async handler() {
     const reader = platform.logs;
     if (!reader) {
-      return {
-        ok: false,
-        error: "Log reader not available. Ensure platform is initialized.",
-      };
+      throwSystemCommandError("Log reader not available. Ensure platform is initialized.", "Run `kb logs stats --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const stats = await reader.getStats();
     const caps = reader.getCapabilities();
 
     return {
-      ok: true,
+
       capabilities: caps,
       buffer: stats.buffer
         ? {
@@ -97,20 +97,6 @@ export const logsStats = defineSystemCommand<Flags, Result>({
     };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui.json(result);
-      return;
-    }
-
-    if (!result.ok) {
-      const error =
-        typeof result.error === "string" ? result.error : "Unknown error";
-      ctx.ui.error("Log Stats", {
-        sections: [{ header: "Error", items: [error] }],
-      });
-      return;
-    }
-
     const sections: Array<{ header: string; items: string[] }> = [];
 
     const caps = result.capabilities;

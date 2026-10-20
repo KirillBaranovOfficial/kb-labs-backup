@@ -9,7 +9,7 @@
  *   pnpm kb agent trace diagnose --task-id=<id> --json
  */
 
-import { defineCommand, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import type { TraceCommandResponse, TraceErrorCode, DetailedTraceEntry } from '@kb-labs/agent-contracts';
 import { loadTrace, formatTraceLoadError } from '@kb-labs/agent-tracing';
 import { normalizeTraceEvents } from './trace-event-normalizer.js';
@@ -131,7 +131,7 @@ export default defineCommand({
   description: 'Quick diagnostic analysis — answers "what went wrong?" in one command',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: TraceDiagnoseInput): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: TraceDiagnoseInput): Promise<CommandResult> {
       const flags: TraceDiagnoseInput =
         (typeof input === 'object' && input !== null && 'flags' in input)
           ? (input as { flags: TraceDiagnoseInput }).flags
@@ -141,25 +141,23 @@ export default defineCommand({
       try {
         const loaded = await loadTrace(taskId);
         if (!loaded.ok) {
-          ctx.ui?.json?.(mkError('INVALID_TASK_ID', formatTraceLoadError(loaded.error)));
-          return { ok: false, error: 'Command failed' };
+          return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: formatTraceLoadError(loaded.error), hint: 'Check the task ID, then rerun `kb agents trace diagnose --task-id <id>`.' } };
         }
         const events = loaded.events;
 
         const report = analyzeDiagnostics(taskId ?? '', events);
-
+        const criticalIssues = report.issues.filter((issue) => issue.severity === 'critical');
+        const outcome: CommandResult = criticalIssues.length > 0
+          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${criticalIssues.length} critical trace issue(s) were found.`, hint: 'Review the diagnostic report, then rerun `kb agents trace diagnose --task-id <id>`.', diagnostics: criticalIssues.map((issue) => ({ code: 'KB_AGENT_TRACE_CRITICAL', severity: 'error', message: issue.message })) } }
+          : report;
         if (flags.json) {
-          ctx.ui?.json?.({ success: true, report });
-        } else {
-          printReport(ctx, report);
+          return criticalIssues.length > 0 ? outcome : { success: true, report };
         }
+        printReport(ctx, report);
 
-        return report.issues.some(i => i.severity === 'critical')
-          ? { ok: false, error: 'Command failed', result: report }
-          : { ok: true, result: report };
-      } catch {
-        ctx.ui?.json?.(mkError('TRACE_NOT_FOUND', `Trace not found: ${taskId}`));
-        return { ok: false, error: 'Command failed' };
+        return outcome;
+      } catch (err) {
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err instanceof Error ? err.message : String(err), hint: 'Check the task ID and trace file, then rerun `kb agents trace diagnose --task-id <id>`.' } };
       }
     },
   },
@@ -498,7 +496,7 @@ function analyzeDiagnostics(taskId: string, events: DetailedTraceEntry[]): Diagn
   };
 }
 
-function printReport(ctx: PluginContextV3, report: DiagnosticReport): void {
+function printReport(ctx: PluginCommandContextV3, report: DiagnosticReport): void {
   const { summary, issues, contextHealth, toolUsage, llmBehavior, loopDetection } = report;
 
   ctx.ui.write('\n');

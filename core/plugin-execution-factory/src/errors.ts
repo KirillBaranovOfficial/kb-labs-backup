@@ -7,7 +7,7 @@
  * ExecutionError interface in types.ts. This is intentional.
  */
 
-import type { ExecutionErrorCode, ExecutionError } from './types.js';
+import type { ExecutionErrorCode } from './types.js';
 
 /**
  * All known error codes for type guards.
@@ -17,7 +17,6 @@ const KNOWN_ERROR_CODES: Set<ExecutionErrorCode> = new Set([
   'TIMEOUT',
   'ABORTED',
   'PERMISSION_DENIED',
-  'HANDLER_ERROR',
   'HANDLER_CONTRACT_ERROR',
   'HANDLER_NOT_FOUND',
   'WORKSPACE_ERROR',
@@ -27,7 +26,9 @@ const KNOWN_ERROR_CODES: Set<ExecutionErrorCode> = new Set([
   'QUEUE_FULL',
   'ACQUIRE_TIMEOUT',
   'WORKER_CRASHED',
+  'WORKER_START_FAILED',
   'WORKER_UNHEALTHY',
+  'WORKER_UNAVAILABLE',
 ]);
 
 /**
@@ -58,17 +59,6 @@ export class ExecutionLayerError extends Error {
     this.details = details;
   }
 
-  /**
-   * Convert to ExecutionError interface for serialization.
-   */
-  toJSON(): ExecutionError {
-    return {
-      message: this.message,
-      code: this.code,
-      stack: this.stack,
-      details: this.details,
-    };
-  }
 }
 
 /**
@@ -234,4 +224,27 @@ export class WorkerUnhealthyError extends ExecutionLayerError {
     this.workerId = workerId;
     this.reason = reason;
   }
+}
+
+/** No worker is currently available and pool maintenance cannot replace one. */
+export class WorkerUnavailableError extends ExecutionLayerError {
+  constructor(failure: WorkerFailureDiagnostic) {
+    super('No worker is available and worker startup is failing', 'WORKER_UNAVAILABLE', {
+      failureCode: failure.code,
+      failureMessage: failure.message,
+      failureAttempt: failure.attempt,
+      retryInMs: failure.retryInMs,
+      failedAt: failure.at,
+    });
+    this.name = 'WorkerUnavailableError';
+  }
+}
+
+/** Sanitized pool failure shared by health and user-facing unavailable errors. */
+export interface WorkerFailureDiagnostic {
+  code: 'WORKER_START_FAILED' | 'WORKER_CRASHED' | 'WORKER_TREE_UNVERIFIED';
+  message: string;
+  at: string;
+  attempt: number;
+  retryInMs: number;
 }

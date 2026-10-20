@@ -8,7 +8,6 @@ import {
 } from '@kb-labs/shared-http';
 import type { ILogger } from '@kb-labs/core-platform';
 import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/core-contracts';
-import type { JwtConfig } from '@kb-labs/gateway-auth';
 import type { RegistryService } from '@kb-labs/marketplace-registry-core';
 import { registerPackageRoutes } from './routes/packages.js';
 import { createRegistryAuthMiddleware } from './auth-middleware.js';
@@ -18,7 +17,7 @@ export interface RegistryServerOptions {
   host?: string;
   logger: ILogger;
   registry: RegistryService;
-  jwtConfig?: JwtConfig;
+  internalSecret?: string;
 }
 
 /**
@@ -41,7 +40,7 @@ function wrapObservability(collector: HttpObservabilityCollector): Observability
 }
 
 export async function createRegistryServer(opts: RegistryServerOptions): Promise<FastifyInstance> {
-  const { logger, registry, jwtConfig } = opts;
+  const { logger, registry, internalSecret } = opts;
 
   const collector = new HttpObservabilityCollector({
     serviceId: 'marketplace-registry',
@@ -55,6 +54,8 @@ export async function createRegistryServer(opts: RegistryServerOptions): Promise
     serviceId: 'marketplace-registry',
     logger,
     observability,
+    onRequest: createRegistryAuthMiddleware(internalSecret),
+    standardRouteConfig: { registryAccess: 'user' },
     // Preserve the legacy /health contract { status:'ok', service, ts } — e2e RG-H01.
     healthResponse: () => ({ status: 'ok', service: 'marketplace-registry', ts: Date.now() }),
     // /ready must return { ready, components } — e2e RG-H02 asserts body.ready === true.
@@ -99,10 +100,6 @@ export async function createRegistryServer(opts: RegistryServerOptions): Promise
 
       app.decorate('registry', registry);
       app.decorate('observability', collector);
-
-      if (jwtConfig) {
-        app.addHook('onRequest', createRegistryAuthMiddleware(jwtConfig));
-      }
 
       await collector.observeOperation('marketplace-registry.bootstrap', () =>
         registerPackageRoutes(app, registry),

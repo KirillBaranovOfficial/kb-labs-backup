@@ -27,8 +27,8 @@ Test cases are stored in `tests/benchmarks/test-cases/`:
 
 ### Results
 
-Latest benchmark results are saved to:
-- `latest-results.json` - Most recent run
+`pnpm test:benchmarks` saves results to:
+- `latest-results.json` - Most recent benchmark run (ordinary `vitest run` leaves it untouched)
 - `baseline-results.json` - Baseline before improvements (Phase 1)
 - `improved-results.json` - Results after pattern detection (Phase 2+)
 

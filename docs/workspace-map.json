@@ -891,7 +891,7 @@
             },
             {
               "name": "@kb-labs/adapters-analytics-file",
-              "description": "File-based analytics adapter for KB Labs platform (writes JSONL to .kb/analytics/buffer)",
+              "description": "File-based analytics adapter for KB Labs platform (writes JSONL to <KB_HOME>/state/<projectId>/analytics/buffer)",
               "version": "0.4.0",
               "path": "infra/kb-labs-adapters/packages/adapters-analytics-file",
               "private": false
@@ -960,13 +960,6 @@
               "private": false
             },
             {
-              "name": "@kb-labs/adapters-pino-http",
-              "description": "Pino HTTP transport for streaming logs to REST API",
-              "version": "0.4.0",
-              "path": "infra/kb-labs-adapters/packages/adapters-pino-http",
-              "private": false
-            },
-            {
               "name": "@kb-labs/adapters-qdrant",
               "description": "Qdrant adapter implementing IVectorStore interface",
               "version": "0.4.0",
@@ -992,13 +985,6 @@
               "description": "SQLite adapter implementing ISQLDatabase interface",
               "version": "0.4.0",
               "path": "infra/kb-labs-adapters/packages/adapters-sqlite",
-              "private": false
-            },
-            {
-              "name": "@kb-labs/adapters-transport",
-              "description": "Transport adapters for inter-process communication (IPC, Unix Sockets)",
-              "version": "0.4.0",
-              "path": "infra/kb-labs-adapters/packages/adapters-transport",
               "private": false
             },
             {

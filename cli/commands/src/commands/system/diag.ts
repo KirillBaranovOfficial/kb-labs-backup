@@ -10,7 +10,7 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../utils/generate-examples';
 import { registry } from '../../registry/service';
-import { discoverManifests, discoverManifestsDetailed } from '../../registry/discover';
+import { getRegisteredDiscovery } from '../../registry/discovery-state.js';
 import { preflightManifests } from '../../registry/register';
 import { validateManifests } from '../../registry/schema';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
@@ -41,6 +41,7 @@ type DiagSummary = {
 };
 
 type DiagResult = CommandResult & {
+  status: 'healthy' | 'degraded' | 'unhealthy';
   diagnostics: DiagDetails[];
   summary: DiagSummary;
 };
@@ -57,6 +58,7 @@ type TraceStage = {
 
 /** Full result returned from runTrace(). */
 type CommandTraceResult = CommandResult & {
+  status: 'healthy' | 'degraded' | 'unhealthy';
   command: string;
   stages: TraceStage[];
   verdict: { rootCause: string; remediation?: string };
@@ -69,6 +71,7 @@ type TraceCtx = {
   platformRoot?: string;
   projectRoot?: string;
   registryOk?: boolean;        // set by runRegistryStage when command is confirmed available
+  registryNotFound?: boolean;  // set only when the requested path has no registry entry
   discoveryResult?: DiscoveryResult;
   lockEntry?: [string, MarketplaceEntry];
 };
@@ -114,13 +117,13 @@ async function tryLoadManifestForTrace(
   pkgName: string,
 ): Promise<ManifestLoadError | null> {
   try {
-    const mod = await import(pathToFileURL(manifestPath).href) as { manifest?: unknown; default?: unknown };
-    const raw = mod.manifest ?? mod.default;
+    const mod = await import(pathToFileURL(manifestPath).href) as { manifest?: unknown };
+    const raw = mod.manifest;
 
     if (!raw || typeof raw !== 'object') {
       return {
         code: 'NO_EXPORT',
-        message: 'No manifest export — add: export { manifest } or export default manifest',
+        message: 'No named manifest export — add: export const manifest = ...',
       };
     }
 
@@ -273,6 +276,7 @@ async function runRegistryStage(
   return {
     stage: 'registry', status: 'info', code: 'REGISTRY_NOT_FOUND',
     message: 'Command not in registry',
+    enrich: { registryNotFound: true },
   };
 }
 
@@ -280,8 +284,15 @@ async function runRegistryStage(
 async function runDiscoveryStage(
   ctx: TraceCtx,
 ): Promise<TraceStage & { enrich?: Partial<TraceCtx> }> {
-  const opts = { platformRoot: ctx.platformRoot, projectRoot: ctx.projectRoot };
-  const { results: discovered, diagnostics } = await discoverManifestsDetailed(ctx.cwd, opts);
+  const registration = await getRegisteredDiscovery();
+  if (!registration) {
+    return {
+      stage: 'discovery', status: 'error', code: 'DISCOVERY_RESULT_UNAVAILABLE',
+      message: 'CLI command discovery did not produce a result for this invocation.',
+      remediation: 'Run `kb --help` to retry command discovery.',
+    };
+  }
+  const { results: discovered, diagnostics } = registration;
 
   const [topSegment] = ctx.segments;
   const result = discovered.find(r => matchesTopSegment(r, topSegment ?? ''));
@@ -366,6 +377,16 @@ async function runDiscoveryStage(
     };
   }
 
+  if (ctx.registryNotFound) {
+    return {
+      stage: 'discovery', status: 'error', code: 'COMMAND_REGISTRATION_MISSING',
+      message: `Discovery found "${commandPath}" in ${result.packageName}, but the command was not registered for dispatch.`,
+      remediation: 'Run `kb --help` to retry command discovery.',
+      details: { packageName: result.packageName, scope: result.scope },
+      enrich: { discoveryResult: result },
+    };
+  }
+
   return {
     stage: 'discovery', status: 'ok', code: 'MANIFEST_OK',
     message: `Manifest loaded and command "${commandPath}" is defined`,
@@ -378,7 +399,7 @@ async function runLockStage(
   ctx: TraceCtx,
 ): Promise<TraceStage & { enrich?: Partial<TraceCtx> }> {
   const collector = new DiagnosticCollector();
-  const lock = await readMarketplaceLock(ctx.cwd, collector);
+  const lock = await readMarketplaceLock(ctx.cwd, collector, 'project');
 
   if (!lock) {
     // Registry already confirmed the command — no lock is fine for workspace plugins
@@ -392,7 +413,7 @@ async function runLockStage(
   }
 
   const [topSegment] = ctx.segments;
-  const entry = findLockEntry(lock.installed, topSegment ?? '');
+  const entry = findLockEntry(lock.plugins, topSegment ?? '');
 
   if (!entry) {
     // Command already confirmed available from registry — not being in the lock is fine
@@ -480,7 +501,7 @@ async function runTrace(ctx: TraceCtx): Promise<CommandTraceResult> {
     if (enrich) { Object.assign(ctx, enrich); }
   }
 
-  const failing =
+    const failing =
     stages.find(s => s.status === 'error') ??
     stages.find(s => s.status === 'warning');
 
@@ -492,15 +513,17 @@ async function runTrace(ctx: TraceCtx): Promise<CommandTraceResult> {
       : { rootCause: 'NONE' },
   };
 
-  return failing
-    ? { ok: false, error: failing.message, ...result }
-    : { ok: true, ...result };
+  const status = stages.some((stage) => stage.status === 'error') ? 'unhealthy' : failing ? 'degraded' : 'healthy';
+  return {  status, ...result };
 }
 
 // ── Command ────────────────────────────────────────────────────────────────────
 
 export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResult>({
   name: 'diag',
+  scope: 'platform',
+  authProtection: 'public',
+  jsonTest: { noSafeValidPath: "This command probes local services and system state that the unit fixture does not start." },
   description: 'Comprehensive system diagnostics (plugins, environment, versions)',
   category: 'info',
   examples: generateExamples('diag', 'kb', [
@@ -549,43 +572,54 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
     // 2. Plugin discovery
     let discovered: DiscoveryResult[] = [];
     try {
-      discovered = await discoverManifests(cwd, { platformRoot, projectRoot });
-      const allCommands = registry.listCommands();
-      const enabled = allCommands.filter(m => m.available && !m.shadowed).length;
-      const disabled = allCommands.filter(m => !m.available && !m.shadowed).length;
-      const shadowed = allCommands.filter(m => m.shadowed).length;
-
-      diagnostics.push({
-        category: 'marketplace',
-        status: disabled > 0 ? 'warning' : 'ok',
-        message: `Found ${discovered.length} packages, ${enabled} enabled, ${disabled} unavailable, ${shadowed} shadowed`,
-        details: { packages: discovered.length, enabled, disabled, shadowed, totalCommands: allCommands.length },
-      });
-
-      // Per-command unavailability breakdown
-      for (const cmd of allCommands.filter(m => !m.available && !m.shadowed)) {
+      const registration = await getRegisteredDiscovery();
+      if (!registration) {
+        const error = 'CLI command discovery did not produce a result for this invocation.';
         diagnostics.push({
-          category: 'unavailable-command',
-          status: 'warning',
-          message: `${cmd.manifest.segments.join(' ')}: ${cmd.unavailableReason ?? 'unavailable'}`,
-          code: 'REQUIRES_MISSING',
-          remediation: cmd.hint,
-          details: { source: cmd.source, package: cmd.packageName ?? null },
+          category: 'marketplace',
+          status: 'error',
+          message: `Discovery failed: ${error}`,
+          details: { error },
         });
-      }
+      } else {
+        discovered = registration.results;
+        const allCommands = registry.listCommands();
+        const enabled = allCommands.filter(m => m.available && !m.shadowed).length;
+        const disabled = allCommands.filter(m => !m.available && !m.shadowed).length;
+        const shadowed = allCommands.filter(m => m.shadowed).length;
 
-      // Synthetic manifest failures
-      for (const result of discovered) {
-        for (const manifest of result.manifests) {
-          if (manifest._synthetic) {
-            diagnostics.push({
-              category: 'manifest-load-failure',
-              status: 'error',
-              message: `${result.packageName}: manifest failed to load`,
-              code: 'MANIFEST_LOAD_FAILED',
-              remediation: `pnpm --filter ${result.packageName} build`,
-              details: { source: result.source, manifestPath: result.manifestPath },
-            });
+        diagnostics.push({
+          category: 'marketplace',
+          status: disabled > 0 ? 'warning' : 'ok',
+          message: `Found ${discovered.length} packages, ${enabled} enabled, ${disabled} unavailable, ${shadowed} shadowed`,
+          details: { packages: discovered.length, enabled, disabled, shadowed, totalCommands: allCommands.length },
+        });
+
+        // Per-command unavailability breakdown
+        for (const cmd of allCommands.filter(m => !m.available && !m.shadowed)) {
+          diagnostics.push({
+            category: 'unavailable-command',
+            status: 'warning',
+            message: `${cmd.manifest.segments.join(' ')}: ${cmd.unavailableReason ?? 'unavailable'}`,
+            code: 'REQUIRES_MISSING',
+            remediation: cmd.hint,
+            details: { source: cmd.source, package: cmd.packageName ?? null },
+          });
+        }
+
+        // Synthetic manifest failures
+        for (const result of discovered) {
+          for (const manifest of result.manifests) {
+            if (manifest._synthetic) {
+              diagnostics.push({
+                category: 'manifest-load-failure',
+                status: 'error',
+                message: `${result.packageName}: manifest failed to load`,
+                code: 'MANIFEST_LOAD_FAILED',
+                remediation: `pnpm --filter ${result.packageName} build`,
+                details: { source: result.source, manifestPath: result.manifestPath },
+              });
+            }
           }
         }
       }
@@ -602,7 +636,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
     // 3. Marketplace lock — also surface DiagnosticCollector events
     try {
       const collector = new DiagnosticCollector();
-      const lock = await readMarketplaceLock(cwd, collector);
+      const lock = await readMarketplaceLock(cwd, collector, 'project');
 
       for (const event of collector.getEvents()) {
         if (event.severity === 'error' || event.severity === 'warning') {
@@ -618,7 +652,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
       }
 
       if (lock) {
-        const entries = Object.entries(lock.installed);
+        const entries = Object.entries(lock.plugins);
         const enabledCount = entries.filter(([, e]) => e.enabled !== false).length;
         const disabledCount = entries.length - enabledCount;
         diagnostics.push({
@@ -685,25 +719,17 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
 
     ctx.platform?.logger?.info('Diag command completed', summary);
 
-    return summary.errors === 0
-      ? { ok: true, diagnostics, summary }
-      : { ok: false, error: `${summary.errors} diagnostic error(s) found`, diagnostics, summary };
+    const status = summary.errors > 0 ? 'unhealthy' : summary.warnings > 0 ? 'degraded' : 'healthy';
+    return {  status, diagnostics, summary };
   },
 
   // eslint-disable-next-line sonarjs/cognitive-complexity
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui?.json?.(result);
-      return;
-    }
-
     // ── Trace mode output ──────────────────────────────────────────────────────
     if ('stages' in result) {
       const trace = result as CommandTraceResult;
-      const verdictStatus = trace.ok ? 'success' : 'error' as const;
-      const verdictMsg = trace.ok
-        ? 'Command is fully operational'
-        : `Root cause: ${trace.verdict.rootCause}`;
+      const verdictStatus = trace.status === 'healthy' ? 'success' : trace.status === 'degraded' ? 'warning' : 'error';
+      const verdictMsg = trace.status === 'healthy' ? 'Command is fully operational' : `Root cause: ${trace.verdict.rootCause}`;
 
       ctx.ui.chain([
         ...trace.stages.map(stageToChainItem),
@@ -765,9 +791,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
       { header: 'Next Steps', items: nextSteps },
     ];
 
-    if (hasErrors) {
-      ctx.ui.error('System Diagnostics', { sections });
-    } else if (hasWarnings) {
+    if (hasErrors || hasWarnings) {
       ctx.ui.warn('System Diagnostics', { sections });
     } else {
       ctx.ui.success('System Diagnostics', { sections });

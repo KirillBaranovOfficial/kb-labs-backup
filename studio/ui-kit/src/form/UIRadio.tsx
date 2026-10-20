@@ -2,6 +2,7 @@
  * UIRadio component - Radio button
  *
  * Wraps Ant Design Radio and Radio.Group.
+  * @demoArgs {"children":"REST API","checked":true}
  */
 
 import * as React from 'react';

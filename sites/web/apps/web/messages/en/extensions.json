@@ -14,14 +14,14 @@
       {
         "title": "Studio",
         "description": "A local visual workspace for observing runs, logs, and plugin surfaces after you start the services.",
-        "command": "kb-dev start  →  http://127.0.0.1:3000",
+        "command": "Developer workspace: kb-dev start  →  http://127.0.0.1:3000",
         "note": "Optional. The CLI remains fully usable without it."
       },
       {
         "title": "MCP",
         "description": "Expose KB Labs tools to an MCP-compatible coding agent running on your machine.",
-        "command": "MCP server  →  localhost:7779",
-        "note": "Optional. Add it only when an agent needs this integration."
+        "command": "kb mcp config claude",
+        "note": "Print project-scoped MCP configuration for Claude Code, Codex, or Cursor."
       },
       {
         "title": "Workflows",

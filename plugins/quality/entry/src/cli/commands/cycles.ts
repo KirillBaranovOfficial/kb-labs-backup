@@ -4,7 +4,7 @@
  * Uses DFS to find all circular dependency chains in the monorepo.
  */
 
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import {
   buildDependencyGraph,
   findCircularDependencies,
@@ -22,7 +22,7 @@ export default defineCommand({
   description: 'Detect circular dependencies in monorepo',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CyclesInput): Promise<CommandResult<{ cycles: string[][] }>> {
+    async execute(ctx: PluginCommandContextV3, input: CyclesInput): Promise<CommandResult<{ cycles: string[][] }>> {
       const { ui } = ctx;
 
       // V3: Flags may come wrapped in input.flags or passed directly
@@ -40,8 +40,8 @@ export default defineCommand({
       outputCycles(cycles, flags, ui);
 
       return cycles.length > 0
-        ? { ok: false, error: 'Circular dependencies found', result: { cycles } }
-        : { ok: true, result: { cycles } };
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Circular dependencies found', hint: 'Review the dependency cycles, then rerun `kb quality cycles`.', diagnostics: cycles.map((cycle) => ({ code: 'KB_QUALITY_DEPENDENCY_CYCLE', severity: 'error', message: cycle.join(' -> ') })) } }
+        : { cycles };
     },
   },
 });
@@ -49,9 +49,8 @@ export default defineCommand({
 /**
  * Output circular dependencies
  */
-function outputCycles(cycles: string[][], flags: Record<string, unknown>, ui: PluginContextV3['ui']) {
+function outputCycles(cycles: string[][], flags: Record<string, unknown>, ui: PluginCommandContextV3['ui']) {
   if (flags.json) {
-    ui?.json?.({ cycles, count: cycles.length });
     return;
   }
 
@@ -114,8 +113,4 @@ function outputCycles(cycles: string[][], flags: Record<string, unknown>, ui: Pl
     ],
   });
 
-  ui?.error?.('Circular dependencies detected', {
-    title: `⚠️ Circular Dependencies Detected (${cycles.length})`,
-    sections,
-  });
 }

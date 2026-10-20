@@ -1,11 +1,13 @@
 ---
 title: "Studio"
 description: "The KB Labs web UI — a React app that hosts plugin pages via Module Federation."
-updatedAt: "2026-04-07"
+updatedAt: "2026-09-30"
 order: 3
 ---
 
-Studio is the web-based dashboard for KB Labs. It's a React SPA built with [rspack](https://rspack.dev) and Ant Design, fronted by the platform's data client and federation layer. Studio talks to the REST API, the workflow daemon, and the marketplace service over HTTP and WebSocket; it also dynamically loads plugin-authored pages at runtime via Module Federation.
+Studio is the web UI served by the machine gateway. Its same-origin data client talks to gateway health routes, host project and marketplace routes, and the selected project's runtime through `/api/v1/projects/{projectId}/…`.
+
+Access follows the platform mode. A local install binds the gateway to loopback and opens Studio without a login. A secured install requires a gateway session; members can use projects and their pages, while admin pages require admin permissions.
 
 Source lives in [studio/](studio/).
 
@@ -13,13 +15,14 @@ Source lives in [studio/](studio/).
 
 - **Workflow runs** — browse, inspect, and trigger runs; watch jobs and steps as they execute; resolve approvals.
 - **Plugin pages** — every plugin that declares a `studio` block in its manifest gets its own page or menu entry. Studio loads those pages dynamically as Module Federation remotes.
-- **System status** — health of services, adapter registration, log streams, metrics dashboards.
-- **Marketplace** — browse installed entities, install new ones, enable/disable plugins.
+- **Projects** — choose the active project used by project-scoped screens; the choice is saved in this browser.
+- **System status** — gateway health and readiness, plus project-scoped runtime logs and events.
+- **Marketplace** — browse extension metadata and manage project plugin enablement.
 - **Analytics dashboards** — charts and time-series views over the analytics adapter (events per day, LLM cost trends, cache hit rates, etc.).
 
 ## Stack
 
-The app lives under [`apps/studio/`](studio/app/). Core dependencies:
+The app lives under [`studio/app/`](studio/app/). Core dependencies:
 
 - **React** + Ant Design (`antd`, `@ant-design/charts`, `@ant-design/plots`, `@ant-design/icons`) — component library and charts.
 - **rspack** — the build tool (fast Rust-based bundler, webpack-compatible).
@@ -34,7 +37,7 @@ The Studio monorepo has several supporting packages:
 
 | Package | Purpose |
 |---|---|
-| `@kb-labs/studio-data-client` | HTTP + WebSocket client for the REST API, workflow daemon, and marketplace. Wraps fetch with correlation IDs, retries, and typed responses. |
+| `@kb-labs/studio-data-client` | HTTP client for gateway APIs and project-runtime routes, with typed data sources and hooks. |
 | `@kb-labs/studio-federation` | Module Federation runtime — loads plugin remotes at startup based on the manifest registry. |
 | `@kb-labs/studio-hooks` | React hooks for data fetching: `useData`, `useMutate`, `useSSE`, `useWebSocket`, etc. |
 | `@kb-labs/studio-event-bus` | In-app event bus for decoupled component communication. |
@@ -73,7 +76,7 @@ studio: {
 }
 ```
 
-At Studio startup, the federation layer discovers installed plugins via the REST API's plugin listing, reads each plugin's `studio` config, and loads the corresponding remote bundle. Pages are mounted at the declared routes; menus are added to the sidebar.
+At Studio startup, the federation layer discovers available plugin page metadata and loads remote bundles for enabled project plugins. Pages are mounted at their declared routes; menus are added to the sidebar.
 
 **`remoteName`** is the Module Federation remote identifier — what Studio uses to load the bundle. **`entry`** is the exposed module path inside that remote. **`route`** is the URL path where the page mounts in the Studio SPA.
 
@@ -108,30 +111,24 @@ Plugin pages get a scoped SDK via `@kb-labs/studio-plugin-tools` and `@kb-labs/s
 ### Dev mode
 
 ```bash
-cd studio/app
-pnpm dev
+pnpm --filter @kb-labs/studio-app dev
 ```
 
-rspack starts a dev server with HMR. The default port is 3000 (configurable in `rspack.config.*`). The app connects to the gateway at `http://localhost:4000` by default — edit the dev server config or set env vars to point at a different gateway.
-
-Or via `kb-dev`:
-
-```bash
-kb-dev start studio
-```
+rspack starts a development server with HMR. The frontend dev server is for UI work; API requests still need a running gateway. For an installed platform, open Studio at the gateway address.
 
 ### Production build
 
 ```bash
-cd studio/app
-pnpm build
+pnpm --filter @kb-labs/studio-app build
 ```
 
 Outputs a static bundle to `dist/`. Serve with any static host (nginx, Caddy, Vercel, or — in development — `pnpm preview`).
 
 ## Talking to services
 
-Studio doesn't talk to the REST API, workflow daemon, and marketplace directly — it goes through the **gateway**. The gateway aggregates upstream services under a single origin, handles authentication, and terminates CORS.
+Studio sends browser requests to the **gateway** under one origin. Gateway health routes use `/api/health`, `/api/ready`, and `/api/observability/health`; host APIs use `/api/v1/projects` and `/api/v1/plugins`.
+
+Project runtime requests include the active project id and service id. For example, a project's logs are requested through `/api/v1/projects/{projectId}/rest/logs`; the gateway starts that project's runtime on demand and forwards the request. Studio does not send project data to an unscoped `/api/v1/logs` URL.
 
 This is important for plugin pages too: when a plugin page calls `useData('/api/v1/plugins/mind/search')`, it's calling the gateway, which routes to the REST API, which executes the plugin's REST handler. Everything stays behind one origin from the browser's perspective.
 

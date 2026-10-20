@@ -6,7 +6,7 @@ import { WORKFLOW } from '../../fixtures/urls.js';
 type WorkflowEntry = { id?: string; name?: string };
 type RunEntry = { id?: string; runId?: string; status?: string; createdAt?: string };
 
-const TERMINAL_STATUSES = ['success', 'completed', 'failed', 'cancelled', 'error'] as const;
+const TERMINAL_STATUSES = ['success', 'failed', 'cancelled', 'skipped', 'dlq'] as const;
 type TerminalStatus = typeof TERMINAL_STATUSES[number];
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ test('J-01: run → reaches success within 30s', async ({ request }) => {
   test.skip(!runId, 'could not start workflow run');
 
   const finalStatus = await pollUntilTerminal(request, runId!, 30_000);
-  expect(finalStatus).toMatch(/^(success|completed)$/);
+  expect(finalStatus).toBe('success');
 
   // Verify the detail response still returns the correct runId
   const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`);
@@ -109,7 +109,7 @@ test('J-02: run → cancel → status is cancelled or failed', async ({ request 
 
   // Poll until terminal regardless of whether the cancel was accepted
   const finalStatus = await pollUntilTerminal(request, runId!, 15_000);
-  expect(finalStatus).toMatch(/^(cancelled|failed|success|completed)$/);
+  expect(finalStatus).toMatch(/^(cancelled|failed|success)$/);
 });
 
 // ── J-03: run → view detail → required fields present ────────────────────────

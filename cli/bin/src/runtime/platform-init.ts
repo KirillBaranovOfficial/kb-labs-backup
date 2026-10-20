@@ -5,20 +5,21 @@
  * `@kb-labs/core-runtime`. The shared loader is responsible for resolving
  * `platformRoot` and `projectRoot`, loading the `.env` file, reading both
  * platform defaults and project config, and deep-merging them. This file
- * only adds CLI-specific concerns: the UI provider, lifecycle hooks, and
- * NoOp fallback on failure.
+ * only adds CLI-specific concerns: the UI provider and lifecycle hooks.
  */
 
 import { createHash } from "node:crypto";
 import {
   initPlatform,
-  loadPlatformConfig,
+  loadPlatformConfig as readPlatformConfig,
   platform,
-  type PlatformConfig,
+  requireProjectContext,
   type PlatformContainer,
   type PlatformLifecycleContext,
   type PlatformLifecycleHooks,
   type PlatformLifecyclePhase,
+  type LoadPlatformConfigResult,
+  isWorkspaceDevelopmentMode,
 } from "@kb-labs/core-runtime";
 import { findRepoRoot } from "@kb-labs/core-sys";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
@@ -50,7 +51,6 @@ function ensureLifecycleHooksRegistered(): void {
       lifecycleLogger().debug("Platform lifecycle: start", {
         app: "cli",
         cwd: ctx.cwd,
-        isChildProcess: ctx.isChildProcess,
       });
     },
     onReady: (ctx: PlatformLifecycleContext) => {
@@ -88,23 +88,13 @@ function createCLIUIProvider(): (hostType: string) => UIFacade {
   };
 }
 
-export interface PlatformInitResult {
+export type PlatformInitResult = LoadPlatformConfigResult & {
   /** The initialized platform singleton. */
   platform: PlatformContainer;
-  /** The merged effective platform config. */
-  platformConfig: PlatformConfig;
-  /** Full raw project config (for `useConfig()` access). */
-  rawConfig?: Record<string, unknown>;
-  /** Raw config with `.kb/overlays/` applied — what `useConfig()` should read. */
-  effectiveConfig?: Record<string, unknown>;
-  /** Where the KB Labs platform code lives (node_modules/@kb-labs/*). */
-  platformRoot: string;
-  /** Where the user's `.kb/kb.config.json` lives. */
-  projectRoot: string;
-}
+};
 
 /**
- * Initialize the platform for the CLI process.
+ * Read platform or project configuration without constructing adapters.
  *
  * @param cwd        Starting directory for project-root discovery
  *                   (typically `process.cwd()`).
@@ -112,12 +102,11 @@ export interface PlatformInitResult {
  *                   the platform installation in installed mode without
  *                   guessing `..` levels. Optional in dev mode.
  */
-export async function initializePlatform(
+export async function loadPlatformConfiguration(
   cwd: string,
   moduleUrl?: string,
-): Promise<PlatformInitResult> {
-  ensureLifecycleHooksRegistered();
-
+  projectScope: 'required' | 'platform' = 'platform',
+): Promise<LoadPlatformConfigResult> {
   // Mirror daemon.ts: derive KB_SOCKET_HASH before config is loaded so
   // ${KB_SOCKET_HASH} placeholders in socket paths resolve without warnings.
   // kb-dev sets it as a real env var for managed services; the CLI derives the
@@ -131,128 +120,80 @@ export async function initializePlatform(
       .slice(0, 8);
   }
 
-  const uiProvider = createCLIUIProvider();
+  return readPlatformConfig({
+    moduleUrl,
+    startDir: cwd,
+    projectScope,
+  });
+}
 
-  // Load config outside of the adapter-init try/catch so rawConfig survives
-  // even when initPlatform fails (e.g. Redis/Qdrant not running in dev).
-  let loadResult: Awaited<ReturnType<typeof loadPlatformConfig>> | undefined;
-  try {
-    loadResult = await loadPlatformConfig({
-      moduleUrl,
-      startDir: cwd,
-    });
-  } catch {
-    // Config file missing or unreadable — proceed with full fallback below.
+/** Initialize the platform's adapters exactly once from an already-resolved scope. */
+export async function initializePlatform(
+  loadResult: LoadPlatformConfigResult,
+  options: { skipAdapterInitialization?: boolean } = {},
+): Promise<PlatformInitResult> {
+  const {
+    platformConfig,
+    rawConfig,
+    platformRoot,
+    projectRoot,
+    sources,
+  } = loadResult;
+  const adapterProjectRoot = loadResult.projectScope === 'platform'
+    ? platformRoot
+    : requireProjectContext(projectRoot);
+  if (options.skipAdapterInitialization) {
+    return { ...loadResult, platform };
   }
-
-  if (loadResult) {
-    const {
-      platformConfig,
-      rawConfig,
-      effectiveConfig,
-      platformRoot,
-      projectRoot,
-      sources,
-    } = loadResult;
-    try {
-      // Relative adapter paths (e.g. ".kb/database/kb.sqlite") must resolve
-      // against the project root — this is where the user's .kb/ lives.
-      // Pass platformRoot so initPlatform finds marketplace.lock in the
-      // right place when platform is installed separately from the project.
-      const platformInstance = await initPlatform(
-        platformConfig,
-        projectRoot,
-        uiProvider,
-        platformRoot !== projectRoot ? platformRoot : undefined,
-        makeAssemblyHook(() =>
-          process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-        ),
-      );
-
-      platformInstance.logger.info("Platform adapters initialized", {
-        layer: "cli",
-        service: LOG_SERVICE,
-        platformRoot,
-        projectRoot,
-        sources,
-        adapters: Object.keys(platformConfig.adapters ?? {}),
-        hasAdapterOptions: !!platformConfig.adapterOptions,
-      });
-
-      if (process.env.KB_DEBUG === "true") {
-        platformInstance.logger.debug("kb.diag.config", {
-          event: "kb.diag.config",
-          v: 1,
-          data: {
-            platformConfigPath: sources.platformDefaults,
-            projectConfigPath: sources.projectConfig,
-            overlayPaths: sources.overlays ?? [],
-            fieldSources: sources.fields ?? {},
-            ignoredProjectFields: sources.ignoredProjectFields ?? [],
-          },
-          ts: Date.now(),
-        });
-      }
-
-      return {
-        platform: platformInstance,
-        platformConfig,
-        rawConfig,
-        effectiveConfig,
-        platformRoot,
-        projectRoot,
-      };
-    } catch (error) {
-      // Adapters failed to connect (Redis/Qdrant/MongoDB not running in dev).
-      // Fall back to NoOp adapters but preserve rawConfig so useConfig() works.
-      const fallbackConfig: PlatformConfig = { adapters: {} };
-      const platformInstance = await initPlatform(
-        fallbackConfig,
-        projectRoot,
-        uiProvider,
-        undefined,
-        makeAssemblyHook(() =>
-          process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-        ),
-      );
-      platformInstance.logger.warn(
-        "Platform adapters failed, using NoOp adapters",
-        {
-          layer: "cli",
-          service: LOG_SERVICE,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-      return {
-        platform: platformInstance,
-        platformConfig: fallbackConfig,
-        rawConfig,
-        effectiveConfig,
-        platformRoot,
-        projectRoot,
-      };
-    }
-  }
-
-  // Full fallback: config could not be loaded at all.
-  const fallbackConfig: PlatformConfig = { adapters: {} };
+  ensureLifecycleHooksRegistered();
   const platformInstance = await initPlatform(
-    fallbackConfig,
-    cwd,
-    uiProvider,
-    undefined,
-    makeAssemblyHook(() =>
-      process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-    ),
+      platformConfig,
+      adapterProjectRoot,
+      createCLIUIProvider(),
+      platformRoot !== adapterProjectRoot ? platformRoot : undefined,
+    {
+      assemblyHook: makeAssemblyHook(() =>
+        process.env.KB_DEBUG === "true" ? platform.logger : undefined,
+      ),
+      workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
+    },
   );
-  platformInstance.logger.warn(
-    "Platform initialization failed, using NoOp adapters",
-    { layer: "cli", service: LOG_SERVICE },
-  );
-  return {
-    platform: platformInstance,
-    platformConfig: fallbackConfig,
-    platformRoot: cwd,
-    projectRoot: cwd,
-  };
+
+  platformInstance.logger.info("Platform adapters initialized", {
+    layer: "cli",
+    service: LOG_SERVICE,
+    platformRoot,
+    projectRoot,
+    sources,
+    adapters: Object.keys(platformConfig.adapters ?? {}),
+    hasAdapterOptions: !!platformConfig.adapterOptions,
+  });
+
+  if (process.env.KB_DEBUG === "true") {
+    platformInstance.logger.debug("kb.diag.config", {
+      event: "kb.diag.config",
+      v: 1,
+      data: {
+        platformConfigPath: sources.platformDefaults,
+        projectConfigPath: sources.projectConfig,
+        overlayPaths: sources.overlays ?? [],
+        fieldSources: sources.fields ?? {},
+        ignoredProjectFields: sources.ignoredProjectFields ?? [],
+      },
+      ts: Date.now(),
+    });
+  }
+
+  return { ...loadResult, platform: platformInstance };
+}
+
+/**
+ * Resolve the selected project's config and overlays before adapter
+ * construction so project-specific default paths use the selected project.
+ */
+export async function resolveProjectConfig(
+  cwd: string,
+  moduleUrl?: string,
+): Promise<LoadPlatformConfigResult> {
+  return loadPlatformConfiguration(cwd, moduleUrl, 'required');
 }

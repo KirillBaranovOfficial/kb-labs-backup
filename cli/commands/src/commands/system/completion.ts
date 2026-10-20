@@ -3,15 +3,16 @@
  * kb completion install         — bake static completions into shell profile (instant Tab)
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedFailure } from '@kb-labs/shared-command-kit';
 import { promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import type { TrieBackedRegistry } from '../../registry/service';
 
-type CompletionResult = CommandResult & { ok: boolean; status: string; script: string; shell: string };
-type InstallResult   = CommandResult & { ok: boolean; status: string; shell: string; profilePath: string; alreadyInstalled: boolean; aliasInstalled: boolean };
+type CompletionResult = { script: string; shell: string };
+type InstallResult = { shell: string; profilePath: string; alreadyInstalled: boolean; aliasInstalled: boolean };
+type RemoveResult = { shell: string; profilePath: string; removed: boolean; staticFileRemoved: boolean };
 
 const MARKER        = '# kb completion';
 const ALIAS_MARKER  = '# kb alias';
@@ -52,6 +53,14 @@ function dynamicScript(shell: string): string | null {
 
     default: return null;
   }
+}
+
+function unsupportedShell(shell: string): never {
+  throwSystemCataloguedFailure(
+    'KB_RUNTIME_INPUT_INVALID',
+    `Unsupported shell: ${shell}. Supported: bash, zsh, fish`,
+    'Run `kb completion bash`, `kb completion zsh`, or `kb completion fish`.',
+  );
 }
 
 // ─── Static zsh script generator ─────────────────────────────────────────────
@@ -136,6 +145,36 @@ async function collectTree(registry: TrieBackedRegistry): Promise<Map<string, Ma
   return tree;
 }
 
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+async function readFileIfPresent(filePath: string): Promise<string | undefined> {
+  try {
+    return await fs.readFile(filePath, 'utf8');
+  } catch (error) {
+    if (isMissingFile(error)) return undefined;
+    throw error;
+  }
+}
+
+async function removeInstallation(shell: string): Promise<RemoveResult> {
+  const rcPath = profilePath(shell);
+  const existing = await readFileIfPresent(rcPath) ?? '';
+  const updated = existing
+    .replaceAll(`\n${profileLine(shell)}\n`, '')
+    .replaceAll(`\n${aliasLine(shell)}\n`, '');
+  if (updated !== existing) await fs.writeFile(rcPath, updated, 'utf8');
+
+  let staticFileRemoved = false;
+  if (shell === 'zsh' && await readFileIfPresent(STATIC_FILE) !== undefined) {
+    await fs.unlink(STATIC_FILE);
+    staticFileRemoved = true;
+  }
+
+  return { shell, profilePath: rcPath, removed: updated !== existing, staticFileRemoved };
+}
+
 // ─── Shell helpers ────────────────────────────────────────────────────────────
 
 function detectShell(): string {
@@ -210,18 +249,29 @@ export async function autoUpdateCompletion(registry: TrieBackedRegistry): Promis
 export function createCompletionCommand(registry: TrieBackedRegistry) {
   return defineSystemCommand({
     name: 'completion',
+    scope: 'platform',
+  jsonTest: { safeArgs: ["bash"] },
     description: 'Generate or install shell completion',
     longDescription:
       'Print a shell completion script or bake a static one into your shell profile.\n\n' +
       'Usage:\n' +
       '  kb completion install   # auto-detect shell, write static file, add to profile\n' +
+      '  kb completion remove    # remove completion from the selected shell profile\n' +
       '  kb completion zsh       # print dynamic zsh script\n' +
       '  kb completion bash      # print dynamic bash script\n' +
       '  kb completion fish      # print dynamic fish script',
-    flags: {},
+    flags: {
+      json: { type: 'boolean', description: 'Output machine-readable JSON' },
+    },
 
     async handler(_ctx, argv) {
       const arg = argv[0];
+
+      if (arg === 'remove') {
+        const shell = argv[1] ?? detectShell();
+        if (!dynamicScript(shell)) unsupportedShell(shell);
+        return removeInstallation(shell);
+      }
 
       // ── install ────────────────────────────────────────────────────────────
       if (!arg || arg === 'install') {
@@ -253,18 +303,32 @@ export function createCompletionCommand(registry: TrieBackedRegistry) {
           await fs.appendFile(rcPath, `\n${aliasLine(shell)}\n`);
         }
 
-        return { ok: true, status: 'success', shell, profilePath: rcPath, alreadyInstalled, aliasInstalled: !aliasAlreadyInstalled } as InstallResult;
+        return { shell, profilePath: rcPath, alreadyInstalled, aliasInstalled: !aliasAlreadyInstalled } satisfies InstallResult;
       }
 
       // ── print dynamic script ───────────────────────────────────────────────
       const script = dynamicScript(arg);
-      if (!script) { throw new Error(`Unsupported shell: ${arg}. Supported: bash, zsh, fish`); }
-      return { ok: true, status: 'success', script, shell: arg } as CompletionResult;
+      if (!script) {
+        unsupportedShell(arg);
+      }
+      return { script, shell: arg };
     },
 
-    formatter(result) {
+    formatter(result, ctx, flags) {
       if ('script' in result) {
-        process.stdout.write(result.script + '\n');
+        {
+          process.stdout.write(result.script + '\n');
+        }
+        return;
+      }
+      if ('removed' in result) {
+        const r = result as RemoveResult;
+        process.stdout.write(r.removed
+          ? `✓ Removed completion from ${r.profilePath}\n`
+          : `Completion was not configured in ${r.profilePath}\n`);
+        if (r.staticFileRemoved) {
+          process.stdout.write(`✓ Removed static zsh completion from ${STATIC_FILE}\n`);
+        }
         return;
       }
       const r = result as InstallResult;

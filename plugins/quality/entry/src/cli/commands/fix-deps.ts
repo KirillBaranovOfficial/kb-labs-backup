@@ -9,8 +9,8 @@
  * Supports --dry-run via intent() for previewing changes without applying
  */
 
-import { defineCommand, validationError, type PluginContextV3, useLoader, type CLIInput, type CommandResult } from '@kb-labs/sdk';
-import type { UIFacade } from '@kb-labs/sdk';
+import { defineCommand, validationError, type PluginCommandContextV3, useLoader, type CLIInput, type CommandResult } from '@kb-labs/sdk';
+import type { PluginHandlerUIFacade } from '@kb-labs/sdk';
 import type { FixDepsFlags } from './flags.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,7 +41,7 @@ export default defineCommand({
   description: 'Auto-fix dependency issues',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<FixDepsFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<FixDepsFlags>) {
       const flags = input.flags;
       const removeUnused = flags['remove-unused'] || flags.all;
       const addMissing = flags['add-missing'] || flags.all;
@@ -77,7 +77,7 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<FixDepsFlags>): Promise<CommandResult<FixResult>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<FixDepsFlags>): Promise<CommandResult<FixResult | DependencyStats>> {
       const { ui, platform } = ctx;
       const flags = input.flags;
       const removeUnused = flags['remove-unused'] || flags.all;
@@ -88,12 +88,11 @@ export default defineCommand({
       if (showStats) {
         const stats = await getDependencyStats(ctx.cwd);
         outputStats(stats, flags, ui);
-        return { ok: true };
+        return stats;
       }
 
       if (!removeUnused && !addMissing && !alignVersions) {
-        validationError(ctx, 'No fix options specified', 'Use --remove-unused, --add-missing, --align-versions, or --all', flags.json);
-        return { ok: false, error: 'Command failed' };
+        return validationError('No fix options specified', 'Run `kb quality fix-deps --help` to choose --remove-unused, --add-missing, --align-versions, or --all.');
       }
 
       const loader = useLoader('Scanning packages...');
@@ -116,7 +115,7 @@ export default defineCommand({
 
       outputResults({ ...result, dryRun: false }, flags, ui);
 
-      return { ok: true, result };
+      return result;
     },
   },
 });
@@ -436,9 +435,8 @@ function isProtectedDep(dep: string): boolean {
 /**
  * Output dependency statistics
  */
-function outputStats(stats: DependencyStats, flags: FixDepsFlags, ui: UIFacade | undefined) {
+function outputStats(stats: DependencyStats, flags: FixDepsFlags, ui: PluginHandlerUIFacade | undefined) {
   if (flags.json) {
-    ui?.json?.(stats);
     return;
   }
 
@@ -469,9 +467,8 @@ function outputStats(stats: DependencyStats, flags: FixDepsFlags, ui: UIFacade |
 /**
  * Output fix results
  */
-function outputResults(result: FixResult & { dryRun: boolean }, flags: FixDepsFlags, ui: UIFacade | undefined) {
+function outputResults(result: FixResult & { dryRun: boolean }, flags: FixDepsFlags, ui: PluginHandlerUIFacade | undefined) {
   if (flags.json) {
-    ui?.json?.(result);
     return;
   }
 

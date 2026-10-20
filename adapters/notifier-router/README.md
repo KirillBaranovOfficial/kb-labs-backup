@@ -1,4 +1,4 @@
-# @kb-labs/adapters-notifier-router
+# @kb-labs/notifier-router
 
 > Part of [KB Labs](https://github.com/kb-labs-team/kb-labs) ecosystem.
 

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContextLogger, type IContextLogger } from "@kb-labs/core-platform";
+import { decodeUxSuccessResult } from "@kb-labs/core-platform/ux-result";
 import { NoOpLogger } from "@kb-labs/core-platform/noop";
 import {
   canonicalizeProjectPath,
@@ -32,10 +33,15 @@ export function silentLogger(): IContextLogger {
   });
 }
 
+export async function readUxSuccessResult<T>(response: Response): Promise<T> {
+  return decodeUxSuccessResult<T>(await response.json());
+}
+
 export interface FakeBehavior {
   exitBeforeReady?: number;
   startDelayMs?: number;
   unhealthyAfterMs?: number;
+  healthModules?: Record<string, "up" | "down">;
   ignoreSigterm?: boolean;
 }
 
@@ -98,6 +104,9 @@ export interface FakeRuntimeReply {
   path: string;
   search: string;
   body: string;
+  stateDaemonUrl?: string | null;
+  gatewayUrl?: string | null;
+  firstLeaseStatus?: number | null;
   received: {
     tokenHeader: string | null;
     projectHeader: string | null;
@@ -111,8 +120,10 @@ export async function callRuntime(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (!headers.has(RUNTIME_TOKEN_HEADER)) headers.set(RUNTIME_TOKEN_HEADER, lease.token);
   return fetch(`http://${lease.address.host}:${lease.address.port}${path}`, {
     ...init,
-    headers: { [RUNTIME_TOKEN_HEADER]: lease.token, ...init.headers },
+    headers,
   });
 }

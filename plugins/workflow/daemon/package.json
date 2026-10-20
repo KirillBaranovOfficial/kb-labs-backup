@@ -3,6 +3,16 @@
   "description": "Workflow daemon for KB Labs - standalone service for background job execution",
   "version": "2.120.1",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "import": "./dist/manifest.js"
+    }
+  },
   "main": "./dist/index.js",
   "bin": {
     "kb-workflow": "./dist/bin.js"
@@ -45,7 +55,7 @@
     "@kb-labs/workflow-runtime": "workspace:*",
     "@kb-labs/workflow-steps": "workspace:*",
     "cron-parser": "^5.5.0",
-    "date-fns-tz": "latest",
+    "date-fns-tz": "^3.2.0",
     "fastify": "^5.12.1",
     "fastify-type-provider-zod": "^4.0.2",
     "node-cron": "^4.2.1",
@@ -64,7 +74,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "kb": {

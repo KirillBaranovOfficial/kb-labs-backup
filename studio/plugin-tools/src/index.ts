@@ -37,6 +37,8 @@ export const STUDIO_SHARED_DEPS: Record<string, { singleton: boolean; requiredVe
   '@kb-labs/sdk': { singleton: true, requiredVersion: '^2.0.0' },
 };
 
+export const STUDIO_WIDGET_OUTPUT_DIR = 'dist/widgets';
+
 export interface KbStudioRemoteOptions {
   /** Module Federation remote name (must match manifest remoteName) */
   name: string;
@@ -110,7 +112,7 @@ export async function createStudioRemoteConfig(options: KbStudioRemoteOptions): 
   await validateReactVersion(require.resolve);
 
   const isDev = process.env.NODE_ENV !== 'production';
-  const outputDir = options.outputDir ?? 'dist/widgets';
+  const outputDir = options.outputDir ?? STUDIO_WIDGET_OUTPUT_DIR;
   const enableDts = options.dts ?? isDev;
 
   return {

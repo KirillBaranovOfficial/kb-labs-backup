@@ -6,6 +6,7 @@
 import type { AdapterManifest } from '@kb-labs/sdk/adapters';
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'analytics-sqlite',
   name: 'SQLite Analytics',
@@ -15,7 +16,9 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'IAnalytics',
-  contexts: ['workspace', 'analytics'],
+  networkRequired: false,
+  defaultFor: { analytics: [] },
+  contexts: ['workspace', 'analytics', 'platformData'],
   capabilities: {
     search: true,
     custom: {
@@ -30,11 +33,18 @@ export const manifest: AdapterManifest = {
   configSchema: {
     dbPath: {
       type: 'string',
-      description: 'Path to the SQLite database file (relative to workspace root) (default: <KB_HOME>/state/<projectId>/analytics/analytics.sqlite)',
+      description: 'Path to the SQLite database file (default: <KB_HOME>/state/<projectId>/analytics/analytics.sqlite)',
+      pathBase: 'platformData',
+      defaultPath: { root: 'projectState', segments: ['analytics', 'analytics.sqlite'] },
     },
-    filename: {
-      type: 'string',
-      description: 'Alias for dbPath — accepted for config compatibility',
+    retentionDays: {
+      type: 'number',
+      integer: true,
+      minimum: 1,
+      minimumMessage: 'Must be a positive integer',
+      default: 90,
+      hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90',
+      description: 'Delete analytics events older than this many days on startup',
     },
   },
 };

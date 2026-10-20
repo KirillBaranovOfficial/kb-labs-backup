@@ -149,6 +149,44 @@ import { local } from '@kb-labs/adapters-foo/internal';
 	}
 }
 
+func TestDepsRuleBoundary_RestrictsFactoryConstructionSubpathToAllowedPreset(t *testing.T) {
+	base := newBoundaryPreset()
+	base.Deps.ForbiddenKbImports = []string{"@kb-labs/plugin-execution-factory/construct"}
+	allowed := base
+	allowed.Deps.AllowedKbImports = []string{"@kb-labs/plugin-execution-factory/construct"}
+
+	for _, test := range []struct {
+		name   string
+		preset config.Preset
+		want   int
+	}{
+		{name: "plane denied", preset: base, want: 1},
+		{name: "runtime allowed", preset: allowed, want: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"@kb-labs/sample"}`), 0o644); err != nil {
+				t.Fatalf("write package: %v", err)
+			}
+			srcDir := filepath.Join(dir, "src")
+			if err := os.MkdirAll(srcDir, 0o755); err != nil {
+				t.Fatalf("mkdir src: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(srcDir, "index.ts"), []byte(`import { createExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';`), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			pkg := workspace.Package{Name: "@kb-labs/sample", Dir: dir}
+			issues := (&DepsRule{}).Check(pkg, test.preset)
+			if len(issues) != test.want {
+				t.Fatalf("issues = %#v, want %d", issues, test.want)
+			}
+			if test.want > 0 && issues[0].Message != `forbidden import "@kb-labs/plugin-execution-factory/construct"` {
+				t.Fatalf("issue = %q, want the constructor-boundary refusal", issues[0].Message)
+			}
+		})
+	}
+}
+
 func TestMatchPatternHandlesGlobAndPrefix(t *testing.T) {
 	cases := []struct {
 		s, pattern string

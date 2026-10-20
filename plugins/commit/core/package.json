@@ -46,7 +46,7 @@
     "pretype-check": "pnpm --filter @kb-labs/commit-core build",
     "test": "vitest run --passWithNoTests",
     "test:all": "vitest run && vitest run tests/benchmarks/commit-type-accuracy.test.ts",
-    "test:benchmarks": "vitest run tests/benchmarks/commit-type-accuracy.test.ts",
+    "test:benchmarks": "KB_COMMIT_BENCHMARK_SAVE=1 vitest run tests/benchmarks/commit-type-accuracy.test.ts",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit"
   },
@@ -66,7 +66,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "sideEffects": false

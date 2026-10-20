@@ -14,6 +14,8 @@
  *   - shutdown() flushes telemetry
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { createUxFailureResult, createUxSuccessResult } from '@kb-labs/core-platform/ux-result';
 import { KBPlatform } from '../client.js';
 
 // ── Mock fetch ────────────────────────────────────────────────────────────
@@ -24,8 +26,8 @@ vi.stubGlobal('fetch', mockFetch);
 function mockOkResponse(result: unknown = null) {
   return {
     ok: true,
-    json: async () => ({ ok: true, result, durationMs: 5 }),
-    text: async () => JSON.stringify({ ok: true, result, durationMs: 5 }),
+    json: async () => createUxSuccessResult(result, { durationMs: 5 }),
+    text: async () => JSON.stringify(createUxSuccessResult(result, { durationMs: 5 })),
   };
 }
 
@@ -33,8 +35,14 @@ function mockErrorResponse(status: number, message: string) {
   return {
     ok: false,
     status,
-    text: async () => JSON.stringify({ ok: false, error: { message } }),
-    json: async () => ({ ok: false, error: { message } }),
+    text: async () => JSON.stringify(createUxFailureResult(createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+      message,
+      correlationId: 'platform-client-test',
+    }))),
+    json: async () => createUxFailureResult(createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+      message,
+      correlationId: 'platform-client-test',
+    })),
   };
 }
 
@@ -61,7 +69,7 @@ describe('KBPlatform', () => {
   it('call() sends correct request format', async () => {
     mockFetch.mockResolvedValueOnce(mockOkResponse('result'));
 
-    await platform.call('cache', 'get', 'my-key');
+    await expect(platform.call('cache', 'get', 'my-key')).resolves.toBe('result');
 
     expect(mockFetch).toHaveBeenCalledWith(
       'http://localhost:4000/platform/v1/cache/get',

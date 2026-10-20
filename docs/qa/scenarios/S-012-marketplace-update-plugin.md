@@ -1,48 +1,29 @@
 ---
 id: S-012
-title: Marketplace — Update plugin
+title: Marketplace — Update an installed plugin pin
 persona: solo-developer
+area: marketplace
 priority: P1
-automation: manual
-e2e: —
+status: active
+release: true
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer updates an installed plugin to a newer version. Commands continue to work after update.
+
+A project user updates an installed plugin to the version resolved by the configured registry and confirms the project pin.
 
 ## Prerequisites
-- [ ] Plugin installed at older version
-- [ ] Newer version available in registry
 
----
+- [ ] The project has an older version of `@kb-labs/commit` installed.
+- [ ] The configured registry contains a newer compatible version.
 
 ## Steps
 
-### Phase 1 — Check for updates
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | `kb marketplace plugins list --outdated` (if exists) | Shows plugins with newer versions available | | ⬜ |
-| 2 | `kb marketplace plugins list` | Shows current vs latest version per plugin | | ⬜ |
-
-### Phase 2 — Update
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 3 | `kb marketplace update <plugin-name>` | Downloads new version, swaps atomically | | ⬜ |
-| 4 | `cat .kb/marketplace.lock` | Version bumped, old integrity replaced | | ⬜ |
-| 5 | `kb --help` | Plugin commands still visible after update | | ⬜ |
-| 6 | Run a command from updated plugin | Works correctly | | ⬜ |
-
-### Phase 3 — Update all
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 7 | `kb marketplace update` (no args) | Updates all outdated plugins | | ⬜ |
-| 8 | Rollback if update fails mid-way | Previous version still works | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-012.1 | Run `kb marketplace update @kb-labs/commit --scope project` | The command completes and reports the updated package ID and exact version, or reports that there is nothing to update. |
+| S-012.2 | Run `kb marketplace plugins list --scope project` and inspect `.kb/marketplace.lock` | Both show the exact newly resolved version; the lock records its integrity. |
+| S-012.3 | Run `kb commit --help` | The commit command group remains available after the update. |
+| S-012.4 | Request update of an unknown package with `kb marketplace update @kb-labs/not-published --scope project` | The command reports a package-specific failure in its warnings and does not change the existing `@kb-labs/commit` pin. |

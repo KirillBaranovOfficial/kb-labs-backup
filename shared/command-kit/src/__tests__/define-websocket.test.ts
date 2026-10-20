@@ -44,7 +44,7 @@ describe('defineWebSocket', () => {
       broadcast: vi.fn(),
       sendTo: vi.fn(),
       close: vi.fn(),
-      getConnectionId: vi.fn(() => 'conn-123'),
+      getConnectionId: vi.fn(async () => 'conn-123'),
     };
   });
 
@@ -307,6 +307,7 @@ describe('isWSHost', () => {
   it('should return false for non-ws host context', () => {
     const cliContext = {
       host: 'cli' as const,
+      binaryName: 'kb',
       argv: [],
       flags: {},
     };

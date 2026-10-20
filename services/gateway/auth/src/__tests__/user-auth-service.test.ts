@@ -25,12 +25,15 @@ import { UsersStore } from '../users-store.js';
 import { CredentialsStore } from '../credentials-store.js';
 import { MembershipsStore } from '../memberships-store.js';
 import { InvitesStore } from '../invites-store.js';
+import { PasswordResetStore } from '../password-reset-store.js';
 import { SessionsStore } from '../sessions-store.js';
 import { ProviderRegistry } from '../provider-registry.js';
 import { createEmailPasswordProvider } from '../providers/email-password.js';
 import { createPasswordPolicy } from '../password-policy.js';
 import { createUserAuthService, AuthError } from '../user-auth-service.js';
 import { verifyUserRefreshToken } from '../jwt.js';
+import { ensureBootstrapAdmin } from '../bootstrap-admin.js';
+import { evaluateAuthReadiness } from '../auth-readiness.js';
 
 const HOUR = 60 * 60 * 1000;
 const tenant = 'kblabs-cloud';
@@ -41,6 +44,7 @@ let users: UsersStore;
 let credentials: CredentialsStore;
 let memberships: MembershipsStore;
 let invites: InvitesStore;
+let passwordResets: PasswordResetStore;
 let sessions: SessionsStore;
 let svc: ReturnType<typeof createUserAuthService>;
 let nowMs: number;
@@ -52,6 +56,7 @@ beforeEach(() => {
   credentials = new CredentialsStore(docs);
   memberships = new MembershipsStore(docs);
   invites = new InvitesStore(docs, () => nowMs);
+  passwordResets = new PasswordResetStore(docs, () => nowMs);
   sessions = new SessionsStore(docs, { now: () => nowMs, refreshTtlMs: HOUR, graceWindowMs: 5_000 });
 
   const registry = new ProviderRegistry();
@@ -64,6 +69,7 @@ beforeEach(() => {
     credentials,
     memberships,
     invites,
+    passwordResets,
     sessions,
     providers: registry,
     passwordPolicy: createPasswordPolicy({ minLength: 8, maxLength: 256, hibpEnabled: false }),
@@ -212,9 +218,11 @@ describe('refresh', () => {
     // the strings differ whenever a real second boundary falls in between.
     const a = await verifyUserRefreshToken(first.refresh.token, jwtConfig);
     const b = await verifyUserRefreshToken(second.refresh.token, jwtConfig);
-    expect(a).not.toBeNull();
-    expect(b?.jti).toBe(a?.jti);
-    expect(b?.familyId).toBe(a?.familyId);
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    if (!a.ok || !b.ok) { throw new Error('Expected both refresh tokens to verify'); }
+    expect(b.payload.jti).toBe(a.payload.jti);
+    expect(b.payload.familyId).toBe(a.payload.familyId);
     expect(await sessions.listFamiliesByUser(userId)).toHaveLength(1);
   });
 
@@ -241,7 +249,10 @@ describe('refresh', () => {
       expect(second.refresh.token).not.toBe(first.refresh.token); // iat differs
       const a = await verifyUserRefreshToken(first.refresh.token, jwtConfig);
       const b = await verifyUserRefreshToken(second.refresh.token, jwtConfig);
-      expect(b?.jti).toBe(a?.jti);
+      expect(a.ok).toBe(true);
+      expect(b.ok).toBe(true);
+      if (!a.ok || !b.ok) { throw new Error('Expected both refresh tokens to verify'); }
+      expect(b.payload.jti).toBe(a.payload.jti);
       expect(await sessions.listFamiliesByUser(userId)).toHaveLength(1);
     });
   });
@@ -335,6 +346,46 @@ describe('changePassword', () => {
       currentPassword: 'correct-pw-12', newPassword: 'short',
     })).rejects.toMatchObject({ code: 'weak_password', reason: 'too_short' });
   });
+
+  // case: S-222.11
+  it('bootstrap after a user password change does not compare against the original password', async () => {
+    const originalPassword = 'Bootstrap-Password-12';
+    const bootstrap = { adminEmail: 'alice@x.com', adminPassword: originalPassword, tenantId: tenant };
+    const bootstrapProviders = [{ id: 'email-password', kind: 'password' as const, operational: { state: 'operational' as const, checkedAt: 0 } }];
+    const bootstrapErrors: unknown[] = [];
+    const bootstrapLogger = { info: () => undefined, warn: () => undefined, error: (...args: unknown[]) => { bootstrapErrors.push(args); } };
+    await ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: bootstrapProviders, bcryptCost: 4, logger: bootstrapLogger });
+    const userId = (await users.findByEmailTenant(bootstrap.adminEmail, tenant))!.userId;
+    const session = await svc.login(
+      { providerId: 'email-password', input: { email: bootstrap.adminEmail, password: originalPassword } },
+      tenant, {},
+    );
+    await svc.changePassword({
+      userId,
+      currentFamilyId: session.familyId,
+      currentPassword: originalPassword,
+      newPassword: 'Changed-Password-34',
+    });
+
+    await expect(ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: bootstrapProviders, bcryptCost: 4, logger: bootstrapLogger }))
+      .resolves.toBe('exists-active');
+    expect(bootstrapErrors).toHaveLength(0);
+    await expect(svc.login(
+      { providerId: 'email-password', input: { email: bootstrap.adminEmail, password: 'Changed-Password-34' } },
+      tenant, {},
+    )).resolves.toMatchObject({ user: { userId } });
+    await expect(evaluateAuthReadiness({
+      authEnabled: true,
+      loopbackOnly: false,
+      tenantId: tenant,
+      jwtSecretIsDefault: false,
+      bootstrap: { status: 'exists-active', email: bootstrap.adminEmail },
+      users,
+      memberships,
+      credentials,
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
+    })).resolves.toMatchObject({ ok: true, activeAdmins: 1 });
+  });
 });
 
 // ─── activate ──────────────────────────────────────────────────────────
@@ -375,7 +426,7 @@ describe('activate', () => {
     })).rejects.toMatchObject({ code: 'unknown_invite' });
   });
 
-  it('expired invite → invalid_invite', async () => {
+  it('expired invite → catalogued invalid invite', async () => {
     const { activationToken } = await invites.createInvite({
       email: 'bob@x.com', tenantId: tenant,
       groupId: 'tenant-member', createdBy: 'admin', ttlMs: 1,
@@ -383,7 +434,7 @@ describe('activate', () => {
     nowMs += 10;
     await expect(svc.activate({
       activationToken, password: 'fresh-pw-1234', deviceCtx: {},
-    })).rejects.toMatchObject({ code: 'invalid_invite' });
+    })).rejects.toMatchObject({ code: 'KB_AUTH_INVALID_INVITE' });
   });
 
   it('weak password → weak_password and invite stays usable', async () => {
@@ -407,7 +458,7 @@ describe('activate', () => {
 
     // Fire both with the identical valid token + password concurrently.
     // The atomic consume() gate must let exactly one through to account
-    // creation; the loser must reject cleanly (invalid_invite) WITHOUT
+    // creation; the loser must reject cleanly (catalogued invalid invite) WITHOUT
     // creating a second user or crashing on the unique-email index.
     const settled = await Promise.allSettled([
       svc.activate({ activationToken, password: 'fresh-pw-1234', deviceCtx: {} }),
@@ -418,11 +469,64 @@ describe('activate', () => {
     const rejected = settled.filter((s) => s.status === 'rejected');
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
-    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: 'invalid_invite' });
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: 'KB_AUTH_INVALID_INVITE' });
 
     // Exactly one user account exists for that email in the tenant.
     const all = await users.listByTenant(tenant);
     expect(all.filter((u) => u.email === 'race@x.com')).toHaveLength(1);
+  });
+});
+
+describe('admin-generated password reset', () => {
+  it('consumes once, changes the password, and revokes every session family', async () => {
+    const userId = await seedActiveUser();
+    const session = await svc.login(
+      { providerId: 'email-password', input: { email: 'alice@x.com', password: 'correct-pw-12' } },
+      tenant, {},
+    );
+    const reset = await svc.issuePasswordReset({ userId, tenantId: tenant, createdBy: 'admin', ttlMs: HOUR });
+
+    await svc.completePasswordReset({ token: reset.token, newPassword: 'Replacement123!' });
+    expect(await sessions.listFamiliesByUser(userId)).toHaveLength(0);
+    await expect(svc.refresh(session.refresh.token)).rejects.toMatchObject({ code: 'invalid_refresh' });
+    await expect(svc.login(
+      { providerId: 'email-password', input: { email: 'alice@x.com', password: 'correct-pw-12' } }, tenant, {},
+    )).rejects.toMatchObject({ code: 'invalid_credentials' });
+    await expect(svc.login(
+      { providerId: 'email-password', input: { email: 'alice@x.com', password: 'Replacement123!' } }, tenant, {},
+    )).resolves.toMatchObject({ user: { userId } });
+    await expect(svc.completePasswordReset({ token: reset.token, newPassword: 'AnotherPassword123!' }))
+      .rejects.toMatchObject({ code: 'KB_AUTH_INVALID_PASSWORD_RESET' });
+  });
+
+  // case: S-222.11
+  it('bootstrap after reset-by-link accepts the active admin without rechecking the old secret', async () => {
+    const originalPassword = 'Bootstrap-Password-12';
+    const bootstrap = { adminEmail: 'alice@x.com', adminPassword: originalPassword, tenantId: tenant };
+    const bootstrapProviders = [{ id: 'email-password', kind: 'password' as const, operational: { state: 'operational' as const, checkedAt: 0 } }];
+    const bootstrapLogger = { info: () => undefined, warn: () => undefined, error: () => undefined };
+    await ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: bootstrapProviders, bcryptCost: 4, logger: bootstrapLogger });
+    const userId = (await users.findByEmailTenant(bootstrap.adminEmail, tenant))!.userId;
+    const reset = await svc.issuePasswordReset({ userId, tenantId: tenant, createdBy: 'admin', ttlMs: HOUR });
+    await svc.completePasswordReset({ token: reset.token, newPassword: 'Reset-Link-Password-56' });
+
+    await expect(ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: bootstrapProviders, bcryptCost: 4, logger: bootstrapLogger }))
+      .resolves.toBe('exists-active');
+    await expect(svc.login(
+      { providerId: 'email-password', input: { email: bootstrap.adminEmail, password: 'Reset-Link-Password-56' } },
+      tenant, {},
+    )).resolves.toMatchObject({ user: { userId } });
+    await expect(evaluateAuthReadiness({
+      authEnabled: true,
+      loopbackOnly: false,
+      tenantId: tenant,
+      jwtSecretIsDefault: false,
+      bootstrap: { status: 'exists-active', email: bootstrap.adminEmail },
+      users,
+      memberships,
+      credentials,
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
+    })).resolves.toMatchObject({ ok: true, activeAdmins: 1 });
   });
 });
 

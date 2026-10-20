@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   UICard, UITag, UIAlert,
-  UISpin, UISpace, UITable,
+  UISkeleton, UISpace, UITable,
   useData, useTheme,
 } from '@kb-labs/sdk/studio';
 import type { StatsSnapshot, BaselineCheckDiff } from '@kb-labs/qa-contracts';
@@ -38,7 +38,7 @@ export function HealthTab() {
   );
 
   if (summaryLoading || diffLoading) {
-    return <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />;
+    return <UISkeleton active lines={5} />;
   }
 
   const stats = summary?.latestStats?.raw;

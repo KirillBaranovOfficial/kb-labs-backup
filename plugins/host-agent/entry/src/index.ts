@@ -1,1 +1,1 @@
-export { manifest, default as pluginManifest } from './manifest.js';
+export { manifest } from './manifest.js';

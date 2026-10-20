@@ -3,12 +3,25 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
 import type { ILogger } from '@kb-labs/core-platform';
 import { registerPackageRoutes } from '../routes/packages.js';
+import { createRegistryAuthMiddleware } from '../auth-middleware.js';
+
+const REGISTRY_INTERNAL_SECRET = 'registry-test-internal-secret';
+const gatewayHeaders = (authCtx?: { namespaceId: string; permissions?: string[] }): Record<string, string> => ({
+  'x-internal-secret': REGISTRY_INTERNAL_SECRET,
+  ...(authCtx ? {
+    'x-kb-auth-type': 'user',
+    'x-kb-auth-user-id': 'test-user',
+    'x-kb-auth-namespace-id': authCtx.namespaceId,
+    'x-kb-auth-tier': 'free',
+    'x-kb-auth-permissions': JSON.stringify(authCtx.permissions ?? []),
+  } : {}),
+});
 
 // ── Minimal logger ─────────────────────────────────────────────────────────────
 
 const noopLog: ILogger = {
   trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(),
-  error: vi.fn(), fatal: vi.fn(), child: () => noopLog,
+  error: vi.fn(), fatal: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), child: () => noopLog,
 };
 
 // ── Registry service mock ──────────────────────────────────────────────────────
@@ -63,11 +76,11 @@ async function buildApp(authCtx?: { namespaceId: string; permissions?: string[] 
   const app = Fastify({ logger: false });
   await app.register(multipart, { limits: { fileSize: 55 * 1024 * 1024 } });
 
-  if (authCtx) {
-    app.addHook('preHandler', async (req) => {
-      (req as any).authContext = authCtx;
-    });
-  }
+  app.addHook('onRequest', async (req) => {
+    const injected = authCtx ? gatewayHeaders(authCtx) : {};
+    for (const [name, value] of Object.entries(injected)) { req.headers[name] = value; }
+  });
+  app.addHook('onRequest', createRegistryAuthMiddleware(REGISTRY_INTERNAL_SECRET));
 
   const registry = makeMockRegistry();
   registerPackageRoutes(app, registry as any);
@@ -97,7 +110,7 @@ describe('GET /api/v1/packages (public)', () => {
   afterAll(() => app.close());
 
   it('AC-01: 200 with package list', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/v1/packages' });
+    const res = await app.inject({ method: 'GET', url: '/api/v1/packages', headers: gatewayHeaders() });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(Array.isArray(body)).toBe(true);
@@ -108,7 +121,7 @@ describe('GET /api/v1/packages (public)', () => {
 describe('GET /api/v1/packages/:handle/:name (public)', () => {
   it('AC-10: 200 for accessible package', async () => {
     const app = await buildApp();
-    const res = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin' });
+    const res = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin', headers: gatewayHeaders() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ name: 'my-plugin' });
     await app.close();
@@ -136,10 +149,34 @@ describe('GET /api/v1/packages/:handle/:name (public)', () => {
     });
     const freshApp = Fastify({ logger: false });
     await freshApp.register(multipart, {});
+    freshApp.addHook('onRequest', createRegistryAuthMiddleware(REGISTRY_INTERNAL_SECRET));
     registerPackageRoutes(freshApp, registry as any);
-    const res = await freshApp.inject({ method: 'GET', url: '/api/v1/packages/kirill/private-pkg' });
+    const res = await freshApp.inject({ method: 'GET', url: '/api/v1/packages/kirill/private-pkg', headers: gatewayHeaders() });
     expect(res.statusCode).toBe(403);
     await freshApp.close();
+    await app.close();
+  });
+
+  it('passes the optional forwarded namespace to canAccess for a private package', async () => {
+    const app = Fastify({ logger: false });
+    const registry = makeMockRegistry();
+    const entry = {
+      name: 'private-pkg', authorHandle: 'kirill', authorNamespaceId: 'ns-kirill',
+      visibility: 'private' as const, trust: 'untrusted' as const, allowlist: [], versions: [],
+      deprecated: false, featured: false, badges: [], tags: [], meta: { name: 'private-pkg', version: '1.0.0' },
+      createdAt: '', updatedAt: '',
+    };
+    registry.getEntry.mockResolvedValue(entry);
+    app.addHook('onRequest', createRegistryAuthMiddleware(REGISTRY_INTERNAL_SECRET));
+    registerPackageRoutes(app, registry as any);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/packages/kirill/private-pkg',
+      headers: gatewayHeaders({ namespaceId: 'tenant-1' }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(registry.canAccess).toHaveBeenCalledWith(entry, 'tenant-1', null);
     await app.close();
   });
 
@@ -161,7 +198,7 @@ describe('GET /api/v1/packages/:handle/:name/stats', () => {
   afterAll(() => app.close());
 
   it('AC-20: returns stats with installs count', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/stats' });
+    const res = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/stats', headers: gatewayHeaders() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ installs: 42 });
   });

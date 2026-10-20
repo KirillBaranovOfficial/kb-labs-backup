@@ -132,6 +132,15 @@ export class Scheduler {
    */
   private async dequeueFromPriority(priority: JobPriority): Promise<JobQueueEntry | null> {
     const key = `kb:jobqueue:${priority}`
+    const eligibleEntries = await this.cache.zrangebyscore(
+      key,
+      0,
+      Date.now() + this.lookAheadMs,
+    )
+    if (eligibleEntries.length === 0) {
+      return null
+    }
+
     return withLock(this.cache, `kb:lock:queue:${priority}`, async () => {
       const now = Date.now()
       const results = await this.cache.zrangebyscore(
@@ -164,5 +173,4 @@ export class Scheduler {
     return this.defaultPriority
   }
 }
-
 

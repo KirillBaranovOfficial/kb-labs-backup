@@ -3,7 +3,7 @@
  * Package verification and release checks belong in release:run pipeline.
  */
 
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3, useConfig } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3, useConfig } from '@kb-labs/sdk';
 import { planRelease, type VersionBump, type ReleaseConfig } from '@kb-labs/release-manager-core';
 import { resolveGitRange, parseCommits } from '@kb-labs/release-manager-changelog';
 import { findRepoRoot } from '../../shared/utils';
@@ -63,7 +63,7 @@ export default defineCommand({
   description: 'Validate release readiness',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<VerifyFlags>): Promise<ReleaseVerifyResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<VerifyFlags>): Promise<ReleaseVerifyResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -118,7 +118,7 @@ export default defineCommand({
       }
 
       if (flags.json) {
-        ctx.ui?.json?.({ valid: isValid, hasPackages, hasBreaking, issues, plan });
+        return { valid: isValid, hasPackages, hasBreaking, issues, plan };
       } else {
         ctx.ui?.sideBox?.({
           title: 'Release Verification',
@@ -134,8 +134,8 @@ export default defineCommand({
         breakingDetected: hasBreaking,
       };
       return isValid
-        ? { ok: true, result }
-        : { ok: false, error: 'Release verification failed', result };
+        ? result
+        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release verification failed', hint: "Run `kb release verify --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

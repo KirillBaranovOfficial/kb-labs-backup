@@ -42,7 +42,7 @@ async function authHeaders(request: Parameters<Parameters<typeof test>[1]>[0]['r
 // progress stream hooked up yet. The test would be flaky: it could pass today
 // (stub response) and silently change behaviour once the real implementation lands.
 // Re-enable once the engine emits real step events.
-test.skip('WS-P01: subscribe → server acknowledges (partial implementation)', async ({ request }) => {
+test('WS-P01: subscribe → server acknowledges', async ({ request }) => {
   const runId = await startRun(request);
 
   await withWs(progressWsUrl(runId), async (ws) => {

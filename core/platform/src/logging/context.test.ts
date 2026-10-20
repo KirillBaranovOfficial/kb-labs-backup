@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createContextLogger, isAgentDiagnosticsEnabled } from "./context.js";
 import type { ILogger } from "../adapters/logger.js";
+
+function productionTypeScriptFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (['.git', 'dist', 'node_modules'].includes(entry.name)) return [];
+      return productionTypeScriptFiles(file);
+    }
+    if (!entry.isFile() || !/\.(?:ts|tsx|mts|cts)$/.test(entry.name)) return [];
+    if (/(?:\.test|\.spec|\.typecheck)\.(?:ts|tsx|mts|cts)$/.test(entry.name) || file.includes(`${path.sep}__tests__${path.sep}`)) return [];
+    return [file];
+  });
+}
 
 function captureLogger(records: Array<Record<string, unknown>>): ILogger {
   const write = (
@@ -20,10 +36,19 @@ function captureLogger(records: Array<Record<string, unknown>>): ILogger {
     fatal: (message, error, meta) =>
       write("fatal", message, { ...(meta ?? {}), ...(error ? { error } : {}) }),
     child: () => captureLogger(records),
+    flush: async () => {},
   };
 }
 
 describe("createContextLogger", () => {
+  it('has no per-module sensitive-value logger scopes', () => {
+    const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
+    const callers = productionTypeScriptFiles(repositoryRoot).filter((file) =>
+      /\.withSensitiveValues\s*\(/.test(readFileSync(file, 'utf8')),
+    );
+    expect(callers).toEqual([]);
+  });
+
   it("inherits platform and correlation identity when a plugin creates children", () => {
     const records: Array<Record<string, unknown>> = [];
     const parent = createContextLogger(captureLogger(records), {
@@ -92,6 +117,49 @@ describe("createContextLogger", () => {
       diagnostic: { summary: "Redis is unavailable" },
     });
     expect(isAgentDiagnosticsEnabled({ KB_DIAGNOSTICS: "agent" })).toBe(true);
+  });
+
+  // case: S-028.5
+  it('redacts registered secret values from log messages, nested fields, and errors', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const logger = createContextLogger(captureLogger(records), {
+      applicationId: 'workflow',
+      serviceId: 'workflow',
+      instanceId: 'test',
+      layer: 'service',
+    });
+    logger.registerSensitiveValues(['sentinel-token']);
+
+    logger.info('Step input contained sentinel-token', {
+      inputs: { env: { ACCESS_TOKEN: 'sentinel-token' } },
+      'sentinel-token': 'dynamic field name',
+    });
+    const error = new Error('request used sentinel-token', { cause: { token: 'sentinel-token' } });
+    logger.error('Step failed', error, {
+      detail: ['sentinel-token'],
+    });
+
+    expect(JSON.stringify(records)).not.toContain('sentinel-token');
+    expect(JSON.stringify(records)).toContain('[REDACTED]');
+    const emittedError = records[1]?.error as Error;
+    expect(emittedError.message).not.toContain('sentinel-token');
+    expect(emittedError.stack).not.toContain('sentinel-token');
+    expect((emittedError.cause as { token: string }).token).toBe('[REDACTED]');
+  });
+
+  it('keeps ordinary environment values readable while redacting explicitly declared secrets', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const logger = createContextLogger(captureLogger(records), {
+      applicationId: 'workflow',
+      serviceId: 'workflow',
+      instanceId: 'test',
+      layer: 'service',
+    });
+    logger.registerSensitiveValues(['declared-secret-value']);
+
+    logger.info('Running in production with declared-secret-value');
+
+    expect(records[0]?.message).toBe('Running in production with [REDACTED]');
   });
 
   it("preserves Pino-compatible fields-first calls from Fastify and plugins", () => {

@@ -85,6 +85,7 @@ export interface AdapterCapabilities {
  * @example Core adapter (Pino logger)
  * ```typescript
  * export const manifest: AdapterManifest = {
+ *   schema: 'kb.adapter/1',
  *   manifestVersion: '1.0.0',
  *   id: 'pino-logger',
  *   name: 'Pino Logger',
@@ -99,6 +100,7 @@ export interface AdapterCapabilities {
  * @example Extension adapter (Ring buffer)
  * ```typescript
  * export const manifest: AdapterManifest = {
+ *   schema: 'kb.adapter/1',
  *   manifestVersion: '1.0.0',
  *   id: 'log-ringbuffer',
  *   name: 'Log Ring Buffer',
@@ -118,6 +120,7 @@ export interface AdapterCapabilities {
  * @example Extension with dependency (SQLite persistence)
  * ```typescript
  * export const manifest: AdapterManifest = {
+ *   schema: 'kb.adapter/1',
  *   manifestVersion: '1.0.0',
  *   id: 'log-persistence',
  *   name: 'SQLite Log Persistence',
@@ -139,6 +142,9 @@ export interface AdapterCapabilities {
  * ```
  */
 export interface AdapterManifest {
+  /** Declarative adapter manifest contract consumed by discovery and release preparation. */
+  schema: 'kb.adapter/1';
+
   /**
    * Manifest schema version.
    * Used for compatibility checking and evolution.
@@ -168,6 +174,12 @@ export interface AdapterManifest {
    * Format: semver (e.g., "1.0.0")
    */
   version: string;
+
+  /** Release compatibility constraints copied into the sealed platform index. */
+  compatibility?: {
+    platformRange?: string;
+    sdkRange?: string;
+  };
 
   /**
    * Adapter description (optional).
@@ -217,8 +229,14 @@ export interface AdapterManifest {
    */
   implements: string | string[];
 
-  /** Capabilities this adapter is the platform's default provider for. */
-  defaultFor?: string[];
+  /** Whether using this adapter requires reaching a network service. */
+  networkRequired: boolean;
+
+  /** Configuration value used to select this adapter when it implements a typed extension point. */
+  channelType?: string;
+
+  /** Default platform slots mapped to package entry-point path segments. Empty segments select the package root. */
+  defaultFor?: Record<string, string[]>;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Dependencies
@@ -251,6 +269,13 @@ export interface AdapterManifest {
      * Each will be passed to factory function in `deps` parameter.
      */
     adapters?: AdapterDependency[];
+
+    /** Named platform services injected into the factory dependency object. */
+    platformServices?: Array<
+      | 'resourceBroker'
+      | 'notifierChannels'
+      | { id: 'resourceBroker' | 'notifierChannels'; alias?: string }
+    >;
 
     /**
      * Required platform version (semver range).
@@ -407,10 +432,63 @@ export interface AdapterManifest {
       description?: string;
       default?: unknown;
       required?: boolean;
+      /** The option is secret material and may be absent during adapter construction. */
+      secret?: boolean;
+      /** Environment variable that supplies this secret option. */
+      env?: string;
       enum?: unknown[];
+      /** Require an integral numeric value. */
+      integer?: boolean;
+      /** Inclusive lower bound for a numeric option. */
+      minimum?: number;
+      /** User-facing explanation when the lower bound is violated. */
+      minimumMessage?: string;
+      /** Inclusive upper bound for a numeric option. */
+      maximum?: number;
+      /** Copy-ready correction for an invalid value. */
+      hint?: string;
+      /** Resolve a relative filesystem option against a runtime-owned root. */
+      pathBase?: 'platformData';
+      /** Default this path beneath the registered project's durable state directory. */
+      defaultPath?: { root: 'projectState'; segments: string[] };
+      /** Values such as `:memory:` that are path options but not files. */
+      specialValues?: string[];
       properties?: Record<string, unknown>;
+      /** Additional doctor metadata for this option; required/secret/env come from this schema field. */
+      doctor?: {
+        id: string;
+        optional?: boolean;
+        severity?: 'error' | 'warning';
+        services: string[];
+        action?: string;
+        hint: string;
+      };
     }
   >;
+}
+
+const ADAPTER_SLOT_CONTRACTS: Record<string, string> = {
+  logger: 'ILogger',
+  cache: 'ICache',
+  storage: 'IStorage',
+  eventBus: 'IEventBus',
+  documentDatabase: 'IDocumentDatabase',
+  kvStore: 'IKVStore',
+  analytics: 'IAnalytics',
+  llm: 'ILLM',
+  embeddings: 'IEmbeddings',
+  vectorStore: 'IVectorStore',
+  logs: 'ILogReader',
+  snapshotManager: 'ISnapshotManager',
+};
+
+/** Whether a manifest declares the platform slot through its identity fields. */
+export function adapterManifestProvidesSlot(manifest: AdapterManifest, slot: string): boolean {
+  if (manifest.defaultFor && Object.hasOwn(manifest.defaultFor, slot)) {return true;}
+  const contract = ADAPTER_SLOT_CONTRACTS[slot];
+  if (!contract) {return false;}
+  const roles = Array.isArray(manifest.implements) ? manifest.implements : [manifest.implements];
+  return roles.includes(contract);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

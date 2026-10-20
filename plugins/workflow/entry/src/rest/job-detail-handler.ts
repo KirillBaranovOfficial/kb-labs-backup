@@ -4,24 +4,11 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
+import type { JobStatusInfo } from '@kb-labs/workflow-contracts';
 
 interface JobDetailParams {
   jobId: string;
-}
-
-interface JobStatusInfo {
-  id: string;
-  type: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  tenantId?: string;
-  createdAt?: string;
-  startedAt?: string;
-  finishedAt?: string;
-  result?: unknown;
-  error?: string;
-  progress?: number;
-  progressMessage?: string;
 }
 
 interface ApiEnvelope<T> {
@@ -42,11 +29,11 @@ export default defineHandler({
       throw new Error('Missing jobId parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/jobs/${jobId}`;
+    const url = `${daemonUrl}/jobs/${jobId}`;
     ctx.platform.logger.info(`[job-detail-handler] Fetching job ${jobId} from ${url}`);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWorkflowApi(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

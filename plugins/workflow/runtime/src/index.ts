@@ -1,5 +1,6 @@
 export * from './types'
 export * from './context'
+export * from './input-log'
 export * from './runners/local-runner'
 export * from './runners/sandbox-runner'
 export * from './config'
@@ -14,5 +15,4 @@ export {
   type ArtifactOutput,
   type ArtifactReference,
 } from '@kb-labs/workflow-artifacts'
-
 

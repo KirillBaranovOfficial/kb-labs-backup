@@ -7,7 +7,7 @@
  * - Build duration tracking
  */
 
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import type { BuildCheckResult } from '@kb-labs/quality-contracts';
 import { CACHE_KEYS } from '@kb-labs/quality-contracts';
 import { checkBuilds } from '@kb-labs/quality-core/builds';
@@ -22,7 +22,7 @@ export default defineCommand({
 
   handler: {
     async execute(
-      ctx: PluginContextV3,
+      ctx: PluginCommandContextV3,
       input: CheckBuildsInput
     ): Promise<CommandResult<BuildCheckResult>> {
       const { ui, platform } = ctx;
@@ -40,8 +40,8 @@ export default defineCommand({
         if (cached) {
           outputBuildCheck({ ...cached, cached: true }, flags, ui);
           return cached.failing > 0
-            ? { ok: false, error: 'Build failures found', result: cached }
-            : { ok: true, result: cached };
+            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Build failures found', hint: 'Review the failed package builds, then rerun `kb quality check-builds`.', diagnostics: cached.failures.map((failure) => ({ code: 'KB_QUALITY_BUILD_FAILED', severity: 'error', path: failure.package, message: failure.error })) } }
+            : cached;
         }
       }
 
@@ -68,8 +68,8 @@ export default defineCommand({
       outputBuildCheck({ ...result, cached: false }, flags, ui);
 
       return result.failing > 0
-        ? { ok: false, error: 'Build failures found', result }
-        : { ok: true, result };
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Build failures found', hint: 'Review the failed package builds, then rerun `kb quality check-builds`.', diagnostics: result.failures.map((failure) => ({ code: 'KB_QUALITY_BUILD_FAILED', severity: 'error', path: failure.package, message: failure.error })) } }
+        : result;
     },
   },
 });
@@ -80,10 +80,9 @@ export default defineCommand({
 function outputBuildCheck(
   result: BuildCheckResult & { cached?: boolean },
   flags: Record<string, unknown>,
-  ui: PluginContextV3['ui']
+  ui: PluginCommandContextV3['ui']
 ) {
   if (flags.json) {
-    ui?.json?.(result);
     return;
   }
 

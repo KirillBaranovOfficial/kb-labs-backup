@@ -3,4 +3,3 @@ export { createAdapter } from './llm.js';
 export type {
   <%= it.name.replace(/(^|-)(\w)/g, (_, _s, c) => c.toUpperCase()) %>Config,
 } from './llm.js';
-export { default } from './manifest.js';

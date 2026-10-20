@@ -9,6 +9,7 @@ import type { AdapterManifest } from "@kb-labs/sdk/adapters";
  * Adapter manifest for OpenAI embeddings.
  */
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "openai-embeddings",
   name: "OpenAI Embeddings",
@@ -19,6 +20,7 @@ export const manifest: AdapterManifest = {
   license: "MIT",
   type: "core",
   implements: "IEmbeddings",
+  networkRequired: true,
   capabilities: {
     batch: true,
   },

@@ -32,7 +32,7 @@ describe('clickup:task.create', () => {
       mockCLIInput({ flags: { list: 'list-1', name: 'My Task' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Task created');
   });
@@ -47,8 +47,8 @@ describe('clickup:task.create', () => {
       mockCLIInput({ flags: { list: 'list-1', name: 'My Task', json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const slim = captured.json[0] as Record<string, unknown>;
+    expect(result).not.toHaveProperty('ok');
+    const slim = result as Record<string, unknown>;
     expect(slim.id).toBe('task-001');
     expect(typeof slim.status).toBe('string');
     expect(slim).not.toHaveProperty('date_created');
@@ -65,8 +65,8 @@ describe('clickup:task.create', () => {
       mockCLIInput({ flags: { list: 'list-1', name: 'My Task', json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const raw = captured.json[0] as typeof mockTask;
+    expect(result).not.toHaveProperty('ok');
+    const raw = result as typeof mockTask;
     expect(typeof raw.status).toBe('object');
     expect(raw.date_created).toBeDefined();
   });
@@ -79,8 +79,8 @@ describe('clickup:task.create', () => {
       mockCLIInput({ flags: { name: 'My Task' } }) as Parameters<typeof taskCreateCommand.execute>[1],
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TC-04: missing --name returns exitCode 1', async () => {
@@ -91,8 +91,8 @@ describe('clickup:task.create', () => {
       mockCLIInput({ flags: { list: 'list-1' } }) as Parameters<typeof taskCreateCommand.execute>[1],
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TC-08: --dry-run shows intent, createTask is NOT called', async () => {
@@ -103,7 +103,7 @@ describe('clickup:task.create', () => {
       mockCLIInput({ flags: { list: 'list-1', name: 'My Task', 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(createTask)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('My Task');
@@ -119,7 +119,7 @@ describe('clickup:task.create', () => {
       mockCLIInput({ flags: { list: 'list-1', name: 'My Task' } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

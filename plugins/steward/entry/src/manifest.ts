@@ -32,7 +32,7 @@ const permissions = combinePermissions()
   })
   .build();
 
-const manifest = {
+const baseManifest = {
   schema: 'kb.plugin/3',
   id: '@kb-labs/steward',
   version: '0.1.0',
@@ -46,7 +46,7 @@ const manifest = {
     requires: ['documentDatabase'],
   },
   cli: {
-    groupMeta: [{ name: 'steward', description: 'Personal PM/CRM for AI agents' }],
+    groupMeta: [{ path: 'steward', describe: 'Personal PM/CRM for AI agents' }],
     commands: [
       // ── Project ──────────────────────────────────────────────────────
       {
@@ -350,6 +350,5 @@ const manifest = {
   ],
 } as const;
 
-const withPermissions: typeof manifest & { permissions: unknown } = { ...manifest, permissions };
-
-export default withPermissions;
+export const manifestWithPermissions: typeof baseManifest & { permissions: unknown } = { ...baseManifest, permissions };
+export const manifest: typeof manifestWithPermissions = manifestWithPermissions;

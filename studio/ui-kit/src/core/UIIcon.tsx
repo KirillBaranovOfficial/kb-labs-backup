@@ -12,7 +12,7 @@ import * as React from 'react';
 import clsx from 'clsx';
 import styles from './UIIcon.module.css';
 
-export type UIIconSize = 'xs' | 'sm' | 'base' | 'lg' | 'xl' | '2xl';
+export type UIIconSize = 'xs' | 'sm' | 'md' | 'base' | 'lg' | 'xl' | '2xl';
 export type UIIconColor = 'primary' | 'secondary' | 'success' | 'warning' | 'error' | 'info' | 'inherit';
 
 export interface UIIconProps {
@@ -71,6 +71,8 @@ export function registerIconRenderer(renderer: IconRenderer): void {
  *   onClick={handleSettings}
  * />
  * ```
+ *
+ * @demoArgs {"name":"HomeOutlined","size":"xl","color":"primary"}
  */
 export function UIIcon({
   icon,
@@ -88,7 +90,7 @@ export function UIIcon({
   const classes = clsx(
     styles.uiIcon,
     'anticon',
-    styles[`size-${size}`],
+    styles[`size-${size === 'md' ? 'base' : size}`],
     styles[`color-${color}`],
     spin && styles.spin,
     onClick && styles.clickable,

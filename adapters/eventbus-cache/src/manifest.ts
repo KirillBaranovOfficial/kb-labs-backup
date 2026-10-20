@@ -9,6 +9,7 @@ import type { AdapterManifest } from '@kb-labs/sdk/adapters';
  * Adapter manifest for Cache-backed EventBus.
  */
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'eventbus-cache',
   name: 'Cache-backed EventBus',
@@ -18,6 +19,8 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'IEventBus',
+  networkRequired: false,
+  defaultFor: { eventBus: [] },
   requires: {
     adapters: [{ id: 'cache', alias: 'cache' }],
     platform: '>= 1.0.0',

@@ -1,7 +1,7 @@
 ---
 title: "Quick Start"
 description: "Install KB Labs and run your first command in under 5 minutes."
-updatedAt: "2026-09-30"
+updatedAt: "2026-10-09"
 order: 1
 ---
 
@@ -10,7 +10,7 @@ Install KB Labs, then run your first command in any Git project.
 ## Prerequisites
 
 - macOS or Linux (Windows installation is not yet supported by this journey).
-- Node.js 24.x.
+- Node.js <NodePolicy />.x.
 - At least 1.20 GiB available memory and 2 GiB free disk space.
 - `curl` to run the installer.
 
@@ -49,8 +49,8 @@ enable AI-backed generation with OpenAI, set the adapter and provide the key
 through an environment variable:
 
 ```bash
-kb config set platform.adapters.llm @kb-labs/adapters-openai
-kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'
+kb config set --scope platform platform.adapters.llm @kb-labs/adapters-openai
+kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'
 export OPENAI_API_KEY=your-openai-api-key
 ```
 
@@ -62,7 +62,7 @@ intend to install:
 
 ```bash
 kb-create apply --json --index ./release-index.json \
-  --request-platform-root ./ci-platform --service-profile default \
+  --platform-root ./ci-platform --service-profile default \
   --scenario commit
 ```
 
@@ -70,7 +70,7 @@ kb-create apply --json --index ./release-index.json \
 
 | Error code | What happened | Fix |
 | --- | --- | --- |
-| `KB_INSTALL_NODE_VERSION` | Node.js is not 24.x. | Install Node 24, then rerun `kb-create install`; with nvm: `nvm install 24 && nvm use 24`. |
+| `KB_NODE_VERSION_UNSUPPORTED` | Node.js is on a major outside the supported policy. | Run the version-switch command shown in the diagnostic, then retry `kb-create install`. |
 | `KB_INSTALL_MEMORY_INSUFFICIENT` | Less than 1.20 GiB memory is available. | Close memory-heavy applications or increase machine memory, then rerun `kb-create install`. |
 | `KB_INSTALL_NO_DISK_SPACE` | Less than 2 GiB is free for installation. | Free disk space or choose a writable platform directory with `kb-create install --platform-root PATH`. |
 | `KB_INSTALL_PACKAGE_MANAGER_KILLED` | The package manager was killed, likely because memory ran out. | Free memory, then rerun `kb-create install`. |

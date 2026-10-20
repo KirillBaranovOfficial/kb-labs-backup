@@ -1,4 +1,4 @@
-import { defineCommand, useLoader, TimingTracker, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useLoader, TimingTracker, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { discoverMonorepos, buildPackageMapFiltered, buildPlan, freeze, loadState } from '@kb-labs/devlink-core';
 import type { LockFile } from '@kb-labs/devlink-core';
 
@@ -17,7 +17,7 @@ export default defineCommand<unknown, FreezeInput, LockFile>({
   description: 'Freeze current dependency state to lock file',
 
   handler: {
-    async intent(_ctx: PluginContextV3, _input: FreezeInput) {
+    async intent(_ctx: PluginCommandContextV3, _input: FreezeInput) {
       return {
         summary: 'Freeze current dependency state to lock file',
         operations: [
@@ -26,7 +26,7 @@ export default defineCommand<unknown, FreezeInput, LockFile>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: FreezeInput): Promise<CommandResult<LockFile>> {
+    async execute(ctx: PluginCommandContextV3, input: FreezeInput): Promise<CommandResult<LockFile>> {
       const tracker = new TimingTracker();
       const flags = (input.flags ?? input) as FreezeFlags;
       const outputJson = flags.json ?? false;
@@ -46,14 +46,13 @@ export default defineCommand<unknown, FreezeInput, LockFile>({
         lock = freeze(rootDir, plan);
       } catch (err) {
         loader.fail('Failed to freeze state');
-        handleError(ctx, err, outputJson);
-        return { ok: false, error: 'Freeze operation failed' };
+        return handleError(err);
       }
       loader.succeed('State frozen');
       tracker.checkpoint('freeze');
 
       if (outputJson) {
-        ctx.ui?.json?.(lock);
+        return lock;
       } else {
         ctx.ui?.success?.('Current state frozen to lock file', {
           title: 'DevLink — Freeze',
@@ -71,7 +70,7 @@ export default defineCommand<unknown, FreezeInput, LockFile>({
         });
       }
 
-      return { ok: true, result: lock, meta: { timing: tracker.total() } };
+      return lock;
     },
   },
 });

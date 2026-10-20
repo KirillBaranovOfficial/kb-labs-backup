@@ -1,1 +1,1 @@
-export { manifest as default } from './manifest.js';
+export { manifest } from './manifest.js';

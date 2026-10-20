@@ -1,3 +1,5 @@
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
+
 /**
  * @module @kb-labs/workflow-contracts/routes
  * REST API route constants for workflow plugin
@@ -7,6 +9,16 @@
  * Base path for all workflow REST endpoints
  */
 export const WORKFLOW_BASE_PATH = '/plugins/workflow'
+
+/** Path to a workflow API route scoped to one registered project. */
+export function projectWorkflowRoute(projectId: string, path = ''): string {
+  return projectServicePath(projectId, 'workflow', path)
+}
+
+/** Project route path for Studio SDK hooks, which prepend `/api` themselves. */
+export function projectWorkflowEndpoint(projectId: string, path = ''): string {
+  return projectWorkflowRoute(projectId, path).slice('/api'.length);
+}
 
 /**
  * Workflow REST API routes

@@ -201,7 +201,7 @@ interface CommandSuggestion {
 class MultiCLISuggestions {
   registerPackage(pkg: CLIPackage): void;
   generateAllSuggestions(context: MultiCLIContext): CommandSuggestion[];
-  generateGroupSuggestions(group: string, context: MultiCLIContext): CommandSuggestion[];
+  generateGroupSuggestions(group: string): CommandSuggestion[];
   getAvailableCommands(group: string): string[];
 }
 ```

@@ -44,7 +44,7 @@ describe('clickup:space.update', () => {
       mockCLIInput({ argv: ['space-1'], flags: { name: 'Updated Space' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Space updated');
     expect(vi.mocked(updateSpace)).toHaveBeenCalledWith('test-api-key', 'space-1', expect.any(Object));
@@ -60,9 +60,9 @@ describe('clickup:space.update', () => {
       mockCLIInput({ argv: ['space-1'], flags: { name: 'Updated Space', json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ id: 'space-1', name: 'Updated Space' });
-    expect(Object.keys(captured.json[0] as object)).toEqual(['id', 'name']);
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ id: 'space-1', name: 'Updated Space' });
+    expect(Object.keys(result as object)).toEqual(['id', 'name']);
   });
 
   it('SU-02b: --json --full outputs raw updated space', async () => {
@@ -75,8 +75,8 @@ describe('clickup:space.update', () => {
       mockCLIInput({ argv: ['space-1'], flags: { name: 'Updated Space', json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const raw = captured.json[0] as typeof mockUpdatedSpace;
+    expect(result).not.toHaveProperty('ok');
+    const raw = result as typeof mockUpdatedSpace;
     expect(raw.folders).toBeDefined();
     expect(raw.statuses).toBeDefined();
   });
@@ -89,8 +89,8 @@ describe('clickup:space.update', () => {
       mockCLIInput({ argv: [], flags: { name: 'Updated Space' } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('SU-04: core function throws — exitCode 1, error shown', async () => {
@@ -103,8 +103,8 @@ describe('clickup:space.update', () => {
       mockCLIInput({ argv: ['space-1'], flags: { name: 'Updated Space' } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('SU-05: --dry-run shows intent, updateSpace is NOT called', async () => {
@@ -115,7 +115,7 @@ describe('clickup:space.update', () => {
       mockCLIInput({ argv: ['space-1'], flags: { name: 'New Name', 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(updateSpace)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('space-1');

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GatewayDispatchTransport } from '../transport/gateway-dispatch-transport.js';
-import type { ExecutionRequest } from '@kb-labs/core-contracts';
+import type { ExecutionRequest } from '@kb-labs/core-platform';
 
 const DEFAULT_OPTS = {
   dispatchEndpoint: 'http://localhost:4000/internal/dispatch',

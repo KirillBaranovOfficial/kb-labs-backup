@@ -15,25 +15,8 @@
  */
 
 import { z } from 'zod';
-import { flattenZodIssues } from '@kb-labs/core-config';
-
-// ── ContainerExecutionConfig ──────────────────────────────────────────────────
-
-export const ContainerExecutionConfigSchema = z.object({
-  /** URL for the Gateway's internal dispatch endpoint (used by loader.ts RoutingBackend transport). */
-  gatewayDispatchUrl: z.string().url({
-    message: 'execution.container.gatewayDispatchUrl must be a valid URL (e.g. "http://localhost:4000/internal/dispatch")',
-  }),
-  /** Internal secret for the dispatch endpoint. */
-  gatewayInternalSecret: z.string().min(1, {
-    message: 'execution.container.gatewayInternalSecret must not be empty. Use ${ENV_VAR} to reference an environment variable.',
-  }),
-  // gatewayWsUrl and gatewayJwtSecret moved to adapterOptions.environment.gateway
-  // (adapter-owned: DockerEnvironmentAdapter injects them during reserve()+start())
-  image: z.string().optional(),
-  pullPolicy: z.enum(['Always', 'IfNotPresent', 'Never']).optional(),
-  dockerFlags: z.array(z.string()).optional(),
-});
+import { flattenZodIssues, registerZodEnumIssueHint } from '@kb-labs/core-config';
+import { RESOLVED_EXECUTION_MODES, ROADMAP_EXECUTION_MODES } from '@kb-labs/core-contracts';
 
 // ── ExecutionRetryConfig ──────────────────────────────────────────────────────
 
@@ -47,8 +30,30 @@ export const ExecutionRetryConfigSchema = z.object({
 
 // ── ExecutionConfig ───────────────────────────────────────────────────────────
 
+const SUPPORTED_EXECUTION_MODES = ['auto', ...RESOLVED_EXECUTION_MODES] as const;
+const EXECUTION_MODE_HINT = `Supported modes are ${SUPPORTED_EXECUTION_MODES.join(', ')}. Run \`kb config set platform.execution.mode in-process --scope platform\`.`;
+
+registerZodEnumIssueHint(SUPPORTED_EXECUTION_MODES, (issue) => (
+  isRoadmapExecutionMode(issue.received) ? EXECUTION_MODE_HINT : undefined
+));
+
+const executionModeErrorMap: z.ZodErrorMap = (issue, ctx) => {
+  if (issue.code === z.ZodIssueCode.invalid_enum_value) {
+    return {
+      message: isRoadmapExecutionMode(issue.received)
+        ? 'remote execution is not supported in this release'
+        : ctx.defaultError,
+    };
+  }
+  return { message: ctx.defaultError };
+};
+
+function isRoadmapExecutionMode(value: unknown): boolean {
+  return ROADMAP_EXECUTION_MODES.some((mode) => mode === value);
+}
+
 export const ExecutionConfigSchema = z.object({
-  mode: z.enum(['auto', 'in-process', 'subprocess', 'worker-pool', 'remote', 'container']).optional(),
+  mode: z.enum(SUPPORTED_EXECUTION_MODES, { errorMap: executionModeErrorMap }).optional(),
 
   workerPool: z.object({
     min: z.number().int().nonnegative().optional(),
@@ -63,34 +68,15 @@ export const ExecutionConfigSchema = z.object({
     }).optional(),
   }).optional(),
 
-  remote: z.object({
-    endpoint: z.string().url().optional(),
-  }).optional(),
-
-  container: ContainerExecutionConfigSchema.optional(),
+  workspaceAgent: z.object({
+    enabled: z.boolean(),
+    internalSecret: z.string().min(1),
+    fallback: z.enum(['local', 'error']).optional(),
+  }).strict().optional(),
 
   retry: ExecutionRetryConfigSchema.optional(),
-}).superRefine((cfg, ctx) => {
-  // If mode=container, container config must be present
-  if (cfg.mode === 'container' && !cfg.container) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['container'],
-      message: 'execution.container is required when mode is "container"',
-    });
-  }
+}).strict();
 
-  // If mode=remote, remote.endpoint must be present
-  if (cfg.mode === 'remote' && !cfg.remote?.endpoint) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['remote', 'endpoint'],
-      message: 'execution.remote.endpoint is required when mode is "remote"',
-    });
-  }
-});
-
-export type ExecutionConfigInput = z.input<typeof ExecutionConfigSchema>;
 export type ExecutionConfigParsed = z.output<typeof ExecutionConfigSchema>;
 
 /**
@@ -189,6 +175,7 @@ export const PlatformSectionSchema = z.union([
   z
     .object({
       dir: z.string().min(1).optional(),
+      mode: z.enum(["development", "production"]).optional(),
       adapters: PlatformAdaptersSchema.optional(),
       adapterOptions: PlatformAdapterOptionsSchema.optional(),
       core: CoreFeaturesConfigSchema.optional(),
@@ -215,6 +202,7 @@ export interface PlatformConfigIssue {
   /** Dotted path of the offending value (empty for the document root). */
   path: string;
   message: string;
+  hint?: string;
 }
 
 /** Validate a parsed user config document; returns every issue with its field path. */

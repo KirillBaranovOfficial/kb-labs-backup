@@ -1,0 +1,85 @@
+schemaVersion: 1
+id: kb-labs
+title: KB Labs
+root: platform
+nodes:
+  - id: platform
+    title: KB Labs platform
+    level: C1
+    summary: Curated navigation over current architecture notes. The system overview is explicitly marked as a draft and needs owner review.
+    diagram: diagrams/c1-platform.mmd
+    documents: [00-system-overview.md]
+    children: [developer-platform, studio]
+  - id: developer-platform
+    title: Developer platform
+    level: C2
+    parent: platform
+    summary: Runtime foundation, public contracts and extension packages.
+    diagram: diagrams/c2-developer-platform.mmd
+    documents: [00-system-overview.md]
+    children: [core-runtime, plugin-system, gateway]
+  - id: core-runtime
+    title: Core runtime
+    level: C3
+    parent: developer-platform
+    summary: Core packages provide platform primitives and plugin execution.
+    documents: [capability-abstractions.md, platform-adapter-pipeline.md, environment-execution-boundary.md, execution-isolation.md]
+    children: [platform-services]
+  - id: platform-services
+    title: Platform services
+    level: C4
+    parent: core-runtime
+    summary: Logger, cache and other platform capabilities are exposed through the platform runtime.
+    documents: [capability-abstractions.md]
+    children: []
+  - id: plugin-system
+    title: Plugin system
+    level: C3
+    parent: developer-platform
+    summary: Plugins are split into contracts, core logic and entry packages.
+    documents: [00-system-overview.md]
+    children: [plugin-manifest]
+  - id: plugin-manifest
+    title: Plugin manifest and routes
+    level: C4
+    parent: plugin-system
+    summary: Manifests declare plugin identity, permissions, REST routes and Studio pages.
+    documents: [00-system-overview.md]
+    children: []
+  - id: gateway
+    title: Gateway and execution
+    level: C3
+    parent: developer-platform
+    summary: Gateway is documented as the unified entry and routing point. Its detailed execution note is marked as an experiment; check its status before relying on it.
+    diagram: diagrams/c3-gateway.mmd
+    documents: [gateway-execution-architecture.md]
+    children: [gateway-auth]
+  - id: gateway-auth
+    title: Gateway authentication
+    level: C4
+    parent: gateway
+    summary: The Gateway note describes JWT access and refresh tokens, route authentication and namespace isolation. The document status remains experimental.
+    documents: [gateway-execution-architecture.md]
+    children: []
+  - id: studio
+    title: Studio
+    level: C2
+    parent: platform
+    summary: Web workspace that hosts core experiences and plugin-contributed pages.
+    diagram: diagrams/c2-studio.mmd
+    documents: [00-system-overview.md]
+    children: [studio-ui, studio-extensions]
+  - id: studio-ui
+    title: Studio UI
+    level: C3
+    parent: studio
+    summary: Application shell, navigation, shared hooks and component kit.
+    documents: [00-system-overview.md]
+    children: []
+  - id: studio-extensions
+    title: Studio plugin pages
+    level: C3
+    parent: studio
+    summary: Studio V2 loads plugin pages as Module Federation remotes.
+    documents: [00-system-overview.md]
+    children: []

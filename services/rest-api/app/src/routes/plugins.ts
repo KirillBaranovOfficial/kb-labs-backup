@@ -1,3 +1,4 @@
+import { noBodySchema, withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/plugins
  * Plugin routes registration
@@ -9,14 +10,13 @@ import type { FastifyInstance } from "fastify";
 import type { RestApiConfig } from "@kb-labs/rest-api-core";
 import type { IEntityRegistry, RegistrySnapshot } from "@kb-labs/core-registry";
 import type { ManifestV3 } from "@kb-labs/plugin-contracts";
-import { validateManifest } from "@kb-labs/plugin-contracts";
+import { resolvePluginBasePath, validateManifest } from "@kb-labs/plugin-contracts";
 import { mountRoutes } from "@kb-labs/plugin-execution/http";
 import {
   mountEventStreams,
   mountWebSocketChannels,
 } from "@kb-labs/plugin-execution";
-import { InProcessBackend } from "@kb-labs/plugin-execution-factory";
-import { combineManifestsToRegistry } from "@kb-labs/rest-api-core";
+import { combineManifestsToRegistry, manifestToRegistryEntry } from "@kb-labs/rest-api-core";
 import { platform } from "@kb-labs/core-runtime";
 import {
   logDiagnosticEvent,
@@ -37,6 +37,7 @@ interface SnapshotManifestEntry {
   pluginId: string;
   manifest: ManifestV3;
   pluginRoot: string;
+  scope: RegistrySnapshot["manifests"][number]["scope"];
 }
 
 function extractSnapshotManifests(
@@ -46,6 +47,7 @@ function extractSnapshotManifests(
     pluginId: entry.pluginId,
     manifest: entry.manifest,
     pluginRoot: entry.pluginRoot,
+    scope: entry.scope,
   }));
 }
 
@@ -90,6 +92,7 @@ export async function registerPluginRoutes(
         // ctx.cwd to fall back to the platform dir (kb-platform333) instead of the user's
         // project dir when services are started via kb-dev start.
         KB_PROJECT_ROOT: process.env.KB_PROJECT_ROOT,
+        KB_HOME: process.env.KB_HOME,
         KB_LABS_WORKSPACE_ROOT: process.env.KB_LABS_WORKSPACE_ROOT,
         KB_LABS_REPO_ROOT: process.env.KB_LABS_REPO_ROOT,
       },
@@ -154,23 +157,18 @@ export async function registerPluginRoutes(
 
     emitRegistrySnapshotDiagnostics(snapshot);
 
-    // Use platform's unified ExecutionBackend (initialized in bootstrap.ts)
+    // Every REST plane uses the single backend initialized by the platform.
     const backend = platform.executionBackend;
-    // Realtime handlers must always run in-process: their senders hold closures over
-    // the live ws socket and connectionRegistry — both bound to this host.
-    // Worker-pool serialization strips its methods (close/getConnectionId
-    // become undefined in the worker), so defineWebSocket's createTypedSender
-    // crashes with "Cannot read properties of undefined (reading 'bind')".
-    const wsBackend = new InProcessBackend({ platform });
+    const wsBackend = backend;
 
     // Filter plugins that have routes, realtime streams or channels to mount
     const mountableManifests = manifests.filter(
       (entry) =>
-        (entry.manifest.rest?.routes &&
+        ((entry.manifest.rest?.routes &&
           entry.manifest.rest.routes.length > 0) ||
         (entry.manifest.sse?.streams &&
           entry.manifest.sse.streams.length > 0) ||
-        (entry.manifest.ws?.channels && entry.manifest.ws.channels.length > 0),
+        (entry.manifest.ws?.channels && entry.manifest.ws.channels.length > 0)),
     );
 
     platform.logger.info("Plugins selected for route mounting", {
@@ -401,35 +399,8 @@ export async function registerPluginRoutes(
       try {
         const start = performance.now();
 
-        let pluginBasePath: string;
-        if (manifest.rest?.basePath) {
-          if (manifest.rest.basePath.startsWith("/api/")) {
-            pluginBasePath = manifest.rest.basePath;
-          } else if (manifest.rest.basePath.startsWith("/v1/")) {
-            pluginBasePath = manifest.rest.basePath.replace(
-              /^\/v1/,
-              config.basePath,
-            );
-          } else {
-            pluginBasePath = `${config.basePath}${manifest.rest.basePath}`;
-          }
-        } else {
-          pluginBasePath = `${config.basePath}/plugins/${manifest.id}`;
-        }
-
-        let sseBasePath = pluginBasePath;
-        if (manifest.sse?.basePath) {
-          if (manifest.sse.basePath.startsWith("/api/")) {
-            sseBasePath = manifest.sse.basePath;
-          } else if (manifest.sse.basePath.startsWith("/v1/")) {
-            sseBasePath = manifest.sse.basePath.replace(
-              /^\/v1/,
-              config.basePath,
-            );
-          } else {
-            sseBasePath = `${config.basePath}${manifest.sse.basePath}`;
-          }
-        }
+        const pluginBasePath = resolvePluginBasePath(manifest, "rest", config.basePath);
+        const sseBasePath = resolvePluginBasePath(manifest, "sse", config.basePath);
 
         platform.logger.info("Mounting plugin routes", {
           plugin: `${manifest.id}@${manifest.version}`,
@@ -513,13 +484,7 @@ export async function registerPluginRoutes(
         if (manifest.ws?.channels && manifest.ws.channels.length > 0) {
           try {
             const wsStart = performance.now();
-            let wsBasePath: string =
-              manifest.ws.basePath || `/v1/ws/plugins/${manifest.id}`;
-            // Normalize: /v1/ → config.basePath (same as REST routes) so gateway
-            // can proxy both HTTP and WS under the same /api/v1 prefix.
-            if (wsBasePath.startsWith("/v1/")) {
-              wsBasePath = wsBasePath.replace(/^\/v1/, config.basePath);
-            }
+            const wsBasePath = resolvePluginBasePath(manifest, "ws", config.basePath);
 
             platform.logger.info("Mounting WebSocket channels", {
               plugin: `${manifest.id}@${manifest.version}`,
@@ -529,6 +494,7 @@ export async function registerPluginRoutes(
 
             const wsResult = await mountWebSocketChannels(server, manifest, {
               backend: wsBackend,
+              hostPlatform: platform,
               pluginRoot: pluginDistRoot,
               workspaceRoot,
               basePath: wsBasePath,
@@ -695,7 +661,7 @@ export async function registerPluginSnapshotRoutes(
 ): Promise<void> {
   const basePath = config.basePath;
 
-  server.post(`${basePath}/plugins/refresh`, async (_request, reply) => {
+  server.post(`${basePath}/plugins/refresh`, { schema: { querystring: { type: 'object', additionalProperties: false }, body: noBodySchema, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { rev: { type: 'integer' }, total: { type: 'integer' }, generatedAt: { type: 'string', format: 'date-time' }, partial: { type: 'boolean' }, stale: { type: 'boolean' } }, required: ['rev', 'total', 'generatedAt', 'partial', 'stale'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } }, async (_request, reply) => {
     try {
       await restDomainOperationMetrics.observeOperation(
         "plugin.registry.refresh",
@@ -744,7 +710,7 @@ export async function registerPluginSnapshotRoutes(
   });
 
   // Raw manifests endpoint for Studio/debug consumers
-  server.get(`${basePath}/plugins/registry`, async (_request, reply) => {
+  server.get(`${basePath}/plugins/registry`, { schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { manifests: { type: 'array', items: { type: 'object', properties: { pluginId: { type: 'string' }, manifest: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, version: { type: 'string' } }, additionalProperties: true }, pluginRoot: { type: 'string' }, source: { type: 'object', properties: { kind: { type: 'string' }, packageName: { type: 'string' }, path: { type: 'string' } }, additionalProperties: true }, discoveredAt: { type: 'string', format: 'date-time' }, buildTimestamp: { type: 'string', format: 'date-time' }, validation: { type: 'object', properties: { valid: { type: 'boolean' }, errors: { type: 'array', items: { type: 'string' } } }, required: ['valid', 'errors'], additionalProperties: true } }, required: ['pluginId', 'manifest', 'pluginRoot', 'source', 'discoveredAt', 'validation'], additionalProperties: true } }, apiBasePath: { type: 'string' }, diagnostics: { type: 'object', properties: { total: { type: 'integer' }, items: { type: 'array', items: { type: 'object', properties: { severity: { type: 'string' }, code: { type: 'string' }, reasonCode: { type: 'string' }, message: { type: 'string' }, pluginId: { type: 'string' }, filePath: { type: 'string' }, remediation: { type: 'string' }, ts: { type: 'string' } }, required: ['severity', 'code', 'reasonCode', 'message', 'ts'], additionalProperties: true } } }, required: ['total', 'items'], additionalProperties: true } }, required: ['manifests', 'apiBasePath', 'diagnostics'], additionalProperties: false } }) } }, async (_request, reply) => {
     try {
       const snapshot = await restDomainOperationMetrics.observeOperation(
         "plugin.registry.snapshot",
@@ -817,6 +783,7 @@ export async function registerPluginSnapshotRoutes(
   }>(
     `${basePath}/plugins/@:scope/:name/readme`,
     {
+      config: { ux: "raw" },
       schema: { hide: true },
     },
     async (request, reply) => {
@@ -862,6 +829,7 @@ export async function registerPluginSnapshotRoutes(
   }>(
     `${basePath}/plugins/@:scope/:name/changelog`,
     {
+      config: { ux: "raw" },
       schema: { hide: true },
     },
     async (request, reply) => {
@@ -905,9 +873,12 @@ export async function registerPluginSnapshotRoutes(
   server.get(
     `${basePath}/studio/registry`,
     {
+      config: { uxFixture: { validResult: 'error-envelope' } },
       schema: {
         tags: ["Studio"],
         summary: "Get Studio Registry V2 (plugin pages for Module Federation)",
+        querystring: { type: 'object', additionalProperties: false },
+        response: withUxErrorResponses({ 200: { type: 'object', properties: { version: { type: 'string' }, generatedAt: { type: 'string', format: 'date-time' }, plugins: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: true } } }, required: ['version', 'generatedAt', 'plugins'], additionalProperties: false } }),
       },
     },
     async (_request, reply) => {
@@ -949,6 +920,7 @@ export async function registerPluginSnapshotRoutes(
   }>(
     "/plugins/@:scope/:name/widgets/*",
     {
+      config: { ux: "raw" },
       schema: { hide: true },
     },
     async (request, reply) => {
@@ -978,7 +950,14 @@ export async function registerPluginSnapshotRoutes(
       const { createReadStream, existsSync, statSync } =
         await import("node:fs");
 
-      const bundleDir = join(entry.pluginRoot, "dist", "widgets");
+      const studioEntry = manifestToRegistryEntry(entry.manifest, entry.pluginRoot);
+      if (!studioEntry) {
+        return reply
+          .code(404)
+          .send({ error: `No widget bundle for ${pluginId}` });
+      }
+
+      const bundleDir = studioEntry.widgetBundleDir;
       const fullPath = join(bundleDir, filePath);
 
       if (!fullPath.startsWith(bundleDir)) {
@@ -1021,7 +1000,7 @@ export async function registerPluginSnapshotRoutes(
   );
 
   // Plugin registry health endpoint
-  server.get(`${basePath}/plugins/health`, async (_request, reply) => {
+  server.get(`${basePath}/plugins/health`, { schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { healthy: { type: 'boolean' }, snapshot: { type: 'object', properties: { partial: { type: 'boolean' }, stale: { type: 'boolean' }, corrupted: { type: 'boolean' }, rev: { type: 'integer' }, generatedAt: { type: 'string' }, totalManifests: { type: 'integer' }, partialReasons: { type: 'array', items: { type: 'string' } } }, required: ['partial', 'stale', 'rev', 'generatedAt', 'totalManifests', 'partialReasons'], additionalProperties: false }, registryErrors: { type: 'object', properties: { total: { type: 'integer' }, items: { type: 'array', items: { type: 'object', properties: { pluginPath: { type: 'string' }, pluginId: { type: 'string' }, error: { type: 'string' }, code: { type: 'string' } }, additionalProperties: false } } }, required: ['total', 'items'], additionalProperties: false }, diagnostics: { type: 'object', properties: { total: { type: 'integer' }, errors: { type: 'integer' }, warnings: { type: 'integer' }, items: { type: 'array', items: { type: 'object', properties: { severity: { type: 'string' }, code: { type: 'string' }, reasonCode: { type: 'string' }, message: { type: 'string' }, pluginId: { type: 'string' }, filePath: { type: 'string' }, remediation: { type: 'string' }, ts: { type: 'string' } }, required: ['severity', 'code', 'reasonCode', 'message', 'ts'], additionalProperties: false } } }, required: ['total', 'errors', 'warnings', 'items'], additionalProperties: false }, validation: { type: 'object', properties: { totalIssues: { type: 'integer' }, issues: { type: 'array', items: { type: 'object', properties: { pluginId: { type: 'string' }, errors: { type: 'array', items: { type: 'string' } } }, required: ['pluginId', 'errors'], additionalProperties: false } } }, required: ['totalIssues', 'issues'], additionalProperties: false }, message: { type: 'string' } }, required: ['healthy', 'snapshot', 'registryErrors', 'diagnostics', 'validation', 'message'], additionalProperties: false } }) } }, async (_request, reply) => {
     try {
       const snapshot = await restDomainOperationMetrics.observeOperation(
         "plugin.registry.health",
@@ -1148,7 +1127,7 @@ export async function registerPluginSnapshotRoutes(
   });
 
   // AI Assistant endpoint: ask questions about a plugin
-  server.post(`${basePath}/plugins/:pluginId/ask`, async (request, reply) => {
+  server.post(`${basePath}/plugins/:pluginId/ask`, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, params: { type: 'object', properties: { pluginId: { type: 'string', minLength: 1 } }, required: ['pluginId'], additionalProperties: false }, body: { type: 'object', properties: { question: { type: 'string', minLength: 1 } }, required: ['question'], additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { answer: { type: 'string' }, usage: { type: 'object', properties: { promptTokens: { type: 'integer' }, completionTokens: { type: 'integer' }, totalTokens: { type: 'integer' } }, additionalProperties: false } }, required: ['answer'], additionalProperties: false } }) } }, async (request, reply) => {
     try {
       const { pluginId } = request.params as { pluginId: string };
       const { question } = request.body as { question: string };

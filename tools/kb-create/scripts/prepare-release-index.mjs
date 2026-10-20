@@ -6,15 +6,17 @@
 // release stage instead of rebuilding or resolving npm tags.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { isPlatformPackage } from '../../../core/plugin-runtime/src/platform-resolve/platform-package.js';
 
 const args = process.argv.slice(2);
 const value = name => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
 };
+const values = name => args.flatMap((argument, index) => argument === name ? [args[index + 1]] : []);
 const required = name => {
   const result = value(name);
   if (!result) throw new Error(`${name} is required`);
@@ -29,16 +31,13 @@ const channel = value('--channel') ?? 'stable';
 const registry = value('--registry') ?? 'https://registry.npmjs.org';
 const platformPackage = value('--platform-package') ?? '@kb-labs/core-runtime';
 const sdkPackage = value('--sdk-package') ?? '@kb-labs/sdk';
-const platformVersion = value('--platform-version');
-const sdkVersion = value('--sdk-version');
 const binaryManifestPath = value('--binary-manifest') ? resolve(value('--binary-manifest')) : undefined;
 if (flow === 'platform' && !binaryManifestPath) throw new Error('--binary-manifest is required for the unified platform release-index');
-// SDK, platform and binaries share one version for now (release decision 4a).
-// A differing version is a release mistake unless it is declared on purpose.
-const allowVersionSkew = args.includes('--allow-version-skew');
 const minLauncherVersion = value('--min-launcher-version');
-if (minLauncherVersion && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(minLauncherVersion)) throw new Error(`--min-launcher-version must be a semver version, got ${minLauncherVersion}`);
+const provenanceManifestPath = resolve(required('--provenance-manifest'));
+const releaseNotes = value('--release-notes');
 const sealerBin = value('--sealer-bin') ? resolve(value('--sealer-bin')) : undefined;
+const historyIndexes = values('--history-index').map(path => resolve(path));
 const platformRequires = (value('--platform-requires') ?? '')
   .split(',')
   .map(item => item.trim())
@@ -60,7 +59,6 @@ const platformMemberPackages = (value('--platform-member-packages') ?? '')
 // a recovery tool (kb-create doctor --recover) is declared only when it ships.
 const hostPackage = value('--host-package') ?? '@kb-labs/host-app';
 const hostHealthURL = value('--host-health-url') ?? 'http://127.0.0.1:4000/health';
-const adapterOverrides = value('--adapter-overrides') ? JSON.parse(value('--adapter-overrides')) : {};
 
 const readStage = directory => {
   const entries = JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8'));
@@ -73,8 +71,10 @@ if (new Set(stage.map(item => item.name)).size !== stage.length) throw new Error
 
 const byName = new Map(stage.map(item => [item.name, item]));
 const sourceDirByName = new Map(stagedEntries.map(({ item, directory }) => [item.name, directory]));
+const sizeBytesFor = item => statSync(resolve(sourceDirByName.get(item.name) ?? artifactsDir, item.tarball)).size;
 const platform = byName.get(platformPackage);
 if (!platform) throw new Error(`platform package ${platformPackage} is absent from stage manifest`);
+const resolvedPlatformVersion = platform.version;
 
 // The default adapter map is part of the sealed platform configuration, not a
 // suggestion for an already-installed workspace.  Its packages must therefore
@@ -98,58 +98,28 @@ const configuredPlatformAdapterPackages = platformAdapterConfig
       return stagedPackageForAdapter(configuredPackage);
     }))]
   : [];
-// A release index is a portable installation baseline, not a copy of the
-// maintainer's local development environment.  Keep every configured adapter
-// package in the sealed member set so a consumer can opt into it later, but
-// enable by default only what works on any machine with no credentials,
-// endpoints or external services:
-//   - serviceTransport: the transport needed to reach the installed service
-//     graph;
-//   - logger + logRingBuffer: in-process logging.  platform.logs (workflow
-//     run logs, the logs WS channel, Studio log views) has no backend unless
-//     a log adapter is bound, so without them a default install silently
-//     shows no logs.  logRingBuffer is an extension adapter that taps the
-//     logger, so the two are enabled together.
-// Remote providers (and their credentials/endpoints) belong in a consumer
-// overlay; otherwise an installed CLI can fail before it can even configure
-// that overlay.
-const PORTABLE_ADAPTER_SLOTS = ['serviceTransport', 'logger', 'logRingBuffer'];
-const portablePlatformAdapterConfig = platformAdapterConfig?.serviceTransport
-  ? Object.fromEntries(
-      PORTABLE_ADAPTER_SLOTS
-        .filter(slot => typeof platformAdapterConfig[slot] === 'string')
-        .map(slot => [slot, platformAdapterConfig[slot]]),
-    )
+// Keep the bindings and options for precisely the required platform slots in
+// the release index. This makes fresh-install defaults travel with the same
+// capability list the resolver uses to produce provider bindings.
+const requiredAdapterSlots = new Set(platformRequires.map(({ capability }) => capability));
+const portablePlatformAdapterConfig = platformAdapterConfig
+  ? Object.fromEntries(Object.entries(platformAdapterConfig).filter(([slot]) => requiredAdapterSlots.has(slot)))
   : undefined;
-const portablePlatformAdapterOptions = platformAdapterOptions?.serviceTransport
-  ? { serviceTransport: platformAdapterOptions.serviceTransport }
+const portablePlatformAdapterOptions = platformAdapterOptions
+  ? Object.fromEntries(Object.entries(platformAdapterOptions).filter(([slot]) => requiredAdapterSlots.has(slot)))
   : undefined;
 for (const packageName of platformMemberPackages) {
   if (!byName.has(packageName)) {
     throw new Error(`required platform member ${packageName} is absent from stage manifest`);
   }
 }
-const resolvedPlatformVersion = platformVersion ?? platform.version;
-if (platform.version !== resolvedPlatformVersion) throw new Error(`platform version mismatch: stage=${platform.version}, expected=${resolvedPlatformVersion}`);
-
 const sdk = byName.get(sdkPackage);
-if (sdkVersion && (!sdk || sdk.version !== sdkVersion)) throw new Error(`SDK version mismatch for ${sdkPackage}`);
 if (!sdk) throw new Error(`SDK package ${sdkPackage} is absent from stage manifest; compatibility cannot be validated without an exact SDK artifact`);
 const binaries = binaryManifestPath ? JSON.parse(readFileSync(binaryManifestPath, 'utf8')).binaries : [];
 if (!Array.isArray(binaries)) throw new Error('binary manifest must contain a binaries array');
 for (const binary of binaries) {
-  for (const field of ['id', 'os', 'arch', 'url', 'filename', 'sha256']) if (!binary[field]) throw new Error(`binary manifest entry is missing ${field}`);
+  for (const field of ['id', 'version', 'os', 'arch', 'url', 'filename', 'sha256']) if (!binary[field]) throw new Error(`binary manifest entry is missing ${field}`);
 }
-const versionSkew = [
-  ...(sdk.version !== resolvedPlatformVersion ? [`sdk ${sdk.version} != platform ${resolvedPlatformVersion}`] : []),
-  ...binaries.filter(binary => binary.version && binary.version !== resolvedPlatformVersion).map(binary => `binary ${binary.id} ${binary.version} != platform ${resolvedPlatformVersion}`),
-];
-if (versionSkew.length > 0) {
-  const detail = versionSkew.join('; ');
-  if (!allowVersionSkew) throw new Error(`version skew: ${detail}. SDK, platform and binaries must share one version; pass --allow-version-skew to release them on purpose`);
-  console.warn(`WARNING: version skew allowed explicitly: ${detail}`);
-}
-
 const staging = resolve(`${artifactsDir}/v2-manifest-root`);
 rmSync(staging, { recursive: true, force: true });
 mkdirSync(staging, { recursive: true });
@@ -161,53 +131,26 @@ const manifestFor = item => {
   if (!existsSync(tarball)) throw new Error(`staged tarball is missing: ${tarball}`);
   const result = spawnSync('tar', ['-xzf', tarball, '-C', packageDir, '--strip-components=1'], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`extract ${item.name}: ${result.stderr || result.stdout}`);
-  for (const candidate of [join(packageDir, 'kb-create.manifest.json'), join(packageDir, 'dist', 'kb-create.manifest.json'), join(packageDir, 'dist', 'manifest.json')]) {
-    if (existsSync(candidate)) return JSON.parse(readFileSync(candidate, 'utf8'));
-  }
-  const javascriptManifest = join(packageDir, 'dist', 'manifest.js');
-  if (existsSync(javascriptManifest)) {
-    const source = readFileSync(javascriptManifest, 'utf8');
-    // Published service packages ship their manifest as compiled JS (rather
-    // than JSON).  The release index is the installation contract, so it
-    // must preserve their service graph instead of silently treating them as
-    // ordinary packages.  Read only the declarative literals we need; never
-    // execute a tarball fetched from the registry while preparing a release.
-    if (/schema:\s*["']kb\.service\/1["']/.test(source)) {
-      const id = source.match(/\bid:\s*["']([^"']+)["']/)?.[1];
-      // Minifiers rewrite round numeric literals into scientific notation
-      // (3000 -> 3e3), so the port literal must be captured whole rather than
-      // truncated at the exponent marker.
-      const port = Number(source.match(/\bport:\s*(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/)?.[1] ?? 0);
-      const healthCheck = source.match(/\bhealthCheck:\s*["']([^"']*)["']/)?.[1];
-      const dependsOnSource = source.match(/\bdependsOn:\s*\[([^\]]*)\]/)?.[1];
-      const dependsOn = dependsOnSource
-        ? [...dependsOnSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
-        : [];
-      if (id) return { schema: 'kb.service/1', id, runtime: { port, healthCheck }, dependsOn };
+  const artifact = join(packageDir, 'dist', 'manifest.json');
+  if (existsSync(artifact)) {
+    const manifest = JSON.parse(readFileSync(artifact, 'utf8'));
+    if (!['kb.service/1', 'kb.adapter/1', 'kb.plugin/3'].includes(manifest?.schema)) {
+      throw new Error(`${item.name} dist/manifest.json uses unsupported schema ${manifest?.schema ?? '(missing)'}`);
     }
-    const id = source.match(/\bid:\s*["']([^"']+)["']/)?.[1];
-    const implementsSource = source.match(/\bimplements:\s*(\[[^\]]+\]|["'][^"']+["'])/)?.[1];
-    const implementsValue = implementsSource?.startsWith('[')
-      ? [...implementsSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
-      : implementsSource?.slice(1, -1);
-    const defaultsSource = source.match(/\bdefaultFor:\s*(\[[^\]]*\])/)?.[1];
-    const defaultFor = defaultsSource
-      ? [...defaultsSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
-      : undefined;
-    if (id && implementsValue) {
-      return { schema: 'kb.adapter/1', id, implements: implementsValue, ...(defaultFor ? { defaultFor } : {}) };
-    }
+    return manifest;
   }
+  const packageJSON = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
+  const declarationField = packageJSON.kb?.adapter?.manifest ? 'kb.adapter.manifest' : 'kb.manifest';
+  const declaredManifest = packageJSON.kb?.adapter?.manifest ?? packageJSON.kb?.manifest;
+  if (declaredManifest) throw new Error(`${item.name} declares ${declarationField} but its build did not emit dist/manifest.json; rebuild the package with @kb-labs/devkit/tsup/node`);
   return undefined;
 };
 
-// A package declares the configuration it needs (non-secret paths, secrets and
-// the environment variables/services they feed) in a `kb-create.requirements.json`
-// shipped in its tarball. It is a SEPARATE file from `kb-create.manifest.json` on
-// purpose: manifestFor() above treats a `kb-create.manifest.json` as the
-// package's *primary* manifest, which would hide a service's `kb.service/1`
-// graph (dist/manifest.js) and drop the service from the index. This file only
-// adds requirements and never replaces the primary manifest. The sealer
+// Service packages declare package-specific configuration in a
+// `kb-create.requirements.json`. Adapter packages receive this artifact from the
+// manifest build emitter, which projects their configSchema into the same
+// requirement format. The file never replaces a package's service, plugin, or
+// adapter contract. The sealer
 // validates each requirement's shape; here we only fail closed on a malformed
 // file, so a typo cannot silently ship a package without its requirements.
 const REQUIREMENTS_FILE = 'kb-create.requirements.json';
@@ -259,6 +202,9 @@ const component = (item, manifest, id = item.name.split('/').pop().replace(/-ent
   package: item.name,
   tarball: tarballURL(item),
   sha256: item.sha256,
+  sizeBytes: sizeBytesFor(item),
+  ...(manifest?.compatibility?.platformRange ? { platformRange: manifest.compatibility.platformRange } : {}),
+  ...(manifest?.compatibility?.sdkRange ? { sdkRange: manifest.compatibility.sdkRange } : {}),
   config: manifest?.requirements ?? [],
 });
 
@@ -278,7 +224,7 @@ const adapters = [];
 // installed.Load()'s id equality check at publish time.
 const normalizedIdByPackage = new Map();
 for (const item of stage) {
-  const manifest = manifestFor(item) ?? adapterOverrides[item.name];
+  const manifest = manifestFor(item);
   const normalizedID = item.name === platformPackage
     ? 'platform'
     : item.name === sdkPackage
@@ -288,7 +234,7 @@ for (const item of stage) {
         : manifest?.schema === 'kb.adapter/1'
           ? manifest.id
         : manifest?.schema === 'kb.plugin/3'
-          ? pluginIdFor(manifest, item.name)
+          ? pluginIdFor(manifest)
         : idFor(item.name);
   normalizedIdByPackage.set(item.name, normalizedID);
   const generatedRequirements = item.name === platformPackage
@@ -328,13 +274,18 @@ for (const item of stage) {
     const capabilities = (Array.isArray(manifest.implements) ? manifest.implements : [manifest.implements])
       .filter(Boolean)
       .map(interfaceToCapability);
-    if (manifest.defaultFor !== undefined && !Array.isArray(manifest.defaultFor)) {
-      throw new Error(`${item.name} defaultFor must be an array of provided capabilities`);
+    if (manifest.defaultFor !== undefined && (typeof manifest.defaultFor !== 'object' || Array.isArray(manifest.defaultFor) || manifest.defaultFor === null)) {
+      throw new Error(`${item.name} defaultFor must map provided capabilities to module entry points`);
     }
-    const defaults = manifest.defaultFor ?? [];
+    const defaults = Object.keys(manifest.defaultFor ?? {});
     for (const capability of defaults) {
       if (!capabilities.includes(capability)) {
         throw new Error(`${item.name} declares defaultFor ${capability} but does not implement it`);
+      }
+    }
+    for (const [capability, entrypoint] of Object.entries(manifest.defaultFor ?? {})) {
+      if (!Array.isArray(entrypoint)) {
+        throw new Error(`${item.name} defaultFor ${capability} must declare module path segments`);
       }
     }
     adapters.push({
@@ -348,8 +299,75 @@ for (const item of stage) {
 const sdkPackageJSON = packageJSONFor(sdk);
 const sdkPlatformRange = sdkPackageJSON.peerDependencies?.[platformPackage];
 if (!sdkPlatformRange) throw new Error(`${sdkPackage} does not declare a peer dependency on ${platformPackage}`);
-if (!satisfies(resolvedPlatformVersion, sdkPlatformRange)) {
-  throw new Error(`${sdkPackage}@${sdk.version} rejects ${platformPackage}@${resolvedPlatformVersion}: ${sdkPlatformRange}`);
+const sdkRuntimePeerPackages = Object.entries(sdkPackageJSON.peerDependencies ?? {})
+  .filter(([name]) => name !== platformPackage && sdkPackageJSON.peerDependenciesMeta?.[name]?.optional !== true)
+  .map(([name]) => name);
+
+// The SDK package manifest is the owner of its required runtime peers. Include
+// each required peer as a platform member so the installed platform root can
+// provide the shared copy to every plugin. Optional peers remain consumer-owned.
+const platformMemberRoots = new Set([
+  ...services.map(service => service.packageName),
+  hostPackage,
+  ...platformMemberPackages,
+  ...configuredPlatformAdapterPackages,
+  ...sdkRuntimePeerPackages,
+  sdk.name,
+]);
+const dependencyClosureCache = new Map();
+const dependencyClosureFor = packageName => {
+  if (dependencyClosureCache.has(packageName)) return dependencyClosureCache.get(packageName);
+  const closure = new Set([packageName]);
+  dependencyClosureCache.set(packageName, closure);
+  const item = byName.get(packageName);
+  if (!item) return closure;
+  const packageJSON = packageJSONFor(item);
+  const dependencies = [
+    ...Object.keys(packageJSON.dependencies ?? {}),
+    ...Object.keys(packageJSON.optionalDependencies ?? {}),
+  ];
+  for (const dependency of dependencies) {
+    if (!dependency.startsWith('@kb-labs/')) continue;
+    for (const transitive of dependencyClosureFor(dependency)) closure.add(transitive);
+  }
+  return closure;
+};
+const platformMemberArtifacts = new Set(platformMemberRoots);
+// Platform members and the SDK are installed into one platform node_modules
+// tree. Derive peer availability from that exact sealed package graph; mere
+// presence in the release stage does not make a peer available to consumers.
+const platformProvidedPackages = new Set();
+platformProvidedPackages.add(platformPackage);
+for (const packageName of platformMemberRoots) {
+  for (const dependency of dependencyClosureFor(packageName)) {
+    if (byName.has(dependency)) platformProvidedPackages.add(dependency);
+  }
+}
+const platformPackageClosure = [...platformProvidedPackages];
+const platformPeerViolations = [];
+const packagesWithPlatformPeers = new Set([...platformPackageClosure, ...stage.map(item => item.name)]);
+for (const packageName of packagesWithPlatformPeers) {
+  const item = byName.get(packageName);
+  if (!item) continue;
+  const packageJSON = packageJSONFor(item);
+  const peers = new Set(Object.keys(packageJSON.peerDependencies ?? {}));
+  const optionalPeers = new Set(Object.entries(packageJSON.peerDependenciesMeta ?? {})
+    .filter(([, metadata]) => metadata?.optional === true)
+    .map(([name]) => name));
+  for (const peer of peers) {
+    if (!isPlatformPackage(peer) || optionalPeers.has(peer) || platformProvidedPackages.has(peer)) continue;
+    platformPeerViolations.push(`${packageName} declares platform peer ${peer}, which the platform package graph does not provide`);
+  }
+}
+for (const packageName of platformPackageClosure) {
+  const item = byName.get(packageName);
+  // Preserve the host-specific validation below, which reports the release
+  // contract violation with its actionable package role.
+  if (!item && packageName === hostPackage) continue;
+  if (!item) throw new Error(`platform package ${packageName} is absent from stage manifest`);
+}
+if (platformPeerViolations.length > 0) {
+  throw new Error(`platform peer validation failed:\n${platformPeerViolations.map(violation => `- ${violation}`).join('\n')}`);
 }
 
 const hostItem = byName.get(hostPackage);
@@ -363,21 +381,24 @@ const host = {
 };
 
 const exportValue = {
+  provenance: JSON.parse(readFileSync(provenanceManifestPath, 'utf8')),
   channels: { [channel]: resolvedPlatformVersion },
   compatibility: {
     schema: 'kb.release-compatibility/2',
     labels: [
       { id: `platform@${resolvedPlatformVersion}`, kind: 'platform', artifactId: 'platform', version: resolvedPlatformVersion, requires: [{ label: `sdk@${sdk.version}`, constraint: sdkPlatformRange }], status: 'prepared', validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-peer-dependency'] },
       { id: `sdk@${sdk.version}`, kind: 'sdk', artifactId: 'sdk', version: sdk.version, status: 'prepared', validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-peer-dependency'] },
-      ...binaries.map(binary => ({ id: `binary:${binary.id}@${resolvedPlatformVersion}:${binary.os}/${binary.arch}`, kind: 'binary', artifactId: binary.id, version: resolvedPlatformVersion, requires: [{ label: `platform@${resolvedPlatformVersion}` }, { label: `sdk@${sdk.version}` }], status: 'prepared', validatedBy: ['release-asset', 'artifact-hash', 'post-publish-smoke'] })),
+      ...binaries.map(binary => { const version = binary.version; return { id: `binary:${binary.id}@${version}:${binary.os}/${binary.arch}`, kind: 'binary', artifactId: binary.id, version, requires: [{ label: `platform@${resolvedPlatformVersion}` }, { label: `sdk@${sdk.version}` }], status: 'prepared', validatedBy: ['release-asset', 'artifact-hash', 'post-publish-smoke'] }; }),
     ],
   },
   platforms: [{
     id: 'platform',
     version: resolvedPlatformVersion,
+    ...(releaseNotes !== undefined ? { releaseNotes } : {}),
     package: platform.name,
     tarball: tarballURL(platform),
     sha256: platform.sha256,
+    sizeBytes: sizeBytesFor(platform),
     ...(minLauncherVersion ? { minLauncherVersion } : {}),
     requires: platformRequires,
     config: [
@@ -393,14 +414,12 @@ const exportValue = {
       }] : []),
     ],
     host,
-    profiles: { default: { platformVersion: resolvedPlatformVersion, services: services.map(({ packageName, ...service }) => service) } },
+    profiles: {
+      default: { platformVersion: platform.version, services: services.map(({ packageName, ...service }) => service) },
+      client: { profile: 'client', platformVersion: platform.version, services: [] },
+    },
     binaries,
-    members: [...new Set([
-      ...services.map(service => service.packageName),
-      hostPackage,
-      ...platformMemberPackages,
-      ...configuredPlatformAdapterPackages,
-    ])].map(packageName => {
+    members: [...platformMemberArtifacts].filter(packageName => packageName !== sdk.name).map(packageName => {
       const item = byName.get(packageName);
       return item ? component(item, undefined,
         normalizedIdByPackage.get(packageName) ?? idFor(packageName),
@@ -416,8 +435,10 @@ const exportPath = join(artifactsDir, 'manifest-export.json');
 writeFileSync(exportPath, `${JSON.stringify(exportValue, null, 2)}\n`);
 
 const sealer = sealerBin
-  ? spawnSync(sealerBin, ['--input', exportPath, '--manifest-root', staging, '--output', output], { stdio: 'inherit' })
-  : spawnSync('go', ['run', './v2/cmd/kb-create-release-index', '--input', exportPath, '--manifest-root', staging, '--output', output], {
+  ? spawnSync(sealerBin, ['--input', exportPath, '--manifest-root', staging, '--output', output,
+    ...historyIndexes.flatMap(index => ['--history-index', index])], { stdio: 'inherit' })
+  : spawnSync('go', ['run', './v2/cmd/kb-create-release-index', '--input', exportPath, '--manifest-root', staging, '--output', output,
+    ...historyIndexes.flatMap(index => ['--history-index', index])], {
       cwd: resolve(new URL('../', import.meta.url).pathname),
       stdio: 'inherit',
     });
@@ -427,16 +448,10 @@ function idFor(packageName) {
   return packageName.split('/').pop().replace(/-entry$/, '');
 }
 
-// A plugin's kb.plugin/3 manifest is the source of truth for its catalog ID
-// (e.g. "@kb-labs/release" -> "release"). Stripping the "-entry" suffix off
-// the npm package name (idFor) is only a fallback for manifests that don't
-// declare one — package names don't reliably follow the manifest's id (e.g.
-// @kb-labs/release-manager-cli's manifest declares id "@kb-labs/release").
-function pluginIdFor(manifest, packageName) {
-  if (typeof manifest.id === 'string' && manifest.id.startsWith('@')) {
-    return manifest.id.split('/').pop();
-  }
-  return idFor(packageName);
+// A plugin's kb.plugin/3 manifest is the source of truth for its ID, including
+// its scope. Package names and release-index short names are not plugin IDs.
+function pluginIdFor(manifest) {
+  return manifest.id;
 }
 
 // Convert an adapter interface name (e.g. "IServiceTransport", "IKVStore",
@@ -459,36 +474,3 @@ function interfaceToCapability(name) {
 const digest = createHash('sha256').update(readFileSync(output)).digest('hex');
 console.log(`Release index prepared: ${output}`);
 console.log(`Release index bytes: ${digest}`);
-
-function satisfies(version, range) {
-  const candidate = parseVersion(version);
-  return range.split('||').some(alternative => alternative.trim().split(/\s+/).filter(Boolean).every(token => compareToken(candidate, token)));
-}
-
-function compareToken(candidate, token) {
-  if (token === '*' || token.toLowerCase() === 'latest') return true;
-  const operator = token.match(/^(\^|~|>=|<=|>|<|=)?(.*)$/)?.[1] ?? '=';
-  const raw = token.slice(operator === '=' ? 0 : operator.length);
-  const target = parseVersion(raw);
-  const comparison = compareVersion(candidate, target);
-  if (operator === '^') return comparison >= 0 && candidate[0] === target[0];
-  if (operator === '~') return comparison >= 0 && candidate[0] === target[0] && candidate[1] === target[1];
-  if (operator === '>=') return comparison >= 0;
-  if (operator === '<=') return comparison <= 0;
-  if (operator === '>') return comparison > 0;
-  if (operator === '<') return comparison < 0;
-  return comparison === 0;
-}
-
-function parseVersion(value) {
-  const match = String(value).trim().replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!match) throw new Error(`invalid semver in compatibility declaration: ${value}`);
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function compareVersion(left, right) {
-  for (let index = 0; index < 3; index += 1) {
-    if (left[index] !== right[index]) return left[index] > right[index] ? 1 : -1;
-  }
-  return 0;
-}

@@ -41,7 +41,7 @@ func TestExecutorStoresAndRestoresOutputsThroughCache(t *testing.T) {
 	}
 	manifests := cache.NewManifestStore(cacheRoot)
 	states := cache.NewStateStore(cacheRoot)
-	exec := NewExecutor(store, manifests, states, root, false)
+	exec := NewExecutor(store, manifests, states, root, cacheRoot, false)
 
 	pkgDir := filepath.Join(root, "pkg")
 	writeFile(t, filepath.Join(pkgDir, "input.txt"), "hello")
@@ -104,7 +104,7 @@ func TestExecutorWritesCleanStateOnSuccess(t *testing.T) {
 		t.Fatalf("NewLocalStore error: %v", err)
 	}
 	states := cache.NewStateStore(cacheRoot)
-	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, false)
+	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, cacheRoot, false)
 
 	pkgDir := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
@@ -130,7 +130,7 @@ func TestExecutorWritesDirtyStateOnFailure(t *testing.T) {
 		t.Fatalf("NewLocalStore error: %v", err)
 	}
 	states := cache.NewStateStore(cacheRoot)
-	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, false)
+	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, cacheRoot, false)
 
 	pkgDir := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
@@ -156,7 +156,7 @@ func TestExecutorWritesStateForNoCacheTasks(t *testing.T) {
 		t.Fatalf("NewLocalStore error: %v", err)
 	}
 	states := cache.NewStateStore(cacheRoot)
-	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, false)
+	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, cacheRoot, false)
 
 	pkgDir := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
@@ -182,5 +182,45 @@ func writeFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func TestExecutorDoesNotReplayCachedFailure(t *testing.T) {
+	root := t.TempDir()
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatalf("NewLocalStore error: %v", err)
+	}
+	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), cache.NewStateStore(cacheRoot), root, cacheRoot, false)
+
+	pkgDir := filepath.Join(root, "pkg")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	pkg := workspace.Package{Name: "@kb/app", Dir: pkgDir}
+	// The marker sits outside the hashed inputs, like a dependency that is
+	// rebuilt after a failed run: the input hash stays the same.
+	def := TaskDef{Name: "test", Command: `sh -c "test -f ../marker"`, Cache: true}
+
+	if r := exec.Run(pkg, def, false, nil); r.OK {
+		t.Fatal("first run: expected failure")
+	}
+	inputHash, err := cache.HashInputsWithFingerprint(pkgDir, nil, []string{"package.json"}, exec.taskFingerprint(def))
+	if err != nil {
+		t.Fatalf("hash failed task inputs: %v", err)
+	}
+	if _, ok := exec.manifests.Get(pkg.Name, def.Name, inputHash); ok {
+		t.Fatal("failed task result was written to the cache")
+	}
+	if err := os.WriteFile(filepath.Join(root, "marker"), nil, 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	r := exec.Run(pkg, def, false, nil)
+	if !r.OK || r.Cached {
+		t.Fatalf("second run: OK=%v Cached=%v, want a fresh successful run", r.OK, r.Cached)
+	}
+	if r := exec.Run(pkg, def, false, nil); !r.OK || !r.Cached {
+		t.Fatalf("third run: OK=%v Cached=%v, want a cached success", r.OK, r.Cached)
 	}
 }

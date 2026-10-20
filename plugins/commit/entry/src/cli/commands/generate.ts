@@ -11,7 +11,9 @@ import {
   findRepoRoot,
   displayArtifacts,
   handleError,
-  type PluginContextV3,
+  AdapterCredentialsMissingError,
+  AdapterUnavailableError,
+  type PluginCommandContextV3,
   type CommandResult,
   type ArtifactInfo,
 } from '@kb-labs/sdk';
@@ -46,8 +48,9 @@ export default defineCommand({
   description: 'Generate commit plan from git changes',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: GenerateInput): Promise<GenerateResult> {
+    async execute(ctx: PluginCommandContextV3, input: GenerateInput): Promise<GenerateResult> {
       const startTime = Date.now();
+      const flags = input.flags ?? input;
       const llm = useLLM();
       const cwd = (await findRepoRoot(ctx.cwd || process.cwd())) ?? process.cwd();
 
@@ -60,7 +63,6 @@ export default defineCommand({
       const config = resolveCommitConfig(fileConfig ?? {}, env);
 
       // V3: Flags come in input.flags (CLI) or directly in input (REST API)
-      const flags = input.flags ?? input;
       const effectiveScope = flags.scope ?? config.scope?.default ?? 'root';
       const scopeCwd = resolveScopePath(cwd, effectiveScope, config.scope?.scopes);
       const allowSecrets = flags['allow-secrets'] ?? false;
@@ -68,19 +70,21 @@ export default defineCommand({
 
       // Check for changes (with scope for nested repos)
       const statusLoader = useLoader('Checking git status...');
-      statusLoader.start();
+      if (!flags.json) { statusLoader.start(); }
       const status = await getGitStatus(scopeCwd);
 
       if (!hasChanges(status)) {
-        statusLoader.stop();
-        ctx.ui?.warn?.('No changes to commit');
-        return { ok: false, error: 'No changes to commit' };
+        if (!flags.json) {
+          statusLoader.stop();
+          ctx.ui?.warn?.('No changes to commit');
+        }
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No changes to commit', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' } };
       }
-      statusLoader.succeed('Found changes to commit');
+      if (!flags.json) { statusLoader.succeed('Found changes to commit'); }
 
       // Generate plan
       const analyzeLoader = useLoader('Analyzing changes...');
-      analyzeLoader.start();
+      if (!flags.json) { analyzeLoader.start(); }
 
       // Create LLM wrapper with config values
       const llmComplete =
@@ -106,28 +110,29 @@ export default defineCommand({
           config,
           allowSecrets,
           autoConfirm,
-          onProgress: (message) => analyzeLoader.update({ text: message }),
+          onProgress: (message) => { if (!flags.json) { analyzeLoader.update({ text: message }); } },
         });
       } catch (err) {
-        analyzeLoader.fail('Failed to generate commit plan');
-        handleError(ctx, err, input.json);
-        return { ok: false, error: 'Command failed' };
+        if (!flags.json) { analyzeLoader.fail('Failed to generate commit plan'); }
+        if ((err instanceof AdapterUnavailableError && err.reason === 'not-configured') || err instanceof AdapterCredentialsMissingError) {
+          return handleError(err);
+        }
+        return handleError(err);
       }
 
       // Save plan
       const saveLoader = useLoader('Saving plan...');
-      saveLoader.start();
+      if (!flags.json) { saveLoader.start(); }
       try {
         await savePlan(cwd, plan, effectiveScope);
       } catch (err) {
-        saveLoader.fail('Failed to save plan');
-        handleError(ctx, err, input.json);
-        return { ok: false, error: 'Command failed' };
+        if (!flags.json) { saveLoader.fail('Failed to save plan'); }
+        return handleError(err);
       }
       const planPath = getCurrentPlanPath(cwd, effectiveScope);
-      saveLoader.succeed('Plan saved');
+      if (!flags.json) { saveLoader.succeed('Plan saved'); }
 
-      analyzeLoader.succeed(`Generated commit plan with ${plan.commits.length} commit(s)`);
+      if (!flags.json) { analyzeLoader.succeed(`Generated commit plan with ${plan.commits.length} commit(s)`); }
 
       // Output
       const output: GenerateOutput = {
@@ -136,8 +141,8 @@ export default defineCommand({
       };
 
       // V3: Flags are auto-merged by bootstrap.ts, just use directly
-      if (input.json) {
-        ctx.ui?.json?.(output);
+      if (flags.json) {
+        return output;
       } else {
         // Build commits section
         const commitsItems = plan.commits.map((commit) => {
@@ -215,13 +220,7 @@ export default defineCommand({
         });
       }
 
-      return {
-        ok: true,
-        result: output,
-        meta: {
-          timing: Date.now() - startTime,
-        },
-      };
+      return output;
     },
   },
 });

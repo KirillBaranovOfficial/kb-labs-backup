@@ -3,7 +3,7 @@
  * Atomic step: reads plan, builds, emits output marker for workflow.
  */
 
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3, useLoader, useConfig } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3, useLoader, useConfig } from '@kb-labs/sdk';
 import {
   planRelease,
   buildPackages,
@@ -56,7 +56,7 @@ export default defineCommand({
   description: 'Build packages from release plan using safe build strategy',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<BuildFlags>): Promise<ReleaseBuildResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<BuildFlags>): Promise<ReleaseBuildResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -71,10 +71,9 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         const msg = `No packages found${flags.scope ? ` matching scope: ${flags.scope}` : ''}`;
-        if (flags.json) { ctx.ui?.json?.({ ok: true, failed: [], results: [], message: msg }); }
+        if (flags.json) { return { failed: [], results: [], message: msg }; }
         else { ctx.ui?.write?.(msg); }
-        console.log('::kb-output::' + JSON.stringify({ ok: true, failed: [] }));
-        return { ok: true, result: { ok: true, failed: [], results: [] } };
+        return { ok: true, failed: [], results: [] };
       }
 
       const effectiveConfig = flags.flow ? mergeConfigWithFlow(config, flags.flow) : config;
@@ -130,11 +129,24 @@ export default defineCommand({
         buildLoader.fail(`${failed.length} package(s) failed to build`);
       }
 
-      console.log('::kb-output::' + JSON.stringify({ ok, failed }));
+      const outcome = ok
+        ? { ok: true, failed, results }
+        : {
+            ok: false as const,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: `Release build failed for ${failed.length} package(s).`,
+              hint: 'Inspect the failed packages and their build output, resolve the errors, then rerun `kb release build`.',
+              diagnostics: failed.map((name) => ({
+                code: 'RELEASE_PACKAGE_BUILD_FAILED',
+                severity: 'error' as const,
+                message: `Build failed for ${name}.`,
+              })),
+            },
+          };
 
       if (flags.json) {
-        ctx.ui?.json?.({ ok, failed, results });
-        return ok ? { ok: true, result: { ok, failed, results } } : { ok: false, error: 'Command failed', result: { ok, failed, results } };
+        return outcome;
       }
 
       ctx.ui?.sideBox?.({
@@ -143,7 +155,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok: true, result: { ok, failed, results } } : { ok: false, error: 'Command failed', result: { ok, failed, results } };
+      return outcome;
     },
   },
 });

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 
 	devsync "github.com/kb-labs/devkit/internal/sync"
 	"github.com/spf13/cobra"
@@ -51,8 +52,10 @@ Use --dry-run to preview changes without writing.`,
 		if jsonMode {
 			ok := len(result.Drifted) == 0 || !syncCheck
 			summary, groups := summarizeSync(result)
-			_ = JSONOut(map[string]any{
-				"ok":      ok,
+			if !ok {
+				return commandFailure("kb-devkit sync")
+			}
+			return JSONOut(map[string]any{
 				"summary": summary,
 				"groups":  groups,
 				"details": result.Entries,
@@ -61,10 +64,6 @@ Use --dry-run to preview changes without writing.`,
 				"skipped": result.Skipped,
 				"drifted": result.Drifted,
 			})
-			if !ok {
-				return errSilent
-			}
-			return nil
 		}
 
 		o := newOutput()
@@ -76,11 +75,11 @@ Use --dry-run to preview changes without writing.`,
 				o.Warn(fmt.Sprintf("%d file(s) drifted from source", len(result.Drifted)))
 				_, groups := summarizeSync(result)
 				for _, g := range groups {
-					fmt.Printf("  %s %-36s repos=%d files=%d\n", o.warning.Render("~"), g["target"], g["repos"], g["files"])
+					clikitcommand.Printf("  %s %-36s repos=%d files=%d\n", o.warning.Render("~"), g["target"], g["repos"], g["files"])
 				}
 				if syncVerbose || cfg.Reporting.Verbose {
 					for _, f := range result.Drifted {
-						fmt.Printf("    %s %s\n", o.dim.Render("•"), f)
+						clikitcommand.Printf("    %s %s\n", o.dim.Render("•"), f)
 					}
 				}
 			}
@@ -88,22 +87,22 @@ Use --dry-run to preview changes without writing.`,
 		}
 
 		if syncDryRun {
-			fmt.Printf("\n%s\n", o.label.Render("Dry run — no files written"))
+			clikitcommand.Printf("\n%s\n", o.label.Render("Dry run — no files written"))
 		}
 
 		for _, f := range result.Created {
 			if syncVerbose || cfg.Reporting.Verbose {
-				fmt.Printf("  %s %s\n", o.healthy.Render("+"), f)
+				clikitcommand.Printf("  %s %s\n", o.healthy.Render("+"), f)
 			}
 		}
 		for _, f := range result.Updated {
 			if syncVerbose || cfg.Reporting.Verbose {
-				fmt.Printf("  %s %s\n", o.info.Render("~"), f)
+				clikitcommand.Printf("  %s %s\n", o.info.Render("~"), f)
 			}
 		}
 		for _, f := range result.Skipped {
 			if syncVerbose || cfg.Reporting.Verbose {
-				fmt.Printf("  %s %s\n", o.dim.Render("-"), f)
+				clikitcommand.Printf("  %s %s\n", o.dim.Render("-"), f)
 			}
 		}
 

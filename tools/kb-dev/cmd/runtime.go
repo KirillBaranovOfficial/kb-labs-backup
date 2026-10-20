@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
-	"io"
-	"os"
+	"errors"
+	"strings"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/dev/internal/manager"
 	"github.com/spf13/cobra"
@@ -18,16 +20,17 @@ func ensureSupportedRuntime(cmd *cobra.Command, mgr *manager.Manager) error {
 	if err == nil || jsonMode {
 		return err
 	}
-	issue, ok := err.(*sharedtoolchain.ValidationError)
-	if !ok || issue.Tool != "Node.js" {
+	var issue *diag.Diag
+	if !errors.As(err, &issue) || issue.Code != "KB_NODE_VERSION_UNSUPPORTED" {
 		return err
 	}
-	var in io.Reader = os.Stdin
-	var out io.Writer = os.Stdout
-	if cmd != nil {
-		in, out = cmd.InOrStdin(), cmd.OutOrStdout()
+	interaction := clikitcommand.FromCommand(cmd)
+	answer, refusal := interaction.Ask(issue.Error()+"\nWould you like to update now? [y/N] ", issue.Hint)
+	if refusal != nil {
+		// Nobody to ask (script, hook, pipe): the unsupported runtime is the failure, not the missing terminal.
+		return err
 	}
-	if !sharedtoolchain.ConfirmUpdate(in, out, issue) {
+	if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
 		return err
 	}
 	nodePath, err := sharedtoolchain.UpdateNode(context.Background())

@@ -74,11 +74,11 @@ export async function readJsonWithDiagnostics<T = unknown>(p: string): Promise<J
             const data = JSON.parse(stripped) as T;
             return { ok: true, data, diagnostics };
         } catch (e) {
-            diagnostics.push({ level: "error", code: "JSON_PARSE_FAILED", message: `Failed to parse JSON: ${p}`, detail: String(e) });
+            diagnostics.push({ level: "error", code: "JSON_PARSE_FAILED", message: `Failed to parse JSON: ${p}`, detail: String(e), path: p, hint: `Run \`python3 -m json.tool "${p}"\`, then repair the config.` });
             return { ok: false, diagnostics };
         }
     } catch (e) {
-        diagnostics.push({ level: "error", code: "FILE_READ_FAILED", message: `Failed to read file: ${p}`, detail: String(e) });
+        diagnostics.push({ level: "error", code: "FILE_READ_FAILED", message: `Failed to read file: ${p}`, detail: String(e), path: p, hint: `Check access with \`ls -l "${p}"\`, then repair the config.` });
         return { ok: false, diagnostics };
     }
 }

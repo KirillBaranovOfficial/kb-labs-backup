@@ -1,28 +1,25 @@
 /**
- * workflow:status command - Get job status
+ * workflow job status command - Get raw job status
  */
 
-import { defineCommand, validationError, handleError, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
-import { type StatusFlags } from '@kb-labs/workflow-contracts';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 
-type StatusInput = StatusFlags & { argv?: string[] };
+type StatusInput = { json?: boolean; argv?: string[]; flags?: { json?: boolean } };
 
 export default defineCommand<unknown, StatusInput, unknown>({
-  id: 'workflow:status',
+  id: 'workflow:job-status',
   description: 'Get status of a workflow job',
 
   handler: {
     // eslint-disable-next-line sonarjs/cognitive-complexity -- Job status display with deep run/job/step traversal, multiple output formats (JSON/human), timing calculations, status color coding, and error aggregation
-    async execute(ctx: PluginContextV3, input: StatusInput): Promise<CommandResult> {
-      ctx.ui?.warn?.('workflow status is deprecated; use: kb workflow runs status <runId>');
-      const flags = (input as { flags?: StatusFlags }).flags ?? input;
+    async execute(ctx: PluginCommandContextV3, input: StatusInput): Promise<CommandResult> {
+      const flags = input.flags ?? input;
       const outputJson = flags.json ?? false;
-      const jobId = flags['job-id'];
+      const jobId = input.argv?.[0];
 
       if (!jobId) {
-        validationError(ctx, 'Missing required flag: --job-id', 'Usage: kb workflow status --job-id=<job-id>', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return validationError('Missing job ID', 'Usage: kb workflow job status <jobId>');
       }
 
       try {
@@ -30,7 +27,7 @@ export default defineCommand<unknown, StatusInput, unknown>({
         const status = await client.getJobStatus(jobId);
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: status });
+          return status;
         } else {
           const statusItems = [
             `ID: ${status.id}`,
@@ -101,10 +98,9 @@ export default defineCommand<unknown, StatusInput, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(error);
       }
     },
   },

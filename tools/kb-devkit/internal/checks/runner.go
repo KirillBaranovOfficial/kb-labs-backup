@@ -9,9 +9,10 @@ import (
 
 // PackageResult holds all issues for a single package.
 type PackageResult struct {
-	Package  workspace.Package
-	Issues   []Issue
-	Skipped  bool
+	Package   workspace.Package
+	Issues    []Issue
+	Skipped   bool
+	ChecksRun int `json:"-"`
 }
 
 // RunAll runs all rules from the registry against all packages in parallel.
@@ -33,6 +34,19 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 	}
 
 	results := make(map[string]PackageResult, len(ws.Packages))
+	workspaceIssues := make([]Issue, 0)
+	workspaceRules := registry.WorkspaceRules(only)
+	for _, rule := range workspaceRules {
+		external := rule.(*externalRule)
+		workspaceIssues = append(workspaceIssues, external.CheckWorkspace(ws)...)
+	}
+	if len(workspaceRules) > 0 {
+		results["workspace"] = PackageResult{
+			Package:   workspace.Package{Name: "workspace", Dir: ws.Root, RelPath: "."},
+			Issues:    workspaceIssues,
+			ChecksRun: len(workspaceRules),
+		}
+	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8) // max 8 goroutines
@@ -53,14 +67,13 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 				return
 			}
 
-			rules := registry.RulesFor(preset)
+			rules := registry.ApplicableRulesFor(pkg, preset, only)
+			if len(rules) == 0 {
+				return
+			}
 
 			var issues []Issue
 			for _, rule := range rules {
-				// Apply --only filter.
-				if len(onlySet) > 0 && !onlySet[rule.Name()] {
-					continue
-				}
 				issues = append(issues, rule.Check(pkg, preset)...)
 			}
 
@@ -72,7 +85,7 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 			}
 
 			mu.Lock()
-			results[pkg.Name] = PackageResult{Package: pkg, Issues: issues}
+			results[pkg.Name] = PackageResult{Package: pkg, Issues: issues, ChecksRun: len(rules)}
 			mu.Unlock()
 		}()
 	}

@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "data": null,
+  "error": {
+    "code": "KB_RUNTIME_UNEXPECTED",
+    "area": "runtime",
+    "stage": "run",
+    "severity": "error",
+    "retryable": false,
+    "message": "The operation failed unexpectedly.",
+    "hint": "Copy diagnostics and contact support.",
+    "correlationId": "corr-203-2"
+  }
+}

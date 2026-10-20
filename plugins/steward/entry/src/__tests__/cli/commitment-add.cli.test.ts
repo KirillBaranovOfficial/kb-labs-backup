@@ -33,7 +33,7 @@ describe('steward:commitment.add', () => {
       mockCLIInput({ flags: { text: 'Send X', person: 'per_1', 'remind-at': '2026-09-01' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedAddCommitment).toHaveBeenCalledWith(
       expect.objectContaining({ text: 'Send X', personId: 'per_1', staleAfterDays: 14 }),
     );
@@ -48,8 +48,8 @@ describe('steward:commitment.add', () => {
       mockCLIInput({ flags: { text: 'Send X', 'remind-at': 'not-a-date' } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('missing --text is a validation error', async () => {
@@ -57,11 +57,11 @@ describe('steward:commitment.add', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe('INVALID_ARGS');
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
+      expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddCommitment).not.toHaveBeenCalled();
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

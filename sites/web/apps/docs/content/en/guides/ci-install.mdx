@@ -1,7 +1,7 @@
 ---
 title: "V2 Installs in CI"
 description: "Apply a sealed KB Labs release index non-interactively with kb-create."
-updatedAt: "2026-09-30"
+updatedAt: "2026-10-09"
 order: 8
 ---
 
@@ -16,7 +16,7 @@ installation root:
 
 ```bash
 kb-create apply --json --index ./release-index.json \
-  --request-platform-root ./ci-platform --service-profile default \
+  --platform-root ./ci-platform --service-profile default \
   --scenario commit
 ```
 
@@ -38,25 +38,28 @@ kb-create apply --json --index ./release-index.json \
 ```bash
 kb-create status --platform-root ./ci-platform --json
 kb-create doctor --platform-root ./ci-platform --json
-kb-create uninstall --platform-root ./ci-platform
+kb-create uninstall --platform-root ./ci-platform --yes
 ```
 
 The `--json` flag makes status and doctor suitable for automation. Keep the
 platform root isolated to the job or runner so uninstall cannot affect a
-shared installation.
+shared installation. Non-interactive uninstall requires `--yes`.
 
 ## Installation prerequisites and recovery
 
-The launcher requires Node.js 24.x, 1.20 GiB available memory, and 2 GiB free
+The launcher requires Node.js <NodePolicy />.x, 1.20 GiB available memory, and 2 GiB free
 disk. It manages pnpm itself. If an install fails with one of these codes:
 
 | Error code | Recovery |
 | --- | --- |
-| `KB_INSTALL_NODE_VERSION` | Install Node 24, then rerun apply; with nvm: `nvm install 24 && nvm use 24`. |
+| `KB_NODE_VERSION_UNSUPPORTED` | Run the version-switch command shown in the diagnostic, then rerun apply. |
 | `KB_INSTALL_MEMORY_INSUFFICIENT` | Free memory or use a runner with more memory, then rerun apply. |
-| `KB_INSTALL_NO_DISK_SPACE` | Free disk space or move `--request-platform-root` to a filesystem with at least 2 GiB free. |
+| `KB_INSTALL_NO_DISK_SPACE` | Free disk space or move `--platform-root` to a filesystem with at least 2 GiB free. |
 | `KB_INSTALL_PACKAGE_MANAGER_KILLED` | Free memory or use a larger runner, then rerun apply. |
 | `KB_INSTALL_PORT_IN_USE` | Release the port identified in the error and rerun apply. |
 
 See [Installation](/installation) for the interactive local flow and the
 complete installation error table.
+
+The release, nightly, and full local journey matrix is tracked in the
+[release journey coverage table](/guides/release-journey-coverage).

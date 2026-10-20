@@ -8,7 +8,8 @@
  * The loader writes to this registry once per slot during startup;
  * `getAdapterStatus()` is the read API. Plugins consume the same data via
  * the `useAdapterStatus()` SDK hook; the gateway publishes it at
- * `/health/adapters`; `kb-dev doctor` polls that endpoint.
+ * `/health/adapters`; `kb-create doctor` polls that endpoint for the
+ * installed-platform operator report.
  *
  * Storage: global singleton on `globalThis` via `Symbol.for(...)`, the same
  * cross-realm pattern used by the platform container singleton in
@@ -22,19 +23,18 @@ import type { AdapterSlot } from '@kb-labs/core-platform';
  * Whether the slot is backed by a real configured adapter, an honest
  * in-process implementation, or a fail-loud NoOp stub.
  */
-export type AdapterMode = 'real' | 'inmemory' | 'noop';
+export type AdapterMode = 'real' | 'inmemory' | 'noop' | 'degraded';
 
 /**
  * Why the slot ended up in its current mode. Only meaningful when
- * `mode !== 'real'`. Single value today; reserved as a union for future
- * additions like `'load-failed'` if we ever allow soft-failure.
+ * `mode !== 'real'`.
  */
-export type AdapterStatusReason = 'not-configured';
+export type AdapterStatusReason = 'not-configured' | 'load-failed';
 
 export interface AdapterSlotStatus {
   /** Slot key, e.g. 'llm', 'cache', 'documentDatabase'. */
   slot: AdapterSlot;
-  /** Real / inmemory / noop. */
+  /** Real / inmemory / noop / degraded. */
   mode: AdapterMode;
   /**
    * Implementation identifier — package id for real adapters
@@ -50,6 +50,10 @@ export interface AdapterSlotStatus {
   configuredPackage?: string;
   /** Why `mode !== 'real'`. */
   reason?: AdapterStatusReason;
+  /** Correlation ID for the single startup diagnostic that recorded this failure. */
+  correlationId?: string;
+  /** Copy-ready package repair command for a degraded configured slot. */
+  action?: { id: string; label: string; command: string };
   /** ISO timestamp of the record. */
   recordedAt: string;
 }

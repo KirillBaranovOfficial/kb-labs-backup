@@ -12,7 +12,7 @@
  */
 
 import { defineCommand, useLogger , type CommandResult} from '@kb-labs/sdk';
-import type { PluginContextV3 } from '@kb-labs/sdk';
+import type { PluginCommandContextV3 } from '@kb-labs/sdk';
 import { ChangeStore } from '@kb-labs/agent-history';
 import type { FileChange } from '@kb-labs/agent-history';
 import { promises as fsp } from 'node:fs';
@@ -34,7 +34,7 @@ export default defineCommand({
   description: 'Rollback file changes made by agents in a session or run',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: RollbackInput): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: RollbackInput): Promise<CommandResult> {
       const logger = useLogger();
       const flags = ((input as Record<string, unknown>).flags ?? input) as Record<string, unknown>;
 
@@ -114,9 +114,9 @@ export default defineCommand({
   },
 });
 
-function output(ctx: PluginContextV3, asJson: boolean, data: unknown, success: boolean): CommandResult<unknown> {
+function output(ctx: PluginCommandContextV3, asJson: boolean, data: unknown, success: boolean): CommandResult<unknown> {
   if (asJson) {
-    ctx.ui?.json?.(data);
+    return data;
   } else {
     const d = data as Record<string, unknown>;
     if (d['success']) {
@@ -136,6 +136,6 @@ function output(ctx: PluginContextV3, asJson: boolean, data: unknown, success: b
     }
   }
   return success
-    ? { ok: true, result: data }
-    : { ok: false, error: 'Command failed', result: data };
+    ? data
+    : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string' ? data.error : 'Agent rollback failed.', hint: 'Check the session ID, then rerun `kb agent rollback --session-id <id>`.' } };
 }

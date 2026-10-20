@@ -6,6 +6,11 @@
 import 'fastify';
 
 declare module 'fastify' {
+  interface FastifyContextConfig {
+    ux?: 'raw';
+    uxFixture?: { validResult: 'error-envelope' };
+  }
+
   interface FastifyRequest {
     /** Raw request body captured by preParsing hook (used for HMAC verification). */
     rawBody?: Buffer;

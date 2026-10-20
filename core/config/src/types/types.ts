@@ -1,6 +1,6 @@
 export type Diagnostic =
-    | { level: "warn" | "error"; code: string; message: string; detail?: unknown }
-    | { level: "info"; code: string; message: string };
+    | { level: "warn" | "error"; code: string; message: string; detail?: unknown; path?: string; hint?: string }
+    | { level: "info"; code: string; message: string; path?: string; hint?: string };
 
 export type JsonReadResult<T = unknown> =
     | { ok: true; data: T; diagnostics: Diagnostic[] }

@@ -10,7 +10,7 @@ import {
   UIAlert,
   UISpace,
   UIIcon,
-  UISpin,
+  UISkeleton,
   useData,
   useTheme,
 } from '@kb-labs/sdk/studio';
@@ -98,7 +98,7 @@ function DiffContent({ diff }: { diff: BaselineCheckDiff }) {
 export function BaselineDiffCard() {
   const { data: diffData, isLoading } = useData<QABaselineDiffResponse>(`${QA_BASE_PATH}${QA_ROUTES.BASELINE_DIFF}`);
 
-  if (isLoading) { return <UISpin size="small" style={{ display: 'block', margin: '16px auto' }} />; }
+  if (isLoading) { return <UISkeleton active lines={4} />; }
 
   if (!diffData) { return null; }
 

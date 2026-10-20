@@ -11,12 +11,18 @@ import type {
   PlatformServices,
 } from "@kb-labs/plugin-contracts";
 import { wrapCliResult } from "@kb-labs/plugin-runtime";
+import { decodeErrorEnvelope, type ErrorEnvelope, type ValidatedErrorEnvelope } from "@kb-labs/core-platform/error-envelope";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import type { ExecutionRequest } from "@kb-labs/plugin-execution-factory";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { renderErrorEnvelope } from "@kb-labs/shared-cli-ui";
 
 export interface ExecuteCommandV3Options {
+  /** Registered executable name from the CLI manifest. */
+  binaryName: string;
+  /** Explicit plugin environment values for this invocation. */
+  env?: Record<string, string | undefined>;
   /**
    * Plugin ID (e.g., "@kb-labs/my-plugin")
    */
@@ -26,6 +32,10 @@ export interface ExecuteCommandV3Options {
    * Plugin version
    */
   pluginVersion: string;
+
+  /** Registered CLI path used in actionable unexpected-failure messages. */
+  commandPath: string;
+  onError?: (error: ErrorEnvelope) => void;
 
   /**
    * Path to command handler file
@@ -107,12 +117,6 @@ export interface ExecuteCommandV3Options {
   devMode?: boolean;
 
   /**
-   * Unix socket path for IPC communication.
-   * If not provided, will attempt to get from platform.getSocketPath()
-   */
-  socketPath?: string;
-
-  /**
    * Resource quotas from manifest
    */
   quotas?: {
@@ -152,8 +156,10 @@ export async function executeCommandV3(
   const {
     pluginId,
     pluginVersion,
+    binaryName,
     handlerPath,
     argv,
+    commandPath,
     flags,
     config: _config,
     permissions = {},
@@ -161,13 +167,13 @@ export async function executeCommandV3(
     outdir: _outdir,
     tenantId,
     ui,
-    platform: _platform,
+    platform,
     signal,
     devMode: _devMode = false,
-    socketPath: _socketPath,
     quotas,
     configSection,
   } = options;
+  const env = options.env ?? process.env;
 
   // Create plugin context descriptor
   const requestId = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -182,7 +188,7 @@ export async function executeCommandV3(
     pluginVersion,
     tenantId,
     permissions,
-    hostContext: { host: "cli", argv, flags },
+    hostContext: { host: "cli", binaryName, argv, flags },
     requestId,
     configSection,
   };
@@ -196,8 +202,7 @@ export async function executeCommandV3(
   // Prepare input
   const input = { argv, flags };
 
-  try {
-    // Resolve plugin root (required by ExecutionBackend). Prefer the
+  // Resolve plugin root (required by ExecutionBackend). Prefer the
     // caller-supplied pkgRoot — the CLI discovery layer already knows
     // exactly where the plugin lives and this is the only path that
     // handles project-scope plugins whose deps live outside cwd.
@@ -211,10 +216,12 @@ export async function executeCommandV3(
       pluginRoot,
       handlerRef: handlerPath,
       input,
+      env,
       timeoutMs: quotas?.timeoutMs,
       // Pass cwd so worker-pool backend sets ctx.cwd to the invocation directory,
       // not the platform installation directory (worker-script.ts reads workspace.cwd)
       workspace: { cwd: _cwd },
+      context: { commandPath },
     };
 
     // Execute via unified platform.executionBackend
@@ -229,11 +236,11 @@ export async function executeCommandV3(
 
     // Handle execution result
     if (!result.ok) {
-      ui.error(result.error?.message || "Execution failed");
+      presentExecutionError(ui, decodeErrorEnvelope(result.error.envelope, { binary: options.binaryName, presentation: 'handler' }), Boolean(flags.json), options.onError);
       return 1;
     }
 
-    // Wrap result for CLI (preserves backward compatibility)
+    // Normalize the execution result for the CLI renderer.
     const executionMeta = result.metadata?.executionMeta ?? {
       startTime: Date.now(),
       endTime: Date.now(),
@@ -249,12 +256,28 @@ export async function executeCommandV3(
     };
     const cliResult = wrapCliResult(runResult, descriptor);
 
+    if (!cliResult.ok) {
+      throw new Error('Execution factory returned a successful result containing a command failure.');
+    }
+    if (flags.json) {
+      ui.json({ ok: true, data: cliResult.result ?? null, ...(cliResult.meta === undefined ? {} : { meta: cliResult.meta }) });
+    }
+
     // Return exit code from wrapped result
-    return cliResult.exitCode;
-  } catch (error) {
-    // Handle execution errors
-    ui.error(error instanceof Error ? error : String(error));
-    return 1;
+  return cliResult.exitCode;
+}
+
+function presentExecutionError(
+  ui: UIFacade,
+  error: ValidatedErrorEnvelope,
+  jsonMode: boolean,
+  onError?: (error: ErrorEnvelope) => void,
+): void {
+  onError?.(error);
+  if (jsonMode) {
+    ui.json({ ok: false, error });
+  } else {
+    ui.error(renderErrorEnvelope(error), { hint: error.hint });
   }
 }
 

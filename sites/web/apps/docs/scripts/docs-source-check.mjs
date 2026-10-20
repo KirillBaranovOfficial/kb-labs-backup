@@ -26,9 +26,14 @@ function walk(dir) {
 function deprecatedCommandRules() {
   const text = readFileSync(workflowManifest, 'utf8');
   const rules = [];
-  const deprecatedPattern = /\bpath\s*:\s*(['"])([^'"]+)\1[\s\S]{0,500}?\bdescribe\s*:\s*(['"])(\(Deprecated\)[^'"]*Use:\s*kb\s+([^'"]+))\3/g;
-  for (const match of text.matchAll(deprecatedPattern)) {
-    rules.push({ command: `kb ${match[2]}`, replacement: `kb ${match[5].trim()}` });
+  // Scope path and describe to one command object. A bounded lookahead across
+  // the manifest can pair a new command with a later deprecated description.
+  for (const entry of text.split(/\n\s{6}\},\s*\n/)) {
+    const pathMatch = entry.match(/\bpath\s*:\s*(['"])([^'"]+)\1/);
+    const describeMatch = entry.match(/\bdescribe\s*:\s*(['"])(\(Deprecated\)[^'"]*Use:\s*kb\s+([^'"]+))\1/);
+    if (pathMatch && describeMatch) {
+      rules.push({ command: `kb ${pathMatch[2]}`, replacement: `kb ${describeMatch[3].trim()}` });
+    }
   }
 
   const runText = readFileSync(workflowRunSource, 'utf8');
@@ -66,7 +71,10 @@ function main() {
 
     const directivePattern = /<CommandExamples\s+command="([^"]+)"(?:\s+match="([^"]+)")?\s*\/>/g;
     for (const match of content.matchAll(directivePattern)) {
-      sourceReferences.push({ doc: relativeDoc, command: match[1], ...(match[2] ? { exampleMatch: match[2] } : {}) });
+      sourceReferences.push({ doc: relativeDoc, reference: match[1], ...(match[2] ? { exampleMatch: match[2] } : {}) });
+    }
+    if (content.includes('<NodePolicy />')) {
+      sourceReferences.push({ doc: relativeDoc, reference: 'NodePolicy' });
     }
 
     const lines = content.split('\n');
@@ -89,7 +97,7 @@ function main() {
     '',
     `Checked ${mdxFiles.length} MDX files.`,
     sourceReferences.length
-      ? `Resolved ${sourceReferences.length} generated command example reference(s): ${sourceReferences.map((ref) => `\`${ref.doc}\` → \`${ref.command}${ref.exampleMatch ? ` (${ref.exampleMatch})` : ''}\``).join(', ')}.`
+      ? `Resolved ${sourceReferences.length} generated source reference(s): ${sourceReferences.map((ref) => `\`${ref.doc}\` → \`${ref.reference}${ref.exampleMatch ? ` (${ref.exampleMatch})` : ''}\``).join(', ')}.`
       : 'No generated source references found.',
     failures.length ? `Found ${failures.length} issue(s).` : 'No stale command examples or broken source references found.',
     '',

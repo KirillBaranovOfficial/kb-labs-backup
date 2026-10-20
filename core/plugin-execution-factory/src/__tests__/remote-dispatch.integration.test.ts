@@ -112,7 +112,7 @@ describe('RemoteBackend + GatewayDispatchTransport integration', () => {
 
     expect(result.ok).toBe(true);
     expect(result.data).toEqual({ output: 'handler-result' });
-    expect(result.metadata?.['backend']).toBe('remote');
+    expect(result.metadata?.['backend']).toBeUndefined();
   });
 
   it('remaps handlerRef before sending to transport', async () => {
@@ -160,7 +160,8 @@ describe('RemoteBackend + GatewayDispatchTransport integration', () => {
 
     const result = await backend.execute(makeRequest());
     expect(result.ok).toBe(false);
-    expect(result.error?.message).toContain('403');
+    expect(result.error?.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(result.error?.message).not.toContain('403');
   });
 
   it('returns ok:false when no host registered (503)', async () => {
@@ -174,6 +175,7 @@ describe('RemoteBackend + GatewayDispatchTransport integration', () => {
 
     const result = await backend.execute(makeRequest());
     expect(result.ok).toBe(false);
-    expect(result.error?.message).toContain('503');
+    expect(result.error?.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(result.error?.message).not.toContain('503');
   });
 });

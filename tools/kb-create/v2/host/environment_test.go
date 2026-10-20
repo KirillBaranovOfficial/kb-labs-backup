@@ -15,16 +15,17 @@ import (
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/secrets"
 )
 
 func TestHostReceivesPlatformSecretsAndSpecEnvironment(t *testing.T) {
 	dump := filepath.Join(t.TempDir(), "env.txt")
 	f := newRunner(t, 10, 5, "-dump-env", dump)
 	f.runner.Spec.Env = map[string]string{"FROM_SPEC": "spec", "SHARED": "spec-wins"}
-	f.runner.SecretEnv = func() (map[string]string, error) {
-		return map[string]string{"GATEWAY_JWT_SECRET": "s3cret", "SHARED": "secret"}, nil
+	f.runner.SecretEnv = func() (secrets.Environment, error) {
+		return secrets.Environment{Values: map[string]string{"GATEWAY_JWT_SECRET": "s3cret", "SHARED": "secret"}}, nil
 	}
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(dump)
@@ -41,8 +42,8 @@ func TestHostReceivesPlatformSecretsAndSpecEnvironment(t *testing.T) {
 
 func TestSecretEnvironmentFailureStopsTheStart(t *testing.T) {
 	f := newRunner(t, 10, 5)
-	f.runner.SecretEnv = func() (map[string]string, error) { return nil, errors.New("store unreadable") }
-	_, err := f.runner.Start(context.Background())
+	f.runner.SecretEnv = func() (secrets.Environment, error) { return secrets.Environment{}, errors.New("store unreadable") }
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
 		t.Fatalf("code %s", code)
 	}
@@ -60,7 +61,9 @@ func TestRunToolUsesHostEnvironmentAndReturnsItsExitStatus(t *testing.T) {
 	}
 	f := newRunner(t, 10, 5)
 	f.runner.Spec.WorkingDir = root
-	f.runner.SecretEnv = func() (map[string]string, error) { return map[string]string{"GATEWAY_JWT_SECRET": "s3cret"}, nil }
+	f.runner.SecretEnv = func() (secrets.Environment, error) {
+		return secrets.Environment{Values: map[string]string{"GATEWAY_JWT_SECRET": "s3cret"}}, nil
+	}
 	var out bytes.Buffer
 	code, err := f.runner.RunTool(context.Background(), Tool{Command: script, Args: []string{"--base"}}, []string{"--email", "a@b.c"}, strings.NewReader("hunter2\n"), &out, &out)
 	if err != nil || code != 3 {
@@ -77,19 +80,30 @@ func TestRunToolUsesHostEnvironmentAndReturnsItsExitStatus(t *testing.T) {
 	}
 }
 
-func TestProberStartsTheDeclaredHostOnceAndLeavesNothingRunning(t *testing.T) {
+func TestProberStartsTheDeclaredHostAndReturnsItsStopOperation(t *testing.T) {
 	port := freePort(t)
-	state := State{Dir: filepath.Join(t.TempDir(), "launcher")}
-	prober := Prober{PlatformRoot: t.TempDir(), State: state}
+	root := t.TempDir()
+	prober := Prober{PlatformRoot: root}
 	declared := contracts.HostSpec{Command: fakeHostBinary, Args: []string{"-port", fmt.Sprint(port)}, HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
-	if err := prober.Probe(context.Background(), declared); err != nil {
+	writeReceipt(t, root, &declared)
+	stop, err := prober.Start(context.Background(), declared)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond); err == nil {
+	t.Cleanup(func() { _ = stop() })
+	if conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond); err != nil {
+		t.Fatalf("a successfully started host must remain available: %v", err)
+	} else {
 		_ = conn.Close()
-		t.Fatal("the probed host must be stopped again")
 	}
-	for _, path := range []string{state.HostPID(), state.SupervisorPID(), state.Control()} {
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+	rootState, err := StateForRoot(prober.PlatformRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{rootState.HostPID(), rootState.SupervisorPID(), rootState.Control()} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("a probe must not touch the real host's state: %s", path)
 		}
@@ -98,13 +112,15 @@ func TestProberStartsTheDeclaredHostOnceAndLeavesNothingRunning(t *testing.T) {
 
 func TestProberReportsAHostThatDoesNotStart(t *testing.T) {
 	port := freePort(t)
-	prober := Prober{PlatformRoot: t.TempDir(), State: State{Dir: t.TempDir()}}
+	root := t.TempDir()
+	prober := Prober{PlatformRoot: root}
 	declared := contracts.HostSpec{Command: fakeHostBinary, Args: []string{"-port", fmt.Sprint(port), "-exit", "5"}, HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10}
-	if code := launcherCode(t, prober.Probe(context.Background(), declared)); code != "KB_HOST_START_FAILED" {
-		t.Fatalf("code %s", code)
+	writeReceipt(t, root, &declared)
+	if _, err := prober.Start(context.Background(), declared); launcherCode(t, err) != "KB_HOST_START_FAILED" {
+		t.Fatalf("code %s", launcherCode(t, err))
 	}
 	invalid := contracts.HostSpec{Command: "host", HealthURL: "http://example.com:1/health"}
-	if code := launcherCode(t, prober.Probe(context.Background(), invalid)); code != "KB_HOST_SPEC_INVALID" {
-		t.Fatalf("code %s", code)
+	if _, err := prober.Start(context.Background(), invalid); launcherCode(t, err) != "KB_HOST_SPEC_INVALID" {
+		t.Fatalf("code %s", launcherCode(t, err))
 	}
 }

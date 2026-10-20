@@ -45,7 +45,7 @@ beforeEach(() => {
   MockedClient.mockImplementation(function MockedClientImplementation() {
     return makeClient({
       ...defaultWorkflowClient,
-      getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+      getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/runs/${runId}/events`,
     });
   });
 });
@@ -60,7 +60,7 @@ describe('workflow:runs watch', () => {
       return makeClient({
         ...defaultWorkflowClient,
         listRuns: async () => [],
-        getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+        getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/runs/${runId}/events`,
       });
     });
 
@@ -68,7 +68,6 @@ describe('workflow:runs watch', () => {
     const ctx = createMockContext({ ui });
     const result = await runsWatchCommand.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.infos.some(i => i.message.includes('No runs found'))).toBe(true);
   });
 
@@ -76,8 +75,8 @@ describe('workflow:runs watch', () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
         ...defaultWorkflowClient,
-        listRuns: async () => [{ id: 'run-latest', name: 'deploy', status: 'running' as const, createdAt: new Date().toISOString() }],
-        getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+        listRuns: async () => [{ id: 'run-latest', workflowId: 'deploy', name: 'deploy', status: 'running' as const, createdAt: new Date().toISOString() }],
+        getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/runs/${runId}/events`,
       });
     });
     mockFetchWithSse([
@@ -88,7 +87,6 @@ describe('workflow:runs watch', () => {
     const ctx = createMockContext({ ui });
     const result = await runsWatchCommand.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.infos.some(i => i.message.includes('run-latest'))).toBe(true);
   });
 
@@ -105,7 +103,6 @@ describe('workflow:runs watch', () => {
       mockCLIInput({ argv: ['run-abc'] }),
     );
 
-    expect(result.ok).toBe(true);
     expect(captured.writes.some((w) => w.includes('run.finished') || w.includes('SUCCESS'))).toBe(true);
   });
 
@@ -121,7 +118,7 @@ describe('workflow:runs watch', () => {
       mockCLIInput({ argv: ['run-abc'] }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
   });
 
   it('CW-04: --json flag emits JSON objects per event', async () => {
@@ -132,13 +129,14 @@ describe('workflow:runs watch', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await runsWatchCommand.execute(
+    const result = await runsWatchCommand.execute(
       ctx,
       mockCLIInput({ argv: ['run-abc'], flags: { json: true } }),
     );
 
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect((captured.json[0] as { event: unknown }).event).toBeTruthy();
+        const payload = result as { events: Array<{ type: string }> };
+    expect(payload.events).toHaveLength(2);
+    expect(payload.events[0]?.type).toBe('run.snapshot');
   });
 
   it('CW-05: daemon connection refused — error message, exitCode 1', async () => {
@@ -151,8 +149,8 @@ describe('workflow:runs watch', () => {
       mockCLIInput({ argv: ['run-abc'] }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('CW-06: log.appended events are forwarded to ctx.ui.log()', async () => {

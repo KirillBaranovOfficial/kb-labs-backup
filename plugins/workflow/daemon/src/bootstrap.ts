@@ -8,6 +8,8 @@ import {
   WorkflowEngine,
   WorkflowService,
   DAEMON_LEASE_HEARTBEAT_INTERVAL_MS,
+  createDefaultSecretProvider,
+  requireWorkflowProjectId,
 } from "@kb-labs/workflow-engine";
 import { getListenOptions } from "@kb-labs/shared-http";
 import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
@@ -18,6 +20,7 @@ import { CronDiscovery } from "./cron-discovery.js";
 import { WorkflowFileWatcher } from "./file-watcher.js";
 import { createServer } from "./server.js";
 import { createRegistry } from "@kb-labs/core-registry";
+import { requireProjectContext } from "@kb-labs/core-runtime";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
@@ -28,12 +31,14 @@ import { join } from "node:path";
 export async function bootstrap(_cwd: string = process.cwd()): Promise<void> {
   await runService({
     appId: "workflow-daemon",
+    projectScope: "required",
+    projectId: process.env["KB_PROJECT_ID"],
     startDir: _cwd,
     // serviceId in the transport map / devservices is 'workflow' (≠ appId).
     serviceId: "workflow",
     defaultPort: 7778,
     portEnvVar: "WORKFLOW_PORT",
-    defaultHost: "0.0.0.0",
+    defaultHost: "127.0.0.1",
     hostEnvVar: "WORKFLOW_HOST",
     platform: {
       assemblyHook: makeAssemblyHook(),
@@ -52,13 +57,13 @@ export async function setup({
   port,
   host,
   projectRoot,
+  projectId: contextProjectId,
   platformRoot,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
-  // KB_PROJECT_ROOT injected by kb-dev when invoked from a project dir with separate platform.
-  // Fall back to the resolved repoRoot (not raw cwd) so plugin/cron/workflow discovery is
-  // correct even when the daemon is launched from a subdirectory.
-  const workspaceRoot = process.env["KB_PROJECT_ROOT"] ?? projectRoot;
+  const projectId = requireWorkflowProjectId(contextProjectId);
+  // KB_PROJECT_ROOT is injected by kb-dev when invoked from a project dir with separate platform.
+  const workspaceRoot = requireProjectContext(process.env["KB_PROJECT_ROOT"] ?? projectRoot);
 
   const startupRequestId = `workflow-startup-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const startupTraceId = randomUUID();
@@ -127,12 +132,16 @@ export async function setup({
   });
 
   bootstrapLogger.info("Creating WorkflowEngine");
+  const secretProvider = createDefaultSecretProvider();
   const engine = new WorkflowEngine({
     cache: platform.cache,
+    storage: platform.storage,
     events: platform.eventBus,
     logger: createWorkflowLogger("engine", "workflow.engine"),
+    secretProvider,
     snapshotManager: platform.snapshotManager,
     workspaceRoot,
+    projectId,
   });
 
   bootstrapLogger.info(
@@ -181,6 +190,13 @@ export async function setup({
     timezone: process.env.WORKFLOW_CRON_TIMEZONE,
   });
 
+  bootstrapLogger.info("Creating WorkflowService");
+  const workflowService = new WorkflowService({
+    cliApi,
+    platform,
+    workspaceRoot,
+  });
+
   bootstrapLogger.info("Discovering cron jobs");
   const cronDiscovery = new CronDiscovery({
     cliApi,
@@ -190,16 +206,11 @@ export async function setup({
       "workflow.cron-discovery",
     ),
     workspaceRoot,
+    workflowService,
   });
   const discovered = await cronDiscovery.discoverAll();
   bootstrapLogger.info("Cron job discovery complete", discovered);
 
-  bootstrapLogger.info("Creating WorkflowService");
-  const workflowService = new WorkflowService({
-    cliApi,
-    platform,
-    workspaceRoot,
-  });
   workflowService
     .listAll()
     .catch((err: unknown) =>
@@ -210,7 +221,7 @@ export async function setup({
   const fileWatcher = new WorkflowFileWatcher({
     watchDirs: [
       join(workspaceRoot, ".kb", "workflows"),
-      join(workspaceRoot, ".kb", "jobs"),
+      join(workspaceRoot, ".kb", "crons"),
     ],
     workflowService,
     cronDiscovery,
@@ -234,12 +245,16 @@ export async function setup({
   bootstrapLogger.info("Creating WorkflowWorker");
   const worker = await createWorkflowWorker({
     engine,
+    secretProvider,
     workflowService,
     cliApi,
     logger: createWorkflowLogger("worker", "workflow.worker"),
     analytics: platform.analytics,
     platform,
     workspaceRoot,
+    platformRoot,
+    projectRoot,
+    projectId,
     concurrency: parseInt(process.env.WORKFLOW_CONCURRENCY ?? "5", 10),
     debugMode,
   });

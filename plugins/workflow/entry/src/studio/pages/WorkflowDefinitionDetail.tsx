@@ -6,7 +6,7 @@
 import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  UISpin,
+  UISkeleton,
   UITag,
   UISpace,
   UITypographyText,
@@ -20,7 +20,9 @@ import {
 import { useData, useMutateData } from '@kb-labs/sdk/studio';
 import { UIPage, UIPageHeader } from '@kb-labs/sdk/studio';
 import type { WorkflowRunInfo, WorkflowInfo } from '@kb-labs/workflow-contracts';
+import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes';
 import { RunWorkflowModal } from '../components/RunWorkflowModal';
+import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker';
 
 const STATUS_COLORS: Record<string, string> = {
   queued: 'default',
@@ -47,8 +49,8 @@ function formatDuration(ms?: number) {
   return `${hours}h ${minutes % 60}m`;
 }
 
-function CancelRunButton({ runId, onSuccess }: { runId: string; onSuccess: () => void }) {
-  const cancel = useMutateData<void, void>(`/exec/api/v1/runs/${runId}/cancel`);
+function CancelRunButton({ projectId, runId, onSuccess }: { projectId: string; runId: string; onSuccess: () => void }) {
+  const cancel = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `runs/${encodeURIComponent(runId)}/cancel`));
   return (
     <UIButton
       variant="link"
@@ -73,19 +75,20 @@ export default function WorkflowDefinitionDetail() {
 
   const workflowId = encodedId ? decodeURIComponent(encodedId) : '';
   const [runModalOpen, setRunModalOpen] = React.useState(false);
+  const { projectId, picker, hasProjects } = useWorkflowProject();
 
   const { data: workflowDef, isLoading: workflowLoading } = useData<WorkflowInfo>(
-    workflowId ? `/exec/api/v1/workflows/${encodeURIComponent(workflowId)}` : '/exec/api/v1/workflows/__none__',
-    { enabled: !!workflowId },
+    projectWorkflowEndpoint(projectId, workflowId ? `workflows/${encodeURIComponent(workflowId)}` : 'workflows/__none__'),
+    { enabled: !!workflowId && hasProjects },
   );
 
   const { data: runsData, isLoading: runsLoading, refetch } = useData<{ runs: WorkflowRunInfo[] }>(
-    workflowId ? `/exec/api/v1/workflows/${encodeURIComponent(workflowId)}/runs` : '/exec/api/v1/workflows/__none__/runs',
-    { enabled: !!workflowId, pollingMs: 5000, params: { limit: 50 } },
+    projectWorkflowEndpoint(projectId, workflowId ? `workflows/${encodeURIComponent(workflowId)}/runs` : 'workflows/__none__/runs'),
+    { enabled: !!workflowId && hasProjects, pollingMs: 5000, params: { limit: 50 } },
   );
 
   const runWorkflowMutation = useMutateData<Record<string, unknown>, { runId: string }>(
-    `/exec/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`,
+    projectWorkflowEndpoint(projectId, `workflows/${encodeURIComponent(workflowId)}/runs`),
   );
 
   const runsColumns = [
@@ -151,9 +154,9 @@ export default function WorkflowDefinitionDetail() {
       width: 100,
       fixed: 'right' as const,
       render: (_: unknown, record: WorkflowRunInfo) => {
-        const canCancel = record.status === 'running' || record.status === 'pending';
+        const canCancel = record.status === 'running' || record.status === 'queued';
         if (!canCancel) {return null;}
-        return <CancelRunButton runId={record.id} onSuccess={() => void refetch()} />;
+        return <CancelRunButton projectId={projectId} runId={record.id} onSuccess={() => void refetch()} />;
       },
     },
   ];
@@ -161,9 +164,7 @@ export default function WorkflowDefinitionDetail() {
   if (workflowLoading) {
     return (
       <UIPage>
-        <div style={{ textAlign: 'center', padding: '80px 0' }}>
-          <UISpin size="large" />
-        </div>
+        <UISkeleton active avatar lines={6} />
       </UIPage>
     );
   }
@@ -194,6 +195,8 @@ export default function WorkflowDefinitionDetail() {
           { title: workflowDef.name },
         ]}
         actions={
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {picker}
           <UIButton
             variant="primary"
             icon={<UIIcon name="PlayCircleOutlined" />}
@@ -201,6 +204,7 @@ export default function WorkflowDefinitionDetail() {
           >
             Run
           </UIButton>
+          </div>
         }
       />
 

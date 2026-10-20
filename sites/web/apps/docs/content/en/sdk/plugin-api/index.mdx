@@ -14,7 +14,7 @@ If you want to go deeper after this, read [Plugins → Overview](/plugins) and [
 ## Prerequisites
 
 - A working KB Labs install (workspace with `pnpm kb --help` functional).
-- Node 24+.
+- Node.js <NodePolicy />.x.
 - `pnpm`.
 
 ## Step 1 — Create the package
@@ -183,7 +183,7 @@ Key points:
 `src/index.ts`:
 
 ```ts
-export { default as manifest } from './manifest.js';
+export { manifest } from './manifest.js';
 ```
 
 The plugin's runtime entry point just re-exports the manifest. The handler files are loaded separately by the runtime via the paths in the manifest.
@@ -237,7 +237,7 @@ pnpm build
 # → dist/index.js, dist/cli/commands/hello.js, dist/manifest.js, plus .d.ts files
 
 # Link into your KB Labs workspace:
-pnpm kb marketplace link /absolute/path/to/packages/hello-plugin
+pnpm kb marketplace plugins add /absolute/path/to/packages/hello-plugin
 ```
 
 The `marketplace plugins refresh` step is mandatory — without it, the CLI uses a cached registry and won't see your new plugin.

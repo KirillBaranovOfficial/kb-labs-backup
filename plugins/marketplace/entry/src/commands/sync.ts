@@ -1,4 +1,5 @@
-import { defineCommand, useEnv, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, parseJsonc, useEnv, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
+
 import { post } from '../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../scope.js';
 import * as fs from 'node:fs/promises';
@@ -33,7 +34,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
   description: 'Sync workspace — scan for entities and populate lock',
 
   handler: {
-    async intent(_ctx: PluginContextV3, _input: SyncInput) {
+    async intent(_ctx: PluginCommandContextV3, _input: SyncInput) {
       return {
         summary: 'Sync workspace — scan for entities and populate lock file',
         operations: [
@@ -42,7 +43,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: SyncInput): Promise<CommandResult<SyncResultData>> {
+    async execute(ctx: PluginCommandContextV3, input: SyncInput): Promise<CommandResult<SyncResultData>> {
       const flags = (input.flags ?? input) as SyncFlags;
       const cwd = ctx.cwd ?? process.cwd();
 
@@ -51,11 +52,10 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
         scopeCtx = await resolveCliScope(cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          validationError(ctx, err.message, undefined, flags.json);
+          return validationError(err.message);
         } else {
-          handleError(ctx, err, flags.json);
+          return handleError(err);
         }
-        return { ok: false, error: 'Marketplace scope is not configured', result: { added: [], skipped: [], total: 0 } };
       }
 
       // Sync reads include/exclude patterns from the config file located at
@@ -65,16 +65,19 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
       const configRoot = scopeCtx.scope === 'project' && scopeCtx.projectRoot
         ? scopeCtx.projectRoot
         : cwd;
-      const syncConfig = await loadSyncConfig(configRoot);
+      let syncConfig: { include?: string[]; exclude?: string[] };
+      try {
+        syncConfig = await loadSyncConfig(configRoot);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : `Cannot read marketplace sync config in ${configRoot}/.kb.`;
+        return validationError(message, `Correct the config, then rerun \`kb marketplace sync --scope ${scopeCtx.scope}\`.`);
+      }
 
       if (!syncConfig.include?.length) {
-        validationError(
-          ctx,
-          `No marketplace.sync.include configured.\n\nAdd to ${configRoot}/.kb/kb.config.json:\n\n  "marketplace": {\n    "sync": {\n      "include": ["plugins/*/entry", "plugins/*/core", "adapters/*"]\n    }\n  }`,
-          undefined,
-          flags.json,
+        return validationError(
+          `No marketplace.sync.include configured in ${configRoot}/.kb/kb.config.jsonc.`,
+          `Add marketplace.sync.include, then rerun \`kb marketplace sync --scope ${scopeCtx.scope}\`.`,
         );
-        return { ok: false, error: 'No marketplace.sync.include configured', result: { added: [], skipped: [], total: 0 } };
       }
 
       try {
@@ -87,7 +90,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
         });
 
         if (flags.json) {
-          ctx.ui?.json?.(result);
+          return result;
         } else if (result.added.length === 0) {
           ctx.ui?.info?.(`Lock is up to date — ${scopeCtx.scope} (${result.total} entries)`);
         } else {
@@ -99,10 +102,9 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
           });
         }
 
-        return { ok: true, result };
+        return result;
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { added: [], skipped: [], total: 0 } };
+        return handleError(err);
       }
     },
   },
@@ -111,20 +113,41 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
 async function loadSyncConfig(root: string): Promise<{ include?: string[]; exclude?: string[] }> {
   for (const name of ['kb.config.jsonc', 'kb.config.json']) {
     const p = path.join(root, '.kb', name);
+    let raw: string;
     try {
-      const raw = await fs.readFile(p, 'utf-8');
-      // .json files are strict JSON — strip only for .jsonc to avoid mangling URLs (e.g. ws://).
-      const parsed = JSON.parse(name.endsWith('.jsonc') ? stripJsonc(raw) : raw);
-      return parsed?.marketplace?.sync ?? {};
-    } catch { continue; }
+      raw = await fs.readFile(p, 'utf-8');
+    } catch (error) {
+      if (isMissingFileError(error)) continue;
+      throw new Error(`Cannot read marketplace sync config ${p}: ${errorMessage(error)}`);
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = name.endsWith('.jsonc') ? parseJsonc(raw) : JSON.parse(raw);
+    } catch (error) {
+      throw new Error(`Invalid marketplace sync config ${p}: ${errorMessage(error)}`);
+    }
+
+    if (typeof parsed !== 'object' || parsed === null || !('marketplace' in parsed)) return {};
+    const marketplace = parsed.marketplace;
+    if (typeof marketplace !== 'object' || marketplace === null || !('sync' in marketplace)) return {};
+    const sync = marketplace.sync;
+    if (typeof sync !== 'object' || sync === null) return {};
+    const include = 'include' in sync && Array.isArray(sync.include) && sync.include.every((item): item is string => typeof item === 'string')
+      ? sync.include
+      : undefined;
+    const exclude = 'exclude' in sync && Array.isArray(sync.exclude) && sync.exclude.every((item): item is string => typeof item === 'string')
+      ? sync.exclude
+      : undefined;
+    return { include, exclude };
   }
   return {};
 }
 
-/** Minimal JSONC stripper — removes // line and /* block comments plus trailing commas. */
-function stripJsonc(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1')
-    .replace(/,(\s*[}\]])/g, '$1');
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error';
 }

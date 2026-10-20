@@ -307,8 +307,11 @@ export interface IDocumentDatabase {
   ): Promise<T[]>;
 
   /**
-   * Update the first document matching `filter`. With `upsert: true` creates
-   * the document if no match exists; the resulting document is returned.
+   * Atomically match and update the first document matching `filter` as one
+   * single-document operation. The filter is evaluated at the update's commit
+   * point, so conditional transitions (compare-and-set) are safe across
+   * concurrent adapter clients. With `upsert: true` creates the document if
+   * no match exists; the resulting document is returned.
    *
    * Returns `null` only when nothing matched and `upsert` was not requested.
    */

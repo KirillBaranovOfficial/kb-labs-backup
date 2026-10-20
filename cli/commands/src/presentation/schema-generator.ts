@@ -6,6 +6,7 @@ type JsonSchemaProperty = {
   default?: unknown;
   enum?: string[];
   items?: { type: string };
+  writeOnly?: boolean;
 };
 
 function flagToProperty(flag: FlagDefinition): JsonSchemaProperty {
@@ -13,8 +14,9 @@ function flagToProperty(flag: FlagDefinition): JsonSchemaProperty {
     type: flag.type === 'array' ? 'array' : flag.type,
     description: flag.description ?? flag.describe,
   };
-  if (flag.default !== undefined) { prop.default = flag.default; }
-  if (flag.choices?.length) { prop.enum = flag.choices; }
+  if (flag.default !== undefined && flag.secret !== true) { prop.default = flag.default; }
+  if (flag.secret === true) { prop.writeOnly = true; }
+  if (flag.type === 'string' && flag.choices?.length) { prop.enum = [...flag.choices]; }
   if (flag.type === 'array') { prop.items = { type: 'string' }; }
   return prop;
 }
@@ -39,6 +41,7 @@ export function generateCommandSchema(manifest: CommandManifest): object {
     ...(manifest.operationType ? { operationType: manifest.operationType } : {}),
     type: 'object',
     properties,
+    additionalProperties: false,
     ...(required.length ? { required } : {}),
     examples: manifest.examples ?? [],
   };

@@ -6,45 +6,6 @@
 import { defineFlags } from '@kb-labs/sdk';
 
 /**
- * Flags for workflow:status command
- */
-export const statusFlags = defineFlags({
-  json: {
-    type: 'boolean',
-    description: 'Output result as JSON',
-    default: false,
-  },
-  'job-id': {
-    type: 'string',
-    description: 'Job ID to get status for',
-  },
-});
-
-/**
- * Flags for workflow:logs command
- */
-export const logsFlags = defineFlags({
-  json: {
-    type: 'boolean',
-    description: 'Output result as JSON',
-    default: false,
-  },
-  'job-id': {
-    type: 'string',
-    description: 'Job ID to get logs for',
-  },
-  'run-id': {
-    type: 'string',
-    description: 'Run ID to get logs for (all steps)',
-  },
-  follow: {
-    type: 'boolean',
-    description: 'Follow log output (stream new logs)',
-    default: false,
-  },
-});
-
-/**
  * Flags for workflow:metrics command
  */
 export const metricsFlags = defineFlags({
@@ -63,25 +24,6 @@ export const healthFlags = defineFlags({
     type: 'boolean',
     description: 'Output result as JSON',
     default: false,
-  },
-});
-
-/**
- * Flags for workflow:list command
- */
-export const listFlags = defineFlags({
-  json: {
-    type: 'boolean',
-    description: 'Output result as JSON',
-    default: false,
-  },
-  status: {
-    type: 'string',
-    description: 'Filter by status (running, completed, failed)',
-  },
-  type: {
-    type: 'string',
-    description: 'Filter by type: "runs" (active executions), "cron" (scheduled jobs)',
   },
 });
 
@@ -114,9 +56,6 @@ export const runFlags = defineFlags({
 });
 
 // Type exports for use in command handlers
-export type StatusFlags = typeof statusFlags.infer;
-export type LogsFlags = typeof logsFlags.infer;
 export type MetricsFlags = typeof metricsFlags.infer;
 export type HealthFlags = typeof healthFlags.infer;
-export type ListFlags = typeof listFlags.infer;
 export type RunFlags = typeof runFlags.infer;

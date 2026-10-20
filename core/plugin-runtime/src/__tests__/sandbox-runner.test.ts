@@ -56,7 +56,7 @@ describe('Sandbox Runner', () => {
         requestId: 'req-123',
         handlerId: 'test:command',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({
@@ -86,16 +86,12 @@ describe('Sandbox Runner', () => {
       expect(result.executionMeta.duration).toBeGreaterThanOrEqual(0);
     });
 
-    it('should return raw CommandResult structure when handler returns it', async () => {
+    it('keeps plain data without interpreting success-looking fields', async () => {
       const handlerPath = join(testDir, 'command-result-handler.js');
       const handlerCode = `
         export default {
           async execute(ctx, input) {
-            return {
-              ok: true,
-              result: { message: 'success' },
-              meta: { custom: 'value' }
-            };
+            return { ok: true, result: { message: 'success' }, meta: { custom: 'value' } };
           }
         };
       `;
@@ -108,7 +104,7 @@ describe('Sandbox Runner', () => {
         requestId: 'req-cmd',
         handlerId: 'test:command',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const runResult = await runInProcess({
@@ -120,18 +116,12 @@ describe('Sandbox Runner', () => {
         cwd: testDir,
       });
 
-      // Raw CommandResult is in data
-      expect(runResult.data).toEqual({
-        ok: true,
-        result: { message: 'success' },
-        meta: { custom: 'value' },
-      });
+      expect(runResult.data).toEqual({ ok: true, result: { message: 'success' }, meta: { custom: 'value' } });
 
       // CLI host can then wrap this into CommandResultWithMeta
       const cliResult = wrapCliResult(runResult, descriptor);
       expect(cliResult.exitCode).toBe(0);
-      expect(cliResult.result).toEqual({ message: 'success' });
-      expect(cliResult.meta?.custom).toBe('value');
+      expect(cliResult.result).toEqual({ ok: true, result: { message: 'success' }, meta: { custom: 'value' } });
       expect(cliResult.meta?.pluginId).toBe('@kb-labs/test');
     });
 
@@ -152,7 +142,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-void',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({
@@ -220,7 +210,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-invalid',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       await expect(
@@ -263,7 +253,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-error',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       await expect(
@@ -304,7 +294,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-cleanup',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({
@@ -349,7 +339,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-cleanup-error',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       await expect(
@@ -388,7 +378,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-signal',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const abortController = new AbortController();
@@ -422,7 +412,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-named',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({
@@ -463,7 +453,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-context',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({

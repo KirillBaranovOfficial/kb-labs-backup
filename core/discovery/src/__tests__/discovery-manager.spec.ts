@@ -38,11 +38,12 @@ describe('DiscoveryManager', () => {
 
   it('reports PACKAGE_NOT_FOUND when resolvedPath does not exist', async () => {
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/ghost'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-abc',
+      package: '@kb-labs/ghost',
       resolvedPath: './nonexistent',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -56,6 +57,89 @@ describe('DiscoveryManager', () => {
     expect(pkgNotFound).toBeDefined();
     expect(pkgNotFound!.context?.pluginId).toBe('@kb-labs/ghost');
     expect(pkgNotFound!.remediation).toContain('install');
+  });
+
+  it('reports an actionable build diagnostic for a locked local workspace plugin without manifest output', async () => {
+    const pluginDir = path.join(tmpDir, 'plugins', 'release-manager-cli');
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(path.join(pluginDir, 'package.json'), JSON.stringify({
+      name: '@kb-labs/release-manager-cli',
+      kb: { manifest: './dist/manifest.js' },
+    }));
+    const lock = createEmptyLock();
+    lock.plugins['@kb-labs/release'] = createMarketplaceEntry({
+      version: '1.0.0', integrity: 'sha256-test', provides: ['plugin'],
+      source: 'local', resolvedPath: './plugins/release-manager-cli', primaryKind: 'plugin',
+    });
+    await writeMarketplaceLock(tmpDir, lock);
+
+    const result = await new DiscoveryManager({ root: tmpDir }).discover();
+    const diagnostic = result.diagnostics.find(event => event.code === 'PLUGIN_BUILD_MISSING');
+    expect(diagnostic).toMatchObject({
+      severity: 'error',
+      context: { pluginId: '@kb-labs/release' },
+      remediation: 'Run `pnpm build` and retry the command.',
+    });
+  });
+
+  // case: S-203.21
+  it('keeps an enabled plugin visible while diagnosing each missing CLI handler', async () => {
+    const pluginDir = path.join(tmpDir, 'plugins', 'missing-handler');
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(path.join(pluginDir, 'package.json'), JSON.stringify({ name: '@kb-labs/missing-handler', version: '1.0.0' }));
+    await fs.writeFile(path.join(pluginDir, 'kb.plugin.json'), JSON.stringify({
+      schema: 'kb.plugin/3', id: '@kb-labs/missing-handler', version: '1.0.0',
+      cli: { commands: [
+        { path: 'missing run', describe: 'Missing handler', handler: './commands/missing.js#default' },
+        { path: 'missing other', describe: 'Another missing handler', handler: './commands/other.js#default' },
+        { path: 'missing invalid', describe: 'Invalid flags', handler: './commands/invalid.js#default', flags: { flag: { type: 'string' } } },
+        { path: 'missing camel', describe: 'Invalid flag name', handler: './commands/camel.js#default', flags: [{ name: 'runId', type: 'string' }] },
+      ] },
+    }));
+    const lock = createEmptyLock();
+    lock.plugins['@kb-labs/missing-handler'] = createMarketplaceEntry({
+      version: '1.0.0', integrity: 'sha256-test', source: 'local', resolvedPath: './plugins/missing-handler', primaryKind: 'plugin', provides: ['plugin', 'cli-command'],
+    });
+    await writeMarketplaceLock(tmpDir, lock);
+
+    const result = await new DiscoveryManager({ root: tmpDir }).discover();
+    expect(result.plugins.map(plugin => plugin.id)).toContain('@kb-labs/missing-handler');
+    expect(result.diagnostics.filter(event => event.code === 'COMMAND_HANDLER_MISSING')).toHaveLength(2);
+    expect(result.diagnostics.filter(event => event.code === 'COMMAND_SCHEMA_INVALID')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: 'error', context: expect.objectContaining({ pluginId: '@kb-labs/missing-handler', entityId: 'missing invalid' }) }),
+      expect.objectContaining({ severity: 'error', context: expect.objectContaining({ pluginId: '@kb-labs/missing-handler', entityId: 'missing camel' }) }),
+    ]));
+    expect(result.diagnostics.filter(event => event.code === 'COMMAND_HANDLER_MISSING')[0]?.remediation)
+      .toContain('kb marketplace plugins doctor');
+  });
+
+  it('associates missing shared-store diagnostics with the pinned plugin', async () => {
+    const lock = createEmptyLock();
+    lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
+      version: '1.0.0',
+      integrity: 'sha256-abc',
+      package: '@kb-labs/ghost',
+      source: 'marketplace',
+      primaryKind: 'plugin',
+      provides: ['plugin'],
+    });
+    await writeMarketplaceLock(tmpDir, lock);
+
+    const dm = new DiscoveryManager({
+      root: tmpDir,
+      extensionStore: {
+        root: tmpDir,
+        casDir: path.join(tmpDir, 'cas'),
+        entriesDir: path.join(tmpDir, 'entries'),
+        lookup: async () => undefined,
+        resolve: async () => { throw new Error('resolve must not be called during discovery'); },
+        listEntries: async () => [],
+      },
+    });
+    const result = await dm.discover();
+
+    const missing = result.diagnostics.find(d => d.code === 'PLUGIN_STORE_MISSING');
+    expect(missing?.context?.pluginId).toBe('@kb-labs/ghost');
   });
 
   it('discovers plugin with kb.plugin.json', async () => {
@@ -81,7 +165,7 @@ describe('DiscoveryManager', () => {
 
     // Write lock
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/test-plugin'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/test-plugin'] = createMarketplaceEntry({
       version: '1.2.3',
       integrity,
       resolvedPath: './plugins/test-plugin',
@@ -116,11 +200,12 @@ describe('DiscoveryManager', () => {
     }), 'utf-8');
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/bad-hash'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/bad-hash'] = createMarketplaceEntry({
       version: '1.0.0',
-      integrity: 'sha256-WRONG_HASH',
+      integrity: 'sha256-WRONGHASH',
+      package: '@kb-labs/bad-hash',
       resolvedPath: './plugins/bad-hash',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -146,11 +231,12 @@ describe('DiscoveryManager', () => {
     }), 'utf-8');
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/no-verify'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/no-verify'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-WRONG',
+      package: '@kb-labs/no-verify',
       resolvedPath: './plugins/no-verify',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -176,11 +262,12 @@ describe('DiscoveryManager', () => {
     const integrity = `sha256-${crypto.createHash('sha256').update(pkgContent).digest('base64')}`;
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/unsigned'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/unsigned'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity,
+      package: '@kb-labs/unsigned',
       resolvedPath: './plugins/unsigned',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -195,7 +282,8 @@ describe('DiscoveryManager', () => {
     expect(sigMissing!.severity).toBe('info');
   });
 
-  it('detects duplicate plugin IDs', async () => {
+  // case: S-203.21
+  it('rejects lock keys that do not match the plugin manifest ID', async () => {
     // Two lock entries that resolve to manifests with the same ID
     const dir1 = path.join(tmpDir, 'plugins', 'dup1');
     const dir2 = path.join(tmpDir, 'plugins', 'dup2');
@@ -214,7 +302,7 @@ describe('DiscoveryManager', () => {
     for (const [name, dir] of [['dup1', dir1], ['dup2', dir2]] as const) {
       const pkgContent = await fs.readFile(path.join(dir, 'package.json'));
       const integrity = `sha256-${crypto.createHash('sha256').update(pkgContent).digest('base64')}`;
-      lock.installed[name] = createMarketplaceEntry({
+      lock.plugins[name] = createMarketplaceEntry({
         version: '1.0.0', integrity,
         resolvedPath: `./plugins/${name}`, source: 'local', primaryKind: 'plugin', provides: ['plugin'],
       });
@@ -224,9 +312,7 @@ describe('DiscoveryManager', () => {
     const dm = new DiscoveryManager({ root: tmpDir });
     const result = await dm.discover();
 
-    // First one wins, second gets ENTITY_CONFLICT
-    expect(result.plugins).toHaveLength(1);
-    const conflict = result.diagnostics.find(d => d.code === 'ENTITY_CONFLICT');
-    expect(conflict).toBeDefined();
+    expect(result.plugins).toHaveLength(0);
+    expect(result.diagnostics.filter(d => d.code === 'PLUGIN_ID_MISMATCH')).toHaveLength(2);
   });
 });

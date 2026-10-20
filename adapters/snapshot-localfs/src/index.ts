@@ -117,7 +117,11 @@ export class LocalFsSnapshotAdapter implements ISnapshotProvider {
         if (error instanceof Error && error.message.startsWith('Restore target already exists')) {
           throw error;
         }
-        // path missing, continue
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+          // Path is absent, so restoration can create it.
+        } else {
+          throw error;
+        }
       }
     }
 
@@ -253,8 +257,11 @@ export class LocalFsSnapshotAdapter implements ISnapshotProvider {
       const parsed = JSON.parse(raw) as SnapshotRecord;
       this.records.set(snapshotId, parsed);
       return parsed;
-    } catch {
-      throw new Error(`Snapshot not found: ${snapshotId}`);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        throw new Error(`Snapshot not found: ${snapshotId}`);
+      }
+      throw error;
     }
   }
 
@@ -282,8 +289,11 @@ export class LocalFsSnapshotAdapter implements ISnapshotProvider {
         loaded.push(JSON.parse(raw) as SnapshotRecord);
       }
       return loaded;
-    } catch {
-      return [];
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        return [];
+      }
+      throw error;
     }
   }
 }

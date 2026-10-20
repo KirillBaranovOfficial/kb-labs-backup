@@ -33,6 +33,7 @@
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import type { StepSpec } from '@kb-labs/workflow-contracts'
+import { summarizeWorkflowInput } from '../input-log'
 import type {
   ExecutionBackend,
   ExecutionRequest,
@@ -70,6 +71,9 @@ export interface SandboxRunnerOptions {
    */
   workspaceRoot?: string
 
+  /** Installed KB Labs platform root, separate from the project workspace. */
+  platformRoot?: string
+
   /**
    * Default timeout for plugin execution (ms).
    * Default: 120000 (2 minutes)
@@ -102,6 +106,7 @@ export class SandboxRunner implements Runner {
   private readonly backend: ExecutionBackend
   private readonly cliApi: IEntityRegistry
   private readonly workspaceRoot: string
+  private readonly platformRoot?: string
   private readonly defaultTimeout: number
   private readonly analytics?: IAnalytics
   private readonly logger?: ILogger
@@ -110,6 +115,7 @@ export class SandboxRunner implements Runner {
     this.backend = options.backend
     this.cliApi = options.cliApi
     this.workspaceRoot = options.workspaceRoot ?? process.cwd()
+    this.platformRoot = options.platformRoot ?? process.env.KB_PLATFORM_ROOT
     this.defaultTimeout = options.defaultTimeout ?? 120000 // 2 minutes
     this.analytics = options.analytics
   }
@@ -151,9 +157,11 @@ export class SandboxRunner implements Runner {
       pluginId: resolution.value.pluginId,
       handler: resolution.value.handler,
       executionId: executionRequest.executionId,
-      // Log handler input for debuggability — shows exactly what the plugin receives.
-      // Tokens/secrets will appear here in server logs; same policy as worker.ts inputs log.
-      handlerInput: resolution.value.input,
+      // Keep environment keys and secret markers, but omit all environment values.
+      handlerInput: summarizeWorkflowInput(
+        resolution.value.input as Record<string, unknown>,
+        Object.keys(context.secrets),
+      ),
     })
 
     // Track plugin execution started
@@ -189,11 +197,15 @@ export class SandboxRunner implements Runner {
         pluginId: resolution.value.pluginId,
         handler: resolution.value.handler,
         executionId: executionRequest.executionId,
+        correlationId: executionRequest.descriptor.requestId,
         durationMs: duration,
         errorCode: result.error?.code,
         errorMessage: result.error?.message,
-        // Include the handler input again at error time — critical for debugging
-        handlerInput: resolution.value.input,
+        // Keep handler diagnostics on the same secret-free input projection.
+        handlerInput: summarizeWorkflowInput(
+          resolution.value.input as Record<string, unknown>,
+          Object.keys(context.secrets),
+        ),
       })
       this.analytics?.track('workflow.sandbox.execution.failed', {
         stepId: context.stepId,
@@ -356,9 +368,16 @@ export class SandboxRunner implements Runner {
         data.ok === false || (typeof data.exitCode === 'number' && data.exitCode !== 0)
       )
       if (commandFailed) {
-        const message = data.stderr
-          ? String(data.stderr).slice(0, 500)
-          : `Step handler reported failure (exitCode: ${data.exitCode ?? 'unknown'})`;
+        const diagnostic = [data.stderr, data.stdout]
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          .map((value) => value.slice(-500))
+          .join('\n')
+        const message = `Step handler reported failure (exitCode: ${data.exitCode ?? 'unknown'})${diagnostic ? `: ${diagnostic}` : ''}`
+        const outputs = Object.fromEntries(
+          ['stdout', 'stderr', 'exitCode']
+            .filter((key) => data[key] !== undefined)
+            .map((key) => [key, data[key]]),
+        )
         const failure = classifyFailure(
           data.error && typeof data.error === 'object'
             ? data.error
@@ -376,6 +395,7 @@ export class SandboxRunner implements Runner {
             message,
             code: 'HANDLER_REPORTED_FAILURE',
           },
+          outputs,
           failure,
         }
       }
@@ -428,7 +448,6 @@ export class SandboxRunner implements Runner {
         error: {
         message: result.error?.message ?? 'Plugin execution failed',
         code: result.error?.code ?? 'UNKNOWN_ERROR',
-        stack: result.error?.stack,
           details: result.error?.details,
         },
         failure: classifyFailure(result.error, { source: 'execution', phase: 'response' }),
@@ -464,6 +483,7 @@ export class SandboxRunner implements Runner {
       return this.resolveBuiltinShell(
         spec,
         request.context.env['KB_WORKSPACE_ROOT'] ?? request.workspace,
+        request.context.env,
       )
     }
 
@@ -603,6 +623,7 @@ export class SandboxRunner implements Runner {
   private async resolveBuiltinShell(
     spec: StepSpec,
     workspace?: string,
+    env: Record<string, string> = {},
   ): Promise<PluginCommandResolution> {
     // Use import.meta.resolve to find @kb-labs/workflow-steps package
     // This supports ES module exports properly
@@ -630,9 +651,10 @@ export class SandboxRunner implements Runner {
     const shellInput = {
       command,
       env: {
-        KB_PLATFORM_ROOT: this.workspaceRoot,
-        ...(workspace ? { KB_WORKSPACE_ROOT: workspace } : {}),
         ...(typeof withBlock.env === 'object' ? (withBlock.env as Record<string, string>) : {}),
+        ...env,
+        ...(this.platformRoot ? { KB_PLATFORM_ROOT: this.platformRoot } : {}),
+        ...(workspace ? { KB_WORKSPACE_ROOT: workspace } : {}),
       },
       // with.timeout takes precedence; fall back to spec.timeoutMs so that the YAML-level
       // timeoutMs (e.g. 3600000 for claude-agent steps) also caps the shell process.

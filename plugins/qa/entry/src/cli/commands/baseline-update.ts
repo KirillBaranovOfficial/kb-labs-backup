@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -20,7 +20,7 @@ export default defineCommand<unknown, CLIInput<BaselineUpdateFlags>, unknown>({
   description: 'Run check + stats and save as new baseline',
 
   handler: {
-    async intent(_ctx: PluginContextV3, _input: CLIInput<BaselineUpdateFlags>) {
+    async intent(_ctx: PluginCommandContextV3, _input: CLIInput<BaselineUpdateFlags>) {
       return {
         summary: 'Run QA check + stats and save as new baseline',
         operations: [
@@ -29,8 +29,14 @@ export default defineCommand<unknown, CLIInput<BaselineUpdateFlags>, unknown>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<BaselineUpdateFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<BaselineUpdateFlags>): Promise<CommandResult> {
       const { flags } = input;
+      if (flags['dry-run']) {
+        const result = { dryRun: true, operations: [{ type: 'create', resource: 'file', path: '.kb/qa/baseline.json' }] };
+        if (flags.json) return result;
+        else ctx.ui?.info?.('Dry-run: would run QA check and stats, then save .kb/qa/baseline.json.');
+        return result;
+      }
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
 
@@ -44,14 +50,14 @@ export default defineCommand<unknown, CLIInput<BaselineUpdateFlags>, unknown>({
       const baseline = store.saveBaseline(check, stats, git);
 
       if (flags.json) {
-        ctx.ui?.json?.(baseline);
+        return baseline;
       } else {
         for (const section of buildBaselineReport(baseline)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return { ok: true };
+      return {  };
     },
   },
 });

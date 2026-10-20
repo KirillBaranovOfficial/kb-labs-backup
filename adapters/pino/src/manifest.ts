@@ -9,6 +9,7 @@ import type { AdapterManifest } from "@kb-labs/sdk/adapters";
  * Adapter manifest for Pino logger.
  */
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "pino-logger",
   name: "Pino Logger",
@@ -18,6 +19,8 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "ILogger",
+  networkRequired: false,
+  defaultFor: { logger: [] },
   optional: {
     adapters: ["analytics"],
   },

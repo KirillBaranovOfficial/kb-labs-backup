@@ -1,12 +1,7 @@
 import { UIRow, UICol, UIStatistic, UIAlert } from '@kb-labs/studio-ui-kit';
 import {
-  ThunderboltOutlined,
-  DatabaseOutlined,
-  CloudOutlined,
-  RocketOutlined,
   RobotOutlined,
   FileTextOutlined,
-  SaveOutlined,
   ArrowRightOutlined,
   DollarOutlined,
 } from '@ant-design/icons';
@@ -15,9 +10,6 @@ import {
   useAnalyticsStats,
   useAdaptersLLMUsage,
   useAdaptersEmbeddingsUsage,
-  useAdaptersVectorStoreUsage,
-  useAdaptersCacheUsage,
-  useAdaptersStorageUsage,
 } from '@kb-labs/studio-data-client';
 import { useDataSources } from '../../../providers/data-sources-provider';
 import { useNavigate } from 'react-router-dom';
@@ -30,6 +22,7 @@ interface AdapterCardConfig {
   label: string;
   icon: ReactNode;
   color: string;
+  loading: boolean;
   stats: Array<{ title: string; value: number; suffix?: string; precision?: number; prefix?: ReactNode; valueColor?: string }>;
 }
 
@@ -53,11 +46,8 @@ export function AnalyticsOverviewPage() {
   } = useAnalyticsStats(sources.analytics);
 
   // Fetch all adapter stats
-  const { data: llmStats } = useAdaptersLLMUsage(sources.adapters);
-  const { data: embeddingsStats } = useAdaptersEmbeddingsUsage(sources.adapters);
-  const { data: vectorstoreStats } = useAdaptersVectorStoreUsage(sources.adapters);
-  const { data: cacheStats } = useAdaptersCacheUsage(sources.adapters);
-  const { data: storageStats } = useAdaptersStorageUsage(sources.adapters);
+  const { data: llmStats, isLoading: llmLoading } = useAdaptersLLMUsage(sources.adapters);
+  const { data: embeddingsStats, isLoading: embeddingsLoading } = useAdaptersEmbeddingsUsage(sources.adapters);
 
   // Check if analytics is not configured
   const analyticsNotConfigured =
@@ -70,7 +60,7 @@ export function AnalyticsOverviewPage() {
       <UIPage>
         <UIPageHeader
           title="Analytics"
-          description="Platform-wide analytics and adapter metrics"
+      description="Platform-wide product events and usage"
         />
         <UIAlert
           message="Analytics Not Configured"
@@ -86,10 +76,10 @@ export function AnalyticsOverviewPage() {
   if (isStatsError) {
     return (
       <UIPage>
-        <UIPageHeader title="Analytics" description="Platform-wide analytics" />
+      <UIPageHeader title="Analytics" description="Platform-wide product events and usage" />
         <UIAlert
-          message="Failed to Load Analytics"
-          description={statsError?.message || 'Unknown error occurred'}
+          message="Analytics source unavailable"
+          description="Source: REST API analytics endpoint. Run kb-create doctor --platform-root <platform-root> to diagnose the service."
           variant="error"
           showIcon
           style={{ marginTop: 16 }}
@@ -112,6 +102,7 @@ export function AnalyticsOverviewPage() {
       label: 'LLM Usage',
       icon: <RobotOutlined />,
       color: 'var(--info)',
+      loading: llmLoading,
       stats: [
         { title: 'Requests', value: llmStats?.totalRequests ?? 0 },
         { title: 'Cost', value: llmStats?.totalCost ?? 0, prefix: <DollarOutlined />, precision: 2 },
@@ -123,45 +114,10 @@ export function AnalyticsOverviewPage() {
       label: 'Embeddings',
       icon: <FileTextOutlined />,
       color: 'var(--success)',
+      loading: embeddingsLoading,
       stats: [
         { title: 'Requests', value: embeddingsStats?.totalRequests ?? 0 },
         { title: 'Text Chars', value: embeddingsStats?.totalTextLength ?? 0 },
-      ],
-    },
-    {
-      key: 'vectorstore',
-      path: '/analytics/vectorstore',
-      label: 'VectorStore',
-      icon: <DatabaseOutlined />,
-      color: 'var(--link)',
-      stats: [
-        { title: 'Searches', value: vectorstoreStats?.searchQueries ?? 0 },
-        { title: 'Avg Score', value: vectorstoreStats?.avgSearchScore ?? 0, precision: 2 },
-      ],
-    },
-    {
-      key: 'cache',
-      path: '/analytics/cache',
-      label: 'Cache',
-      icon: <ThunderboltOutlined />,
-      color: 'var(--warning)',
-      stats: [
-        {
-          title: 'Hit Rate', value: cacheStats?.hitRate ?? 0, suffix: '%', precision: 1,
-          valueColor: cacheStats && cacheStats.hitRate >= 80 ? 'var(--success)' : 'var(--info)',
-        },
-        { title: 'Total Gets', value: cacheStats?.totalGets ?? 0 },
-      ],
-    },
-    {
-      key: 'storage',
-      path: '/analytics/storage',
-      label: 'Storage',
-      icon: <SaveOutlined />,
-      color: 'var(--error)',
-      stats: [
-        { title: 'Reads', value: storageStats?.readOperations ?? 0 },
-        { title: 'Writes', value: storageStats?.writeOperations ?? 0 },
       ],
     },
   ];
@@ -170,7 +126,7 @@ export function AnalyticsOverviewPage() {
     <UIPage width="full">
       <UIPageHeader
         title="Analytics Overview"
-        description="High-level metrics across all platform adapters"
+        description="High-level product event and usage metrics"
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 8 }}>
@@ -190,6 +146,7 @@ export function AnalyticsOverviewPage() {
               <UICol key={adapter.key} xs={24} md={12} lg={8}>
                 <UICard
                   title={title}
+                  loading={adapter.loading}
                   extra={<ArrowRightOutlined style={{ color: 'var(--text-tertiary)', fontSize: 13 }} />}
                   hoverable
                   onClick={() => navigate(adapter.path)}

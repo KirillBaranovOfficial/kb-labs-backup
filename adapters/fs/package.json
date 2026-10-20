@@ -45,11 +45,13 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "kb": {
-    "manifest": "./dist/manifest.js"
+    "adapter": {
+      "manifest": "./dist/manifest.js"
+    }
   },
   "peerDependencies": {
     "@kb-labs/sdk": ">=2.0.0"

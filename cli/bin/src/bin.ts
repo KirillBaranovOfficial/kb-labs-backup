@@ -16,7 +16,8 @@
  * the raw process arguments (argv[2..]), then ensures the platform is
  * gracefully shut down via `platform.shutdown()` before the process exits.
  * If `run()` returns a numeric exit code, that code is forwarded to
- * `process.exit()` so the shell receives the correct status.
+ * `process.exitCode` so Node can finish flushing stdout and stderr before the
+ * shell receives the correct status.
  */
 
 const rawCliArgs = process.argv.slice(2);
@@ -36,10 +37,8 @@ if (!process.env.LOG_LEVEL && !process.env.KB_LOG_LEVEL) {
   process.env.KB_LOG_LEVEL = resolveBootstrapLogLevel(rawCliArgs) ?? 'silent';
 }
 
-// CLI diagnostics belong on stderr. Command results and UI stay on stdout.
-if (!process.env.KB_LOG_STREAM) {
-  process.env.KB_LOG_STREAM = 'stderr';
-}
+// CLI diagnostics belong on stderr. Command results stay on stdout.
+process.env.KB_LOG_STREAM = 'stderr';
 
 // Check for --json flag BEFORE imports to ensure auto-init uses correct mode
 // This prevents ConsoleSink from being created when user wants JSON output
@@ -48,47 +47,48 @@ if (process.argv.includes('--json')) {
 }
 
 
-import { createRequire } from "module";
-
 // Captured at module load so that `resolvePlatformRoot` can walk up from the
 // physical location of this bin.js file — the most reliable way to locate
 // `node_modules/@kb-labs/*` in installed mode (independent of process.cwd()).
 const BIN_MODULE_URL = import.meta.url;
 
-// Inject CLI_VERSION from package.json so system commands (version, health, diag)
-// can report the correct version at runtime without hardcoding it at build time.
-// package.json sits one level above dist/bin.js in both dev and installed mode.
-if (!process.env.CLI_VERSION) {
-  try {
-    const _req = createRequire(import.meta.url);
-    const pkg = _req('../package.json') as { version?: string };
-    if (pkg.version) {
-      process.env.CLI_VERSION = pkg.version;
-    }
-  } catch {
-    // Non-fatal: version command will fall back to '0.0.0'
-  }
-}
+// Inject the package version compiled into this binary by tsup.config.ts.
+declare const __KB_CLI_VERSION__: string;
+process.env.CLI_VERSION = __KB_CLI_VERSION__;
 
 (async () => {
   // Import the platform only after the logging environment is bootstrapped.
-  const [{ run }, { platform }, { createCLIUIFacade }] = await Promise.all([
+  const [{ run }, { platform }, { createJsonPresenter, createTextPresenter }, { handleExecutionError }] = await Promise.all([
     import('./index.js'),
     import('@kb-labs/core-runtime'),
-    import('./runtime/ui-facade.js'),
+    import('@kb-labs/cli-runtime'),
+    import('./runtime/execution-error.js'),
   ]);
+
+  const reportUnexpectedError = async (error: Error) => {
+    const presenter = process.env.KB_OUTPUT_MODE === 'json'
+      ? createJsonPresenter()
+      : createTextPresenter();
+    handleExecutionError(error, presenter);
+    try {
+      await platform.shutdown();
+    } catch (shutdownError) {
+      process.stderr.write(
+        `[kb] platform shutdown failed: ${shutdownError instanceof Error ? shutdownError.message : String(shutdownError)}\n`
+      );
+    }
+    process.exit(1);
+  };
 
   // Global handler — any uncaught exception renders as a formatted error box
   // instead of a raw Node.js stack dump.
   process.on('uncaughtException', (err) => {
-    createCLIUIFacade().error(err);
-    process.exit(1);
+    void reportUnexpectedError(err);
   });
 
   process.on('unhandledRejection', (reason) => {
     const err = reason instanceof Error ? reason : new Error(String(reason));
-    createCLIUIFacade().error(err);
-    process.exit(1);
+    void reportUnexpectedError(err);
   });
 
   let code: number | void;
@@ -105,6 +105,9 @@ if (!process.env.CLI_VERSION) {
   }
 
   if (typeof code === "number") {
+    await new Promise<void>((resolve, reject) => {
+      process.stdout.write('', (error) => error ? reject(error) : resolve());
+    });
     process.exit(code);
   }
 })();

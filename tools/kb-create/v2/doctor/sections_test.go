@@ -2,6 +2,8 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
@@ -29,7 +32,7 @@ func installation(t *testing.T, hostCommand string) (root string, state host.Sta
 	t.Helper()
 	root = t.TempDir()
 	state = host.State{Dir: filepath.Join(t.TempDir(), "launcher")}
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.5.0"}, Host: &contracts.HostSpec{Command: hostCommand, HealthURL: "http://127.0.0.1:4000/health"}}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.5.0", Services: []contracts.Service{{ID: "gateway", Command: "serve", Port: 4000, HealthCheck: "/health", Required: true}}}, Host: &contracts.HostSpec{Command: hostCommand, HealthURL: "http://127.0.0.1:4000/health"}}
 	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +60,42 @@ func TestInstallationSectionReportsACompleteInstallationAsHealthy(t *testing.T) 
 	}
 }
 
+// case: S-005.6
+func TestClientInstallationIsHealthyWithoutHostOrRuntimeConfig(t *testing.T) {
+	root := t.TempDir()
+	state := host.State{Dir: filepath.Join(t.TempDir(), "launcher")}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.5.0", Profile: "client"}}
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "client-r1", Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	section := InspectInstallation(root, state)
+	if !section.OK {
+		t.Fatalf("client installation section = %+v", section)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
+		t.Fatalf("client runtime config stat error = %v", err)
+	}
+}
+
+// case: S-025.3
+func TestInstallationSectionReportsInvalidReceiptHostSpec(t *testing.T) {
+	root, state := installation(t, "kb-create-test-host")
+	active, err := receipt.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Plan.Host.Command = ""
+	if err := receipt.Write(root, active); err != nil {
+		t.Fatal(err)
+	}
+	section := InspectInstallation(root, state)
+	got := check(t, section, "host-spec")
+	if got.OK || got.Code != contracts.CodeHostSpecInvalid || !strings.Contains(got.Detail, "command is required") || !strings.Contains(got.Hint, contracts.ShellCommand("kb-create", "apply", "--platform-root", root)) {
+		t.Fatalf("host-spec check = %+v", got)
+	}
+}
+
 func TestInstallationSectionNamesWhatIsMissing(t *testing.T) {
 	root, state := installation(t, filepath.Join(t.TempDir(), "no-such-host"))
 	if err := os.Remove(filepath.Join(root, ".kb", "kb.config.jsonc")); err != nil {
@@ -73,7 +112,7 @@ func TestInstallationSectionNamesWhatIsMissing(t *testing.T) {
 
 func TestInstallationSectionWithoutAReceiptIsAFindingNotAnError(t *testing.T) {
 	section := InspectInstallation(t.TempDir(), host.State{Dir: t.TempDir()})
-	if section.OK || check(t, section, "receipt").OK || !check(t, section, "launcher-state").OK {
+	if section.OK || check(t, section, "receipt").OK || !check(t, section, "host-state").OK {
 		t.Fatalf("section = %+v", section)
 	}
 }
@@ -90,11 +129,15 @@ func TestInstallationSectionRejectsAReceiptWithoutAHost(t *testing.T) {
 }
 
 func TestPlatformSectionReportsAStoppedOrUnhealthyHost(t *testing.T) {
-	stopped := InspectPlatform(context.Background(), host.Status{State: host.StateStopped}, nil)
+	stopped := InspectPlatform(context.Background(), host.Status{State: host.StateStopped}, nil, nil)
 	if stopped.OK || !strings.Contains(check(t, stopped, "host-process").Hint, "kb-create start") {
 		t.Fatalf("stopped = %+v", stopped)
 	}
-	unhealthy := InspectPlatform(context.Background(), host.Status{State: host.StateUnhealthy, PID: 7}, nil)
+	adapterCheck := check(t, stopped, "adapters")
+	if adapterCheck.OK || !strings.Contains(adapterCheck.Detail, "cannot be checked") || !strings.Contains(adapterCheck.Hint, "kb-create start") {
+		t.Fatalf("stopped adapter status = %+v", adapterCheck)
+	}
+	unhealthy := InspectPlatform(context.Background(), host.Status{State: host.StateUnhealthy, PID: 7}, nil, nil)
 	if unhealthy.OK || !strings.Contains(check(t, unhealthy, "host-process").Hint, "kb-create restart") {
 		t.Fatalf("unhealthy = %+v", unhealthy)
 	}
@@ -106,6 +149,8 @@ func gatewayDouble(t *testing.T, health, auth string) host.Status {
 		switch r.URL.Path {
 		case "/health":
 			_, _ = w.Write([]byte(health))
+		case "/health/adapters":
+			_, _ = w.Write([]byte(`{"ok":true,"data":[{"slot":"storage","mode":"real","implementation":"@kb-labs/adapters-fs","configuredPackage":"@kb-labs/adapters-fs","recordedAt":"2026-10-06T00:00:00.000Z"},{"slot":"cache","mode":"inmemory","implementation":"StateBroker","reason":"not-configured","recordedAt":"2026-10-06T00:00:00.000Z"}]}`))
 		case "/health/auth":
 			if auth == "" {
 				http.NotFound(w, r)
@@ -120,11 +165,97 @@ func gatewayDouble(t *testing.T, health, auth string) host.Status {
 	return host.Status{State: host.StateRunning, PID: 9, Healthy: true, HealthURL: server.URL + "/health"}
 }
 
+func TestAdapterChecksDistinguishUnreadableResponseFromUnreachableHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health/adapters" {
+			_, _ = w.Write([]byte(`[{"slot":"storage","mode":"real"}]`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"data":{"upstreams":{}}}`))
+	}))
+	status := host.Status{State: host.StateRunning, PID: 9, Healthy: true, HealthURL: server.URL + "/health"}
+	section := InspectPlatform(context.Background(), status, server.Client(), nil)
+	server.Close()
+
+	unreadable := check(t, section, "adapters")
+	if unreadable.OK || unreadable.Detail != "The running host returned an unreadable adapter status response." || strings.Contains(unreadable.Hint, "restart") {
+		t.Fatalf("unreadable response check = %+v", unreadable)
+	}
+
+	unreachable := InspectPlatform(context.Background(), status, nil, nil)
+	// The closed server is still not reachable; the connection failure has a
+	// restart hint, unlike an HTTP 200 response that violates the UX contract.
+	unreachableCheck := check(t, unreachable, "adapters")
+	if unreachableCheck.OK || !strings.Contains(unreachableCheck.Detail, "host is unreachable") || !strings.Contains(unreachableCheck.Hint, "kb-create restart") {
+		t.Fatalf("unreachable response check = %+v", unreachableCheck)
+	}
+}
+
+// case: S-054.2
+func TestPlatformSectionReportsPerSlotAdapterModeAndImplementation(t *testing.T) {
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{}}}`, "")
+	section := InspectPlatform(context.Background(), status, nil, nil)
+	encoded, err := json.Marshal(section)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Checks []map[string]any `json:"checks"`
+	}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []map[string]string{
+		{"slot": "storage", "mode": "real", "implementation": "@kb-labs/adapters-fs"},
+		{"slot": "cache", "mode": "inmemory", "implementation": "StateBroker"},
+	} {
+		found := false
+		for _, got := range result.Checks {
+			if got["slot"] == want["slot"] && got["mode"] == want["mode"] && got["implementation"] == want["implementation"] {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("checks do not report adapter status %+v: %s", want, encoded)
+		}
+	}
+}
+
+// case: S-211.6
+func TestPlatformSectionReportsDegradedAdapterWithRecoveryCommand(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health/adapters" {
+			_, _ = w.Write([]byte(`{"ok":true,"data":[{"slot":"llm","mode":"degraded","implementation":"@kb-labs/adapters-vibeproxy","configuredPackage":"@kb-labs/adapters-vibeproxy","reason":"load-failed","correlationId":"load-123","action":{"id":"install-adapter","label":"Install @kb-labs/adapters-vibeproxy","command":"kb marketplace install @kb-labs/adapters-vibeproxy --scope platform"},"recordedAt":"2026-10-06T00:00:00.000Z"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"data":{"upstreams":{}}}`))
+	}))
+	defer server.Close()
+	status := host.Status{State: host.StateRunning, PID: 9, Healthy: true, HealthURL: server.URL + "/health"}
+	section := InspectPlatform(context.Background(), status, server.Client(), nil)
+	got := check(t, section, "adapter:llm")
+	if got.OK || got.Mode != "degraded" || !strings.Contains(got.Detail, "load-failed") || !strings.Contains(got.Detail, "load-123") || got.Hint != "kb marketplace install @kb-labs/adapters-vibeproxy --scope platform" {
+		t.Fatalf("degraded adapter check = %+v", got)
+	}
+}
+
+// case: S-054.10
+func TestPlatformSectionRejectsInMemoryFallbackWhenPersistentProviderIsBound(t *testing.T) {
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{}}}`, "")
+	section := InspectPlatform(context.Background(), status, nil, []contracts.ProviderBinding{{
+		Capability: "cache", Package: "@kb-labs/adapters-state-broker",
+	}})
+	got := check(t, section, "adapter:cache")
+	if got.OK || got.Mode != "inmemory" || !strings.Contains(got.Hint, "kb adapter bind cache @kb-labs/adapters-state-broker") {
+		t.Fatalf("persistent cache fallback finding = %+v", got)
+	}
+}
+
 func TestPlatformSectionReadsUpstreamsAdaptersAndSignInReadiness(t *testing.T) {
 	status := gatewayDouble(t,
-		`{"upstreams":{"marketplace":{"status":"up"},"state":{"status":"down"}},"adapters":{"cache":{"available":true},"llm":{"available":false}}}`,
-		`{"ok":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in","hint":"kb-create doctor --recover"}]}`)
-	section := InspectPlatform(context.Background(), status, nil)
+		`{"ok":true,"data":{"upstreams":{"marketplace":{"status":"up"},"state":{"status":"down"}},"adapters":{"cache":{"available":true},"llm":{"available":false}}}}`,
+		`{"ok":true,"data":{"ok":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in","hint":"kb-create doctor --recover"}]}}`)
+	section := InspectPlatform(context.Background(), status, nil, nil)
 	if section.OK {
 		t.Fatalf("section = %+v", section)
 	}
@@ -139,18 +270,29 @@ func TestPlatformSectionReadsUpstreamsAdaptersAndSignInReadiness(t *testing.T) {
 }
 
 func TestPlatformSectionIsHealthyWhenEverythingReportsUp(t *testing.T) {
-	status := gatewayDouble(t, `{"upstreams":{"state":{"status":"up"}},"projectRuntimes":{"active":0,"limit":4}}`, `{"ok":true,"issues":[]}`)
-	if section := InspectPlatform(context.Background(), status, nil); !section.OK {
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{"state":{"status":"up"}},"projectRuntimes":{"active":0,"limit":4}}}`, `{"ok":true,"data":{"ok":true,"issues":[]}}`)
+	if section := InspectPlatform(context.Background(), status, nil, nil); !section.OK {
 		t.Fatalf("section = %+v", section)
 	} else if check(t, section, "project-runtimes").Detail != "Project runtimes start on demand; 0 of 4 active." {
 		t.Fatalf("project runtime status = %+v", check(t, section, "project-runtimes"))
 	}
 }
 
+// case: S-222.9
+func TestPlatformSectionDoesNotFlagUsableSSOAdminWithoutBootstrapConfig(t *testing.T) {
+	status := gatewayDouble(t,
+		`{"ok":true,"data":{"upstreams":{"state":{"status":"up"}}}}`,
+		`{"ok":true,"data":{"ok":true,"authEnabled":true,"activeAdmins":1,"bootstrap":"not-configured","issues":[]}}`)
+	section := InspectPlatform(context.Background(), status, nil, nil)
+	if !check(t, section, "auth").OK {
+		t.Fatalf("usable SSO-only admin should not be reported broken: %+v", section)
+	}
+}
+
 func TestPlatformSectionDoesNotRequireAdminWhenAuthIsDisabled(t *testing.T) {
-	status := gatewayDouble(t, `{"upstreams":{"marketplace":{"status":"up"}}}`,
-		`{"ok":true,"authEnabled":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in"},{"code":"jwt_secret_default","severity":"error","message":"shared secret"}]}`)
-	section := InspectPlatform(context.Background(), status, nil)
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{"marketplace":{"status":"up"}}}}`,
+		`{"ok":true,"data":{"ok":true,"authEnabled":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in"},{"code":"jwt_secret_default","severity":"error","message":"shared secret"}]}}`)
+	section := InspectPlatform(context.Background(), status, nil, nil)
 	for _, item := range section.Checks {
 		if item.ID == "auth:no_active_admin" {
 			t.Fatalf("local mode must not report missing admin: %+v", item)
@@ -161,11 +303,43 @@ func TestPlatformSectionDoesNotRequireAdminWhenAuthIsDisabled(t *testing.T) {
 	}
 }
 
-func TestPlatformSectionToleratesAHostWithoutStructuredHealth(t *testing.T) {
+func TestPlatformSectionRejectsAHealthBodyWithoutTheUxEnvelope(t *testing.T) {
 	status := gatewayDouble(t, `ok`, "")
-	section := InspectPlatform(context.Background(), status, nil)
-	if !section.OK || !check(t, section, "health").OK {
+	section := InspectPlatform(context.Background(), status, nil, nil)
+	if section.OK || check(t, section, "health").OK {
 		t.Fatalf("section = %+v", section)
+	}
+}
+
+func TestGetJSONDecodesGatewayFailureEnvelope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"ok":false,"error":{"code":"KB_AUTH_GATEWAY_UNREACHABLE","area":"auth","stage":"run","severity":"error","retryable":true,"message":"Gateway is unavailable.","hint":"Run kb-create doctor.","correlationId":"corr-doctor"}}`))
+	}))
+	defer server.Close()
+	var payload map[string]any
+	status, err := getJSON(context.Background(), server.Client(), server.URL, &payload)
+	var diagnostic *diag.Diag
+	if status != http.StatusServiceUnavailable || !errors.As(err, &diagnostic) || diagnostic.Code != "KB_AUTH_GATEWAY_UNREACHABLE" {
+		t.Fatalf("getJSON failure = status %d, err %#v; want decoded Gateway failure diagnostic", status, err)
+	}
+}
+
+// case: S-203.1
+func TestPlatformSectionRejectsRawHealthJSON(t *testing.T) {
+	status := gatewayDouble(t, `{"upstreams":{"state":{"status":"up"}}}`, "")
+	section := InspectPlatform(context.Background(), status, nil, nil)
+	if section.OK || check(t, section, "health").OK {
+		t.Fatalf("raw health JSON must not be treated as a successful response: %+v", section)
+	}
+}
+
+// case: S-203.1
+func TestPlatformSectionRejectsRawAuthReadinessJSON(t *testing.T) {
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{}}}`, `{"ok":true,"authEnabled":true,"issues":[]}`)
+	section := InspectPlatform(context.Background(), status, nil, nil)
+	if section.OK || check(t, section, "auth").OK {
+		t.Fatalf("raw auth readiness JSON must fail its check: %+v", section)
 	}
 }
 

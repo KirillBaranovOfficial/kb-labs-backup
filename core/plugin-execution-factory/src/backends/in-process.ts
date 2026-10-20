@@ -38,7 +38,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import type {
-  ExecutionBackend,
+  RawExecutionBackend,
   ExecutionRequest,
   ExecutionResult,
   ExecuteOptions,
@@ -57,7 +57,7 @@ interface WithMiddlewareDecls {
 }
 import { localWorkspaceManager } from '../workspace/local.js';
 import type { WorkspaceLease } from '../workspace/types.js';
-import { normalizeError } from '../utils.js';
+import { normalizeExecutionFailure } from '../utils.js';
 import { resolveExecutionTarget } from '../target-resolver.js';
 import {
   AbortError,
@@ -84,7 +84,7 @@ export interface InProcessBackendOptions {
 /**
  * InProcessBackend - executes handlers in current process.
  */
-export class InProcessBackend implements ExecutionBackend {
+export class InProcessBackend implements RawExecutionBackend {
   private _stats: ExecutionStats = {
     totalExecutions: 0,
     successCount: 0,
@@ -144,6 +144,8 @@ export class InProcessBackend implements ExecutionBackend {
           workspaceDescriptor = await workspaceProvider.materialize({
             sourceRef: requestToExecute.pluginRoot,
             basePath: requestToExecute.pluginRoot,
+            projectRoot: process.env.KB_PROJECT_ROOT,
+            platformRoot: process.env.KB_PLATFORM_ROOT,
             metadata: { executionId: requestToExecute.executionId },
           });
           if (workspaceDescriptor.rootPath) {
@@ -241,6 +243,7 @@ export class InProcessBackend implements ExecutionBackend {
         eventEmitter,
         handlerPath,
         input: requestToExecute.input,
+        environment: requestToExecute.env,
         signal: options?.signal,
         cwd: lease.cwd,           // From WorkspaceLease
         outdir: undefined,        // Optional, defaults to cwd/.kb/output
@@ -271,7 +274,7 @@ export class InProcessBackend implements ExecutionBackend {
 
       return {
         ok: false,
-        error: normalizeError(error),
+        ...normalizeExecutionFailure(error, request),
         executionTimeMs,
         metadata: {
           backend: 'in-process',

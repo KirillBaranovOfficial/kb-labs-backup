@@ -10,7 +10,9 @@ import * as os from 'node:os';
 import { DiscoveryManager } from '../discovery-manager.js';
 import { writeMarketplaceLock, createEmptyLock, createMarketplaceEntry } from '../marketplace-lock.js';
 import { computePackageIntegrity } from '../integrity.js';
-import { findWorkspaceCandidates } from '../workspace-source.js';
+import { findWorkspaceCandidates, findWorkspacePackages } from '../workspace-source.js';
+import { loadAdapterManifest } from '@kb-labs/core-platform';
+import type { StoreEntry } from '@kb-labs/core-extension-store';
 
 interface PluginFixture {
   dir: string;
@@ -54,17 +56,20 @@ async function makePlugin(f: PluginFixture): Promise<string> {
 async function lockEntry(
   root: string,
   dir: string,
-  source: 'marketplace' | 'local',
+  source: 'platform' | 'local',
   enabled = true,
 ): Promise<ReturnType<typeof createMarketplaceEntry>> {
-  const entry = createMarketplaceEntry({
+  const entryOptions = {
     version: '1.0.0',
     integrity: await computePackageIntegrity(dir),
     resolvedPath: path.relative(root, dir) || '.',
-    source,
     primaryKind: 'plugin',
     provides: ['plugin'],
-  });
+  };
+  const packageName = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8')).name as string;
+  const entry = source === 'local'
+    ? createMarketplaceEntry({ ...entryOptions, source: 'local' })
+    : createMarketplaceEntry({ ...entryOptions, source: 'platform', package: packageName });
   entry.enabled = enabled;
   return entry;
 }
@@ -74,7 +79,7 @@ async function writeLock(
   entries: Record<string, ReturnType<typeof createMarketplaceEntry>>,
 ): Promise<void> {
   const lock = createEmptyLock();
-  lock.installed = entries;
+  lock.plugins = entries;
   await writeMarketplaceLock(root, lock);
 }
 
@@ -103,10 +108,10 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
     await fs.writeFile(path.join(platform, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
 
     await writeLock(platform, {
-      '@x/plat': await lockEntry(platform, platformPlugin, 'marketplace'),
+      '@x/plat': await lockEntry(platform, platformPlugin, 'platform'),
       '@x/linked': await lockEntry(platform, linkedPlugin, 'local'),
     });
-    await writeLock(project, { '@x/proj': await lockEntry(project, projectPlugin, 'marketplace') });
+    await writeLock(project, { '@x/proj': await lockEntry(project, projectPlugin, 'local') });
 
     const result = await new DiscoveryManager({ root: project, platformRoot: platform }).discover();
     const byId = new Map(result.plugins.map(p => [p.id, p]));
@@ -114,14 +119,14 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
     expect([...byId.keys()].sort()).toEqual(['@x/linked', '@x/plat', '@x/proj', '@x/ws']);
     expect(byId.get('@x/plat')).toMatchObject({ scope: 'platform', origin: 'node_modules', manifestKind: 'static' });
     expect(byId.get('@x/linked')).toMatchObject({ scope: 'platform', origin: 'linked' });
-    expect(byId.get('@x/proj')).toMatchObject({ scope: 'project', origin: 'node_modules' });
+    expect(byId.get('@x/proj')).toMatchObject({ scope: 'project', origin: 'linked' });
     expect(byId.get('@x/ws')).toMatchObject({ scope: 'platform', origin: 'workspace', packageName: '@x/ws' });
     expect(result.manifests.size).toBe(4);
   });
 
   it('reads the static manifest.json and never imports the compiled module', async () => {
     const dir = await makePlugin({ dir: path.join(project, 'node_modules', 'safe'), id: '@x/safe', throwingModule: true });
-    await writeLock(project, { '@x/safe': await lockEntry(project, dir, 'marketplace') });
+    await writeLock(project, { '@x/safe': await lockEntry(project, dir, 'platform') });
 
     const result = await new DiscoveryManager({ root: project }).discover();
 
@@ -133,7 +138,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
 
   it('falls back to importing the compiled module when there is no static manifest', async () => {
     const dir = await makePlugin({ dir: path.join(project, 'node_modules', 'js'), id: '@x/js', staticJson: false, workingModule: true });
-    await writeLock(project, { '@x/js': await lockEntry(project, dir, 'marketplace') });
+    await writeLock(project, { '@x/js': await lockEntry(project, dir, 'platform') });
 
     const result = await new DiscoveryManager({ root: project }).discover();
 
@@ -154,8 +159,8 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
     const projectCopy = await makePlugin({ dir: path.join(project, 'node_modules', 'dup'), id: '@x/dup', version: '2.0.0' });
     await makePlugin({ dir: path.join(platform, 'packages', 'dup'), id: '@x/dup', version: '3.0.0' });
     await fs.writeFile(path.join(platform, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-    await writeLock(platform, { '@x/dup': await lockEntry(platform, platformCopy, 'marketplace') });
-    await writeLock(project, { '@x/dup': await lockEntry(project, projectCopy, 'marketplace') });
+    await writeLock(platform, { '@x/dup': await lockEntry(platform, platformCopy, 'platform') });
+    await writeLock(project, { '@x/dup': await lockEntry(project, projectCopy, 'local') });
 
     const result = await new DiscoveryManager({ root: project, platformRoot: platform }).discover();
 
@@ -164,11 +169,9 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
   });
 
   it('inside one scope workspace > linked > node_modules', async () => {
-    const installed = await makePlugin({ dir: path.join(platform, 'node_modules', 'dup'), id: '@x/dup', version: '1.0.0' });
     const linked = await makePlugin({ dir: path.join(platform, 'linked', 'dup'), id: '@x/dup', version: '2.0.0' });
     await writeLock(platform, {
-      'installed-key': await lockEntry(platform, installed, 'marketplace'),
-      'linked-key': await lockEntry(platform, linked, 'local'),
+      '@x/dup': await lockEntry(platform, linked, 'local'),
     });
 
     const withoutWorkspace = await new DiscoveryManager({ root: platform }).discover();
@@ -185,7 +188,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
 
   it('a disabled lock entry is skipped', async () => {
     const dir = await makePlugin({ dir: path.join(project, 'node_modules', 'off'), id: '@x/off' });
-    await writeLock(project, { '@x/off': await lockEntry(project, dir, 'marketplace', false) });
+    await writeLock(project, { '@x/off': await lockEntry(project, dir, 'platform', false) });
 
     const result = await new DiscoveryManager({ root: project }).discover();
 
@@ -237,25 +240,86 @@ describe('plugins.allow / plugins.block / plugins.linked gate', () => {
 
   async function install(ids: string[], plugins: Record<string, unknown>): Promise<void> {
     const entries: Record<string, ReturnType<typeof createMarketplaceEntry>> = {};
+    const packageRoots = new Map<string, { packageRoot: string; entryDir: string; entry: StoreEntry }>();
     for (const id of ids) {
       const dir = await makePlugin({ dir: path.join(root, 'node_modules', id.replace('/', '__')), id });
-      entries[id] = await lockEntry(root, dir, 'marketplace');
+      const integrity = await computePackageIntegrity(dir);
+      packageRoots.set(id, {
+        packageRoot: dir,
+        entryDir: '/mock/store/entries/test',
+        entry: { schema: 'kb.store-entry/1', name: id, version: '1.0.0', kind: 'plugin', integrity, installedAt: '2026-10-12T00:00:00.000Z' },
+      });
+      entries[id] = createMarketplaceEntry({
+        version: '1.0.0',
+        integrity,
+        package: id,
+        source: 'marketplace',
+        primaryKind: 'plugin',
+        provides: ['plugin'],
+      });
     }
     await writeLock(root, entries);
     await fs.writeFile(path.join(root, '.kb', 'kb.config.json'), JSON.stringify({ plugins }));
+    store = packageRoots;
+  }
+
+  let store = new Map<string, { packageRoot: string; entryDir: string; entry: StoreEntry }>();
+
+  async function stored(name: string, packageRoot: string): Promise<{ packageRoot: string; entryDir: string; entry: StoreEntry }> {
+    return {
+      packageRoot,
+      entryDir: '/mock/store/entries/test',
+      entry: {
+        schema: 'kb.store-entry/1',
+        name,
+        version: '1.0.0',
+        kind: 'plugin',
+        integrity: await computePackageIntegrity(packageRoot),
+        installedAt: '2026-10-12T00:00:00.000Z',
+      },
+    };
   }
 
   async function ids(): Promise<{ found: string[]; codes: string[] }> {
-    const result = await new DiscoveryManager({ root }).discover();
+    const result = await new DiscoveryManager({
+      root,
+      scope: 'project',
+      extensionStore: {
+        root: '/mock/store',
+        casDir: '/mock/store/cas',
+        entriesDir: '/mock/store/entries',
+        lookup: async ({ name }) => store.get(name),
+        resolve: async () => { throw new Error('resolve must not run in lock discovery'); },
+        listEntries: async () => [],
+      },
+    }).discover();
     return { found: result.plugins.map(p => p.id).sort(), codes: result.diagnostics.map(d => d.code) };
   }
 
-  it('block hides a third-party package but never a @kb-labs one', async () => {
-    await install(['@x/bad', '@kb-labs/core'], { block: ['@x/bad', '@kb-labs/core'] });
+  it('applies policy from provenance and ignores package-name prefixes', async () => {
+    const thirdParty = await makePlugin({ dir: path.join(root, 'node_modules', 'kb-labs-name'), id: '@kb-labs/name-only' });
+    const bad = await makePlugin({ dir: path.join(root, 'node_modules', 'bad'), id: '@x/bad' });
+    const shipped = await makePlugin({ dir: path.join(root, 'packages', 'shipped'), id: '@vendor/shipped' });
+    await fs.writeFile(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    await writeLock(root, {
+      '@kb-labs/name-only': createMarketplaceEntry({
+        version: '1.0.0', integrity: await computePackageIntegrity(thirdParty), package: '@kb-labs/name-only',
+        source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'],
+      }),
+      '@x/bad': createMarketplaceEntry({
+        version: '1.0.0', integrity: await computePackageIntegrity(bad), package: '@x/bad',
+        source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'],
+      }),
+    });
+    store = new Map([
+      ['@kb-labs/name-only', await stored('@kb-labs/name-only', thirdParty)],
+      ['@x/bad', await stored('@x/bad', bad)],
+    ]);
+    await fs.writeFile(path.join(root, '.kb', 'kb.config.json'), JSON.stringify({ plugins: { block: ['@x/bad', '@vendor/shipped', '@kb-labs/name-only'] } }));
 
     const { found, codes } = await ids();
 
-    expect(found).toEqual(['@kb-labs/core']);
+    expect(found).toEqual(['@vendor/shipped']);
     expect(codes).toContain('PLUGIN_BLOCKED');
   });
 
@@ -305,5 +369,105 @@ describe('findWorkspaceCandidates', () => {
     const found = await findWorkspaceCandidates(root);
 
     expect(found).toEqual([{ packageName: '@x/solo', packageRoot: root }]);
+  });
+});
+
+describe('findWorkspacePackages', () => {
+  it('finds configured packages before they are built', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-ws-packages-'));
+    try {
+      const adapterRoot = path.join(root, 'adapters', 'sqlite');
+      await fs.mkdir(adapterRoot, { recursive: true });
+      await fs.writeFile(path.join(adapterRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-sqlite' }));
+      await fs.writeFile(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
+
+      const found = await findWorkspacePackages(root);
+
+      expect(found).toEqual([{ packageName: '@kb-labs/adapters-sqlite', packageRoot: adapterRoot }]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('workspace adapter candidates', () => {
+  const moduleFor = (roles: string | string[]) =>
+    `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: roles, networkRequired: false })};\n`;
+
+  it('uses only kb.adapter.manifest and classifies undeclared packages as non-adapters', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-result-'));
+    try {
+      await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+        name: '@fixture/manifest',
+        type: 'module',
+        kb: { adapter: { manifest: './manifest.js' } },
+      }));
+      await fs.writeFile(path.join(root, 'manifest.js'), moduleFor('IFirst'));
+      expect(await loadAdapterManifest({ packageRoot: root })).toMatchObject({ kind: 'adapter', manifest: { schema: 'kb.adapter/1', implements: 'IFirst' } });
+
+      const multiRoleRoot = path.join(root, 'multi-role');
+      await fs.mkdir(multiRoleRoot, { recursive: true });
+      await fs.writeFile(path.join(multiRoleRoot, 'package.json'), JSON.stringify({
+        name: '@fixture/multi-role',
+        type: 'module',
+        kb: { adapter: { manifest: './roles.js' } },
+      }));
+      await fs.writeFile(path.join(multiRoleRoot, 'roles.js'), moduleFor(['IRoleA', 'IRoleB']));
+      expect(await loadAdapterManifest({ packageRoot: multiRoleRoot })).toMatchObject({ kind: 'adapter', manifest: { schema: 'kb.adapter/1', implements: ['IRoleA', 'IRoleB'] } });
+
+      await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+        name: '@fixture/undeclared',
+        type: 'module',
+      }));
+      expect(await loadAdapterManifest({ packageRoot: root })).toMatchObject({ kind: 'not-adapter', reason: expect.stringContaining('kb.adapter.manifest') });
+
+      const brokenRoot = path.join(root, 'broken');
+      await fs.mkdir(brokenRoot, { recursive: true });
+      await fs.writeFile(path.join(brokenRoot, 'package.json'), JSON.stringify({
+        name: '@fixture/broken', type: 'module', kb: { adapter: { manifest: './dist/manifest.js' } },
+      }));
+      expect(await loadAdapterManifest({ packageRoot: brokenRoot })).toMatchObject({ kind: 'failed' });
+
+      const plainRoot = path.join(root, 'plain');
+      await fs.mkdir(plainRoot, { recursive: true });
+      await fs.writeFile(path.join(plainRoot, 'package.json'), JSON.stringify({ name: '@fixture/plain', type: 'module' }));
+      expect(await loadAdapterManifest({ packageRoot: plainRoot })).toMatchObject({ kind: 'not-adapter' });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not discover the LLM routing wrapper as an ILLM provider', async () => {
+    const root = path.resolve(import.meta.dirname, '../../../..');
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-llm-provider-workspace-'));
+    try {
+      const routerRoot = path.join(fixtureRoot, 'packages', 'llm-router');
+      const providerRoot = path.join(fixtureRoot, 'packages', 'llm-provider');
+      await fs.mkdir(path.join(routerRoot, 'dist'), { recursive: true });
+      await fs.mkdir(path.join(providerRoot, 'dist'), { recursive: true });
+      const routerPackage = JSON.parse(await fs.readFile(path.join(root, 'core/llm-router/package.json'), 'utf8')) as Record<string, unknown>;
+      await fs.writeFile(path.join(routerRoot, 'package.json'), JSON.stringify(routerPackage));
+      await fs.writeFile(path.join(routerRoot, 'dist', 'manifest.js'), moduleFor('ILLM'));
+      await fs.writeFile(path.join(providerRoot, 'package.json'), JSON.stringify({
+        name: '@fixture/llm-provider',
+        type: 'module',
+        kb: { adapter: { manifest: './dist/manifest.js' } },
+      }));
+      await fs.writeFile(path.join(providerRoot, 'dist', 'manifest.js'), moduleFor('ILLM'));
+      await fs.writeFile(path.join(fixtureRoot, 'pnpm-workspace.yaml'), 'packages: ["packages/*"]\n');
+
+      const workspaceCandidates = await findWorkspacePackages(fixtureRoot);
+      const llmProviders = (await Promise.all(workspaceCandidates.map(async candidate => ({
+        packageName: candidate.packageName,
+        manifest: await loadAdapterManifest({ packageRoot: candidate.packageRoot }),
+      }))))
+        .filter(candidate => candidate.manifest.kind === 'adapter' && candidate.manifest.manifest.implements === 'ILLM')
+        .map(candidate => candidate.packageName);
+
+      expect(llmProviders).toEqual(['@fixture/llm-provider']);
+      expect(llmProviders).not.toContain('@kb-labs/llm-router');
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
   });
 });

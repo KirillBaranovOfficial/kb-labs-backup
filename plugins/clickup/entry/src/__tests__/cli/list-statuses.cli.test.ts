@@ -41,7 +41,7 @@ describe('clickup:list.statuses', () => {
       mockCLIInput({ argv: ['list-1'], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.table.length).toBeGreaterThan(0);
     expect(vi.mocked(getListStatuses)).toHaveBeenCalledWith('test-api-key', 'list-1');
   });
@@ -56,9 +56,9 @@ describe('clickup:list.statuses', () => {
       mockCLIInput({ argv: ['list-1'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(Array.isArray(captured.json[0])).toBe(true);
-    const slim = (captured.json[0] as Array<Record<string, unknown>>)[0];
+    expect(result).not.toHaveProperty('ok');
+    expect(Array.isArray(result)).toBe(true);
+    const slim = (result as Array<Record<string, unknown>>)[0];
     expect(slim).toMatchObject({ status: 'open', type: 'open', color: '#000000' });
     expect(slim).not.toHaveProperty('id');
     expect(slim).not.toHaveProperty('orderindex');
@@ -74,8 +74,8 @@ describe('clickup:list.statuses', () => {
       mockCLIInput({ argv: ['list-1'], flags: { json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const raw = (captured.json[0] as typeof mockStatuses)[0]!;
+    expect(result).not.toHaveProperty('ok');
+    const raw = (result as typeof mockStatuses)[0]!;
     expect(raw.id).toBeDefined();
     expect(raw.orderindex).toBeDefined();
   });
@@ -88,8 +88,8 @@ describe('clickup:list.statuses', () => {
       mockCLIInput({ argv: [], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LS-04: core function throws — exitCode 1, error shown', async () => {
@@ -102,7 +102,7 @@ describe('clickup:list.statuses', () => {
       mockCLIInput({ argv: ['list-1'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

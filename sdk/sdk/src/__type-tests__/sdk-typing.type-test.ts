@@ -3,6 +3,7 @@ import type {
   ContextForHost,
   ExtractHostContext,
   PluginContextV3,
+  ProjectEntry,
 } from '../index.js';
 import type {
   ManifestV3,
@@ -15,6 +16,7 @@ import type {
 
 import {
   defineCommand,
+  parseJsonc,
   defineManifest,
 } from '../index.js';
 
@@ -30,6 +32,9 @@ type _RestHostCheck = Assert<
 type _ContextNarrowCheck = Assert<
   Equals<ContextForHost<'cli'>['hostContext']['host'], 'cli'>
 >;
+
+type _ProjectEntryIdIsPublic = Assert<Equals<ProjectEntry['id'], string>>;
+const parsedJsonc: unknown = parseJsonc('{"value": true}');
 
 const command = defineCommand<
   { profile: 'dev' | 'prod' },

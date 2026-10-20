@@ -9,6 +9,7 @@ import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import { readKbConfig } from "@kb-labs/core-config";
 import { createServer } from "@kb-labs/marketplace-api";
 import { MarketplaceService } from "@kb-labs/marketplace-core";
+import { createExtensionStore } from "@kb-labs/core-extension-store";
 import {
   NpmPackageSource,
   RegistryPackageSource,
@@ -22,10 +23,9 @@ export async function setup({
   logger,
   port,
   host,
-  projectRoot,
   platformRoot,
 }: ServiceContext): Promise<() => Promise<void>> {
-  const repoRoot = projectRoot;
+  const repoRoot = platformRoot;
 
   // Read marketplace.registry config to wire up RegistryPackageSource for kb: specs.
   const kbConfig = await readKbConfig(repoRoot);
@@ -45,6 +45,8 @@ export async function setup({
 
   const service = new MarketplaceService({
     platformRoot,
+    logger,
+    extensionStore: createExtensionStore({ platformRoot }),
     source: new NpmPackageSource(),
     registrySource,
   });
@@ -63,6 +65,7 @@ export async function setup({
 export async function bootstrap(_cwd: string = process.cwd()): Promise<void> {
   await runService({
     appId: "marketplace",
+    projectScope: "platform",
     startDir: _cwd,
     defaultPort: 5070,
     portEnvVar: "KB_MARKETPLACE_PORT",

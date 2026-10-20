@@ -23,6 +23,7 @@ export {
   type CreateFSShimOptions,
   type CreateRuntimeAPIOptions,
 } from './runtime/index.js';
+export { selectPermittedEnvironment } from './sandbox/environment.js';
 
 // API
 export {
@@ -77,6 +78,7 @@ export {
 
 // Platform governance
 export { createGovernedPlatformServices } from './platform/governed.js';
+export { createWSSender, rehydrateWSInput } from './ws/sender.js';
 export { resolveAdapterMiddlewares } from './platform/middleware-loader.js';
 export type { RawMiddlewareDecl } from './platform/middleware-loader.js';
 export type { LoadedMiddleware, PlatformConfig } from './platform/pipeline.js';
@@ -94,6 +96,7 @@ export {
   wrapCliResult,
   wrapRestResult,
   unwrapRestData,
+  normalizeJsonResult,
   type RestResultWithMeta,
 } from './host/index.js';
 
@@ -117,7 +120,6 @@ export type {
   ExecutionMeta,
   // CLI types (for wrapCliResult)
   CommandResult,
-  CommandSuccess,
   CommandFailure,
   CommandError,
   CommandResultWithMeta,

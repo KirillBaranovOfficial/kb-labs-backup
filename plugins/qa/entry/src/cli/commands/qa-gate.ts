@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -19,7 +19,7 @@ export default defineCommand<unknown, CLIInput<QaGateFlags>, unknown>({
   description: 'Run pre-commit gate check (exits 1 if violations found)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaGateFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaGateFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -36,16 +36,26 @@ export default defineCommand<unknown, CLIInput<QaGateFlags>, unknown>({
 
       if (flags.save) store.saveGate(raw, durationMs, git);
 
-      if (flags.json) {
-        ctx.ui?.json?.(raw);
-      } else if (raw.ok) {
+      const result = raw.ok ? raw : {
+        ok: false as const,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: 'QA gate failed',
+          hint: 'Review the reported gate violations, then rerun `kb qa gate`.',
+          diagnostics: raw.violations.map((violation) => ({
+            code: 'KB_QA_GATE_VIOLATION',
+            severity: violation.severity,
+            path: violation.package,
+            message: `${violation.check}: ${violation.message}`,
+          })),
+        },
+      };
+
+      if (!flags.json && raw.ok) {
         ctx.ui?.success?.(`Gate passed. ${raw.staged_files} staged file(s), no violations.`);
-      } else {
-        const items = raw.violations.map(v => `[${v.severity}] ${v.package}  ${v.check}: ${v.message}`);
-        ctx.ui?.error?.('Gate failed', { sections: [{ header: 'Violations', items }] });
       }
 
-      return raw.ok ? { ok: true, result: raw } : { ok: false, error: 'QA gate failed', result: raw };
+      return result;
     },
   },
 });

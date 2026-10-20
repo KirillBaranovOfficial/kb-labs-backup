@@ -1,6 +1,6 @@
 # @kb-labs/plugin-execution-factory
 
-Factory for creating plugin execution backends - extracted to eliminate circular dependencies.
+Execution backend implementations and types. Backend construction is owned by `@kb-labs/core-runtime` through the `./construct` subpath.
 
 ## Purpose
 
@@ -24,22 +24,9 @@ plugin-runtime → plugin-execution-factory → core-runtime ✅
 - **SubprocessBackend** - Executes plugins in subprocess via IPC (isolated, secure)
 - **WorkerPoolBackend** - Pool of worker processes for parallel execution
 
-### Factory
+### Backend construction
 
-```typescript
-import { createExecutionBackend } from '@kb-labs/plugin-execution-factory';
-
-const backend = createExecutionBackend({
-  type: 'worker-pool',
-  options: {
-    minWorkers: 2,
-    maxWorkers: 10,
-    workerScript: './worker.js'
-  }
-});
-
-await backend.execute(descriptor, input);
-```
+Only `@kb-labs/core-runtime` constructs the execution backend. Service planes receive the initialized instance from `platform.executionBackend`; they do not import a constructor.
 
 ### Workspace Management
 
@@ -75,23 +62,19 @@ The original `pool.ts` (580 lines) was refactored into focused modules:
 
 ## Usage in Core Runtime
 
-Core Runtime imports this package to create execution backends:
+Core Runtime imports the dedicated construction subpath:
 
 ```typescript
 // core-runtime/src/loader.ts
-import { createExecutionBackend } from '@kb-labs/plugin-execution-factory';
+import { createExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
 
 const backend = await createExecutionBackend(config);
 platform.initExecutionBackend(backend);
 ```
 
-## Re-exports
+## Public surface
 
-The original `@kb-labs/plugin-execution` package re-exports everything from this package for backward compatibility:
-
-```typescript
-export { createExecutionBackend } from '@kb-labs/plugin-execution-factory';
-```
+The package root exposes backend types and implementation support. The dedicated `./construct` subpath exposes construction to core runtime; package dependency checks prevent other workspace packages from importing it.
 
 ## Build
 

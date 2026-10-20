@@ -9,9 +9,13 @@
  * Host layer (CLI, REST, etc.) wraps this into host-specific format.
  */
 
-import { fork, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import type { ErrorEnvelope, SerializedError } from '@kb-labs/core-platform';
+import type { IPlatformAdapters } from '@kb-labs/core-platform';
+import { createStdioChannel, StdioPlatformServer } from '@kb-labs/core-ipc';
 import {
   platformContext,
   runtimeContext,
@@ -24,8 +28,10 @@ import type {
   ExecutionMeta,
 } from '@kb-labs/plugin-contracts';
 import { PluginError, TimeoutError, AbortError, createExecutionMeta } from '@kb-labs/plugin-contracts';
-import type { ParentMessage, ChildMessage, ResultMessage, ErrorMessage } from './ipc-protocol.js';
+import type { ExecuteMessage } from './ipc-protocol.js';
 import { createPluginContextV3 } from '../context/index.js';
+import { rehydrateWSInput } from '../ws/sender.js';
+import type { WSInputReference } from '@kb-labs/plugin-contracts';
 import { executeCleanup, type PluginInvokerFn, type EventEmitterFn } from '../api/index.js';
 import type { LoadedMiddleware } from '../platform/pipeline.js';
 
@@ -57,20 +63,21 @@ export interface RunInProcessOptions {
   signal?: AbortSignal;
   cwd: string;
   outdir?: string;
+  environment?: Record<string, string | undefined>;
   /** Resolved adapter middlewares to apply before governance. */
   adapterMiddlewares?: LoadedMiddleware[];
 }
 
 export interface RunInSubprocessOptions {
   descriptor: PluginContextDescriptor;
-  socketPath: string;
-  platformAuthToken?: string;
+  platform: IPlatformAdapters;
   handlerPath: string;
   input: unknown;
   timeoutMs?: number;
   signal?: AbortSignal;
   cwd: string;
   outdir?: string;
+  environment?: Record<string, string | undefined>;
   onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
 }
 
@@ -85,7 +92,7 @@ export interface RunInSubprocessOptions {
 export async function runInProcess<T = unknown>(
   options: RunInProcessOptions
 ): Promise<RunResult<T>> {
-  const { descriptor, platform, ui, pluginInvoker, eventEmitter, handlerPath, input, signal, cwd, outdir, adapterMiddlewares } = options;
+  const { descriptor, platform, ui, pluginInvoker, eventEmitter, handlerPath, input, signal, cwd, outdir, environment, adapterMiddlewares } = options;
   const startTime = Date.now();
 
   // Create context
@@ -98,6 +105,7 @@ export async function runInProcess<T = unknown>(
     eventEmitter,
     cwd,
     outdir,
+    environment,
     adapterMiddlewares,
   });
 
@@ -137,16 +145,20 @@ export async function runInProcess<T = unknown>(
     if (typeof handler.execute !== 'function') {
       throw new PluginError(
         `Handler at ${handlerPath} does not export an execute function`,
-        'INVALID_HANDLER'
+        'KB_PLUGIN_LOAD_FAILED',
+        { plugin: descriptor.pluginId },
       );
     }
 
     // Execute handler within platform + runtime contexts (AsyncLocalStorage).
     // platformContext → usePlatform()/useLLM()/etc. return governed platform
     // runtimeContext → useEnv()/useFS()/useFetch() return sandboxed shims
+    const handlerInput = descriptor.hostType === 'ws'
+      ? rehydrateWSInput(input as WSInputReference, platform.websocket)
+      : input;
     const data = await platformContext.run(context.platform, () =>
       runtimeContext.run(context.runtime, () =>
-        handler.execute(context, input)
+        handler.execute(context, handlerInput)
       )
     ) as T;
 
@@ -185,13 +197,14 @@ export async function runInSubprocess<T = unknown>(
 ): Promise<RunResult<T>> {
   const {
     descriptor,
-    socketPath,
-    platformAuthToken,
+    platform,
     handlerPath,
     input,
     timeoutMs = 30000,
     signal,
   } = options;
+
+  if (signal?.aborted) { throw new AbortError(); }
 
   const startTime = Date.now();
 
@@ -229,32 +242,43 @@ export async function runInSubprocess<T = unknown>(
       );
     }
 
-    // Fork child process
-    const child: ChildProcess = fork(bootstrapPath, [], {
-      stdio: ['inherit', 'pipe', 'pipe', 'ipc'],
+    const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [bootstrapPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
+        ...options.environment,
         NODE_ENV: process.env.NODE_ENV,
-        KB_SOCKET_PATH: socketPath,
-        KB_PLATFORM_SOCKET_TOKEN: platformAuthToken,
-        KB_EXECUTION_ID: descriptor.requestId,
-        KB_TENANT_ID: descriptor.tenantId,
       },
     });
 
     let completed = false;
+    let stderrBuffer = '';
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let cancelId: ReturnType<typeof setTimeout> | undefined;
+    const channel = createStdioChannel(child.stdout, child.stdin);
+    const platformServer = new StdioPlatformServer(channel, platform);
+    const finish = () => {
+      completed = true;
+      clearTimeout(timeoutId);
+      clearTimeout(cancelId);
+      signal?.removeEventListener('abort', abortHandler);
+      platformServer.close();
+      channel.close();
+      child.stdin.end();
+    };
+    const fail = (error: Error) => {
+      if (completed) { return; }
+      finish();
+      child.kill('SIGKILL');
+      reject(error);
+    };
 
     // Handle abort signal
     const abortHandler = () => {
       if (!completed) {
-        child.send({ type: 'abort' } satisfies ParentMessage);
-        // Give it a moment to clean up, then kill
-        setTimeout(() => {
-          if (!completed) {
-            child.kill('SIGKILL');
-          }
-        }, 1000);
+        void channel.send({ type: 'execution:cancel', requestId: descriptor.requestId ?? '' })
+          .finally(() => child.stdin.end());
+        cancelId = setTimeout(() => fail(new AbortError()), 1000);
       }
     };
 
@@ -262,75 +286,96 @@ export async function runInSubprocess<T = unknown>(
       signal.addEventListener('abort', abortHandler);
     }
 
-    // Pipe stdout/stderr to parent
-    child.stdout?.pipe(process.stdout);
-    child.stderr?.pipe(process.stderr);
+    channel.onError((error) => fail(error));
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrBuffer += chunk.toString('utf8');
+      const lines = stderrBuffer.split(/\r?\n/);
+      stderrBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        options.onLog?.({
+          level: 'error', message: line, stream: 'stderr', lineNo: 0, timestamp: new Date().toISOString(),
+        });
+      }
+    });
+    child.stderr.on('end', () => {
+      if (stderrBuffer.length > 0) {
+        options.onLog?.({
+          level: 'error', message: stderrBuffer, stream: 'stderr', lineNo: 0, timestamp: new Date().toISOString(),
+        });
+      }
+    });
 
     // Set timeout
     // eslint-disable-next-line prefer-const
     timeoutId = setTimeout(() => {
       if (!completed) {
-        completed = true;
-        child.kill('SIGKILL');
-        reject(new TimeoutError(`Plugin execution timed out after ${timeoutMs}ms`));
+        fail(new TimeoutError(`Plugin execution timed out after ${timeoutMs}ms`));
       }
     }, timeoutMs);
 
-    // Handle messages from child
-    child.on('message', (msg: ChildMessage) => {
-      if (msg.type === 'ready') {
-        // Child is ready, send execute message
-        const executeMsg: ParentMessage = {
-          type: 'execute',
-          descriptor,
-          socketPath,
-          handlerPath,
-          input,
-          cwd: options.cwd,
-          outdir: options.outdir,
-        };
-        child.send(executeMsg);
-      } else if (msg.type === 'log') {
-        // Forward log entry to onLog callback
-        options.onLog?.(msg.entry);
-      } else if (msg.type === 'result') {
-        completed = true;
-        clearTimeout(timeoutId);
-        signal?.removeEventListener('abort', abortHandler);
-
-        const resultMsg = msg as ResultMessage;
-
-        // IPC sends raw handler return value — pass through as-is.
-        // Host layer (CLI, REST, Workflow) handles interpretation.
-        resolve({
-          ok: true,
-          data: resultMsg.data as T,
-          executionMeta: buildExecutionMeta(descriptor, startTime),
-        });
-      } else if (msg.type === 'error') {
-        completed = true;
-        clearTimeout(timeoutId);
-        signal?.removeEventListener('abort', abortHandler);
-
-        const errorMsg = msg as ErrorMessage;
-        reject(PluginError.fromJSON(errorMsg.error));
+    const requestId = descriptor.requestId ?? '';
+    const executeMsg: ExecuteMessage = {
+      requestId,
+      descriptor,
+      handlerPath,
+      input,
+      cwd: options.cwd,
+      strictFilesystemPermissions: false,
+      outdir: options.outdir,
+    };
+    void channel.send({ type: 'execution:start', requestId, payload: executeMsg }).catch((error: unknown) => {
+      fail(error instanceof Error ? error : new Error(String(error)));
+    });
+    channel.on('log', (frame) => {
+      options.onLog?.({
+        level: frame.level,
+        message: frame.message,
+        stream: frame.stream,
+        lineNo: 0,
+        timestamp: new Date().toISOString(),
+        meta: frame.meta,
+      });
+    });
+    channel.on('execution:result', (frame) => {
+      if (frame.requestId !== requestId) { fail(new Error('Execution result request id does not match')); return; }
+      finish();
+      resolve({
+        ok: true,
+        data: (frame.payloadUndefined ? undefined : frame.payload) as T,
+        executionMeta: buildExecutionMeta(descriptor, startTime),
+      });
+    });
+    channel.on('execution:error', (frame) => {
+      if (frame.requestId !== requestId) { fail(new Error('Execution error request id does not match')); return; }
+      const payload = frame.payload;
+      if (typeof payload !== 'object' || payload === null || !('envelope' in payload)) {
+        fail(new Error('Execution error frame did not contain an error envelope'));
+        return;
       }
+      if (!('serializedError' in payload) || typeof payload.serializedError !== 'object' || payload.serializedError === null
+        || !('name' in payload.serializedError) || typeof payload.serializedError.name !== 'string'
+        || !('message' in payload.serializedError) || typeof payload.serializedError.message !== 'string') {
+        fail(new Error('Execution error frame did not contain a serialized error'));
+        return;
+      }
+      const errorPayload = payload as { envelope: ErrorEnvelope; serializedError: SerializedError };
+      finish();
+      reject(new SerializedErrorEnvelopeError(errorPayload.envelope, errorPayload.serializedError));
     });
 
     // Handle child exit
     child.on('exit', (code) => {
       if (!completed) {
-        completed = true;
-        clearTimeout(timeoutId);
-        signal?.removeEventListener('abort', abortHandler);
+        finish();
 
         if (signal?.aborted) {
           reject(new AbortError());
         } else {
           reject(new PluginError(
             `Plugin process exited with code ${code}`,
-            'PROCESS_EXIT',
-            { code }
+            'KB_PLUGIN_CRASHED',
+            { plugin: descriptor.pluginId }
           ));
         }
       }
@@ -339,10 +384,7 @@ export async function runInSubprocess<T = unknown>(
     // Handle child error
     child.on('error', (error) => {
       if (!completed) {
-        completed = true;
-        clearTimeout(timeoutId);
-        signal?.removeEventListener('abort', abortHandler);
-        reject(error);
+        fail(error);
       }
     });
   });

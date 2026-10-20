@@ -5,7 +5,7 @@
  * With --failed-only, only jobs that failed or were interrupted are requeued.
  */
 
-import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 
 interface RunsRerunFlags {
@@ -20,7 +20,7 @@ export default defineCommand<unknown, CLIInput<RunsRerunFlags>, unknown>({
   description: 'Rerun a workflow run',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<RunsRerunFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<RunsRerunFlags>) {
       const runId = input.flags?.['run-id'] ?? input.argv[0];
       const failedOnly = input.flags?.['failed-only'];
       return {
@@ -29,14 +29,13 @@ export default defineCommand<unknown, CLIInput<RunsRerunFlags>, unknown>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<RunsRerunFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunsRerunFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const outputJson = flags?.json ?? false;
       const runId = flags?.['run-id'] ?? argv[0];
 
       if (!runId) {
-        validationError(ctx, 'Missing run ID', 'Usage: kb workflow runs-rerun <runId> [--run-id=<id>] [--failed-only]', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return validationError('Missing run ID', 'Usage: kb workflow runs-rerun <runId> [--run-id=<id>] [--failed-only]');
       }
       const failedOnly = flags?.['failed-only'] ?? false;
 
@@ -46,7 +45,7 @@ export default defineCommand<unknown, CLIInput<RunsRerunFlags>, unknown>({
         const result = await client.rerunWorkflow(runId, { failedOnly });
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: result });
+          return result;
         } else {
           ctx.ui?.success?.('Workflow Rerun Triggered', {
             title: runId,
@@ -67,10 +66,9 @@ export default defineCommand<unknown, CLIInput<RunsRerunFlags>, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(error);
       }
     },
   },

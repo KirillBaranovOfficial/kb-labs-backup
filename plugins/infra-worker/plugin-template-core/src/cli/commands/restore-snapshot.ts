@@ -1,10 +1,10 @@
-import { defineCommand, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 
 interface RestoreSnapshotFlags {
-  snapshotId?: string;
-  workspaceId?: string;
-  environmentId?: string;
-  targetPath?: string;
+  'snapshot-id'?: string;
+  'workspace-id'?: string;
+  'environment-id'?: string;
+  'target-path'?: string;
   overwrite?: boolean;
 }
 
@@ -23,19 +23,19 @@ export default defineCommand<unknown, RestoreSnapshotInput, RestoreSnapshotResul
   description: 'Restore snapshot to workspace/environment.',
   handler: {
     async execute(
-      ctx: PluginContextV3<unknown>,
+      ctx: PluginCommandContextV3<unknown>,
       input: RestoreSnapshotInput
     ): Promise<CommandResult<RestoreSnapshotResult>> {
       const flags = input.flags;
-      if (!flags.snapshotId) {
-        throw new Error('Missing required flag: snapshotId');
+      if (!flags['snapshot-id']) {
+        throw new Error('Missing required flag: --snapshot-id');
       }
 
       const restored = await ctx.api.snapshot.restore({
-        snapshotId: flags.snapshotId,
-        workspaceId: flags.workspaceId,
-        environmentId: flags.environmentId,
-        targetPath: flags.targetPath,
+        snapshotId: flags['snapshot-id'],
+        workspaceId: flags['workspace-id'],
+        environmentId: flags['environment-id'],
+        targetPath: flags['target-path'],
         overwrite: flags.overwrite,
       });
 
@@ -45,10 +45,7 @@ export default defineCommand<unknown, RestoreSnapshotInput, RestoreSnapshotResul
       };
       ctx.ui.success(`Snapshot restored: ${result.snapshotId}`);
 
-      return {
-        ok: true,
-        result,
-      };
+      return result;
     },
   },
 });

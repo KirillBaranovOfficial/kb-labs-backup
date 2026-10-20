@@ -3,7 +3,10 @@
 // (services) — it does not reimplement them.
 package main
 
-import "github.com/kb-labs/env/cmd"
+import (
+	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/env/cmd"
+)
 
 var (
 	version = "dev"
@@ -13,5 +16,5 @@ var (
 
 func main() {
 	cmd.SetVersionInfo(version, commit, date)
-	cmd.Execute()
+	command.Exit(cmd.Execute())
 }

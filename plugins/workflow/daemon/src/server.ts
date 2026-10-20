@@ -43,24 +43,14 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
     jobBroker,
     workflowService,
     cronScheduler,
+    cronDiscovery,
     logger,
   });
 
-  const isProduction = process.env.NODE_ENV === 'production';
-  const requireAuth = process.env.KB_DAEMON_REQUIRE_AUTH === 'false'
-    ? false
-    : (process.env.KB_DAEMON_REQUIRE_AUTH === 'true' || isProduction);
-  const daemonApiKey = process.env.KB_DAEMON_API_KEY;
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') ?? [
     'http://localhost:3000',
     'http://localhost:5173',
   ];
-
-  if (requireAuth && !daemonApiKey) {
-    throw new Error(
-      'KB_DAEMON_API_KEY is required when daemon auth is enabled (KB_DAEMON_REQUIRE_AUTH=true or NODE_ENV=production)',
-    );
-  }
 
   const observability = new HttpObservabilityCollector({
     serviceId: 'workflow',
@@ -85,29 +75,11 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
     cors: {
       origin: (origin: string | undefined, callback: (err: Error | null, allow: boolean) => void) => {
         if (!origin) {
-          const isDevelopment =
-            process.env.KB_DAEMON_REQUIRE_AUTH === 'false' || process.env.NODE_ENV !== 'production';
-          if (isDevelopment) { callback(null, true); } else { callback(new Error('Origin header required in production'), false); }
+          callback(null, true);
           return;
         }
         if (allowedOrigins.includes(origin)) { callback(null, true); } else { callback(new Error(`Origin ${origin} not allowed by CORS`), false); }
       },
-    },
-
-    onRequest: async (request, reply) => {
-      if (!requireAuth || request.url === '/health') {
-        return;
-      }
-      const apiKeyHeader = request.headers['x-api-key'];
-      const authHeader = request.headers.authorization;
-      const bearerToken =
-        typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
-          ? authHeader.slice('Bearer '.length).trim()
-          : undefined;
-      const token = (typeof apiKeyHeader === 'string' ? apiKeyHeader : undefined) ?? bearerToken;
-      if (!token || token !== daemonApiKey) {
-        reply.code(401).send({ ok: false, error: 'Unauthorized' });
-      }
     },
 
     registerRoutes: async (server) => {
@@ -250,7 +222,7 @@ function buildWorkflowMetricLines(metrics: WorkflowMetrics): string[] {
     metricLine('workflow_runs_total', metrics.runs.total, { status: 'total' }),
     metricLine('workflow_runs_total', metrics.runs.queued, { status: 'queued' }),
     metricLine('workflow_runs_total', metrics.runs.running, { status: 'running' }),
-    metricLine('workflow_runs_total', metrics.runs.completed, { status: 'completed' }),
+    metricLine('workflow_runs_total', metrics.runs.success, { status: 'success' }),
     metricLine('workflow_runs_total', metrics.runs.failed, { status: 'failed' }),
     metricLine('workflow_runs_total', metrics.runs.cancelled, { status: 'cancelled' }),
     metricLine('workflow_runs_total', metrics.runs.dlq, { status: 'dlq' }),
@@ -259,7 +231,7 @@ function buildWorkflowMetricLines(metrics: WorkflowMetrics): string[] {
     metricLine('workflow_jobs_total', metrics.jobs.total, { status: 'total' }),
     metricLine('workflow_jobs_total', metrics.jobs.queued, { status: 'queued' }),
     metricLine('workflow_jobs_total', metrics.jobs.running, { status: 'running' }),
-    metricLine('workflow_jobs_total', metrics.jobs.completed, { status: 'completed' }),
+    metricLine('workflow_jobs_total', metrics.jobs.success, { status: 'success' }),
     metricLine('workflow_jobs_total', metrics.jobs.failed, { status: 'failed' }),
     metricLine('service_operation_total', metrics.runs.total, { operation: 'workflow.runs', status: 'ok' }),
     metricLine('service_operation_total', metrics.runs.failed + metrics.runs.cancelled + metrics.runs.dlq, { operation: 'workflow.runs', status: 'error' }),

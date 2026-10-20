@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"io"
 	"os"
 	"path/filepath"
@@ -155,14 +156,14 @@ func runBundle(cmd *cobra.Command, args []string) error {
 
 	o := newOutput()
 	o.OK(fmt.Sprintf("Bundle ready: %s", outDir))
-	fmt.Printf("\n")
+	clikitcommand.Printf("\n")
 	o.KeyValue("target", target.Name)
 	o.KeyValue("packages", fmt.Sprintf("%d in closure", len(closure)))
-	fmt.Printf("\n")
+	clikitcommand.Printf("\n")
 	for _, p := range closure {
 		o.Bullet(p.RelPath, p.Name)
 	}
-	fmt.Printf("\n")
+	clikitcommand.Printf("\n")
 	return nil
 }
 

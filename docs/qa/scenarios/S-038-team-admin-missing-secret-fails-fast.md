@@ -1,63 +1,34 @@
 ---
 id: S-038
-title: Team Admin — Missing Secret Fails Fast Instead of Booting Broken
+title: Team admin — Missing production secret fails at service startup
 persona: team-admin
-priority: P0
-automation: e2e-todo
-e2e: core/runtime/src/__tests__/config-loader.test.ts
+area: platform-core
+priority: P1
+status: planned
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
 
-An admin deploys a service and forgets to set a required secret
-(`GATEWAY_JWT_SECRET`, `OPENAI_API_KEY`, etc.), referenced in config as
-`${VAR}`. In production, the process refuses to start with a clear error
-naming the missing variable — it never boots "successfully" with a literal
-`${VAR}` string baked into its live config and fails mysteriously on first
-real request instead.
-
----
+An administrator receives an actionable startup error when a required config environment reference is unset, and local or secured kb-create installs generate and preserve the gateway-to-service secret without asking the user to set it.
 
 ## Prerequisites
 
-- [ ] A config with a `${VAR}` placeholder for a required value
-- [ ] `NODE_ENV=production` set (as every shipped image does)
-
----
+- [ ] A KB Labs deployment whose gateway and internal upstreams share `GATEWAY_INTERNAL_SECRET`.
+- [ ] Docker Engine is installed and running.
 
 ## Steps
 
-### Phase 1 — Missing variable in production mode
+| # | Action | Expected |
+|---|---|---|
+| S-038.1 | Start the gateway, REST API, or marketplace-registry container without `GATEWAY_INTERNAL_SECRET` | The process exits non-zero during startup; the catalog diagnostic names `GATEWAY_INTERNAL_SECRET` and tells the operator to set it in the deployment secret configuration. |
+| S-038.2 | Start the same services with `GATEWAY_INTERNAL_SECRET` set to a valid test value | Each service starts and its documented health endpoint returns HTTP 200 within 30 seconds. |
+| S-038.3 | Run a development service container without `GATEWAY_INTERNAL_SECRET` | Startup fails with the same missing-variable diagnostic; this secret is required in every mode. |
+| S-038.4 | Create a fresh local install with kb-create | kb-create generates `GATEWAY_INTERNAL_SECRET`, stores it in the private secret store, and supplies it to the gateway and every internal upstream without prompting the user. |
+| S-038.5 | Update that install and inspect the effective service environment | The existing `GATEWAY_INTERNAL_SECRET` value is unchanged and remains available to every service that checks `x-internal-secret`. |
+| S-038.6 | Roll back the install and inspect the effective service environment | The same `GATEWAY_INTERNAL_SECRET` value is restored and remains available to every service that checks `x-internal-secret`. |
+| S-038.7 | Deploy through the compose or Kubernetes team-deployment configuration without declaring `GATEWAY_INTERNAL_SECRET` | Deployment fails before services start; the diagnostic names the required variable and tells the operator how to provide it through the deployment secret configuration. |
 
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Start the service with the referenced env var unset, `NODE_ENV=production` | Process exits non-zero at boot, error names the missing variable | | ⬜ |
-| 2 | Set the variable, restart | Boots normally | | ⬜ |
-
-### Phase 2 — Same scenario outside production (dev ergonomics preserved)
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 3 | Same missing variable, `NODE_ENV` unset/`development` | Boots anyway, with a logged warning and the literal `${VAR}` left in place (fails lazily at first use, not at boot) | | ⬜ |
-
----
-
-## Result
-
-<!-- PASS / FAIL / PARTIAL -->
-
-## Bugs
-
-## Notes
-
-- **Mechanism-level coverage exists and passes** —
-  `core/runtime/src/__tests__/config-loader.test.ts` has
-  `'throws on an unresolved ${VAR} placeholder when NODE_ENV=production'`
-  (confirmed to fail before the fix, pass after — see commit history) and
-  `'leaves an unresolved ${VAR} placeholder intact outside production'` for
-  Phase 2. Run: `pnpm --filter @kb-labs/core-runtime run test -- config-loader.test.ts`.
-- **Not yet proven at container level** — booting a real published image
-  with a secret withheld and observing the actual exit code/log line needs a
-  real built image, same CI gap as [S-034](S-034-platform-team-full-image-matrix-published.md).
-  Marked `e2e-todo` rather than `e2e-done` for that reason, even though the
-  underlying logic is fully tested.
+This planned container-level case is separate from config-loader unit behavior and is outside the platform-core release gate until the kb-deploy phase.

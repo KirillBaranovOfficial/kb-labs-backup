@@ -24,6 +24,16 @@
       "import": "./dist/adapters/contract/index.js",
       "require": "./dist/adapters/contract/index.cjs"
     },
+    "./error-envelope": {
+      "types": "./dist/error-envelope/index.d.ts",
+      "import": "./dist/error-envelope/index.js",
+      "require": "./dist/error-envelope/index.cjs"
+    },
+    "./ux-result": {
+      "types": "./dist/ux-result/index.d.ts",
+      "import": "./dist/ux-result/index.js",
+      "require": "./dist/ux-result/index.cjs"
+    },
     "./core": {
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js",
@@ -65,6 +75,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "generate:error-codes": "node scripts/generate-error-codes.mjs",
     "clean": "rimraf dist",
     "dev": "tsup --config tsup.config.ts --watch",
     "lint": "eslint src --ext .ts",
@@ -75,6 +86,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-contracts": "workspace:*",
     "ulid": "^2.3.0"
   },
   "devDependencies": {
@@ -86,7 +98,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "peerDependencies": {

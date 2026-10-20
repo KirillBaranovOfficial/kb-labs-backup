@@ -21,6 +21,7 @@ describe('generateCommandSchema', () => {
     expect(schema['type']).toBe('object');
     expect(schema['title']).toBe('workflow runs list');
     expect(schema['description']).toBe('List workflow runs');
+    expect(schema['additionalProperties']).toBe(false);
   });
 
   it('maps flag types correctly', () => {
@@ -88,5 +89,15 @@ describe('generateCommandSchema', () => {
     const schema = generateCommandSchema(manifest) as Record<string, unknown>;
     const props = schema['properties'] as Record<string, Record<string, unknown>>;
     expect(props['limit']!['default']).toBe(20);
+  });
+
+  it('marks secret inputs write-only and never publishes their defaults', () => {
+    const manifest = makeManifest({
+      flags: [{ name: 'token', type: 'string', secret: true, default: 'secret-default-fixture' }],
+    });
+    const schema = generateCommandSchema(manifest) as Record<string, unknown>;
+    const props = schema['properties'] as Record<string, Record<string, unknown>>;
+    expect(props['token']!['writeOnly']).toBe(true);
+    expect(props['token']!['default']).toBeUndefined();
   });
 });

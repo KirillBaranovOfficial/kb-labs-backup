@@ -15,6 +15,11 @@
       "types": "./dist/rest-api.d.ts",
       "import": "./dist/rest-api.js",
       "require": "./dist/rest-api.js"
+    },
+    "./routes": {
+      "types": "./dist/routes.d.ts",
+      "import": "./dist/routes.js",
+      "require": "./dist/routes.js"
     }
   },
   "files": [
@@ -34,6 +39,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "@kb-labs/workflow-constants": "workspace:*",
     "zod": "^3.25.76"
@@ -50,7 +56,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "sideEffects": false

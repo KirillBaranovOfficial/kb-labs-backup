@@ -27,26 +27,7 @@ import {
   type ErrorEnvelope,
 } from "@kb-labs/core-platform";
 import type { GatewayConfig } from "@kb-labs/gateway-contracts";
-
-/** Gateway-owned first path segments that the SPA fallback must never answer. */
-const RESERVED_ROOTS: ReadonlySet<string> = new Set([
-  "api",
-  "auth",
-  "health",
-  "ready",
-  "metrics",
-  "observability",
-  "hosts",
-  "clients",
-  "internal",
-  "webhooks",
-  "telemetry",
-  "docs",
-  "docs-all",
-  "openapi.json",
-  "openapi-merged.json",
-  "echo",
-]);
+import { isGatewayPath } from "../routes/path-classification.js";
 
 /** Gateway-native roots that Studio addresses under `/api/<root>/...`. */
 const API_ALIAS_ROOTS: ReadonlySet<string> = new Set([
@@ -166,6 +147,8 @@ async function isFile(path: string): Promise<boolean> {
 export interface StudioStatic {
   /** Real path of the served directory. */
   dir: string;
+  /** Whether the static handler would serve this path as a file. */
+  isPublicAsset: (method: string, rawUrl: string) => Promise<boolean>;
   onRequest: (
     request: FastifyRequest,
     reply: FastifyReply,
@@ -191,6 +174,40 @@ export async function createStudioStatic(
   }
   const root = await realpath(dir);
   const upstreamPrefixes = Object.values(config.upstreams).map((u) => u.prefix);
+
+  const resolveTarget = (pathname: string): string | undefined => {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathname);
+    } catch {
+      return undefined;
+    }
+    if (decoded.includes("\0")) {
+      return undefined;
+    }
+    const target = resolve(root, `.${decoded}`);
+    return target.startsWith(root + sep) ? target : undefined;
+  };
+
+  const resolveFile = async (pathname: string): Promise<{ target: string; real: string } | undefined> => {
+    const target = resolveTarget(pathname);
+    if (!target || !(await isFile(target))) {
+      return undefined;
+    }
+    const real = await realpath(target);
+    return real.startsWith(root + sep) ? { target, real } : undefined;
+  };
+
+  const staticRequestPath = (method: string, rawUrl: string): string | undefined => {
+    if (method !== "GET" && method !== "HEAD") {
+      return undefined;
+    }
+    const pathname = pathnameOf(rawUrl);
+    if (isGatewayPath(pathname) || matchesPrefix(pathname, upstreamPrefixes)) {
+      return undefined;
+    }
+    return pathname;
+  };
 
   const runtimeConfig: Record<string, string> = {
     KB_API_BASE_URL: studio.apiBaseUrl ?? "/api/v1",
@@ -220,39 +237,20 @@ export async function createStudioStatic(
 
   return {
     dir: root,
+    async isPublicAsset(method, rawUrl) {
+      const pathname = staticRequestPath(method, rawUrl);
+      if (pathname === undefined) return false;
+      return Boolean(await resolveFile(pathname));
+    },
     async onRequest(request, reply) {
-      if (request.method !== "GET" && request.method !== "HEAD") {
-        return undefined;
-      }
-      const pathname = pathnameOf(request.url);
-      if (
-        RESERVED_ROOTS.has(firstSegment(pathname)) ||
-        matchesPrefix(pathname, upstreamPrefixes)
-      ) {
-        return undefined;
-      }
-      let decoded: string;
-      try {
-        decoded = decodeURIComponent(pathname);
-      } catch {
-        return undefined;
-      }
-      if (decoded === "/" || decoded === "/index.html") {
+      const pathname = staticRequestPath(request.method, request.url);
+      if (pathname === undefined) return undefined;
+      if (pathname === "/" || pathname === "/index.html") {
         return sendIndex(request, reply);
       }
-      if (decoded.includes("\0")) {
-        return undefined;
-      }
-      const target = resolve(root, `.${decoded}`);
-      if (!target.startsWith(root + sep)) {
-        return undefined;
-      }
-      if (await isFile(target)) {
-        // A symlink inside the directory must not escape it.
-        const real = await realpath(target);
-        if (!real.startsWith(root + sep)) {
-          return undefined;
-        }
+      const file = await resolveFile(pathname);
+      if (file) {
+        const { target, real } = file;
         const data = await readFile(real);
         return reply
           .code(200)
@@ -268,7 +266,8 @@ export async function createStudioStatic(
           )
           .send(request.method === "HEAD" ? undefined : data);
       }
-      if (extname(target) === "") {
+      const target = resolveTarget(pathname);
+      if (target && extname(target) === "") {
         // SPA route: unknown extension-less path.
         return sendIndex(request, reply);
       }

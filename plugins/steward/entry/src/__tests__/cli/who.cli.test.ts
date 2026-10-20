@@ -28,7 +28,7 @@ describe('steward:who', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: ['frontend'], flags: { project: 'prj_1' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedWhoToContact).toHaveBeenCalledWith({ topic: 'frontend', projectId: 'prj_1' });
     expect(captured.chain[0]).toHaveLength(1);
   });
@@ -48,11 +48,11 @@ describe('steward:who', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe('INVALID_ARGS');
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
+      expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedWhoToContact).not.toHaveBeenCalled();
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

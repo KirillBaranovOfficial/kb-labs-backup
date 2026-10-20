@@ -4,6 +4,7 @@
  */
 
 import type { HttpClient } from '../client/http-client';
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path';
 import type { AnalyticsDataSource } from './analytics-source';
 import type {
   EventsQuery,
@@ -18,7 +19,12 @@ import type {
  * Calls REST API /v1/analytics/* endpoints
  */
 export class HttpAnalyticsSource implements AnalyticsDataSource {
-  constructor(private readonly client: HttpClient) {}
+  constructor(private readonly client: HttpClient, private readonly projectId?: string) {}
+
+  private path(path: string): string {
+    if (!this.projectId) {throw new Error('Select a project to view project analytics.');}
+    return projectServicePath(this.projectId, 'rest', path);
+  }
 
   async getEvents(query?: EventsQuery): Promise<EventsResponse> {
     const params = new URLSearchParams();
@@ -37,17 +43,17 @@ export class HttpAnalyticsSource implements AnalyticsDataSource {
     if (query?.limit) {params.set('limit', String(query.limit));}
     if (query?.offset) {params.set('offset', String(query.offset));}
 
-    const path = `/analytics/events${params.toString() ? `?${params}` : ''}`;
-    return this.client.fetch<EventsResponse>(path);
+    const path = this.path(`/analytics/events${params.toString() ? `?${params}` : ''}`);
+    return this.client.fetch<EventsResponse>(path, { baseURL: '' });
   }
 
   async getStats(): Promise<EventsStats> {
-    return this.client.fetch<EventsStats>('/analytics/stats');
+    return this.client.fetch<EventsStats>(this.path('/analytics/stats'), { baseURL: '' });
   }
 
   async getBufferStatus(): Promise<BufferStatus | null> {
     try {
-      return this.client.fetch<BufferStatus>('/analytics/buffer/status');
+      return await this.client.fetch<BufferStatus>(this.path('/analytics/buffer/status'), { baseURL: '' });
     } catch (_error) {
       // Analytics not configured or buffer not applicable (501)
       return null;
@@ -56,7 +62,7 @@ export class HttpAnalyticsSource implements AnalyticsDataSource {
 
   async getDlqStatus(): Promise<DlqStatus | null> {
     try {
-      return this.client.fetch<DlqStatus>('/analytics/dlq/status');
+      return await this.client.fetch<DlqStatus>(this.path('/analytics/dlq/status'), { baseURL: '' });
     } catch (_error) {
       // Analytics not configured or DLQ not applicable (501)
       return null;

@@ -2,14 +2,15 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"io"
 	"net/http"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/dev/internal/docker"
 	"github.com/kb-labs/dev/internal/environ"
 	"github.com/kb-labs/dev/internal/manager"
@@ -136,6 +137,9 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		authSkip = addAuthChecks(result, gatewayPort)
 	}
 
+	if !result.OK {
+		return commandFailure("kb-dev doctor")
+	}
 	if jsonMode {
 		type jsonResult struct {
 			*manager.DoctorResult
@@ -152,9 +156,9 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	}
 
 	out := newOutput()
-	fmt.Println()
-	fmt.Println(out.label.Render("Environment Check"))
-	fmt.Println()
+	clikitcommand.Println()
+	clikitcommand.Println(out.label.Render("Environment Check"))
+	clikitcommand.Println()
 
 	for _, check := range result.Checks {
 		icon := out.StatusIcon("alive")
@@ -167,15 +171,15 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		if check.Path != "" {
 			detail += " " + out.dim.Render("("+check.Path+")")
 		}
-		fmt.Printf("  %s %s  %s\n", icon, Pad(check.ID, 15), detail)
+		clikitcommand.Printf("  %s %s  %s\n", icon, Pad(check.ID, 15), detail)
 	}
 
 	// Print adapter status table.
-	fmt.Println()
-	fmt.Println(out.label.Render("Adapter Status"))
-	fmt.Println()
+	clikitcommand.Println()
+	clikitcommand.Println(out.label.Render("Adapter Status"))
+	clikitcommand.Println()
 	if gatewaySkip != "" {
-		fmt.Printf("  %s %s\n", out.StatusIcon("dead"), out.dim.Render(gatewaySkip))
+		clikitcommand.Printf("  %s %s\n", out.StatusIcon("dead"), out.dim.Render(gatewaySkip))
 	} else {
 		for _, s := range adapterStatuses {
 			icon := out.StatusIcon("alive")
@@ -191,7 +195,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 			if s.Reason != "" {
 				reason = out.dim.Render("(" + s.Reason + ")")
 			}
-			fmt.Printf("  %s %s  %s  %s  %s\n",
+			clikitcommand.Printf("  %s %s  %s  %s  %s\n",
 				icon,
 				Pad(s.Slot, 20),
 				Pad(modeStr, 20),
@@ -202,16 +206,16 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	}
 
 	if authSkip != "" {
-		fmt.Printf("  %s %s\n", out.StatusIcon("dead"), out.dim.Render(authSkip))
+		clikitcommand.Printf("  %s %s\n", out.StatusIcon("dead"), out.dim.Render(authSkip))
 	}
 
-	fmt.Println()
+	clikitcommand.Println()
 	if result.Hint != "" {
 		out.Warn(result.Hint)
 	}
 
 	if !result.OK {
-		return errSilent
+		return commandFailure("kb-dev doctor")
 	}
 	return nil
 }
@@ -260,7 +264,7 @@ func fetchAdapterStatuses(gatewayPort int) ([]adapterStatus, string) {
 	}
 
 	var statuses []adapterStatus
-	if err := json.Unmarshal(body, &statuses); err != nil {
+	if err := result.DecodeSuccessResult(body, &statuses); err != nil {
 		return nil, "failed to parse gateway response"
 	}
 

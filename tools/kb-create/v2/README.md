@@ -35,22 +35,27 @@ owners to one production command would recreate the split-brain V2 removes.
 `apply` and `update` require an immutable release index and request. Recovery
 operations deliberately require only `--platform-root` (and a snapshot for
 rollback), so they recover the verified V2 receipt rather than recalculating a
-new plan. Raw package-manager transcript is private under `.kb/logs/`; failed
-operations add a redacted dossier under `.kb/diagnostics/`.
+new plan. Operation logs and raw package-manager transcripts are stored under
+`installer/logs/`; failed operations add a redacted dossier under
+`installer/diagnostics/`. Active versions expose shared runtime history from
+`state/logs/` and `state/diagnostics/` through `.kb/logs/` and
+`.kb/diagnostics/`.
 
 CI and agents may pass the request file unchanged, or use direct flags such
-as `--request-platform-root`, `--platform-version`/`--platform-channel`,
+as `--platform-root`, `--platform-version`/`--platform-channel`,
 `--sdk-version`, `--plugins id@version,...`, `--adapters id@version,...`,
 `--service-profile`, `--policy`, and `--offline`. Both forms normalize into
 the same `InstallRequest` before resolution; flags never build a separate
 shell-level install sequence.
 
-For a human, run `kb-create install`. It checks Node.js 24 before prompting,
-uses the release index saved by `install.sh` and defaults the platform root to
-`~/kb-platform`. It gathers scenario answers, resolves and displays the plan,
-then applies that plan through the same engine used by CI. Local access is the
-default; secured access remains available in the scenario. After installation,
-run `cd ~/any-project && kb commit`.
+For a human, run `kb-create install`. The platform supports exactly one Node.js
+major, the latest LTS major declared by the root `package.json` `engines.node`.
+On a mismatch, the installer prints the exact command to switch to that major.
+It uses the release index saved by `install.sh` and defaults the platform root
+to `~/kb-platform`. It gathers scenario answers, resolves and displays the
+plan, then applies that plan through the same engine used by CI. Local access
+is the default; secured access remains available in the scenario. After
+installation, run `cd ~/any-project && kb commit`.
 
 ## Scenarios
 
@@ -76,7 +81,9 @@ digest before resolving.
 
 Secret input uses `--secret-env requirement.id=ENV_VAR`, so CI/agents pass a
 reference to process environment rather than secret text through argv/JSON.
-V2 stores the value only in `.kb/v2/secrets.env` (0600); generated config,
+V2 stores secret values and their bootstrap lifecycle facts together in the
+install-root-owned `state/secret-state.json` (0600), exposed to the active
+version at `.kb/v2/secret-state.json`; generated config,
 receipt, scenario state, logs, diagnostics and telemetry retain only the
 manifest requirement or environment variable name. The launcher hands the
 private store to the host process as its environment (see Host supervision).
@@ -143,7 +150,7 @@ flowchart TD
   E --> F["InstallReceipt + immutable snapshot"]
   F --> G["Render config + service graph"]
   G --> H["Verify config + host declaration, trial-run the host"]
-  H --> I["Success or LauncherError + diagnostic bundle"]
+  H --> I["Success or shared clikit result + diagnostic bundle"]
   F --> J["doctor --fix / update / uninstall / rollback (around the host)"]
 ```
 
@@ -211,18 +218,40 @@ adapter version, but it never silently changes an explicit pin:
 
 | Policy | Behaviour |
 |---|---|
-| `strict` (default for CI/agents) | Exact pins must be compatible or resolution fails. |
-| `compatible` (interactive install default) | Resolver may choose only unpinned compatible versions and displays the resolved set before apply. |
-| `upgrade-safe` (explicit update only) | Resolver may advance unpinned artifacts within the defined compatibility policy; a snapshot is mandatory. |
+| `strict` (default for CI/agents) | The selected platform, SDK and binary pair must have an exact relation in the sealed release matrix. Declared plugin/adapter ranges must exactly name the selected versions. |
+| `compatible` (interactive install default) | The exact relation or a declared semantic-version range in the sealed matrix/manifest must admit the selected version. Pins are never changed silently. |
+
+Compatibility ranges support exact `major.minor.patch` versions, `*`, `^` and
+`~` ranges, comparison operators (`>`, `>=`, `<`, `<=`, `=`), whitespace-AND
+comparators, and `||` alternatives. Versions follow SemVer precedence,
+including prereleases. This is the complete supported grammar; npm range
+features such as partial versions, wildcards inside a version, hyphen ranges,
+and comma-separated comparators are rejected when the release index is sealed.
+Numeric version and prerelease identifiers must fit an unsigned 64-bit integer.
+Prereleases participate in SemVer precedence. The release-index sealer rejects
+malformed or out-of-subset ranges and versions.
 
 No intersecting range produces `KB_INSTALL_INCOMPATIBLE_COMPONENTS` before
 download or config writes. A missing capability produces
 `KB_INSTALL_PROVIDER_UNRESOLVED`; a competing explicit binding produces
 `KB_INSTALL_PROVIDER_AMBIGUOUS`. Each error names the selected versions or
 providers, the manifest constraint that rejected them and safe alternatives.
-A plugin or adapter without a range is `unknown compatibility`, never silently
-universal: it needs explicit user policy during migration and becomes a
-publish-time failure for official artifacts after the migration window.
+A plugin or adapter without a range supplies no component-specific constraint;
+the resolver cannot infer compatibility from the absent field. Release authors
+must publish explicit ranges before claiming cross-version compatibility.
+
+Updates recheck every plugin and adapter in the active receipt against its
+declared platform and SDK ranges before creating a snapshot or changing files.
+An incompatible update returns `KB_UPDATE_INCOMPATIBLE` and names the blocking
+component and range. `kb-create update` refuses semantic-version downgrades with
+`KB_UPDATE_DOWNGRADE_REFUSED`; use `kb-create rollback` to restore a saved
+snapshot.
+
+For example, select the canary channel with
+`kb-create plan --platform-channel canary --policy compatible --index release-index.json --input request.json --json`.
+The receipt records the resolved channel and exact platform version. To return
+to the prior installed version, use `kb-create rollback --yes --json`; an
+`update` request for a lower version is refused.
 
 The resolver also validates graph completeness before `apply`: required
 providers, ports, dependency targets, offline artifacts and mandatory service
@@ -257,7 +286,7 @@ KB_INSTALL_CONFIG_REQUIRED
 Owner: @kb-labs/plugin-x@4.1.0
 Requirement: adapters.llm.apiKey (secret)
 Current state: missing
-Hint: kb-create doctor --fix --input adapters.llm.apiKey
+Hint: set OPENAI_API_KEY, then run `kb-create apply --index release-index.json --platform-root /path/to/platform --secret-env adapters.llm.apiKey=OPENAI_API_KEY --json`
 ```
 
 `doctor --fix` must not invent a secret or silently choose between competing
@@ -268,8 +297,10 @@ configuration, service graph and readiness before updating the receipt.
 
 ### Packages declare their own configuration requirements
 
-A selected package states the configuration it needs in a
-`kb-create.requirements.json` shipped in its tarball (package root or `dist/`):
+A service package states package-specific configuration in a
+`kb-create.requirements.json` shipped in its tarball (package root or `dist/`).
+For adapters, the build emits this artifact from `kb.adapter.manifest` and its
+`configSchema`, so credential requirements have one declaration:
 
 ```json
 {
@@ -281,7 +312,7 @@ A selected package states the configuration it needs in a
 }
 ```
 
-`prepare-release-index.mjs` merges these into the package's staged
+`prepare-release-index.mjs` merges the generated or service-declared requirements into the package's staged
 `kb-create.manifest.json`, and `kb-create-release-index` seals them into the
 index; the sealed shape is unchanged (`id`, `path`, `default`, `secret`, `env`,
 `services`), so launchers that predate this file keep verifying the digest.
@@ -297,14 +328,17 @@ index; the sealed shape is unchanged (`id`, `path`, `default`, `secret`, `env`,
   scenario (`when` + a field bound to the requirement); the index carries no
   conditional-requirement syntax.
 
-The gateway declares `gateway.access.mode` (`local` | `secured`), the optional
-first-admin identity (`gateway.bootstrap.adminEmail`, `gateway.bootstrap.tenantId`) and the
-secrets `gateway.bootstrap.password` and `gateway.jwtSecret`. Non-interactive
-secured install:
+The gateway declares `gateway.access.mode` (`local` | `secured`), the first-admin
+identity (`gateway.bootstrap.adminEmail`, `gateway.bootstrap.tenantId`) and the
+secrets `gateway.bootstrap.password` and `gateway.jwtSecret`. A secured install
+requires an admin email. If no bootstrap password is supplied, kb-create
+generates one, seeds the administrator, and shows the email and password once
+after install succeeds. Non-interactive secured install with a caller-supplied
+password:
 
 ```bash
 export ADMIN_PASSWORD=... JWT_SECRET="$(openssl rand -hex 64)"
-kb-create --operation apply --index release-index.json --input request.json \
+kb-create apply --index release-index.json --input request.json \
   --secret-env gateway.bootstrap.password=ADMIN_PASSWORD,gateway.jwtSecret=JWT_SECRET
 # request.json: values {"gateway.access.mode":"\"secured\"","gateway.bootstrap.adminEmail":"\"admin@example.com\""}
 #               secretInputs ["gateway.bootstrap.password","gateway.jwtSecret"]
@@ -312,14 +346,13 @@ kb-create --operation apply --index release-index.json --input request.json \
 
 The interactive install collects the same values. Secret input is read with echo
 disabled on a real terminal, a human-chosen value is asked twice, and format
-errors or a mismatch re-ask (three tries) instead of aborting. Blank means:
-generate it (fields with `generate`, e.g. the session signing secret), fail
-(required fields), or skip. After the request compiled, only the secrets the
-request names are written to the private store (`.kb/v2/secrets.env`, 0600); a
-secret never reaches the answers, the request, the terminal output or the resume
-state. Skipping the admin password leaves a secured install without an admin
-until `kb-create doctor --recover` is run; `kb-create doctor` reports exactly that
-(`auth:no_active_admin` in its `platform` section).
+errors or a mismatch re-ask (three tries) instead of aborting. Pressing Enter at
+the admin password prompt generates a password; the successful install shows it
+once with the admin email. The password is stored in `state/secret-state.json`
+(0600), exposed to the active version at `.kb/v2/secret-state.json`, passed to the
+Gateway at startup, and excluded from scenario answers, plans, receipts,
+progress events and logs. `kb-create doctor --recover` remains
+the recovery path for an administrator who later loses access.
 
 ## Engine, receipt and snapshots
 
@@ -340,22 +373,27 @@ and uses the same engine/recovery model.
 
 ## Errors, logs and diagnostics
 
-Every operation uses one redacted `LauncherError` contract:
+CLI failures use the shared `clikit/diag` diagnostic and result envelope:
 
 ```text
-code, stage(resolve|apply|verify|recover), retryable,
-message, safe cause, hint, correlation ID, safe details
+ok, error { code, message, hint, correlationId, details }
 ```
 
-The error is rendered for humans, returned through `--json` and agent
-protocol, persisted in the journal/receipt, and consumed by `doctor --fix`.
+Human mode renders the same catalogued `KB_*` code, message, hint and
+correlation ID. JSON mode returns the shared error envelope. Wrapped Go causes
+remain internal and are never serialized; unexpected causes are recorded in a
+structured local log keyed by the correlation ID.
 
-Each invocation writes a full local log. A failure additionally writes a
-redacted dossier under `.kb/diagnostics/<correlation-id>/` with resolved plan,
-receipt/snapshot metadata, engine journal, package-manager output, toolchain,
-config hashes and the service graph. The CLI prints one recovery
-command and the bundle path so users can attach it to an issue without manual
-terminal reconstruction.
+Each invocation writes an operation log under the install root's
+`installer/logs/`. Runtime log and diagnostic history lives in the shared
+`state/logs/` and `state/diagnostics/` directories and remains available across
+version switches. Active versions expose those shared directories at
+`.kb/logs/` and `.kb/diagnostics/`. An installer failure additionally writes a
+redacted dossier under `installer/diagnostics/<correlation-id>.json` with the
+resolved plan, receipt/snapshot metadata, engine journal, package-manager
+output, toolchain, config hashes, and service graph. The CLI prints one
+recovery command and the bundle path so users can attach it to an issue without
+manual terminal reconstruction.
 
 ## Opt-in anonymous telemetry
 
@@ -399,7 +437,7 @@ V2 may replace the launcher only when all are true:
 ## Delivery sequence
 
 1. Define V2 contracts and fixture catalog: request, matrix, resolved plan,
-   receipt, snapshot and `LauncherError` schemas.
+   receipt, snapshot and shared platform error schemas.
 2. Complete the V2 runtime's resolved-plan application, journal and receipt
    events; it owns execution semantics rather than adapting old state.
 3. Implement config/service graph renderer and verifier, then make offline

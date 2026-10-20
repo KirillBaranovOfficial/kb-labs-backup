@@ -20,7 +20,6 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { createErrorEnvelope } from "@kb-labs/core-platform";
 import type {
   IProjectRegistry,
   ProjectEntry,
@@ -53,12 +52,13 @@ function runtimeInfoFor(
     .status()
     .runtimes.find((candidate) => candidate.projectId === projectId);
   if (!runtime) {
-    return { state: "stopped", restarts: 0 };
+    return { state: "stopped", restarts: 0, keptRunningSchedules: 0 };
   }
   return {
     state: runtime.state as ProjectRuntimeState,
     lastUsedAt: runtime.lastUsedAt,
     restarts: runtime.restarts,
+    keptRunningSchedules: runtime.keptRunningSchedules,
   };
 }
 
@@ -72,7 +72,6 @@ function toEntry(
 interface AddProjectBody {
   path?: unknown;
   name?: unknown;
-  init?: unknown;
 }
 
 /**
@@ -105,30 +104,18 @@ export function createProjectsRoutes(
     app.post<{ Body: AddProjectBody }>(
       "/api/v1/projects",
       async (request, reply) => {
-        const { path, name, init } = request.body ?? {};
+        const { path, name } = request.body ?? {};
         if (typeof path !== "string" || path.trim() === "") {
           return sendEnvelope(reply, invalidBody("path", "must be a non-empty string"));
         }
         if (name !== undefined && typeof name !== "string") {
           return sendEnvelope(reply, invalidBody("name", "must be a string"));
         }
-        if (init !== undefined && typeof init !== "boolean") {
-          return sendEnvelope(reply, invalidBody("init", "must be a boolean"));
-        }
-
         try {
-          const outcome = await addProject(registry, { path, name, init: init === true });
-          if (outcome.status === "initialization-required") {
-            return sendEnvelope(
-              reply,
-              createErrorEnvelope("KB_PROJECT_INIT_REQUIRED", {
-                details: { path: outcome.path },
-              }),
-            );
-          }
+          const outcome = await addProject(registry, { path, name });
           // `status === "planned"` cannot happen: this route never passes `dryRun`.
           const summary = await showProject(registry, outcome.project.id);
-          return sendData(reply, toEntry(manager, summary), 201);
+          return sendData(reply, { ...toEntry(manager, summary), alreadyExisted: outcome.alreadyExisted }, outcome.alreadyExisted ? 200 : 201);
         } catch (error) {
           return sendEnvelope(reply, projectErrorEnvelope(error));
         }

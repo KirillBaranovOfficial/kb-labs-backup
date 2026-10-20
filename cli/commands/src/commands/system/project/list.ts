@@ -21,6 +21,8 @@ function pad(value: string, width: number): string {
 
 export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
   name: 'list',
+  scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description: 'List registered projects',
   longDescription: 'Lists the projects in the machine-level registry with their status and last use.',
   category: 'project',
@@ -37,11 +39,9 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
     const json = Boolean(flags.json);
     try {
       const projects = await listProjects(openRegistry());
-      if (json) {
-        ctx.ui?.json({ ok: true, projects, total: projects.length });
-      } else if (projects.length === 0) {
-        ctx.ui?.write('No projects registered. Add one with: kb project add <path>\n');
-      } else {
+      if (projects.length === 0) {
+        if (!json) ctx.ui?.write('No projects registered. Add one with: kb project add <path>\n');
+      } else if (!json) {
         const nameWidth = Math.max(4, ...projects.map((p) => p.name.length));
         ctx.ui?.write(`${pad('NAME', nameWidth)}  ${pad('ID', 20)}  ${pad('STATUS', 8)}  PATH\n`);
         for (const p of projects) {
@@ -49,9 +49,9 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
           ctx.ui?.write(`${pad(p.name, nameWidth)}  ${pad(p.id, 20)}  ${pad(p.status, 8)}  ${p.path}${note}\n`);
         }
       }
-      return { ok: true, projects, total: projects.length };
+      return {  projects, total: projects.length };
     } catch (error) {
-      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
+      return failWithEnvelope(projectErrorEnvelope(error));
     }
   },
 });

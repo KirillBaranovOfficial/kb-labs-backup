@@ -203,3 +203,24 @@ With these required, a PR cannot merge until both `CI (PR)` and the PR-triggered
 - [ADR-0014: Declarative delivery](./adr/0014-declarative-delivery-and-fleet-distribution.md) — Deploy workflow architecture
 - [docs/ci-budget.md](./ci-budget.md) — operational spend reference + CodeQL UI step
 - [scripts/ci-status.sh](../scripts/ci-status.sh) — terminal state inspection helper
+
+
+## Local gate while GitHub is unavailable
+
+Run the focused local gate for changed packages, or select a small package set explicitly:
+
+```bash
+scripts/local-gate.sh quick
+scripts/local-gate.sh quick --packages @kb-labs/extension-store
+```
+
+`quick` compares changes with `local/main`, then runs package type-checks and unit tests plus isolated-HOME Go tests for changed `tools/kb-create` packages. Use `--dry-run` to inspect package selection and commands.
+
+The full sequence is available when the machine can support it:
+
+```bash
+scripts/local-gate.sh batch --dry-run
+scripts/local-gate.sh batch
+```
+
+`batch` runs the frozen-lockfile check, affected build and quality tasks, kb-create Go tests, dependency audit, gitleaks, and the local and secured install/service journeys sequentially under Colima. The frozen install runs with `CI=true` so pnpm does not prompt when it needs to replace `node_modules`. With `--keep-going`, independent stages continue after failures; stages that depend on a failed frozen install or journey candidate preparation are recorded as `BLOCKED` with a reason and are not run. Candidate preparation happens before Colima starts, and Colima is recorded as `BLOCKED` when install or candidate preparation prevents the journeys from running. The dry-run stage list is generated from the same stage-name definition used by the batch runner. It writes Markdown and JSON results to `.kb/local-gate/<timestamp>/`; journey capability results are also aggregated with the nightly report tool. Batch can take substantial time and memory.

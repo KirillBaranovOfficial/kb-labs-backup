@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 
 	"github.com/kb-labs/devkit/internal/engine"
 	"github.com/spf13/cobra"
@@ -27,8 +28,7 @@ var affectedCmd = &cobra.Command{
 			for _, pkg := range pkgs {
 				packages = append(packages, pkg.Name)
 			}
-			_ = JSONOut(map[string]any{"ok": true, "packages": packages})
-			return nil
+			return JSONOut(map[string]any{"packages": packages})
 		}
 
 		if len(pkgs) == 0 {
@@ -36,7 +36,7 @@ var affectedCmd = &cobra.Command{
 			return nil
 		}
 		for _, pkg := range pkgs {
-			fmt.Println(pkg.Name)
+			clikitcommand.Println(pkg.Name)
 		}
 		return nil
 	},

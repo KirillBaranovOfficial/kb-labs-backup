@@ -116,7 +116,7 @@ The auth middleware runs on every non-whitelisted route. On success it writes `A
 
 ```typescript
 interface AuthContext {
-  type: 'machine' | 'user';
+  type: 'machine' | 'user' | 'cli';
   userId: string;       // hostId (JWT sub)
   namespaceId: string;
   tier: 'free' | 'pro' | 'enterprise';
@@ -221,8 +221,11 @@ globalDispatcher.firstHost(namespaceId)
 
 **4.1** Docker образ для host-agent
 
+Use the Node.js major declared by the root `package.json` `engines.node` for
+the platform runtime image:
+
 ```dockerfile
-FROM node:24-slim
+FROM node:<PLATFORM_NODE_MAJOR>-slim
 COPY dist/ /app/dist/
 CMD ["node", /app/dist/index.js]
 ```

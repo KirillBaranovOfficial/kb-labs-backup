@@ -33,8 +33,27 @@ func killProcessGroup(pid int) {
 	_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
 }
 
-func TerminateProcess(pid int) { terminateProcessGroup(pid) }
-func KillProcess(pid int)      { killProcessGroup(pid) }
+func TerminateProcessIfIdentity(pid int, processIdentity string) bool {
+	return signalWithProcessIdentity(pid, processIdentity, func() error {
+		terminateProcessGroup(pid)
+		return nil
+	})
+}
+
+func KillProcessIfIdentity(pid int, processIdentity string) bool {
+	return signalWithProcessIdentity(pid, processIdentity, func() error {
+		killProcessGroup(pid)
+		return nil
+	})
+}
+
+func TerminateProcessGroupIfIdentity(pid int, processIdentity string) bool {
+	return TerminateProcessIfIdentity(pid, processIdentity)
+}
+
+func KillProcessGroupIfIdentity(pid int, processIdentity string) bool {
+	return KillProcessIfIdentity(pid, processIdentity)
+}
 
 func ProcessAlive(pid int) bool { return processAlive(pid) }
 

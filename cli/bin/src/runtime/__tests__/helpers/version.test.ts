@@ -14,23 +14,23 @@ describe('resolveVersion', () => {
     expect(resolveVersion(undefined, { KB_VERSION: '2.0.0' })).toBe('2.0.0');
   });
 
+  it('uses required package metadata injected by the CLI binary', () => {
+    expect(resolveVersion(undefined, { CLI_VERSION: '2.120.1' })).toBe('2.120.1');
+  });
+
   it('should prefer options over env', () => {
     expect(resolveVersion('1.0.0', { KB_VERSION: '2.0.0' })).toBe('1.0.0');
   });
 
-  it('should return "unknown" when neither provided', () => {
-    expect(resolveVersion(undefined, {})).toBe('unknown');
+  it('fails when package metadata and explicit version are missing', () => {
+    expect(() => resolveVersion(undefined, {})).toThrow(/CLI version metadata is required/);
   });
 
-  it('should handle empty env object', () => {
-    expect(resolveVersion(undefined, {})).toBe('unknown');
+  it('fails when version metadata is empty', () => {
+    expect(() => resolveVersion('', {})).toThrow(/CLI version metadata is required/);
   });
 
-  it('should handle empty string in options', () => {
-    expect(resolveVersion('', {})).toBe('');
-  });
-
-  it('should handle empty string in env', () => {
-    expect(resolveVersion(undefined, { KB_VERSION: '' })).toBe('');
+  it('does not treat empty environment metadata as a version', () => {
+    expect(() => resolveVersion(undefined, { CLI_VERSION: '', KB_VERSION: '' })).toThrow(/CLI version metadata is required/);
   });
 });

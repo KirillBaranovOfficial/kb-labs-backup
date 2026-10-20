@@ -58,6 +58,7 @@ describe("runHost", () => {
   function makeConfig(modules: HostConfig["modules"]): HostConfig {
     return {
       appId: "kb-host",
+      projectScope: "platform",
       platform: { assemblyHook: vi.fn() },
       modules,
     };
@@ -106,9 +107,33 @@ describe("runHost", () => {
         applicationId: "kb-host",
         serviceId: "kb-host",
         kind: "service",
+        projectScope: "platform",
       }),
     );
     expect(order).toEqual(["setup:a", "setup:b"]);
+  });
+
+  // case: S-124.11
+  it("launches with the scope and explicit project identity declared by the process", async () => {
+    const projectId = "prj_1234567890123456";
+    const projectModule = module("a", 9001);
+    const config: HostConfig = {
+      ...makeConfig([projectModule]),
+      projectScope: "required",
+      projectId,
+    };
+
+    await runHost(config);
+
+    expect(mocks.launchPlatform).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectScope: "required",
+        projectId,
+      }),
+    );
+    expect(projectModule.setup).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId }),
+    );
   });
 
   it("gives each module its own resolved port and the shared roots", async () => {
@@ -199,8 +224,8 @@ describe("runHost", () => {
     expect(signalListeners).toHaveLength(0);
   });
 
-  it("uses the module serviceId for the transport lookup and falls back to the module id", async () => {
-    const listenAddress = vi.fn().mockReturnValue({ port: 4321, host: "10.0.0.5" });
+  it("binds to the shared service transport address using the module serviceId", async () => {
+    const listenAddress = vi.fn().mockReturnValue({ port: 43323, host: "127.0.0.1" });
     mocks.launchPlatform.mockResolvedValueOnce({
       platform: { getAdapter: vi.fn().mockReturnValue({ listenAddress }) },
       logger,
@@ -218,5 +243,9 @@ describe("runHost", () => {
 
     expect(listenAddress).toHaveBeenNthCalledWith(1, "custom");
     expect(listenAddress).toHaveBeenNthCalledWith(2, "b");
+    expect(named.setup).toHaveBeenCalledWith(expect.objectContaining({
+      port: 43323,
+      host: "127.0.0.1",
+    }));
   });
 });

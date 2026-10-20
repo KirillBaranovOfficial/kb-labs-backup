@@ -16,6 +16,7 @@ const originalOn = process.on.bind(process);
 function makeConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
   return {
     appId: "test-service",
+    projectScope: "required",
     defaultPort: 9999,
     portEnvVar: "TEST_SERVICE_PORT",
     defaultHost: "127.0.0.1",
@@ -69,21 +70,24 @@ describe("runService", () => {
   });
 
   it("launches the platform before running service setup", async () => {
+    const projectId = "prj_1234567890123456";
     const setup = vi
       .fn()
       .mockResolvedValue(vi.fn().mockResolvedValue(undefined));
-    await runService(makeConfig({ setup }));
+    await runService(makeConfig({ projectId, setup }));
 
     expect(mocks.launchPlatform).toHaveBeenCalledWith(
       expect.objectContaining({
         applicationId: "test-service",
         kind: "service",
+        projectId,
       }),
     );
     expect(setup).toHaveBeenCalledWith(
       expect.objectContaining({
         projectRoot: "/project",
         platformRoot: "/platform",
+        projectId,
         port: 9999,
         host: "127.0.0.1",
       }),

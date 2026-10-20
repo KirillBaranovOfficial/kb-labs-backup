@@ -1,0 +1,8 @@
+[
+  {
+    "directory": "e2e/fixtures/adapters/llm-deterministic"
+  },
+  {
+    "directory": "e2e/journey/fixtures/analytics-emitter"
+  }
+]

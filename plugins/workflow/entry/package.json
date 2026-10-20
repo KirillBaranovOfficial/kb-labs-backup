@@ -13,8 +13,7 @@
     "./plugin-manifest": {
       "types": "./dist/manifest.d.ts",
       "import": "./dist/manifest.js"
-    },
-    "./dist/*": "./dist/*"
+    }
   },
   "files": [
     "dist",
@@ -34,7 +33,6 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "@kb-labs/workflow-contracts": "workspace:*",
     "@kb-labs/workflow-runtime": "workspace:*",
@@ -55,10 +53,14 @@
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-contracts": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "kb": {
@@ -68,7 +70,11 @@
     "antd": "^5.21.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.0.0"
+    "react-router-dom": "^7.0.0",
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-contracts": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*"
   },
   "sideEffects": false
 }

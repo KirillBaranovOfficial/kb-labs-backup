@@ -3,6 +3,7 @@
  *
  * Displays error state with icon, title, description, and retry action.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"title":"Could not load services","description":"The service endpoint did not respond.","details":"Request timed out after 10 seconds.","showRetry":true,"retryText":"Try again"}
  */
 
 import * as React from 'react';

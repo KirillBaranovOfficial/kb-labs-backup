@@ -172,6 +172,8 @@ type yamlDeps struct {
 	CheckVersionConsistency bool     `yaml:"check_version_consistency"`
 	AllowedKbDeps           []string `yaml:"allowed_kb_deps"`
 	ForbiddenKbDeps         []string `yaml:"forbidden_kb_deps"`
+	AllowedKbImports        []string `yaml:"allowed_kb_imports"`
+	ForbiddenKbImports      []string `yaml:"forbidden_kb_imports"`
 }
 
 type yamlGo struct {
@@ -217,11 +219,13 @@ type yamlRun struct {
 }
 
 type yamlCustomCheck struct {
-	Name     string   `yaml:"name"`
-	Run      string   `yaml:"run"`
-	Fix      string   `yaml:"fix"`
-	On       []string `yaml:"on"`
-	Language string   `yaml:"language"`
+	Name       string   `yaml:"name"`
+	Run        string   `yaml:"run"`
+	Fix        string   `yaml:"fix"`
+	On         []string `yaml:"on"`
+	Language   string   `yaml:"language"`
+	Categories []string `yaml:"categories"`
+	Scope      string   `yaml:"scope"`
 }
 
 type yamlChecks struct {
@@ -322,7 +326,16 @@ func parseYAMLBytes(data []byte) (*DevkitConfig, error) {
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
-	return mapYAML(raw), nil
+	cfg := mapYAML(raw)
+	for _, check := range cfg.Custom {
+		if check.Scope != "" && check.Scope != "package" && check.Scope != "workspace" {
+			return nil, fmt.Errorf("custom check %q has unsupported scope %q (expected package or workspace)", check.Name, check.Scope)
+		}
+		if check.Scope == "workspace" && (check.Language != "" || len(check.Categories) > 0) {
+			return nil, fmt.Errorf("custom check %q uses workspace scope and cannot set package language or categories", check.Name)
+		}
+	}
+	return cfg, nil
 }
 
 func mapYAML(raw yamlConfig) *DevkitConfig {
@@ -427,11 +440,13 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 	// Custom checks
 	for _, c := range raw.Custom {
 		cfg.Custom = append(cfg.Custom, CustomCheck{
-			Name:     c.Name,
-			Run:      c.Run,
-			Fix:      c.Fix,
-			On:       c.On,
-			Language: c.Language,
+			Name:       c.Name,
+			Run:        c.Run,
+			Fix:        c.Fix,
+			On:         c.On,
+			Language:   c.Language,
+			Categories: c.Categories,
+			Scope:      c.Scope,
 		})
 	}
 
@@ -481,6 +496,8 @@ func mapPreset(v yamlPreset) Preset {
 			CheckVersionConsistency: v.Deps.CheckVersionConsistency,
 			AllowedKbDeps:           v.Deps.AllowedKbDeps,
 			ForbiddenKbDeps:         v.Deps.ForbiddenKbDeps,
+			AllowedKbImports:        v.Deps.AllowedKbImports,
+			ForbiddenKbImports:      v.Deps.ForbiddenKbImports,
 		},
 		Go: GoRules{
 			MinVersion: v.Go.MinVersion,

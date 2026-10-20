@@ -2,12 +2,11 @@
  * @module @kb-labs/core-runtime/discover-adapters
  * Lock-based adapter discovery — reads from .kb/marketplace.lock.
  *
- * All adapters must be registered via `kb marketplace link` or `kb marketplace install`.
+ * All adapters must be registered via `kb marketplace plugins add` or `kb marketplace install`.
  * No filesystem scanning.
  *
- * Priority: projectRoot lock is loaded first (project wins). platformRoot lock
- * fills in any gaps. This ensures that when platform.dir is set, workspace
- * adapters override the installed platform's adapters.
+ * Adapters are platform-owned. Project locks are never read for adapter
+ * discovery; project locks contain plugins only.
  */
 
 import { promises as fs } from 'node:fs';
@@ -16,7 +15,12 @@ import path from 'node:path';
 import {
   readMarketplaceLock,
   DiagnosticCollector,
+  findWorkspacePackages,
+  resolveMarketplaceLockScope,
 } from '@kb-labs/core-discovery';
+import { loadAdapterManifest } from '@kb-labs/core-platform';
+import type { AdapterManifest } from '@kb-labs/core-platform';
+import { configuredWorkspaceAdapterInvalidError, configuredWorkspaceAdapterNotBuiltError } from './adapter-module-loader.js';
 
 /**
  * Discovered adapter info
@@ -29,7 +33,7 @@ export interface DiscoveredAdapter {
   /** Adapter factory function */
   createAdapter: (config?: unknown) => unknown;
   /** Adapter module (full exports) */
-  module: Record<string, unknown>;
+  module: Record<string, unknown> & { manifest: AdapterManifest };
 }
 
 /**
@@ -45,21 +49,20 @@ async function loadAdapterModule(distPath: string): Promise<Record<string, unkno
  *
  * @param root - Directory containing .kb/marketplace.lock
  * @param discovered - Map to populate
- * @param overwrite - If false, skip entries already present in the map (used for platform fallback)
  */
 async function loadAdaptersFromLock(
   root: string,
   discovered: Map<string, DiscoveredAdapter>,
-  overwrite: boolean,
 ): Promise<void> {
   const diag = new DiagnosticCollector();
-  const lock = await readMarketplaceLock(root, diag);
+  const scope = await resolveMarketplaceLockScope({ platformRoot: root }, root);
+  const lock = await readMarketplaceLock(root, diag, scope);
   if (!lock) { return; }
 
-  for (const [pkgId, entry] of Object.entries(lock.installed)) {
-    if (entry.primaryKind !== 'adapter') { continue; }
+  for (const [pkgId, entry] of Object.entries(lock.adapters ?? {})) {
     if (entry.enabled === false) { continue; }
 
+    if (!entry.resolvedPath) {continue;}
     const pkgRoot = path.resolve(root, entry.resolvedPath);
 
     // Read main export path and npm package name from package.json.
@@ -80,6 +83,9 @@ async function loadAdaptersFromLock(
       await fs.access(distPath);
       const module = await loadAdapterModule(distPath);
 
+      const manifestResult = await loadAdapterManifest({ packageRoot: pkgRoot });
+      if (manifestResult.kind !== 'adapter') {continue;}
+
       if (typeof module.createAdapter !== 'function') {
         continue;
       }
@@ -88,18 +94,13 @@ async function loadAdaptersFromLock(
         packageName: npmPkgName ?? pkgId,
         pkgRoot,
         createAdapter: module.createAdapter as (config?: unknown) => unknown,
-        module,
+        module: { ...module, manifest: manifestResult.manifest },
       };
 
       // Index by manifest ID and npm package name.
-      // When overwrite=false (platform fallback), skip entries already set by project.
-      if (overwrite || !discovered.has(pkgId)) {
-        discovered.set(pkgId, adapterEntry);
-      }
+      discovered.set(pkgId, adapterEntry);
       if (npmPkgName && npmPkgName !== pkgId) {
-        if (overwrite || !discovered.has(npmPkgName)) {
-          discovered.set(npmPkgName, adapterEntry);
-        }
+        discovered.set(npmPkgName, adapterEntry);
       }
     } catch {
       // Skip adapters that fail to load (not built yet)
@@ -107,30 +108,119 @@ async function loadAdaptersFromLock(
   }
 }
 
+/** Load built adapter packages from the pnpm workspace development source. */
+async function loadWorkspaceAdapters(
+  root: string,
+  discovered: Map<string, DiscoveredAdapter>,
+  configuredPackages: readonly { packageName: string; slot: string }[],
+): Promise<void> {
+  const packages = await findWorkspacePackages(root);
+  const requested = new Map(configuredPackages.map(adapter => [adapter.packageName, adapter.slot]));
+  for (const [packageName, slot] of requested) {
+    const candidate = packages.find(pkg => pkg.packageName === packageName);
+    if (!candidate) {continue;}
+    const distPath = path.join(candidate.packageRoot, 'dist', 'index.js');
+    try {
+      await fs.access(distPath);
+    } catch {
+      throw configuredWorkspaceAdapterNotBuiltError(slot, packageName);
+    }
+    const manifestResult = await loadAdapterManifest({ packageRoot: candidate.packageRoot });
+    if (manifestResult.kind !== 'adapter') {
+      throw configuredWorkspaceAdapterInvalidError(slot, packageName, manifestResult.reason);
+    }
+    const module = await loadAdapterModule(distPath);
+    if (typeof module.createAdapter !== 'function') {
+      throw configuredWorkspaceAdapterInvalidError(slot, packageName, 'its module does not export createAdapter');
+    }
+    discovered.set(packageName, {
+      packageName,
+      pkgRoot: candidate.packageRoot,
+      createAdapter: module.createAdapter as (config?: unknown) => unknown,
+      module: { ...module, manifest: manifestResult.manifest },
+    });
+  }
+}
+
+export interface WorkspaceAdapterDiscoveryOptions {
+  /** True only when the platform config identifies this checkout as development mode. */
+  development: boolean;
+  /** Adapter package paths configured by the platform, including subpath entries. */
+  configuredPackages: readonly { packageName: string; slot: string }[];
+}
+
+/** Load a channel factory from the same package source used for platform adapters. */
+export async function loadAdapterChannelFactory(
+  channelType: string,
+  platformRoot: string,
+  development: boolean,
+): Promise<(config: unknown, channelId: string) => unknown> {
+  const candidateRoots: string[] = [];
+  if (development) {
+    const packages = await findWorkspacePackages(platformRoot);
+    candidateRoots.push(...packages.map(pkg => pkg.packageRoot));
+  } else {
+    const diagnostic = new DiagnosticCollector();
+    const scope = await resolveMarketplaceLockScope({ platformRoot }, platformRoot);
+    const lock = await readMarketplaceLock(platformRoot, diagnostic, scope);
+    for (const entry of Object.values(lock?.adapters ?? {})) {
+      if (entry.enabled && entry.resolvedPath) {
+        candidateRoots.push(path.resolve(platformRoot, entry.resolvedPath));
+      }
+    }
+  }
+
+  const matches: string[] = [];
+  for (const candidateRoot of candidateRoots) {
+    const manifestResult = await loadAdapterManifest({ packageRoot: candidateRoot });
+    if (manifestResult.kind !== 'adapter') { continue; }
+    const implementsValue = manifestResult.manifest.implements;
+    const interfaces = Array.isArray(implementsValue) ? implementsValue : [implementsValue];
+    if (manifestResult.manifest.channelType === channelType && interfaces.includes('INotifierChannel')) {
+      matches.push(candidateRoot);
+    }
+  }
+  if (matches.length !== 1) {
+    const reason = matches.length === 0 ? 'no installed adapter manifest matches this channel type' : 'multiple adapter manifests match this channel type';
+    throw new Error(`Notifier channel type "${channelType}" is unavailable: ${reason}.`);
+  }
+  const packageRoot = matches[0]!;
+
+  const packageMetadata = JSON.parse(
+    await fs.readFile(path.join(packageRoot, 'package.json'), 'utf-8'),
+  ) as { main?: string };
+  const modulePath = path.resolve(packageRoot, packageMetadata.main ?? 'dist/index.js');
+  const relativePath = path.relative(path.resolve(packageRoot), modulePath);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error(`Notifier channel type "${channelType}" has a main path outside its package root.`);
+  }
+  const module = await loadAdapterModule(modulePath) as {
+    createChannel?: unknown;
+    default?: unknown;
+  };
+  const factory = module.createChannel ?? module.default;
+  if (typeof factory !== 'function') {
+    throw new Error(`Notifier channel type "${channelType}" does not export createChannel.`);
+  }
+  return factory as (config: unknown, channelId: string) => unknown;
+}
+
 /**
  * Discover adapters from marketplace.lock(s).
  * Reads entries with `primaryKind === 'adapter'` and loads their modules.
  *
- * When projectRoot is provided and differs from platformRoot, the project lock
- * is read first (project wins). The platform lock fills any remaining gaps.
- *
  * @param platformRoot - Platform installation / workspace root directory
- * @param projectRoot  - Project root (overrides platformRoot entries when different)
  * @returns Map of package names to adapter info
  */
 export async function discoverAdapters(
   platformRoot: string,
-  projectRoot?: string,
+  workspaceOptions?: WorkspaceAdapterDiscoveryOptions,
 ): Promise<Map<string, DiscoveredAdapter>> {
   const discovered = new Map<string, DiscoveredAdapter>();
-
-  // Project lock first — project wins
-  if (projectRoot && projectRoot !== platformRoot) {
-    await loadAdaptersFromLock(projectRoot, discovered, /* overwrite= */ true);
+  await loadAdaptersFromLock(platformRoot, discovered);
+  if (workspaceOptions?.development) {
+    await loadWorkspaceAdapters(platformRoot, discovered, workspaceOptions.configuredPackages);
   }
-
-  // Platform lock second — fills gaps only
-  await loadAdaptersFromLock(platformRoot, discovered, /* overwrite= */ false);
 
   return discovered;
 }
@@ -139,19 +229,14 @@ export async function discoverAdapters(
  * Resolve adapter path — reads from marketplace.lock, supports subpath exports.
  *
  * @param adapterPath - Package name or subpath (e.g., "@kb-labs/adapters-openai/embeddings")
- * @param cwd - Project root directory
- * @param platformRoot - Platform installation root (fills gaps when different from cwd)
+ * @param platformRoot - Platform installation root
  * @returns Adapter factory function
  */
 export async function resolveAdapter(
   adapterPath: string,
-  cwd: string,
-  platformRoot?: string,
+  platformRoot: string,
 ): Promise<((config?: unknown) => unknown) | null> {
-  const discovered = await discoverAdapters(
-    platformRoot ?? cwd,
-    platformRoot && platformRoot !== cwd ? cwd : undefined,
-  );
+  const discovered = await discoverAdapters(platformRoot);
 
   // Check for subpath exports (e.g., "@kb-labs/adapters-openai/embeddings")
   const basePkgName = adapterPath.split('/').slice(0, 2).join('/');

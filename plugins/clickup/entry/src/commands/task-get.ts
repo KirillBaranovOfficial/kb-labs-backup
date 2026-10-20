@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, getTask, getTaskComments } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 import { slimTaskWithDesc } from '../utils/slim.js';
@@ -10,11 +10,10 @@ export default defineCommand({
   description: 'Get full task details including comments',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<TaskGetFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<TaskGetFlags>) {
       const [taskId] = input.argv;
       if (!taskId) {
-        validationError(ctx, 'Task ID is required', 'Usage: kb clickup task get <taskId>', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('Task ID is required', 'Usage: kb clickup task get <taskId>');
       }
 
       try {
@@ -25,8 +24,7 @@ export default defineCommand({
         ]);
 
         if (input.flags.json) {
-          ctx.ui?.json?.(input.flags.full ? { task, comments } : slimTaskWithDesc(task));
-          return { ok: true, result: { task, comments } };
+          return input.flags.full ? { task, comments } : slimTaskWithDesc(task);
         }
 
         const priority = task.priority?.priority ?? '–';
@@ -65,10 +63,9 @@ export default defineCommand({
           sections,
         });
 
-        return { ok: true, result: { task, comments } };
+        return { task, comments };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

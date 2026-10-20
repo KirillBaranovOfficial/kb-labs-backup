@@ -12,9 +12,30 @@ import metricsCommand from '../../commands/metrics.js';
 
 const MockedClient = vi.mocked(WorkflowDaemonClient);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function failureError(result: unknown): Record<string, unknown> {
+  if (!isRecord(result) || !isRecord(result.error)) {
+    throw new Error('Expected a workflow command failure envelope.');
+  }
+  return result.error;
+}
+
+function normalizeFailure(error: Record<string, unknown>): Record<string, unknown> {
+  const { correlationId, hint, ...fields } = error;
+  return {
+    ...fields,
+    hint: typeof correlationId === 'string' && typeof hint === 'string'
+      ? hint.replace(correlationId, '<correlationId>')
+      : hint,
+  };
+}
+
 const sampleMetrics: WorkflowMetricsData = {
-  runs: { total: 42, queued: 2, running: 3, completed: 35, failed: 2, cancelled: 0 },
-  jobs: { total: 120, queued: 5, running: 8, completed: 100, failed: 7 },
+  runs: { total: 42, queued: 2, running: 3, success: 35, failed: 2, cancelled: 0 },
+  jobs: { total: 120, queued: 5, running: 8, success: 100, failed: 7 },
 };
 
 beforeEach(() => {
@@ -33,7 +54,6 @@ describe('workflow:metrics', () => {
     const ctx = createMockContext({ ui });
     const result = await metricsCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Metrics');
   });
@@ -49,11 +69,9 @@ describe('workflow:metrics', () => {
     const ctx = createMockContext({ ui });
     const result = await metricsCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: WorkflowMetricsData };
-    expect(payload.ok).toBe(true);
-    expect(payload.data.runs.total).toBe(42);
-    expect(payload.data.jobs.total).toBe(120);
+    const payload = result as WorkflowMetricsData;
+    expect(payload.runs.total).toBe(42);
+    expect(payload.jobs.total).toBe(120);
   });
 
   it('CM-03: daemon unavailable returns exitCode 1', async () => {
@@ -67,7 +85,25 @@ describe('workflow:metrics', () => {
     const ctx = createMockContext({ ui });
     const result = await metricsCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
+  });
+
+  // case: S-203.1
+  it('keeps daemon failures identical in human and JSON modes', async () => {
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ getMetrics: async () => { throw new Error('ECONNREFUSED'); } });
+    });
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui });
+    const humanResult = await metricsCommand.execute(ctx, mockCLIInput({ flags: {} }));
+    const jsonResult = await metricsCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+
+    expect(humanResult).toHaveProperty('ok', false);
+    const humanError = failureError(humanResult);
+    const jsonError = failureError(jsonResult);
+    expect(normalizeFailure(jsonError)).toEqual(normalizeFailure(humanError));
+    expect(jsonError.correlationId).toBeTruthy();
+    expect(jsonError.hint).toContain(jsonError.correlationId);
   });
 });

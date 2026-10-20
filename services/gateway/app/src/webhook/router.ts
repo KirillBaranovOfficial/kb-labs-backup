@@ -8,15 +8,13 @@
  *   POST /webhooks/:pluginId/:event/:instanceId  (multi: true)
  *
  * Per-request pipeline:
- *   1. Lookup declaration → 404 if unknown pluginId/event
- *   2. x-kb-namespace header → 400 if missing
- *   3. Rate limit via IResourceBroker → 429 if denied
- *   4. Challenge response → 200 (before auth, intentional for Slack handshake)
- *   5. Idempotency dedup → 200 early if duplicate delivery
- *   6. Auth (secret / hmac / custom) → 401 on failure
- *   7. Dispatch via globalDispatcher → 200 sync / 202 async
+ *   1. Lookup manifest declaration → 404 if unknown pluginId/event
+ *   2. Verify declared auth (secret / hmac / custom) → catalog 401 on failure
+ *   3. Validate namespace, apply rate limit, then handle challenge/dedup
+ *   4. Dispatch via globalDispatcher → 200 sync / 202 async
  *
- * Security: missing auth on any declaration causes startup rejection.
+ * Security: missing auth on any declaration causes startup rejection; user
+ * session auth is not used for webhooks.
  * Plugin code never runs in-process — always dispatched via globalDispatcher.
  */
 
@@ -24,12 +22,15 @@ import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ManifestV3, WebhookHandlerDecl } from '@kb-labs/plugin-contracts';
-import type { ICache, ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, normalizeHttpFailure, toErrorEnvelope, type ICache, type ILogger } from '@kb-labs/core-platform';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import { globalDispatcher } from '../hosts/dispatcher.js';
 import { WebhookSecretStore } from './secret-store.js';
 import { WebhookIdempotencyStore } from './idempotency-store.js';
 import { verifyWebhookAuth, type WebhookAuthRequest } from './auth.js';
+import { sendAuthError } from '../auth/error-response.js';
+import type { WebhookHistoryStore } from './history-store.js';
+import type { WebhookHistoryOutcome } from '@kb-labs/gateway-contracts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ export interface RegisterWebhookRoutesOptions {
   logger: ILogger;
   manifests: WebhookManifestEntry[];
   baseUrl?: string;
+  historyStore: WebhookHistoryStore;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -80,10 +82,11 @@ export async function registerWebhookRoutes(
   scope: FastifyInstance,
   options: RegisterWebhookRoutesOptions,
 ): Promise<number> {
-  const { cache, broker, logger, manifests } = options;
+  const { cache, broker, logger, manifests, historyStore } = options;
 
   const secretStore = new WebhookSecretStore(cache);
   const idempotencyStore = new WebhookIdempotencyStore(cache);
+  const ingress = new WeakMap<FastifyRequest, { webhookId: string; startedAt: number }>();
 
   // Build lookup maps, validate, register rate limits
   const declMap = new Map<string, DeclEntry>();
@@ -113,6 +116,38 @@ export async function registerWebhookRoutes(
 
   if (declMap.size === 0) { return 0; }
 
+  scope.addHook('onRequest', async (request, reply) => {
+    const context = { webhookId: randomUUID(), startedAt: Date.now() };
+    ingress.set(request, context);
+    reply.header('X-Webhook-Id', context.webhookId);
+  });
+
+  scope.addHook('onError', async (request, _reply, error) => {
+    const statusCode = typeof error.statusCode === 'number' ? error.statusCode : 500;
+    if (statusCode !== 413) {
+      return;
+    }
+    const params = request.params as { pluginId?: string; event?: string; instanceId?: string };
+    if (!params.pluginId || !params.event) {
+      return;
+    }
+    const entry = declMap.get(`${params.pluginId}:${params.event}:${params.instanceId === undefined ? 'single' : 'multi'}`);
+    if (!entry) {
+      return;
+    }
+    const context = ingress.get(request);
+    if (!context) {
+      throw new Error('Webhook ingress context is missing');
+    }
+    await writeHistory(historyStore, request, entry, params.instanceId, context, {
+      type: 'rejected',
+      code: normalizeHttpFailure(error, {
+        correlationId: String(request.id),
+        statusCode,
+      }).error.code,
+    });
+  });
+
   // Capture raw body for HMAC / custom auth verification.
   // NOTE: this scope must contain only webhook delivery routes — the preParsing
   // hook fires for every route registered here, buffering the body each time.
@@ -141,7 +176,7 @@ export async function registerWebhookRoutes(
         return reply.code(404).send({ error: 'Webhook not found' });
       }
 
-      return handleWebhook({ request, reply, entry, namespaceHeader: request.headers['x-kb-namespace'], instanceId: undefined, secretStore, idempotencyStore, broker, logger });
+      return handleWebhook({ request, reply, entry, namespaceHeader: request.headers['x-kb-namespace'], instanceId: undefined, secretStore, idempotencyStore, broker, logger, historyStore, ingress, gatewayUrl: options.baseUrl });
     },
   );
 
@@ -156,7 +191,7 @@ export async function registerWebhookRoutes(
         return reply.code(404).send({ error: 'Webhook not found' });
       }
 
-      return handleWebhook({ request, reply, entry, namespaceHeader: request.headers['x-kb-namespace'], instanceId, secretStore, idempotencyStore, broker, logger });
+      return handleWebhook({ request, reply, entry, namespaceHeader: request.headers['x-kb-namespace'], instanceId, secretStore, idempotencyStore, broker, logger, historyStore, ingress, gatewayUrl: options.baseUrl });
     },
   );
 
@@ -175,6 +210,9 @@ interface HandleWebhookArgs {
   idempotencyStore: WebhookIdempotencyStore;
   broker: IResourceBroker;
   logger: ILogger;
+  historyStore: WebhookHistoryStore;
+  ingress: WeakMap<FastifyRequest, { webhookId: string; startedAt: number }>;
+  gatewayUrl?: string;
 }
 
 async function handleWebhook({
@@ -187,43 +225,25 @@ async function handleWebhook({
   idempotencyStore,
   broker,
   logger,
+  historyStore,
+  ingress,
+  gatewayUrl,
 }: HandleWebhookArgs): Promise<unknown> {
   const { pluginId, decl, pluginRoot, manifest } = entry;
 
   // Step 1: Resolve namespace
-  const namespaceId = Array.isArray(namespaceHeader) ? namespaceHeader[0] : namespaceHeader;
-  if (!namespaceId) {
-    return reply.code(400).send({ error: 'Missing required header: x-kb-namespace' });
+  const namespaceId = (Array.isArray(namespaceHeader) ? namespaceHeader[0] : namespaceHeader) ?? '';
+  const context = ingress.get(request);
+  if (!context) {
+    throw new Error('Webhook ingress context is missing');
   }
-
-  // Step 2: Rate limit
-  // Use the unconditional try/finally pattern: release() is a no-op when allowed=false,
-  // so the finally block is safe regardless of whether the request was accepted.
+  const { webhookId } = context;
   const rateResource = `webhook:${pluginId}:${decl.event}`;
-  const acquired = await broker.tryAcquire(rateResource);
+  let acquired: Awaited<ReturnType<IResourceBroker['tryAcquire']>> | undefined;
 
   try {
-    if (!acquired.allowed) {
-      const retryAfterSec = acquired.waitTimeMs ? Math.max(1, Math.ceil(acquired.waitTimeMs / 1000)) : 1;
-      return reply.code(429).header('Retry-After', String(retryAfterSec)).send({
-        error: 'Too Many Requests',
-        retryAfterMs: acquired.waitTimeMs ?? null,
-      });
-    }
-
-    // Step 3: Challenge (before auth — Slack-style handshake)
-    if (decl.challenge && request.body) {
-      const fieldValue = getByDotPath(request.body, decl.challenge.bodyPath);
-      if (fieldValue === decl.challenge.value) {
-        const replyValue = getByDotPath(request.body, decl.challenge.replyPath);
-        // Use the last path segment as the JSON key so dot-paths like
-        // 'data.token' reply with { token: value } not { 'data.token': value }.
-        const replyKey = decl.challenge.replyPath.split('.').pop()!;
-        return reply.code(200).send({ [replyKey]: replyValue });
-      }
-    }
-
-    // Step 4: Auth
+    // Verify the manifest-selected auth strategy before challenge, namespace
+    // checks, rate limiting, deduplication, or plugin handler dispatch.
     // rawBody is set by the preParsing hook for hmac/custom auth types.
     // Fallback: re-serialize from parsed body for secret auth (no raw body needed).
     // Use empty Buffer for null/undefined body to avoid JSON.stringify artifacts
@@ -248,7 +268,40 @@ async function handleWebhook({
 
     const authResult = await verifyWebhookAuth(decl.auth, authReq, secretStore, authBackend, pluginRoot);
     if (!authResult.valid) {
-      return reply.code(401).send({ error: 'Unauthorized', reason: authResult.reason });
+      await writeHistory(historyStore, request, entry, instanceId, context, {
+        type: 'rejected', code: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: gatewayUrl ?? 'the configured Gateway URL' } }).code,
+      });
+      return sendAuthError(reply, 401);
+    }
+
+    if (!namespaceId) {
+      await writeHistory(historyStore, request, entry, instanceId, context, {
+        type: 'rejected', code: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID').code,
+      });
+      return reply.code(400).send({ error: 'Missing required header: x-kb-namespace' });
+    }
+
+    // Rate limiting is a product policy, so it follows webhook authentication.
+    acquired = await broker.tryAcquire(rateResource);
+    if (!acquired.allowed) {
+      await writeHistory(historyStore, request, entry, instanceId, context, {
+        type: 'rejected', code: createErrorEnvelope('KB_RUNTIME_RATE_LIMITED', { details: { retryAfter: acquired.waitTimeMs ? `${acquired.waitTimeMs} ms` : 'the configured retry interval' } }).code,
+      });
+      const retryAfterSec = acquired.waitTimeMs ? Math.max(1, Math.ceil(acquired.waitTimeMs / 1000)) : 1;
+      return reply.code(429).header('Retry-After', String(retryAfterSec)).send({
+        error: 'Too Many Requests', retryAfterMs: acquired.waitTimeMs ?? null,
+      });
+    }
+
+    // Challenge response is also behind the manifest's verifier.
+    if (decl.challenge && request.body) {
+      const fieldValue = getByDotPath(request.body, decl.challenge.bodyPath);
+      if (fieldValue === decl.challenge.value) {
+        const replyValue = getByDotPath(request.body, decl.challenge.replyPath);
+        const replyKey = decl.challenge.replyPath.split('.').pop()!;
+        await writeHistory(historyStore, request, entry, instanceId, context, { type: 'delivered' });
+        return reply.code(200).send({ [replyKey]: replyValue });
+      }
     }
 
     // Step 5: Idempotency dedup — after auth to prevent unauthenticated callers
@@ -260,13 +313,13 @@ async function handleWebhook({
       if (typeof deliveryKey === 'string') {
         const isDuplicate = await idempotencyStore.checkAndMark(namespaceId, pluginId, decl.event, deliveryKey);
         if (isDuplicate) {
+          await writeHistory(historyStore, request, entry, instanceId, context, { type: 'delivered' });
           return reply.code(200).send({ status: 'duplicate' });
         }
       }
     }
 
     // Step 6: Build host context
-    const webhookId = randomUUID();
     const hostContext = {
       host: 'webhook' as const,
       event: decl.event,
@@ -280,6 +333,9 @@ async function handleWebhook({
     // Step 7: Resolve execution host
     const hostId = globalDispatcher.firstHostWithCapability(namespaceId, 'execution');
     if (!hostId) {
+      await writeHistory(historyStore, request, entry, instanceId, context, {
+        type: 'handler_error', code: createErrorEnvelope('KB_RUNTIME_UNEXPECTED').code,
+      });
       return reply.code(503).send({ error: 'No execution host connected' });
     }
 
@@ -302,20 +358,24 @@ async function handleWebhook({
     // Step 8: Dispatch
     if (decl.async) {
       reply.code(202).send({ status: 'accepted', webhookId });
-      void globalDispatcher.call(namespaceId, hostId, 'execution', 'execute', dispatchArgs).catch((err: unknown) => {
-        logger.error(
-          'Webhook async dispatch failed',
-          err instanceof Error ? err : new Error(String(err)),
-          { pluginId, event: decl.event, webhookId },
-        );
+      void globalDispatcher.call(namespaceId, hostId, 'execution', 'execute', dispatchArgs).then(
+        () => writeHistory(historyStore, request, entry, instanceId, context, { type: 'delivered' }),
+        async (err: unknown) => {
+          await writeHistory(historyStore, request, entry, instanceId, context, { type: 'handler_error', code: toErrorEnvelope(err).code });
+          logger.error('Webhook async dispatch failed', err instanceof Error ? err : new Error(String(err)), { pluginId, event: decl.event, webhookId });
+        },
+      ).catch((err: unknown) => {
+        logger.error('Webhook async history write failed', err instanceof Error ? err : new Error(String(err)), { pluginId, event: decl.event, webhookId });
       });
       return;
     }
 
     try {
       const result = await globalDispatcher.call(namespaceId, hostId, 'execution', 'execute', dispatchArgs);
+      await writeHistory(historyStore, request, entry, instanceId, context, { type: 'delivered' });
       return reply.code(200).send({ status: 'ok', webhookId, result });
     } catch (err) {
+      await writeHistory(historyStore, request, entry, instanceId, context, { type: 'handler_error', code: toErrorEnvelope(err).code });
       logger.error(
         'Webhook dispatch failed',
         err instanceof Error ? err : new Error(String(err)),
@@ -324,8 +384,32 @@ async function handleWebhook({
       return reply.code(500).send({ error: 'Dispatch failed' });
     }
   } finally {
-    await acquired.release();
+    await acquired?.release();
   }
+}
+
+async function writeHistory(
+  historyStore: WebhookHistoryStore,
+  request: FastifyRequest,
+  entry: DeclEntry,
+  instanceId: string | undefined,
+  context: { webhookId: string; startedAt: number },
+  outcome: WebhookHistoryOutcome,
+): Promise<void> {
+  await historyStore.record({
+    webhookId: context.webhookId,
+    project: (Array.isArray(request.headers['x-kb-namespace'])
+      ? request.headers['x-kb-namespace'][0]
+      : request.headers['x-kb-namespace']) ?? '',
+    receivedAt: new Date(context.startedAt).toISOString(),
+    pluginId: entry.pluginId,
+    event: entry.decl.event,
+    handler: entry.decl.handler,
+    instanceId: instanceId ?? null,
+    outcome,
+    durationMs: Math.max(0, Date.now() - context.startedAt),
+    correlationId: request.id,
+  });
 }
 
 // ── Auth execution backend for 'custom' auth type ─────────────────────────────

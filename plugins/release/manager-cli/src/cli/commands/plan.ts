@@ -6,7 +6,7 @@ import {
   defineCommand,
   type CLIInput,
   type CommandResult,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   useLoader,
   displayArtifacts,
   type ArtifactInfo,
@@ -75,7 +75,7 @@ export default defineCommand({
   description: 'Analyze changes and prepare release plan',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<PlanFlags>): Promise<ReleasePlanResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<PlanFlags>): Promise<ReleasePlanResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -139,15 +139,9 @@ export default defineCommand({
       });
 
       const firstPkg = plan.packages[0];
-      console.log('::kb-output::' + JSON.stringify({
-        version: firstPkg?.nextVersion ?? '',
-        packages: plan.packages.length,
-        bump: firstPkg?.bump ?? 'auto',
-        planPath,
-      }));
 
       if (flags.json) {
-        ctx.ui?.json?.(plan);
+        return plan;
       } else {
         ctx.ui?.sideBox?.({
           title: 'Release Plan',
@@ -156,7 +150,7 @@ export default defineCommand({
         });
       }
 
-      return { ok: true, result: { plan } };
+      return { plan };
     },
   },
 });

@@ -52,7 +52,7 @@ describe('release:version', () => {
 
     const result = await versionCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     expect(vi.mocked(updatePackageVersions)).toHaveBeenCalledOnce();
   });
 
@@ -64,7 +64,7 @@ describe('release:version', () => {
 
     const result = await versionCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     expect(vi.mocked(updatePackageVersions)).not.toHaveBeenCalled();
   });
 
@@ -74,10 +74,8 @@ describe('release:version', () => {
 
     const result = await versionCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const out = captured.json[0] as Record<string, unknown>;
-    expect(out.ok).toBe(true);
-    expect(Array.isArray(out.updates)).toBe(true);
+    expect(result).toMatchObject({ ok: true, updates: expect.any(Array) });
+    expect(result).not.toHaveProperty('result');
   });
 
   it('VB-04: --dry-run shows intent, updatePackageVersions is NOT called', async () => {
@@ -86,9 +84,23 @@ describe('release:version', () => {
 
     const result = await versionCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ summary: expect.stringContaining('2 package(s)'), operations: expect.any(Array) });
     expect(vi.mocked(updatePackageVersions)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('2 package');
+  });
+
+  it('VB-05: reports failed updates as the same typed failure in human and JSON modes', async () => {
+    vi.mocked(updatePackageVersions).mockResolvedValue([
+      { package: '@kb-labs/sdk', from: '1.0.0', to: '1.1.0', updated: false },
+    ] as never);
+
+    const jsonContext = createMockContext({ ui: createCapturedUI().ui, cwd: '/project' });
+    const textContext = createMockContext({ ui: createCapturedUI().ui, cwd: '/project' });
+    const jsonResult = await versionCommand.execute(jsonContext as never, mockCLIInput({ flags: { json: true } }));
+    const textResult = await versionCommand.execute(textContext as never, mockCLIInput({ flags: {} }));
+
+    expect(jsonResult).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
+    expect(jsonResult).toEqual(textResult);
   });
 });

@@ -2,49 +2,39 @@ package result
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/kb-labs/clikit/diag"
 )
 
-// Render writes a successful/warning CommandOutput to w in the given mode.
+// Render writes a successful CommandOutput to w in the given mode.
 //
 //   - ModeHuman: the pre-rendered Human string.
-//   - ModeJSON:  the full JSON payload (plus warnings, if any).
+//   - ModeJSON:  the shared {ok,data} machine envelope.
 //   - ModeAgent: the compact Agent payload, falling back to JSON.
-func Render(w io.Writer, out CommandOutput, mode Mode) {
+func Render(w io.Writer, out CommandOutput, mode Mode) error {
 	switch mode {
 	case ModeJSON:
-		writeJSON(w, jsonEnvelope(out))
+		return writeJSON(w, jsonEnvelope(out))
 	case ModeAgent:
-		if out.Agent != nil {
-			writeJSON(w, out.Agent)
-			return
-		}
-		writeJSON(w, jsonEnvelope(out))
+		return writeJSON(w, jsonEnvelope(out))
 	default:
-		fmt.Fprintln(w, out.Human)
+		_, err := fmt.Fprintln(w, out.Human)
+		return err
 	}
 }
 
 // RenderDiag writes a failure (a *Diag) to w in the given mode and returns the
 // process exit code. Human mode prints message + reason + hint lines; machine
 // modes print the {ok:false, error:{…}} envelope (agent mode omits meta).
-func RenderDiag(w io.Writer, hw io.Writer, d *diag.Diag, mode Mode) int {
+func RenderDiag(w io.Writer, hw io.Writer, d *diag.Diag, mode Mode) diag.ExitStatus {
 	switch mode {
 	case ModeJSON:
-		writeJSON(w, map[string]any{
-			"ok":     false,
-			"status": string(StatusError),
-			"error":  diagPayload(d, true),
-		})
+		writeJSON(w, FailureEnvelope(d))
 	case ModeAgent:
-		writeJSON(w, map[string]any{
-			"ok":     false,
-			"status": string(StatusError),
-			"error":  diagPayload(d, false),
-		})
+		writeJSON(w, FailureEnvelope(d))
 	default:
 		writeHumanDiag(hw, d)
 	}
@@ -54,46 +44,51 @@ func RenderDiag(w io.Writer, hw io.Writer, d *diag.Diag, mode Mode) int {
 // jsonEnvelope is the machine shape for a CommandOutput.
 func jsonEnvelope(out CommandOutput) map[string]any {
 	env := map[string]any{
-		"ok":     out.Ok,
-		"status": string(out.Status),
-	}
-	if out.JSON != nil {
-		env["data"] = out.JSON
+		"ok":   out.Ok,
+		"data": out.JSON,
 	}
 	if len(out.Warnings) > 0 {
-		ws := make([]map[string]any, 0, len(out.Warnings))
-		for _, w := range out.Warnings {
-			ws = append(ws, diagPayload(w, true))
+		warnings := make([]diag.Envelope, 0, len(out.Warnings))
+		for _, warning := range out.Warnings {
+			if warning != nil {
+				warnings = append(warnings, errorEnvelope(warning))
+			}
 		}
-		env["warnings"] = ws
+		if len(warnings) > 0 {
+			env["meta"] = map[string]any{"warnings": warnings}
+		}
 	}
 	return env
 }
 
-// diagPayload renders a Diag to a map. withMeta=false yields the compact agent
-// form (code/message/reason/hint only).
-func diagPayload(d *diag.Diag, withMeta bool) map[string]any {
+func errorEnvelope(d *diag.Diag) diag.Envelope {
 	if d == nil {
-		return nil
+		return diag.Envelope{}
 	}
-	p := map[string]any{
-		"code":    d.Code,
-		"message": d.Message,
+	d = diag.FromError(d)
+	envelope, err := diag.ToEnvelope(d)
+	if err != nil {
+		var violation *diag.Diag
+		if errors.As(err, &violation) {
+			envelope, _ = diag.ToEnvelope(violation)
+		} else {
+			envelope, _ = diag.ToEnvelope(diag.NewContractViolation(d.Code, "serialization"))
+		}
 	}
-	if d.Reason != "" {
-		p["reason"] = d.Reason
-	}
-	if d.Hint != "" {
-		p["hint"] = d.Hint
-	}
-	if withMeta && len(d.Meta) > 0 {
-		p["meta"] = d.Meta
-	}
-	return p
+	return envelope
 }
 
-func writeJSON(w io.Writer, v any) {
+// FailureEnvelope returns the shared machine error envelope for result streams.
+func FailureEnvelope(d *diag.Diag) map[string]any {
+	envelope := map[string]any{"ok": false, "error": errorEnvelope(d)}
+	if d != nil && d.Data != nil {
+		envelope["data"] = d.Data
+	}
+	return envelope
+}
+
+func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	return enc.Encode(v)
 }

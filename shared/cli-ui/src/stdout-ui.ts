@@ -2,6 +2,14 @@ import type { UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-
 import { safeColors, safeSymbols } from './colors.js';
 import { sideBorderBox, sideBorderChain, metricsList } from './modern-format.js';
 import { formatTable } from './table.js';
+import { InteractiveInputRequiredError } from './interactive/terminal.js';
+
+function unavailablePrompt<T>(message: string): Promise<T> {
+  return Promise.reject(new InteractiveInputRequiredError(
+    'Provide the value as workflow or request input, then run `kb workflow run --help`.',
+    `The prompt "${message}" cannot be answered in this execution context.`,
+  ));
+}
 
 /**
  * All interactive prompt methods of UIFacade.
@@ -16,15 +24,15 @@ export interface UIPrompts {
 }
 
 /**
- * Safe-return prompts for non-interactive contexts (subprocess, sandbox).
- * All methods return the most sensible default without any I/O.
+ * Prompts for non-interactive contexts fail instead of substituting defaults.
  */
 export const NOOP_PROMPTS: UIPrompts = {
-  confirm: async (_, opts) => opts?.defaultValue ?? false,
-  prompt: async (_, opts) => opts?.default ?? '',
-  select: async <T>(_: string, choices: SelectChoice<T>[]) => choices[0]?.value as T,
-  multiSelect: async <T>(_: string, choices: MultiSelectChoice<T>[]) =>
-    choices.filter(c => c.checked).map(c => c.value) as T[],
+  confirm: (message) => unavailablePrompt(message),
+  prompt: (message) => unavailablePrompt(message),
+  select: <T>(message: string): Promise<T> =>
+    unavailablePrompt(message),
+  multiSelect: <T>(message: string): Promise<T[]> =>
+    unavailablePrompt(message),
 };
 
 /**
@@ -94,11 +102,11 @@ export function createBaseStdoutUI(
       }
 
       if (options?.hint) {
-        const hintItems: Array<string | { text: string; dim: boolean }> = [options.hint];
+        const hintItems: Array<string | { text: string; dim: boolean }> = [`Hint: ${options.hint}`];
         if (options.command) { hintItems.push({ text: `$ ${options.command}`, dim: true }); }
-        sections.push({ header: 'Hint', items: hintItems });
+        sections.push({ items: hintItems });
       } else if (options?.command) {
-        sections.push({ header: 'Hint', items: [{ text: `$ ${options.command}`, dim: true }] });
+        sections.push({ items: [{ text: `Hint: $ ${options.command}`, dim: true }] });
       }
 
       console.error(sideBorderBox({

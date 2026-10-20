@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createChildProcessLauncher } from "../project-runtime/launcher.js";
-import { ProjectRuntimeError } from "../project-runtime/errors.js";
+import { ProjectRuntimeError, runtimeStartFailed } from "../project-runtime/errors.js";
 import {
   ProjectRuntimeManager,
   type ProjectRuntimeManagerOptions,
@@ -50,6 +50,17 @@ async function expectRuntimeError(
 }
 
 describe("ProjectRuntimeManager (real child processes, fake runtime script)", () => {
+  // case: S-124.12
+  it("preserves a typed project identity mismatch for the host response", () => {
+    const failure = runtimeStartFailed(
+      "prj_1234567890123456",
+      "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH: registry path mismatch",
+    );
+
+    expect(failure.envelope.code).toBe("KB_PROJECT_RUNTIME_IDENTITY_MISMATCH");
+    expect(failure.envelope.hint).toContain("kb project list");
+  });
+
   const projects: TestProject[] = [];
   const managers: ProjectRuntimeManager[] = [];
 
@@ -134,6 +145,62 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
       lease.release(); // idempotent
     }
     expect(subject.status().runtimes[0]?.inflight).toBe(0);
+  });
+
+  // case: S-192.2
+  it("keeps the runtime when the discovered plugin-set digest is unchanged", async () => {
+    const a = await project();
+    const launcher = countingLauncher();
+    const subject = manager({ getPluginSetDigest: async () => "lock-a" }, launcher);
+
+    (await subject.acquire(a)).release();
+    (await subject.acquire(a)).release();
+
+    expect(launcher.launches).toBe(1);
+  });
+
+  // case: S-192.2
+  it("reloads once for concurrent requests after the plugin-set digest changes and drains old leases", async () => {
+    const a = await project();
+    const launcher = countingLauncher();
+    let digest = "lock-a";
+    const subject = manager({ getPluginSetDigest: async () => digest }, launcher);
+    const oldLease = await subject.acquire(a);
+    const oldPid = pidOf(subject, a.id);
+    const oldRequest = callRuntime(oldLease, "/rest/slow?delay=100");
+
+    digest = "lock-b";
+    const next = Promise.all([subject.acquire(a), subject.acquire(a)]);
+    await waitFor(() => subject.status().runtimes[0]?.state === "reloading", "runtime reload to begin");
+    expect(launcher.launches).toBe(1);
+    expect(isAlive(oldPid)).toBe(true);
+
+    expect((await oldRequest).status).toBe(200);
+    oldLease.release();
+    const leases = await next;
+    expect(launcher.launches).toBe(2);
+    expect(new Set(leases.map((lease) => lease.address.port)).size).toBe(1);
+    expect(isAlive(oldPid)).toBe(false);
+    for (const lease of leases) lease.release();
+  });
+
+  // case: S-192.2
+  it("reports a typed reload failure and retries the changed digest on the next request", async () => {
+    const a = await project();
+    const launcher = countingLauncher();
+    let digest = "lock-a";
+    const subject = manager({ getPluginSetDigest: async () => digest }, launcher);
+    (await subject.acquire(a)).release();
+
+    digest = "lock-b";
+    await a.behave({ exitBeforeReady: 1 });
+    const failed = await expectRuntimeError(subject.acquire(a), "KB_PROJECT_RUNTIME_RELOAD_FAILED");
+    expect(failed.envelope.hint).toContain("kb marketplace plugins doctor");
+
+    await a.behave({});
+    const retried = await subject.acquire(a);
+    expect(launcher.launches).toBe(3);
+    retried.release();
   });
 
   it("rejects a runtime that never speaks the secret protocol", async () => {
@@ -271,7 +338,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
 
     // The runtime dies while answering this request.
     const held = await subject.acquire(a);
-    await callRuntime(held, "/rest/__crash").catch(() => undefined);
+    await callRuntime(held, "/rest/api/v1/__crash").catch(() => undefined);
     held.release();
     await waitFor(() => !isAlive(firstPid), "the crashed runtime to be gone");
 
@@ -299,7 +366,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     // From now on the runtime cannot come back up.
     await a.behave({ exitBeforeReady: 9 });
     const held = await subject.acquire(a);
-    await callRuntime(held, "/rest/__crash").catch(() => undefined);
+    await callRuntime(held, "/rest/api/v1/__crash").catch(() => undefined);
     held.release();
 
     await waitFor(
@@ -334,16 +401,20 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     expect(subject.status().runtimes[0]?.restarts).toBeGreaterThanOrEqual(1);
   });
 
-  it("reports KB_PROJECT_RUNTIME_START_FAILED with the cause when the process exits during start", async () => {
+  it("reports KB_PROJECT_RUNTIME_PROCESS_START_FAILED with the cause when the process exits during start", async () => {
     const a = await project({ exitBeforeReady: 3 });
     const subject = manager();
 
     const error = await expectRuntimeError(
       subject.acquire(a),
-      "KB_PROJECT_RUNTIME_START_FAILED",
+      "KB_PROJECT_RUNTIME_PROCESS_START_FAILED",
     );
 
-    expect(error.envelope.details).toEqual({ project: a.id });
+    expect(error.envelope.details).toEqual({ projectId: a.id });
+    expect(error.envelope.message).toContain(a.id);
+    expect(error.envelope.message).not.toMatch(/\{[^}]+\}/);
+    expect(error.envelope.hint).toContain("kb logs query");
+    expect(error.envelope.hint).not.toMatch(/\{[^}]+\}/);
     expect(error.envelope.cause).toContain("code 3");
     expect(error.envelope.cause).toContain("refusing to start");
     expect(subject.status().runtimes[0]).toMatchObject({ state: "failed" });
@@ -354,15 +425,19 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
   });
 
   it("reports a start failure when the runtime is not healthy in time, and leaves no process", async () => {
-    const a = await project({ startDelayMs: 5000 });
-    const subject = manager({ startTimeoutMs: 400 });
+    const a = await project({
+      unhealthyAfterMs: 0,
+      healthModules: { rest: "up", workflow: "down", mcp: "up" },
+    });
+    const subject = manager({ startTimeoutMs: 1500 });
 
     const error = await expectRuntimeError(
       subject.acquire(a),
-      "KB_PROJECT_RUNTIME_START_FAILED",
+      "KB_PROJECT_RUNTIME_PROCESS_START_FAILED",
     );
 
-    expect(error.envelope.cause).toContain("not healthy within 400 ms");
+    expect(error.envelope.cause).toContain("not healthy within 1500 ms");
+    expect(error.envelope.cause).toContain('"workflow":"down"');
     expect(subject.status().active).toBe(0);
   });
 
@@ -373,7 +448,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     const leaseB = await subject.acquire(b);
     const pids = [pidOf(subject, a.id), pidOf(subject, b.id)];
     const { childPid } = (await (
-      await callRuntime(leaseA, "/rest/__spawn-child")
+      await callRuntime(leaseA, "/rest/api/v1/__spawn-child")
     ).json()) as { childPid: number };
     expect(isAlive(childPid)).toBe(true);
     // Requests are still in flight: shutdown does not wait for them.
@@ -387,7 +462,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     expect(subject.status().runtimes).toEqual([]);
     await expectRuntimeError(
       subject.acquire(a),
-      "KB_PROJECT_RUNTIME_START_FAILED",
+      "KB_PROJECT_RUNTIME_PROCESS_START_FAILED",
     );
   });
 

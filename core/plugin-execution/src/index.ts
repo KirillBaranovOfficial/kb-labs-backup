@@ -13,11 +13,7 @@
  *
  * @example
  * ```typescript
- * import { createExecutionBackend } from '@kb-labs/plugin-execution';
  * import { mountRoutes } from '@kb-labs/plugin-execution/http';
- *
- * // Create backend
- * const backend = createExecutionBackend({ platform });
  *
  * // Mount routes
  * await mountRoutes(server, manifest, { backend, pluginRoot, workspaceRoot });
@@ -34,6 +30,7 @@ export type {
   // Execution request/result
   ExecutionRequest,
   ExecutionResult,
+  NormalizedExecutionResult,
   ExecutionError,
   ExecutionErrorCode,
   ExecutionMetadata,
@@ -55,6 +52,7 @@ export type {
 
   // Backend interface
   ExecutionBackend,
+  ResolvedExecutionMode,
   HealthStatus,
   ExecutionStats,
 
@@ -62,24 +60,9 @@ export type {
   BackendOptions,
   WorkerPoolOptions,
   WarmupPolicy,
-  RemoteOptions,
 } from "./types.js";
 
 export { PROTOCOL_VERSION } from "./types.js";
-
-// Factory - re-exported from @kb-labs/plugin-execution-factory
-export { createExecutionBackend } from "@kb-labs/plugin-execution-factory";
-
-// Adapters - re-exported from @kb-labs/plugin-execution-factory
-export { SubprocessRunnerAdapter } from "@kb-labs/plugin-execution-factory";
-
-// Backends - re-exported from @kb-labs/plugin-execution-factory
-export {
-  InProcessBackend,
-  type InProcessBackendOptions,
-  WorkerPoolBackend,
-  type WorkerPoolBackendOptions,
-} from "@kb-labs/plugin-execution-factory";
 
 // Workspace
 export {
@@ -126,7 +109,6 @@ export {
   connectionRegistry,
   ConnectionRegistry,
   type ConnectionInfo,
-  createWSSender,
 } from "./ws/index.js";
 export {
   mountEventStreams,

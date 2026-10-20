@@ -4,20 +4,109 @@ package host
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 var fakeHostBinary string
+
+func TestLifecycleRecordReadersNeverSeePartialPublication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "host.pid")
+	type record struct {
+		PID      int    `json:"pid"`
+		Identity string `json:"identity"`
+	}
+	first, _ := json.Marshal(record{PID: 1, Identity: strings.Repeat("a", 32*1024)})
+	second, _ := json.Marshal(record{PID: 2, Identity: strings.Repeat("b", 32*1024)})
+	if err := WriteRecordFile(path, first); err != nil {
+		t.Fatal(err)
+	}
+	var writers sync.WaitGroup
+	writers.Add(1)
+	go func() {
+		defer writers.Done()
+		for i := 0; i < 400; i++ {
+			data := first
+			if i%2 == 0 {
+				data = second
+			}
+			if err := WriteRecordFile(path, data); err != nil {
+				t.Errorf("publish record: %v", err)
+				return
+			}
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read record during publication: %v", err)
+		}
+		var got record
+		if err := json.Unmarshal(data, &got); err != nil || (got.PID != 1 && got.PID != 2) || len(got.Identity) != 32*1024 {
+			t.Fatalf("reader saw a partial lifecycle record: pid=%d identity length=%d err=%v", got.PID, len(got.Identity), err)
+		}
+	}
+	writers.Wait()
+}
+
+func TestStartFailureEnvelopePreservesReadinessEvidence(t *testing.T) {
+	state := State{Dir: filepath.Join(t.TempDir(), "missing-state-dir")}
+	original := StartFailure(state, errors.New("readiness check failed"), map[string]string{
+		"stderrTail": "fakehost: ready check failed", "hostStartupCode": "KB_RUNTIME_UNEXPECTED",
+		"waited": "1s", "readinessURL": "http://127.0.0.1:5250/ready", "readinessStatus": "500",
+		"readinessError": "readiness refused", "exitCode": "2", "signal": "SIGTERM", "exitStatus": "exit status 2",
+		"expectedPid": "20", "pid": "21", "command": "kb-host", "failureKind": "readinessFailed",
+		"supervisorLog": "/tmp/supervisor.log", "supervisorStderrTail": "supervisor failed",
+		"supervisorExit": "exit status 3", "controlRecord": "/tmp/control.json",
+		"nextCommand": "kb-create status",
+	})
+	encoded, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal start failure: %v", err)
+	}
+	var decoded diag.Diag
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("decode start failure: %v", err)
+	}
+	for key, want := range original.Meta {
+		if got := decoded.Meta[key]; got != want {
+			t.Errorf("decoded start-failure detail %q = %v, want %v", key, got, want)
+		}
+	}
+	entry, _ := diag.LookupCatalog("KB_HOST_START_FAILED")
+	if len(encoded) == 0 || len(decoded.Meta) != len(entry.StructuredDetailFields) {
+		t.Fatalf("round-trip fields=%v, catalog declares %v", decoded.Meta, entry.StructuredDetailFields)
+	}
+}
+
+func TestStartFailureRejectsUndeclaredEvidence(t *testing.T) {
+	failure := StartFailure(State{Dir: t.TempDir()}, errors.New("startup failed"), map[string]string{
+		"evidenceFromNewProducer": "value",
+	})
+	if failure.Code != "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION" ||
+		failure.Meta["originalCode"] != "KB_HOST_START_FAILED" ||
+		failure.Meta["fields"] != "evidenceFromNewProducer" {
+		t.Fatalf("StartFailure = %+v, want typed contract violation with offending field", failure)
+	}
+}
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "kb-create-fakehost-")
@@ -32,6 +121,19 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
+	if output, err := exec.Command("lsof", "-nP", "-t", fakeHostBinary).CombinedOutput(); err != nil {
+		if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 || len(output) != 0 {
+			fmt.Fprintf(os.Stderr, "could not audit test process path %s: %v\n%s", fakeHostBinary, err, output)
+			code = 1
+		} else {
+			fmt.Fprintf(os.Stdout, "process audit %s: none\n", fakeHostBinary)
+		}
+	} else if len(strings.Fields(string(output))) > 0 {
+		fmt.Fprintf(os.Stderr, "test fakehost process remains alive for %s:\n%s", fakeHostBinary, output)
+		code = 1
+	} else {
+		fmt.Fprintf(os.Stdout, "process audit %s: none\n", fakeHostBinary)
+	}
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -52,6 +154,27 @@ type fixture struct {
 	port   int
 }
 
+func startProcessForTest(t *testing.T, runner *ProcessRunner, ctx context.Context) (Info, error) {
+	t.Helper()
+	info, err := runner.Start(ctx)
+	if err == nil {
+		t.Cleanup(func() {
+			if _, stopErr := runner.Stop(context.Background()); stopErr != nil {
+				runner.mu.Lock()
+				processIdentity := runner.processIdentity
+				runner.mu.Unlock()
+				if ProcessIdentityOf(info.PID, processIdentity) == ProcessIdentityMatch {
+					if !KillProcessGroupIfIdentity(info.PID, processIdentity) || !runner.waitGone(info.PID, processIdentity, 5*time.Second) {
+						t.Errorf("test host cleanup could not kill verified process %d after stop error", info.PID)
+					}
+				}
+				t.Errorf("test host cleanup could not stop process: %v", stopErr)
+			}
+		})
+	}
+	return info, err
+}
+
 func newRunner(t *testing.T, ready, grace int, hostArgs ...string) fixture {
 	t.Helper()
 	port := freePort(t)
@@ -62,19 +185,29 @@ func newRunner(t *testing.T, ready, grace int, hostArgs ...string) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(t.TempDir(), "state")}, PollInterval: 20 * time.Millisecond}
-	t.Cleanup(func() { _, _ = runner.Stop(context.Background()) })
+	root := t.TempDir()
+	identity, err := NewProcessIdentity(contracts.InstallReceipt{ID: "test-receipt", InstallationID: "test-installation",
+		Plan: contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "host"}}}}}, root, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(t.TempDir(), "state")}, InstallRoot: root, InstallationID: identity.InstallationID, PlatformRoot: root, TreeRoot: root, Identity: identity, PollInterval: 20 * time.Millisecond}
+	t.Cleanup(func() {
+		if _, stopErr := runner.Stop(context.Background()); stopErr != nil {
+			t.Errorf("test runner cleanup could not stop process: %v", stopErr)
+		}
+	})
 	return fixture{runner: runner, port: port}
 }
 
 func launcherCode(t *testing.T, err error) string {
 	t.Helper()
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if !errors.As(err, &typed) {
-		t.Fatalf("expected a LauncherError, got %v", err)
+		t.Fatalf("expected a Diag, got %v", err)
 	}
-	if problems := typed.Validate(); len(problems) != 0 {
-		t.Fatalf("error %s is not a valid envelope: %v", typed.Code, problems)
+	if typed.Hint == "" {
+		t.Fatalf("diagnostic %s has no hint", typed.Code)
 	}
 	return typed.Code
 }
@@ -82,7 +215,7 @@ func launcherCode(t *testing.T, err error) string {
 func TestStartStatusStopGraceful(t *testing.T) {
 	f := newRunner(t, 10, 5)
 	ctx := context.Background()
-	info, err := f.runner.Start(ctx)
+	info, err := startProcessForTest(t, f.runner, ctx)
 	if err != nil || info.PID == 0 {
 		t.Fatalf("start: %+v %v", info, err)
 	}
@@ -111,7 +244,7 @@ func TestStartStatusStopGraceful(t *testing.T) {
 
 func TestPidAndLogFilesArePrivate(t *testing.T) {
 	f := newRunner(t, 10, 5)
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{f.runner.State.HostPID(), f.runner.State.HostLog()} {
@@ -124,37 +257,193 @@ func TestPidAndLogFilesArePrivate(t *testing.T) {
 
 func TestStartWhileRunningIsAlreadyRunning(t *testing.T) {
 	f := newRunner(t, 10, 5)
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	_, err := f.runner.Start(context.Background())
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_ALREADY_RUNNING" {
 		t.Fatalf("code %s", code)
 	}
 }
 
+func TestRunnerDoesNotObserveOrStopAHostForAnotherRoot(t *testing.T) {
+	f := newRunner(t, 10, 5)
+	rootA, rootB := filepath.Join(t.TempDir(), "platform-a"), filepath.Join(t.TempDir(), "platform-b")
+	f.runner.PlatformRoot = rootA
+	info, err := startProcessForTest(t, f.runner, context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := &ProcessRunner{Spec: f.runner.Spec, State: f.runner.State, InstallRoot: rootB, InstallationID: "other-installation", PlatformRoot: rootB, TreeRoot: f.runner.TreeRoot, Identity: f.runner.Identity}
+	status, err := other.Status(context.Background())
+	if err != nil || status.State != StateStopped || status.PID != 0 {
+		t.Fatalf("other-root status = %#v, %v; want stopped", status, err)
+	}
+	stopped, err := other.Stop(context.Background())
+	if err != nil || stopped.WasRunning {
+		t.Fatalf("other-root stop = %#v, %v; want no-op", stopped, err)
+	}
+	if !processAlive(info.PID) {
+		t.Fatal("other-root stop signaled the original host")
+	}
+	_, err = startProcessForTest(t, other, context.Background())
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_HOST_ALREADY_RUNNING" ||
+		typed.Meta["platformRoot"] != rootA || typed.Meta["pid"] != strconv.Itoa(info.PID) ||
+		!strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "stop", "--platform-root", rootA)) {
+		t.Fatalf("other-root start error = %#v; want typed root refusal", err)
+	}
+	status, err = f.runner.Status(context.Background())
+	if err != nil || status.State != StateRunning || status.PID != info.PID {
+		t.Fatalf("original root status after other-root operations = %#v, %v", status, err)
+	}
+	if _, err := f.runner.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPortInUse(t *testing.T) {
 	f := newRunner(t, 10, 5)
+	f.runner.Operation = "apply"
 	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", f.port))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer blocker.Close()
-	plan := contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", f.port)}}
-	if err := CheckPorts(plan); err == nil {
+	plan := contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{PlatformRoot: f.runner.PlatformRoot},
+		Host: &contracts.HostSpec{HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", f.port)}}
+	if err := CheckPorts(plan, "apply"); err == nil {
 		t.Fatal("expected early port conflict")
 	} else {
-		var typed *contracts.LauncherError
-		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Details["port"] != fmt.Sprint(f.port) || typed.Details["pid"] == "" || typed.Details["command"] == "" {
+		var typed *diag.Diag
+		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Meta["port"] != fmt.Sprint(f.port) || typed.Meta["pid"] == "" || typed.Meta["command"] == "" {
 			t.Fatalf("port diagnostic lacks owner details: %#v", err)
 		}
+		wire, marshalErr := diag.ToEnvelope(typed)
+		if marshalErr != nil {
+			t.Fatalf("marshal actual port preflight diagnostic: %v", marshalErr)
+		}
+		if wire.Code != "KB_INSTALL_PORT_IN_USE" || wire.Details["port"] != fmt.Sprint(f.port) {
+			t.Fatalf("actual kb-create wire diagnostic = %+v, want details.port=%d", wire, f.port)
+		}
+		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply")) ||
+			!strings.Contains(typed.Hint, typed.Meta["pid"].(string)) || !strings.Contains(typed.Hint, typed.Meta["command"].(string)) {
+			t.Fatalf("port hint omits the owning process or attempted command: %#v", err)
+		}
+		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply", "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
+			t.Fatalf("port hint omits explicit Gateway recovery: %#v", err)
+		}
 	}
-	_, err = f.runner.Start(context.Background())
+	planFailure := CheckPorts(plan, "plan")
+	var planDiagnostic *diag.Diag
+	if !errors.As(planFailure, &planDiagnostic) || planDiagnostic.Code != "KB_INSTALL_PORT_IN_USE" ||
+		!strings.Contains(planDiagnostic.Hint, contracts.ShellCommand("kb-create", "plan", "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
+		t.Fatalf("plan port diagnostic does not suggest a Gateway address: %#v", planFailure)
+	}
+	_, err = startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_INSTALL_PORT_IN_USE" {
 		t.Fatalf("code %s", code)
 	}
 	if _, statErr := os.Stat(f.runner.State.HostPID()); !os.IsNotExist(statErr) {
 		t.Fatal("no process should have been spawned")
+	}
+}
+
+// case: S-025.8, PC-001.9
+func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ProcessIdentityEnv, token)
+	root := filepath.Join(t.TempDir(), "KB Labs ' root")
+	writeReceipt(t, root, &contracts.HostSpec{Command: fakeHostBinary, HealthURL: "http://127.0.0.1:4100/health"})
+	platformRoot := filepath.Join(root, "current")
+	launcherHome := t.TempDir()
+	t.Setenv(KBHomeEnv, launcherHome)
+	expectedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := StateForRoot(platformRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	processIdentity, err := ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(state.HostPID(), pidRecord{PID: os.Getpid(), ProcessIdentity: processIdentity, InstallationID: installationID, PlatformRoot: platformRoot}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receipt.Read(platformRoot); err != nil {
+		t.Fatalf("fixture receipt: %v", err)
+	}
+	if active, ok := ActiveHost(state); !ok || active.PID != os.Getpid() || filepath.Clean(active.PlatformRoot) != filepath.Clean(platformRoot) {
+		t.Fatalf("fixture active host = %#v, %t", active, ok)
+	}
+	launcherState, err := StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(platformRoot, "http://127.0.0.1:4100"); err != nil {
+		t.Fatal(err)
+	}
+	if roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Read(); err != nil || len(roots) != 1 {
+		t.Fatalf("fixture Gateway roots = %#v, %v", roots, err)
+	}
+
+	failure := portConflictError("4100", "127.0.0.1:4100", "gateway", portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", root, nil)
+	if failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["platformRoot"] != expectedRoot || failure.Meta["pid"] != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("known installation conflict = %#v", failure)
+	}
+	stopCommand := contracts.ShellCommand("kb-create", "stop", "--platform-root", expectedRoot)
+	if !strings.Contains(failure.Hint, stopCommand) {
+		t.Fatalf("known installation conflict omitted its stop command: %#v", failure)
+	}
+	commands, err := contracts.ParseShellCommands(stopCommand)
+	want := []string{"kb-create", "stop", "--platform-root", expectedRoot}
+	if err != nil || len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
+		t.Fatalf("stop command does not preserve a root containing spaces and quote: %#v, %v", commands, err)
+	}
+	if err := writeJSONFile(state.HostPID(), map[string]any{
+		"pid": os.Getpid(), "processIdentity": "different-process-identity", "platformRoot": platformRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale := portConflictError("4100", "127.0.0.1:4100", "gateway",
+		portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", root, nil)
+	if stale.Code != contracts.CodeHostProcessIdentityStale || strings.Contains(stale.Message, "already running") {
+		t.Fatalf("reused PID was identified as the registered installation: %#v", stale)
+	}
+}
+
+func TestPortConflictSurfacesGatewayIndexDiagnosticForRequestedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "requested platform")
+	launcherHome := t.TempDir()
+	t.Setenv(KBHomeEnv, launcherHome)
+	state, err := StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(state.Dir, "gateway-roots.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema":1,"roots":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	failure := portConflictError("4100", "127.0.0.1:4100", "gateway",
+		portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", root, nil)
+	if failure.Code != contracts.CodeGatewayIndexUnavailable || !strings.Contains(failure.Message, path) || !strings.Contains(failure.Hint, root) {
+		t.Fatalf("port conflict did not retain Gateway index diagnostic and requested root: %#v", failure)
 	}
 }
 
@@ -167,7 +456,7 @@ func TestStalePidFileIsRecovered(t *testing.T) {
 	if err := f.runner.State.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, StartedAt: time.Now()}); err != nil {
+	if err := writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, PlatformRoot: f.runner.PlatformRoot, StartedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	status, err := f.runner.Status(context.Background())
@@ -175,9 +464,201 @@ func TestStalePidFileIsRecovered(t *testing.T) {
 		t.Fatalf("status with stale pid: %+v %v", status, err)
 	}
 	// Recreate the stale file: Start must clean it and succeed.
-	_ = writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, StartedAt: time.Now()})
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	_ = writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, PlatformRoot: f.runner.PlatformRoot, StartedAt: time.Now()})
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatalf("start over stale pid: %v", err)
+	}
+}
+
+func TestActiveHostRejectsAReusedPID(t *testing.T) {
+	state := State{Dir: t.TempDir()}
+	if err := state.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
+	configureHostProcess(child)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		KillProcessGroupIfIdentity(child.Process.Pid, token)
+		_ = child.Wait()
+	})
+	if err := writeJSONFile(state.HostPID(), map[string]any{
+		"pid": child.Process.Pid, "platformRoot": "/tmp/recorded-kb-root", "processIdentity": "different-process-identity",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if active, ok := ActiveHost(state); ok {
+		t.Fatalf("reused PID was accepted as the recorded host: %#v", active)
+	}
+}
+
+func TestStopDoesNotSignalAReusedPID(t *testing.T) {
+	f := newRunner(t, 10, 1)
+	if err := f.runner.State.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	foreignIdentity, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), foreignIdentity)
+	configureHostProcess(child)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		KillProcessGroupIfIdentity(child.Process.Pid, foreignIdentity)
+		_ = child.Wait()
+	})
+	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
+		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot, "installationId": f.runner.InstallationID, "processIdentity": "recorded-owner-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runner.Status(context.Background()); err == nil {
+		t.Fatal("status accepted a process whose identity differs from the recorded host")
+	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("stale process record diagnostic = %#v", err)
+	}
+	if _, err := f.runner.Stop(context.Background()); err == nil {
+		t.Fatal("stop accepted a process whose identity differs from the recorded host")
+	}
+	if !processAlive(child.Process.Pid) {
+		t.Fatal("stop signalled the process after its PID identity failed validation")
+	}
+}
+
+func TestOldHostRecordWithoutIdentityIsDiagnosedAndNeverSignalled(t *testing.T) {
+	f := newRunner(t, 10, 1)
+	if err := f.runner.State.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
+	configureHostProcess(child)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		KillProcessGroupIfIdentity(child.Process.Pid, token)
+		_ = child.Wait()
+	})
+	// This is the host.pid shape written before processIdentity was required.
+	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
+		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runner.Status(context.Background()); err == nil {
+		t.Fatal("status silently treated the old live record as stopped")
+	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("old host record diagnostic = %#v", err)
+	}
+	if _, err := f.runner.Stop(context.Background()); err == nil {
+		t.Fatal("stop accepted the old record without process identity")
+	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("old host record stop diagnostic = %#v", err)
+	}
+	if !processAlive(child.Process.Pid) {
+		t.Fatal("stop signalled the process for an old record without identity")
+	}
+}
+
+func TestX26RecordWithoutInstallationIDFailsClosed(t *testing.T) {
+	f := newRunner(t, 10, 1)
+	if err := f.runner.State.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
+	configureHostProcess(child)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		KillProcessGroupIfIdentity(child.Process.Pid, token)
+		_ = child.Wait()
+	})
+	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
+		"pid": child.Process.Pid, "processIdentity": token, "platformRoot": f.runner.PlatformRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "status", run: func() error { _, err := f.runner.Status(context.Background()); return err }},
+		{name: "stop", run: func() error { _, err := f.runner.Stop(context.Background()); return err }},
+	} {
+		t.Run(action.name, func(t *testing.T) {
+			err := action.run()
+			failure, ok := err.(*diag.Diag)
+			if !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+				t.Fatalf("x26 record diagnostic = %#v", err)
+			}
+			if !processAlive(child.Process.Pid) {
+				t.Fatal("operation signalled the live process from an x26-format record")
+			}
+		})
+	}
+}
+
+func TestStatusReportsAProcessRecordFromPreviousBootAsStale(t *testing.T) {
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ProcessIdentityEnv, token)
+	f := newRunner(t, 10, 1)
+	if err := f.runner.State.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(f.runner.State.HostPID(), pidRecord{
+		PID: os.Getpid(), ProcessIdentity: "recorded-before-reboot", InstallationID: f.runner.InstallationID,
+		PlatformRoot: f.runner.PlatformRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(f.runner.State.HostPID()) })
+	if _, err := f.runner.Status(context.Background()); err == nil {
+		t.Fatal("status accepted a process identity from a previous boot")
+	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("previous-boot status diagnostic = %#v", err)
+	}
+}
+
+func TestProcessIdentityDistinguishesAReusedPID(t *testing.T) {
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ProcessIdentityEnv, token)
+	identity, err := ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ProcessIdentityOf(os.Getpid(), identity) != ProcessIdentityMatch {
+		t.Fatal("current process did not match its captured instance token")
+	}
+	if ProcessIdentityOf(os.Getpid(), identity+"-reused") == ProcessIdentityMatch {
+		t.Fatal("current process matched a different instance token")
 	}
 }
 
@@ -185,14 +666,14 @@ func TestCorruptPidFileIsStale(t *testing.T) {
 	f := newRunner(t, 10, 5)
 	_ = f.runner.State.Ensure()
 	_ = os.WriteFile(f.runner.State.HostPID(), []byte("not json"), 0o600)
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatalf("start over corrupt pid: %v", err)
 	}
 }
 
 func TestForcedStopWhenTermIgnored(t *testing.T) {
 	f := newRunner(t, 10, 1, "-ignore-term")
-	info, err := f.runner.Start(context.Background())
+	info, err := startProcessForTest(t, f.runner, context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,9 +700,20 @@ func TestStopWhenNotRunning(t *testing.T) {
 
 func TestStartFailureWhenHostExits(t *testing.T) {
 	f := newRunner(t, 10, 5, "-exit", "7")
-	_, err := f.runner.Start(context.Background())
+	f.runner.Operation = "apply"
+	f.runner.PlatformRoot = "/tmp/platform"
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
 		t.Fatalf("code %s", code)
+	}
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Meta["exitCode"] != "7" ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fakehost: exiting early") {
+		t.Fatalf("process exit diagnostic = %#v; want exit code and stderr tail", err)
+	}
+	if typed.Message != "The host process failed while starting." || typed.Reason == "" || typed.Cause == "" ||
+		typed.Meta["nextCommand"] != "kb-create apply" {
+		t.Fatalf("apply startup diagnostic = %#v; want catalog message, concrete reason, and apply retry", typed)
 	}
 	if _, statErr := os.Stat(f.runner.State.HostPID()); !os.IsNotExist(statErr) {
 		t.Fatal("pid file must be removed after a failed start")
@@ -230,27 +722,185 @@ func TestStartFailureWhenHostExits(t *testing.T) {
 	if len(data) == 0 {
 		t.Fatal("host output should be captured in the log file")
 	}
+	launcherLog, err := os.ReadFile(f.runner.State.LauncherLog())
+	if err != nil || !strings.Contains(string(launcherLog), "host.start.failed") || !strings.Contains(string(launcherLog), "exit code 7") {
+		t.Fatalf("launcher failure log = %q, %v; want the process exit reason", launcherLog, err)
+	}
+}
+
+func TestStartIdentityTimeoutTerminatesAndReapsHost(t *testing.T) {
+	f := newRunner(t, 1, 5)
+	childPID := 0
+	f.runner.identityReader = func(pid int) (string, error) {
+		childPID = pid
+		return "", errors.New("injected process environment unavailable")
+	}
+	_, err := startProcessForTest(t, f.runner, context.Background())
+	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
+		t.Fatalf("code %s", code)
+	}
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Meta["waited"] == nil ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fakehost: ready") {
+		t.Fatalf("identity timeout diagnostic = %#v; want elapsed time and stderr tail", err)
+	}
+	if f.runner.pid != 0 {
+		t.Fatalf("runner retained child PID %d after failed start", f.runner.pid)
+	}
+	if childPID == 0 || processAlive(childPID) {
+		t.Fatalf("host child PID %d remains alive after failed start", childPID)
+	}
+	if _, statErr := os.Stat(f.runner.State.HostPID()); !os.IsNotExist(statErr) {
+		t.Fatalf("pid file must be absent after failed start: %v", statErr)
+	}
+	if conn, dialErr := net.DialTimeout("tcp", f.runner.Spec.HealthAddress(), 200*time.Millisecond); dialErr == nil {
+		_ = conn.Close()
+		t.Fatal("host listener remains after identity timeout")
+	}
+}
+
+func TestStartWaitsPastFormerIdentityLimitForDelayedMatch(t *testing.T) {
+	f := newRunner(t, 3, 5)
+	started := time.Now()
+	childPID := 0
+	f.runner.identityReader = func(pid int) (string, error) {
+		childPID = pid
+		if time.Since(started) < 1100*time.Millisecond {
+			return "", errProcessEnvironmentNotReady
+		}
+		return ProcessIdentityForPID(pid)
+	}
+	info, err := startProcessForTest(t, f.runner, context.Background())
+	if err != nil {
+		t.Fatalf("delayed valid identity should start successfully: %v", err)
+	}
+	if info.PID == 0 || info.PID != childPID || !processAlive(info.PID) {
+		t.Fatalf("host PID %d is not alive after delayed identity verification", info.PID)
+	}
+	if _, err := os.Stat(f.runner.State.HostPID()); err != nil {
+		t.Fatalf("verified host PID record was not published: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 1100*time.Millisecond {
+		t.Fatalf("identity wait lasted %s; want more than the former one-second bound", elapsed)
+	}
+	if _, err := f.runner.Stop(context.Background()); err != nil {
+		t.Fatalf("stop delayed host: %v", err)
+	}
 }
 
 func TestReadyTimeoutKillsHost(t *testing.T) {
 	f := newRunner(t, 1, 5, "-unhealthy")
-	_, err := f.runner.Start(context.Background())
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
 		t.Fatalf("code %s", code)
+	}
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Meta["readinessURL"] != f.runner.Spec.HealthURL ||
+		typed.Meta["readinessStatus"] != "500" || typed.Meta["waited"] == nil ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fakehost: ready") {
+		t.Fatalf("readiness diagnostic = %#v; want URL, last status, elapsed wait, and stderr tail", err)
 	}
 	if _, dialErr := net.DialTimeout("tcp", f.runner.Spec.HealthAddress(), 200*time.Millisecond); dialErr == nil {
 		t.Fatal("unhealthy host must be killed after the ready timeout")
 	}
 }
 
+func TestTypedStartupEnvelopeIsTheHostFailureCause(t *testing.T) {
+	f := newRunner(t, 10, 5, "-startup-error")
+	f.runner.SecretEnv = func() (secrets.Environment, error) {
+		return secrets.Environment{Values: map[string]string{"API_TOKEN": "fake-secret-token"}}, nil
+	}
+	_, err := startProcessForTest(t, f.runner, context.Background())
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_CONFIG_INVALID" ||
+		typed.Meta["hostStartupCode"] != "KB_CONFIG_INVALID" ||
+		!strings.Contains(typed.Cause, "positive integer") ||
+		typed.Meta["path"] != "platform.adapterOptions.analytics.retentionDays" ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), `"code":"KB_CONFIG_INVALID"`) ||
+		strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fake-secret-token") ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "[REDACTED]") ||
+		typed.Message != "Adapter option \"platform.adapterOptions.analytics.retentionDays\" is invalid: must be a positive integer." {
+		t.Fatalf("typed startup diagnostic = %#v; want original catalogued config error with host evidence", err)
+	}
+}
+
+func TestTypedConfigStartupFailureKeepsReadinessEvidence(t *testing.T) {
+	configFailure := diag.New("KB_CONFIG_INVALID", "Analytics retention must be a positive integer.",
+		diag.WithCause("platform.adapterOptions.analytics.retentionDays must be a positive integer"),
+		diag.WithMeta(map[string]any{"path": "platform.adapterOptions.analytics.retentionDays"}))
+	envelope, err := diag.ToEnvelope(configFailure)
+	if err != nil {
+		t.Fatalf("serialize config failure: %v", err)
+	}
+	stderr, err := json.Marshal(map[string]any{"ok": false, "error": envelope})
+	if err != nil {
+		t.Fatalf("marshal config failure: %v", err)
+	}
+
+	failure := StartFailure(State{Dir: t.TempDir()}, errors.New("readiness check failed"), map[string]string{
+		"stderrTail": string(stderr), "waited": "5s", "readinessURL": "http://127.0.0.1:5250/health",
+		"readinessError": "connection refused",
+	})
+	result, err := diag.ToEnvelope(failure)
+	if err != nil {
+		t.Fatalf("serialize startup failure: %v", err)
+	}
+	if result.Code != "KB_CONFIG_INVALID" || result.Details["path"] != "platform.adapterOptions.analytics.retentionDays" ||
+		result.Details["waited"] != "5s" || result.Details["readinessURL"] != "http://127.0.0.1:5250/health" ||
+		result.Details["readinessError"] != "connection refused" {
+		t.Fatalf("startup envelope = %+v; want the original config error and catalogued readiness evidence", result)
+	}
+}
+
+// case: S-222.11
+func TestHostEnvironmentSuppressesCompletedBootstrapPasswordFromAllSources(t *testing.T) {
+	t.Setenv(secrets.BootstrapPasswordEnvironment, "inherited-bootstrap-password")
+	runner := newRunner(t, 10, 5)
+	runner.runner.Spec.Env = map[string]string{secrets.BootstrapPasswordEnvironment: "spec-bootstrap-password"}
+	runner.runner.SecretEnv = func() (secrets.Environment, error) {
+		return secrets.Environment{
+			Values:     map[string]string{secrets.BootstrapPasswordEnvironment: "stored-bootstrap-password"},
+			Suppressed: []string{secrets.BootstrapPasswordEnvironment},
+		}, nil
+	}
+
+	environment, err := runner.runner.environment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, secrets.BootstrapPasswordEnvironment+"=") {
+			t.Fatalf("completed host environment contains bootstrap password: %q", entry)
+		}
+	}
+}
+
+func TestStderrTailIsLimitedToFortyLines(t *testing.T) {
+	buffer := &tailBuffer{limit: 64 * 1024}
+	for i := 0; i < 80; i++ {
+		_, _ = fmt.Fprintf(buffer, "line-%02d\n", i)
+	}
+	tail := strings.Split(buffer.String(), "\n")
+	if len(tail) != 40 || tail[0] != "line-40" || tail[len(tail)-1] != "line-79" {
+		t.Fatalf("stderr tail = %d lines, first %q last %q; want last 40 lines", len(tail), tail[0], tail[len(tail)-1])
+	}
+}
+
 func TestStatusReportsUnhealthy(t *testing.T) {
 	f := newRunner(t, 10, 5)
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// Point the health probe at a dead path on the same server by stopping
 	// the answer: use a spec whose URL returns 404.
-	f.runner.Spec.HealthURL = fmt.Sprintf("http://127.0.0.1:%d/missing", f.port)
+	record, ok := f.runner.readPID()
+	if !ok {
+		t.Fatal("running host record is missing")
+	}
+	record.HealthURL = fmt.Sprintf("http://127.0.0.1:%d/missing", f.port)
+	if err := writeJSONFile(f.runner.State.HostPID(), record); err != nil {
+		t.Fatal(err)
+	}
 	status, _ := f.runner.Status(context.Background())
 	if status.State != StateUnhealthy || status.Healthy {
 		t.Fatalf("status: %+v", status)
@@ -262,7 +912,7 @@ func TestStateDirUnwritable(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "file")
 	_ = os.WriteFile(blocker, nil, 0o600)
 	f.runner.State = State{Dir: filepath.Join(blocker, "state")}
-	_, err := f.runner.Start(context.Background())
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_STATE_DIR_UNWRITABLE" {
 		t.Fatalf("code %s", code)
 	}
@@ -311,26 +961,55 @@ func TestSpecValidationAndResolution(t *testing.T) {
 
 func writeReceipt(t *testing.T, root string, host *contracts.HostSpec) {
 	t.Helper()
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: host}
-	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", Plan: plan}); err != nil {
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: host, ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "host"}}}}
+	if err := receipt.Write(stage, contracts.InstallReceipt{ID: "r1", InstallationID: installationID, Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateInitial(stage, "1.0.0", "host-test"); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestNewRunnerRunsTheHostTheReceiptDeclares(t *testing.T) {
-	root, state := t.TempDir(), State{Dir: filepath.Join(t.TempDir(), "launcher")}
+	root := t.TempDir()
 	writeReceipt(t, root, &contracts.HostSpec{Command: "bin/host", HealthURL: "http://127.0.0.1:9/health"})
-	runner, err := NewRunner(root, state)
+	runner, err := NewRunner(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runner.Spec.Command != filepath.Join(root, "bin/host") || runner.State != state || runner.SecretEnv == nil {
+	layout, _ := versionroot.New(root)
+	rootState, stateErr := StateForRoot(layout.InstallRoot())
+	installationID, identityErr := versionroot.InstallationIDForPath(root)
+	if runner.Spec.Command != filepath.Join(layout.PlatformRoot(), "bin/host") || stateErr != nil || identityErr != nil || runner.State != rootState || runner.SecretEnv == nil || runner.Identity.InstallationID != installationID {
 		t.Fatalf("runner: %#v", runner)
 	}
 }
 
+func TestNewRunnerRejectsReceiptWithoutInstallationIdentity(t *testing.T) {
+	root := t.TempDir()
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: &contracts.HostSpec{Command: "host", HealthURL: "http://127.0.0.1:9/health"}}
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "transaction-id", Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewRunner(root)
+	if launcherCode(t, err) != contracts.CodeReceiptUnavailable {
+		t.Fatalf("missing installation identity error = %v", err)
+	}
+}
+
 func TestNewRunnerRejectsAnInstallationWithoutAValidHost(t *testing.T) {
-	state := State{Dir: t.TempDir()}
 	cases := map[string]*contracts.HostSpec{
 		"no host (a receipt from before the host-only launcher)": nil,
 		"non-loopback health URL":                                {Command: "host", HealthURL: "http://10.0.0.1:1/health"},
@@ -339,13 +1018,32 @@ func TestNewRunnerRejectsAnInstallationWithoutAValidHost(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			writeReceipt(t, root, spec)
-			_, err := NewRunner(root, state)
+			_, err := NewRunner(root)
 			if code := launcherCode(t, err); code != "KB_HOST_SPEC_INVALID" {
 				t.Fatalf("code %s", code)
 			}
 		})
 	}
-	if _, err := NewRunner(t.TempDir(), state); launcherCode(t, err) != "KB_INSTALL_RECEIPT_UNAVAILABLE" {
+	if _, err := NewRunner(t.TempDir()); launcherCode(t, err) != "KB_INSTALL_RECEIPT_UNAVAILABLE" {
 		t.Fatalf("a missing receipt must be reported as such: %v", err)
+	}
+}
+
+func TestRootConflictNamesPidWhenRootIsUnknown(t *testing.T) {
+	failure := RootConflict("", 4242)
+	if failure.Code != "KB_HOST_ALREADY_RUNNING" {
+		t.Fatalf("code = %q", failure.Code)
+	}
+	if !strings.Contains(failure.Hint, "Stop process 4242") || strings.Contains(failure.Hint, "--platform-root") {
+		t.Fatalf("hint must name the pid, not an unmatchable stop command: %q", failure.Hint)
+	}
+	known := RootConflict("/tmp/KB Labs ' A", 7)
+	want := contracts.ShellCommand("kb-create", "stop", "--platform-root", "/tmp/KB Labs ' A")
+	if !strings.Contains(known.Hint, want) {
+		t.Fatalf("hint = %q", known.Hint)
+	}
+	envelope, err := diag.ToEnvelope(known)
+	if err != nil || envelope.Details["nextCommand"] != want {
+		t.Fatalf("root conflict envelope command = %q, error = %v", envelope.Details["nextCommand"], err)
 	}
 }

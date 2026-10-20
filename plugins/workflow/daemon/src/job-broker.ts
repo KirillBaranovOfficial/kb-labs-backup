@@ -69,7 +69,10 @@ export class JobBroker {
     const run = await this.engine.runFromInline(spec, {
       trigger: { type: 'manual' as const },
       env: {},
-      metadata: request.metadata,
+      metadata: {
+        ...request.metadata,
+        workflowId: spec.name,
+      },
     });
 
     this.logger.info('Background job submitted', {
@@ -195,13 +198,9 @@ export class JobBroker {
       return true;
     });
 
-    // Sort chronologically (oldest first — natural reading order)
+    // Sort chronologically (oldest first — natural reading order).
     filtered.sort((a, b) => a.timestamp - b.timestamp);
-
-    // Paginate
-    const page = filtered.slice(offset, offset + limit);
-
-    return page.map((log) => {
+    const liveLogs = filtered.map((log) => {
       const stepId = log.fields['stepId'] as string | undefined;
       return {
         timestamp: new Date(log.timestamp).toISOString(),
@@ -213,5 +212,35 @@ export class JobBroker {
         context: log.fields,
       };
     });
+
+    // Platform log buffers can be process-local. Completed shell output is also
+    // part of the durable WorkflowRun record, so history can reconstruct its
+    // user-visible lines after a host restart when the log reader has no copy.
+    const persistedOutput = (run.jobs ?? []).flatMap((job) => (job.steps ?? []).flatMap((step) => {
+      if (options?.stepId && options.stepId !== step.id) { return [] }
+      const outputs = step.outputs ?? {}
+      const timestamp = step.finishedAt ?? run.finishedAt ?? run.createdAt
+      return (['stdout', 'stderr'] as const).flatMap((stream) => {
+        const level = stream === 'stderr' ? 'warn' : 'info'
+        if (options?.level && options.level !== 'all' && options.level !== level) { return [] }
+        const output = outputs[stream]
+        if (typeof output !== 'string') { return [] }
+        return output.split(/\r?\n/).filter(Boolean).map((message) => ({
+          timestamp: timestamp ? new Date(timestamp).toISOString() : new Date(0).toISOString(),
+          level,
+          message,
+          stepId: step.id,
+          stepName: step.name,
+          stream,
+          context: { runId, stepId: step.id, stepName: step.name, logSource: stream, persisted: true },
+        }))
+      })
+    }))
+    const liveLines = new Set(liveLogs.map((log) => `${log.stepId ?? ''}\0${log.stream ?? ''}\0${log.message}`))
+    const logs = [
+      ...liveLogs,
+      ...persistedOutput.filter((log) => !liveLines.has(`${log.stepId ?? ''}\0${log.stream ?? ''}\0${log.message}`)),
+    ].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    return logs.slice(offset, offset + limit)
   }
 }

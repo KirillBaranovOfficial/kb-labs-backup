@@ -1,4 +1,4 @@
-import { defineCommand, useLoader, TimingTracker, handleError, type PluginContextV3, type CommandResult, type CLIInput } from '@kb-labs/sdk';
+import { defineCommand, useLoader, TimingTracker, handleError, type PluginCommandContextV3, type CommandResult, type CLIInput } from '@kb-labs/sdk';
 import { discoverMonorepos, buildPackageMapFiltered, buildPlan, applyPlan, createBackup, loadState, saveState, checkGitDirty, updateWorkspaceYamls } from '@kb-labs/devlink-core';
 import type { DevlinkMode } from '@kb-labs/devlink-contracts';
 import { existsSync, unlinkSync, rmSync } from 'node:fs';
@@ -20,6 +20,10 @@ interface SwitchResult {
   mode: DevlinkMode;
   changed: number;
   backupId?: string;
+  cleanedLocks?: number;
+  wsUpdates?: number;
+  installedRepos?: number;
+  installErrors?: string[];
 }
 
 export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
@@ -27,7 +31,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
   description: 'Switch cross-repo deps between link: and npm mode',
 
   handler: {
-    async intent(ctx: PluginContextV3, input: CLIInput<SwitchFlags>) {
+    async intent(ctx: PluginCommandContextV3, input: CLIInput<SwitchFlags>) {
       const flags = input.flags;
       const mode = flags.mode;
       const rootDir = ctx.cwd ?? process.cwd();
@@ -62,7 +66,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<SwitchFlags>): Promise<CommandResult<SwitchResult>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<SwitchFlags>): Promise<CommandResult<SwitchResult>> {
       const tracker = new TimingTracker();
       const flags = input.flags;
       const mode = flags.mode;
@@ -83,8 +87,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
         packageMap = await buildPackageMapFiltered(monorepos, rootDir, ttlMs, mode);
       } catch (err) {
         discoverLoader.fail('Discovery failed');
-        handleError(ctx, err, outputJson);
-        return { ok: false, error: 'Switch operation failed' };
+        return handleError(err);
       }
       discoverLoader.succeed(`Found ${monorepos.length} monorepos, ${Object.keys(packageMap).length} packages`);
       tracker.checkpoint('discovery');
@@ -101,7 +104,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
 
       if (plan.items.length === 0 && !flags.install) {
         ctx.ui?.info?.('No changes needed — dependencies are already in the requested mode.');
-        return { ok: true, result: { mode, changed: 0 }, meta: { timing: tracker.total() } };
+        return { mode, changed: 0 };
       }
 
       // 4. Always create backup (even if no deps change — install cleans node_modules)
@@ -217,7 +220,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
       };
 
       if (outputJson) {
-        ctx.ui?.json?.({ ...result, cleanedLocks, wsUpdates: wsUpdates.length, installedRepos, installErrors });
+        return { ...result, cleanedLocks, wsUpdates: wsUpdates.length, installedRepos, installErrors };
       } else {
         const summaryItems = [
           `Mode: ${mode}`,
@@ -253,7 +256,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
         });
       }
 
-      return { ok: true, result, meta: { timing: tracker.total() } };
+      return result;
     },
   },
 });

@@ -6,6 +6,7 @@
  */
 
 import type { ExecutionEvent } from '@kb-labs/core-contracts';
+import { createErrorEnvelope, ErrorEnvelopeError, isErrorEnvelope } from '@kb-labs/core-platform';
 import { sideBorderBox } from '@kb-labs/shared-cli-ui';
 
 /**
@@ -50,13 +51,26 @@ export class TerminalEventRenderer implements IEventRenderer {
 
       case 'execution:error': {
         this.clearProgress();
-        const errSections: Array<{ header?: string; items: string[] }> = [
-          { items: [event.message] },
-        ];
-        if (event.code) {
-          errSections.push({ header: 'Code', items: [event.code] });
+        if (!isErrorEnvelope(event.error)) {
+          throw new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
+            details: {
+              requestStage: 'execution event rendering',
+              fields: 'error envelope',
+            },
+          }));
         }
-        process.stderr.write('\n' + sideBorderBox({ title: 'Error', sections: errSections, status: 'error' }) + '\n');
+        const errSections: Array<{ header?: string; items: string[] }> = [
+          { items: [event.error.message] },
+        ];
+        errSections.push({ header: 'Code', items: [event.error.code] });
+        errSections.push({ header: 'Hint', items: [event.error.hint] });
+        if (event.error.correlationId) {
+          errSections.push({ header: 'Correlation ID', items: [event.error.correlationId] });
+        }
+        process.stderr.write('\n' + sideBorderBox({
+          title: 'Error', sections: errSections, status: 'error',
+          wrap: process.stderr.isTTY === true, width: process.stderr.columns,
+        }) + '\n');
         break;
       }
 

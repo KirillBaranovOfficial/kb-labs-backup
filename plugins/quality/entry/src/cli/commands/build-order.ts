@@ -5,7 +5,7 @@
  * Shows build layers where each layer can build in parallel.
  */
 
-import { defineCommand, useConfig, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, useConfig, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { analyzeBuildOrder } from '@kb-labs/quality-core';
 import { defaultQualityConfig, type QualityPluginConfig } from '@kb-labs/quality-contracts';
 import type { BuildOrderFlags } from './flags.js';
@@ -15,7 +15,7 @@ export default defineCommand<unknown, CLIInput<BuildOrderFlags>, unknown>({
   description: 'Calculate build order using topological sort',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<BuildOrderFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<BuildOrderFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QualityPluginConfig>();
       const cfg = config ?? defaultQualityConfig;
@@ -28,22 +28,11 @@ export default defineCommand<unknown, CLIInput<BuildOrderFlags>, unknown>({
       });
 
       if (result.hasCircular) {
-        if (flags.json) {
-          ctx.ui?.json?.({ ...result, ok: false });
-        } else {
-          ctx.ui?.error?.(`Circular dependencies detected — build order cannot be fully determined`, {
-            sections: result.circular.map((cycle, i) => ({
-              header: `Cycle ${i + 1}`,
-              items: cycle,
-            })),
-          });
-        }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Circular dependencies prevent a complete build order.', hint: 'Run `kb quality build-order --help`, resolve the reported dependency cycle, then rerun `kb quality build-order`.' } };
       }
 
       if (flags.json) {
-        ctx.ui?.json?.(result);
-        return { ok: true };
+        return result;
       }
 
       if (flags.script) {
@@ -52,7 +41,7 @@ export default defineCommand<unknown, CLIInput<BuildOrderFlags>, unknown>({
           if (!layer) continue;
           ctx.ui?.success?.(`# Layer ${i + 1}`, { sections: [{ header: '', items: layer.map(p => `pnpm --filter "${p}" run build`) }] });
         }
-        return { ok: true };
+        return {  };
       }
 
       const sections = flags.layers
@@ -68,7 +57,7 @@ export default defineCommand<unknown, CLIInput<BuildOrderFlags>, unknown>({
       });
 
       ctx.ui?.success?.(flags.package ? `Build order for ${flags.package}` : 'Monorepo build order', { sections });
-      return { ok: true };
+      return {  };
     },
   },
 });

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/kb-labs/devkit/internal/config"
@@ -78,14 +79,12 @@ Use --dry-run to preview what would be changed.`,
 		}
 
 		if jsonMode {
-			_ = JSONOut(map[string]any{
-				"ok":      true,
+			return JSONOut(map[string]any{
 				"fixed":   fixCount,
 				"dryRun":  fixDryRun,
 				"modes":   modes,
 				"actions": fixLog,
 			})
-			return nil
 		}
 
 		o := newOutput()
@@ -100,7 +99,7 @@ Use --dry-run to preview what would be changed.`,
 		}
 		o.OK(fmt.Sprintf("%s %d issue(s):", prefix, fixCount))
 		for _, entry := range fixLog {
-			fmt.Printf("  %s %s\n", o.bullet.Render("●"), entry)
+			clikitcommand.Printf("  %s %s\n", o.bullet.Render("●"), entry)
 		}
 
 		return nil

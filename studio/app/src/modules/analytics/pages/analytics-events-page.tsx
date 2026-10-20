@@ -399,7 +399,7 @@ export function AnalyticsEventsPage() {
             },
           ]}
         />
-        {hasMore ? (
+        {!eventsLoading && hasMore ? (
           <div style={{ textAlign: 'center', paddingTop: 8 }}>
             <UIButton onClick={handleLoadMore} loading={eventsLoading}>
               Load {PAGE_SIZE} more
@@ -408,7 +408,7 @@ export function AnalyticsEventsPage() {
               Showing {events.length} of {total.toLocaleString()}
             </UIText>
           </div>
-        ) : (
+        ) : !eventsLoading ? (
           <div style={{ textAlign: 'center', paddingTop: 4 }}>
             <UIText color="secondary" style={{ fontSize: 12 }}>
               {total > 0
@@ -416,7 +416,7 @@ export function AnalyticsEventsPage() {
                 : 'No events found'}
             </UIText>
           </div>
-        )}
+        ) : null}
       </UICard>
 
       <EventDrawer event={selectedEvent} onClose={() => setSelectedEvent(null)} />

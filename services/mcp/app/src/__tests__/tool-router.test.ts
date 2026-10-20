@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
+import { createErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import type { McpTool } from '../mcp/tool-builder.js';
 import { callOutput } from '../mcp/output-capture.js';
 
@@ -24,8 +25,15 @@ const tool: McpTool = {
 
 // Minimal container — only the members callTool touches.
 const container = {
-  logger: { child: () => ({}) },
-  getSocketPath: () => '/tmp/sock',
+  logger: {
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    child: () => container.logger,
+  },
 } as unknown as PlatformContainer;
 const resolvePlatform = vi.fn(() => container);
 
@@ -43,7 +51,11 @@ describe('callTool', () => {
   });
 
   it('reports failure when the command exits non-zero', async () => {
-    executeCommandV3.mockResolvedValue(1);
+    const error = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId: 'mcp-failure-correlation' });
+    executeCommandV3.mockImplementation(async (options: { onError?: (error: ErrorEnvelope) => void }) => {
+      options.onError?.(error);
+      return 1;
+    });
     const result = await callTool(tool, {}, 'tenant1', resolvePlatform);
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(1);
@@ -53,7 +65,7 @@ describe('callTool', () => {
     // Simulate what the execution backend's uiProvider does: it reads
     // callOutput.getStore() and pushes lines into it when the plugin calls ui.*.
     executeCommandV3.mockImplementation(async () => {
-      callOutput.getStore()?.push('[info] hello from uiProvider');
+      callOutput.getStore()?.text.push('[info] hello from uiProvider');
       return 0;
     });
     const result = await callTool(tool, {}, 'tenant1', resolvePlatform);
@@ -61,24 +73,24 @@ describe('callTool', () => {
   });
 
   it('activates the per-call AsyncLocalStorage context', async () => {
-    let storeInsideCall: string[] | undefined;
+    let storeInsideCall: { text: string[]; structured: unknown[] } | undefined;
     executeCommandV3.mockImplementation(async () => {
       storeInsideCall = callOutput.getStore();
       return 0;
     });
     await callTool(tool, {}, 'tenant1', resolvePlatform);
-    expect(Array.isArray(storeInsideCall)).toBe(true);
+    expect(storeInsideCall).toMatchObject({ text: [], structured: [] });
   });
 
   it('isolated stores per concurrent call — outputs never mix', async () => {
     // Simulate two calls with different output.
     executeCommandV3
       .mockImplementationOnce(async () => {
-        callOutput.getStore()?.push('output-A');
+        callOutput.getStore()?.text.push('output-A');
         return 0;
       })
       .mockImplementationOnce(async () => {
-        callOutput.getStore()?.push('output-B');
+        callOutput.getStore()?.text.push('output-B');
         return 0;
       });
 

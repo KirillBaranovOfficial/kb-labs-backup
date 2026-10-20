@@ -5,7 +5,7 @@
  * Implements ADR-0043: Adapter Manifest System
  */
 
-import type { AdapterManifest, AdapterDependency } from '@kb-labs/core-platform';
+import type { AdapterManifest, AdapterDependency, ILogger } from '@kb-labs/core-platform';
 
 /**
  * Adapter configuration from kb.config.json
@@ -35,6 +35,8 @@ export interface LoadedAdapterModule {
 interface DependencyGraphNode {
   /** Adapter name (config key) */
   name: string;
+  /** Configured package specifier used to load this slot. */
+  modulePath?: string;
   /** Adapter manifest */
   manifest: AdapterManifest;
   /** Loaded module */
@@ -206,7 +208,8 @@ export class AdapterLoader {
    */
   async buildDependencyGraph(
     configs: Record<string, AdapterConfig>,
-    loadModule: (modulePath: string) => Promise<LoadedAdapterModule>
+    loadModule: (modulePath: string) => Promise<LoadedAdapterModule>,
+    externalAdapters: ReadonlyMap<string, unknown> = new Map(),
   ): Promise<DependencyGraph> {
     const graph = new DependencyGraph();
 
@@ -220,6 +223,7 @@ export class AdapterLoader {
 
       graph.addNode({
         name,
+        modulePath: config.module,
         manifest: module.manifest,
         module,
         config: config.config,
@@ -234,12 +238,12 @@ export class AdapterLoader {
       // Add edges for required dependencies
       for (const depId of node.requiredDeps) {
         const depNode = graph.getNode(depId);
-        if (!depNode) {
+        if (!depNode && !externalAdapters.has(depId)) {
           throw this.createMissingDependencyError(node.name, depId, graph);
         }
         // Edge from dependency to dependent (dependency must load first)
         // db -> logPersistence means db loads before logPersistence
-        graph.addEdge(depId, node.name);
+        if (depNode) {graph.addEdge(depId, node.name);}
       }
 
       // Add edges for optional dependencies (if present)
@@ -299,10 +303,16 @@ export class AdapterLoader {
    */
   async loadAdapters(
     configs: Record<string, AdapterConfig>,
-    loadModule: (modulePath: string) => Promise<LoadedAdapterModule>
+    loadModule: (modulePath: string) => Promise<LoadedAdapterModule>,
+    sharedDeps: {
+      logger?: ILogger;
+      onAdapterLoadFailure?: (slot: string, packageName: string, error: unknown) => void;
+      adapters?: ReadonlyMap<string, unknown>;
+      platformServices?: Record<string, () => unknown | Promise<unknown>>;
+    } = {},
   ): Promise<Map<string, unknown>> {
     // Step 1: Build dependency graph
-    const graph = await this.buildDependencyGraph(configs, loadModule);
+    const graph = await this.buildDependencyGraph(configs, loadModule, sharedDeps.adapters);
 
     // Step 2: Topological sort
     const sorted = graph.topologicalSort();
@@ -311,37 +321,50 @@ export class AdapterLoader {
     const adapters = new Map<string, unknown>();
 
     for (const node of sorted) {
-      // Build deps object for factory function
-      const deps: Record<string, unknown> = {};
+      try {
+        // Build deps object for factory function
+        const deps: Record<string, unknown> = sharedDeps.logger ? { logger: sharedDeps.logger } : {};
 
-      // Get dependency aliases
-      const aliases = this.getDependencyAliases(node.manifest);
+        // Get dependency aliases
+        const aliases = this.getDependencyAliases(node.manifest);
 
-      // Add required dependencies
-      for (const depId of node.requiredDeps) {
-        const depInstance = adapters.get(depId);
-        if (!depInstance) {
-          throw new Error(
-            `Internal error: Required dependency "${depId}" not loaded before "${node.name}"`
-          );
-        }
-        const alias = aliases.get(depId) ?? depId;
-        deps[alias] = depInstance;
-      }
-
-      // Add optional dependencies (if present)
-      for (const depId of node.optionalDeps) {
-        const depInstance = adapters.get(depId);
-        if (depInstance) {
+        // Add required dependencies
+        for (const depId of node.requiredDeps) {
+          const depInstance = adapters.get(depId) ?? sharedDeps.adapters?.get(depId);
+          if (!depInstance) {
+            throw new Error(
+              `Required adapter dependency "${depId}" failed to load before "${node.name}".`,
+            );
+          }
           const alias = aliases.get(depId) ?? depId;
           deps[alias] = depInstance;
         }
-        // If optional dep missing, skip
-      }
 
-      // Create adapter instance
-      const instance = await node.module.createAdapter(node.config, deps);
-      adapters.set(node.name, instance);
+        for (const declaration of node.manifest.requires?.platformServices ?? []) {
+          const service = typeof declaration === 'string' ? declaration : declaration.id;
+          const alias = typeof declaration === 'string' ? service : declaration.alias ?? service;
+          const provider = sharedDeps.platformServices?.[service];
+          if (provider === undefined) {
+            throw new Error(`Adapter "${node.name}" requires platform service "${service}" but no provider is registered.`);
+          }
+          deps[alias] = await provider();
+        }
+
+        // Add optional dependencies (if present)
+        for (const depId of node.optionalDeps) {
+          const depInstance = adapters.get(depId);
+          if (depInstance) {
+            const alias = aliases.get(depId) ?? depId;
+            deps[alias] = depInstance;
+          }
+        }
+
+        const instance = await node.module.createAdapter(node.config, deps);
+        adapters.set(node.name, instance);
+      } catch (error) {
+        if (!sharedDeps.onAdapterLoadFailure) {throw error;}
+        sharedDeps.onAdapterLoadFailure(node.name, node.modulePath ?? node.name, error);
+      }
     }
 
     return adapters;

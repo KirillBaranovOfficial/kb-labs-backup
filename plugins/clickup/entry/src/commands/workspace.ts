@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, requireTeamId, getWorkspaceHierarchy } from '@kb-labs/clickup-core';
 import type { ClickUpWorkspace } from '@kb-labs/clickup-contracts';
 import { handleError } from '../utils/error.js';
@@ -27,13 +27,12 @@ export default defineCommand({
   description: 'Show full workspace hierarchy (spaces → folders → lists)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<WorkspaceFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<WorkspaceFlags>) {
       try {
         const workspace = await getWorkspaceHierarchy(requireApiKey(), requireTeamId());
 
         if (input.flags.json) {
-          ctx.ui?.json?.(input.flags.full ? workspace : toCompact(workspace));
-          return { ok: true, result: workspace };
+          return input.flags.full ? workspace : toCompact(workspace);
         }
 
         const sections = workspace.spaces.map(space => ({
@@ -48,10 +47,9 @@ export default defineCommand({
         }));
         ctx.ui?.info?.(workspace.name, { sections });
 
-        return { ok: true, result: workspace };
+        return workspace;
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

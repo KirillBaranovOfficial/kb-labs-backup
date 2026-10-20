@@ -22,6 +22,7 @@ export const LOG_CONTEXT_FIELDS = [
   "pluginId",
   "component",
   "operation",
+  "correlationId",
   "requestId",
   "traceId",
   "executionId",
@@ -200,4 +201,7 @@ export interface ILogger {
    * ```
    */
   onLog?(callback: (record: LogRecord) => void | Promise<void>): () => void;
+
+  /** Wait for every registered log extension to finish its pending deliveries. */
+  flush(): Promise<void>;
 }

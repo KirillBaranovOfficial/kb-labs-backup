@@ -16,6 +16,6 @@ export { NoOpInvoke } from './invoke.js';
 export { NoOpDocumentDatabase, NoOpKVStore } from './database.js';
 export { NoOpLLM } from './llm.js';
 export { NoOpEmbeddings } from './embeddings.js';
-export { NoOpNotifier } from './notifier.js';
-export { NoOpLogReader } from './log-reader.js';
+export { UnavailableLogReader } from './log-reader.js';
+export { UnavailableVectorStore } from './vector-store.js';
 export { NoOpLogger } from './logger.js';

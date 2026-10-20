@@ -65,8 +65,8 @@ docs: update agent protocol examples
 1. Create `cmd/<name>.go` with a cobra command
 2. Register it in `init()` with `rootCmd.AddCommand(<name>Cmd)`
 3. Use `loadManager()` helper for commands that need config + services
-4. Support `--json` flag: check `jsonMode` and use `JSONOut()` for structured output
-5. Return `errSilent` after printing errors (prevents cobra from printing again)
+4. Support `--json` by returning `JSONOut(data)`; the shared Cobra boundary renders it
+5. Return typed errors and never print command output directly; the shared boundary renders results and failures
 
 ### Adding a New Service Runner
 

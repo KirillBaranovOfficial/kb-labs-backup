@@ -41,8 +41,6 @@ describe('E2E Context Tests', () => {
       export default {
         async execute(ctx, input) {
           return {
-            ok: true,
-            result: {
               hasHost: typeof ctx.host === 'string',
               hasRequestId: typeof ctx.requestId === 'string',
               hasUI: ctx.ui !== undefined,
@@ -52,7 +50,6 @@ describe('E2E Context Tests', () => {
               hasTrace: ctx.trace !== undefined,
               host: ctx.host,
               requestId: ctx.requestId,
-            },
           };
         }
       };
@@ -65,7 +62,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-test-123',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -108,11 +105,8 @@ describe('E2E Context Tests', () => {
           // Check if fs.exists is a function
           const hasExistsMethod = typeof ctx.runtime.fs.exists === 'function';
           return {
-            ok: true,
-            result: {
               hasExistsMethod,
               hasFsAPI: ctx.runtime.fs !== undefined,
-            },
           };
         }
       };
@@ -125,7 +119,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-fs-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -163,7 +157,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-shell-test',
       permissions: { shell: { allow: ['node'] }, quotas: { timeoutMs: 5000, maxOutputBytes: 1024 } },
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess({
@@ -187,13 +181,10 @@ describe('E2E Context Tests', () => {
       export default {
         async execute(ctx, input) {
           return {
-            ok: true,
-            result: {
               hasTraceId: typeof ctx.trace.traceId === 'string',
               hasSpanId: typeof ctx.trace.spanId === 'string',
               traceIdLength: ctx.trace.traceId.length,
               spanIdLength: ctx.trace.spanId.length,
-            },
           };
         }
       };
@@ -206,7 +197,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-trace-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -234,11 +225,7 @@ describe('E2E Context Tests', () => {
     const handlerCode = `
       export default {
         async execute(ctx, input) {
-          return {
-            ok: false,
-            error: 'command failed',
-            result: { custom: 'data' },
-          };
+          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'command failed', hint: 'Resolve the failure, then retry.' } };
         }
       };
     `;
@@ -250,7 +237,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-exit-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -265,7 +252,15 @@ describe('E2E Context Tests', () => {
     const result = wrapCliResult(runResult, descriptor);
 
     expect(result.exitCode).toBe(1);
-    expect(result.result).toEqual({ custom: 'data' });
+    expect(result.error).toEqual({
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      area: 'runtime',
+      stage: 'run',
+      severity: 'error',
+      retryable: false,
+      message: 'command failed',
+      hint: 'Resolve the failure, then retry.',
+    });
     expect(result.meta).toBeDefined();
   });
 
@@ -275,8 +270,6 @@ describe('E2E Context Tests', () => {
       export default {
         async execute(ctx, input) {
           return {
-            ok: true,
-            result: {
               hasLLM: ctx.platform.llm !== undefined,
               hasLogger: ctx.platform.logger !== undefined,
               hasEmbeddings: ctx.platform.embeddings !== undefined,
@@ -284,7 +277,6 @@ describe('E2E Context Tests', () => {
               hasCache: ctx.platform.cache !== undefined,
               hasStorage: ctx.platform.storage !== undefined,
               hasAnalytics: ctx.platform.analytics !== undefined,
-            },
           };
         }
       };
@@ -297,7 +289,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-platform-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -344,8 +336,6 @@ describe('E2E Context Tests', () => {
           const colorsWork = typeof coloredText === 'string';
 
           return {
-            ok: true,
-            result: {
               hasColors,
               hasSuccessColor,
               hasErrorColor,
@@ -354,7 +344,6 @@ describe('E2E Context Tests', () => {
               hasBoldColor,
               hasWrite,
               colorsWork,
-            },
           };
         }
       };
@@ -367,7 +356,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-ui-api-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({

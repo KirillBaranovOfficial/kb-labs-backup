@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolveToken, extractBearerToken } from '../auth/tokens.js';
+import { authRejectionEnvelope, resolveToken, extractBearerToken } from '../auth/tokens.js';
 import { signAccessToken } from '@kb-labs/gateway-auth';
 import type { ICache } from '@kb-labs/core-platform';
 import type { JwtConfig } from '@kb-labs/gateway-auth';
@@ -12,6 +12,33 @@ function makeCache(entries: Record<string, unknown> = {}): ICache {
     clear: vi.fn(),
   } as unknown as ICache;
 }
+
+describe('authRejectionEnvelope', () => {
+  // case: S-203.20
+  it('uses catalogued actionable codes and fills the actual Gateway URL', () => {
+    const gatewayUrl = 'https://gateway.example.test:444';
+    const expectedCodes = [
+      ['expired', 'KB_AUTH_TOKEN_EXPIRED'],
+      ['reissue-required', 'KB_AUTH_TOKEN_REISSUE_REQUIRED'],
+      ['revoked', 'KB_AUTH_SESSION_REVOKED'],
+      ['inactive', 'KB_AUTH_USER_INACTIVE'],
+      ['invalid', 'KB_AUTH_REQUIRED'],
+      ['unknown-issuer', 'KB_AUTH_REQUIRED'],
+    ] as const;
+    for (const [reason, code] of expectedCodes) {
+      const envelope = authRejectionEnvelope(reason, gatewayUrl, 'request-1');
+      expect(envelope).toMatchObject({
+        code,
+        details: { gatewayUrl, reason },
+        correlationId: 'request-1',
+      });
+      expect(envelope.hint).toContain(gatewayUrl);
+    }
+    expect(authRejectionEnvelope(undefined, gatewayUrl, 'request-2')).toMatchObject({
+      code: 'KB_AUTH_REQUIRED', details: { gatewayUrl }, correlationId: 'request-2',
+    });
+  });
+});
 
 describe('extractBearerToken', () => {
   it('extracts token from Bearer header', () => {
@@ -51,7 +78,7 @@ describe('resolveToken', () => {
         hostId: 'host-1',
         namespaceId: 'ns-1',
         tier: 'free',
-        type: 'machine',
+        type: 'machine_access',
         permissions: ['host:connect'],
       },
       stubJwtConfig,
@@ -60,11 +87,12 @@ describe('resolveToken', () => {
     const cache = makeCache();
     const ctx = await resolveToken(token, cache, stubJwtConfig);
 
-    expect(ctx).not.toBeNull();
-    expect(ctx!.type).toBe('machine');
-    expect(ctx!.userId).toBe('host-1');
-    expect(ctx!.namespaceId).toBe('ns-1');
-    expect(ctx!.permissions).toContain('host:connect');
+    expect(ctx.ok).toBe(true);
+    if (!ctx.ok) { throw new Error(`Unexpected token rejection: ${ctx.reason}`); }
+    expect(ctx.payload.type).toBe('machine');
+    expect(ctx.payload.userId).toBe('host-1');
+    expect(ctx.payload.namespaceId).toBe('ns-1');
+    expect(ctx.payload.permissions).toContain('host:connect');
   });
 
   it('resolves host-registry opaque token from cache (issued by /hosts/register)', async () => {
@@ -75,28 +103,29 @@ describe('resolveToken', () => {
 
     const ctx = await resolveToken(token, cache, stubJwtConfig);
 
-    expect(ctx).not.toBeNull();
-    expect(ctx!.type).toBe('machine');
-    expect(ctx!.userId).toBe('host-1');
-    expect(ctx!.namespaceId).toBe('ns-1');
-    expect(ctx!.permissions).toContain('host:connect');
+    expect(ctx.ok).toBe(true);
+    if (!ctx.ok) { throw new Error(`Unexpected token rejection: ${ctx.reason}`); }
+    expect(ctx.payload.type).toBe('machine');
+    expect(ctx.payload.userId).toBe('host-1');
+    expect(ctx.payload.namespaceId).toBe('ns-1');
+    expect(ctx.payload.permissions).toContain('host:connect');
   });
 
-  it('returns null for an invalid / unknown token', async () => {
+  it('returns a typed invalid category for an unknown token', async () => {
     const cache = makeCache();
     const ctx = await resolveToken('not-a-valid-token', cache, stubJwtConfig);
-    expect(ctx).toBeNull();
+    expect(ctx).toEqual({ ok: false, reason: 'invalid' });
   });
 
   it('returns null for a JWT signed with a different secret', async () => {
     const { token } = await signAccessToken(
-      { hostId: 'h', namespaceId: 'ns', tier: 'free', type: 'machine', permissions: [] },
+      { hostId: 'h', namespaceId: 'ns', tier: 'free', type: 'machine_access', permissions: [] },
       { secret: 'other-secret' },
     );
 
     const cache = makeCache();
     const ctx = await resolveToken(token, cache, stubJwtConfig);
-    expect(ctx).toBeNull();
+    expect(ctx).toEqual({ ok: false, reason: 'invalid' });
   });
 
   it('embeds custom permissions in JWT path', async () => {
@@ -105,7 +134,7 @@ describe('resolveToken', () => {
         hostId: 'h',
         namespaceId: 'ns',
         tier: 'free',
-        type: 'machine',
+        type: 'machine_access',
         permissions: ['machine:register', 'host:connect'],
       },
       stubJwtConfig,
@@ -113,8 +142,9 @@ describe('resolveToken', () => {
 
     const cache = makeCache();
     const ctx = await resolveToken(token, cache, stubJwtConfig);
-    expect(ctx).not.toBeNull();
-    expect(ctx!.permissions).toContain('machine:register');
-    expect(ctx!.permissions).toContain('host:connect');
+    expect(ctx.ok).toBe(true);
+    if (!ctx.ok) { throw new Error(`Unexpected token rejection: ${ctx.reason}`); }
+    expect(ctx.payload.permissions).toContain('machine:register');
+    expect(ctx.payload.permissions).toContain('host:connect');
   });
 });

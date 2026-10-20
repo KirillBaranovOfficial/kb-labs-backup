@@ -35,11 +35,14 @@ function validateSegments(segs: readonly string[]): string | null {
 
 const noopLogger: ILogger = {
   debug: () => {},
+  trace: () => {},
   info:  () => {},
   warn:  () => {},
   error: () => {},
+  fatal: () => {},
+  flush: async () => {},
   child: () => noopLogger,
-} as unknown as ILogger;
+};
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
@@ -72,7 +75,7 @@ export class TrieBackedRegistry {
   }
 
   registerManifest(cmd: RegisteredCommand): void {
-    if (cmd.manifest._synthetic) { return; }
+    if (cmd.manifest._synthetic && !cmd.manifest.unavailablePlugin) { return; }
 
     const segs = cmd.manifest.segments;
     const pkg  = cmd.packageName ?? 'unknown';
@@ -161,7 +164,7 @@ export class TrieBackedRegistry {
     }
 
     // ── groupMeta from ManifestV3 declarations ────────────────────────────────
-    const v3 = cmd.manifest.manifestV2;
+    const v3 = cmd.manifest.v3Manifest;
     if (v3?.cli?.groupMeta) {
       for (const meta of v3.cli.groupMeta) {
         const metaSegs = meta.path.trim().split(/\s+/).filter(Boolean);
@@ -196,6 +199,10 @@ export class TrieBackedRegistry {
     return this.systemRouter.listSystemTopLevel();
   }
 
+  listSystemCommands(): SystemCommand[] {
+    return this.systemRouter.listSystemCommands();
+  }
+
   getPluginGroupDescribe(segments: string[]): string | undefined {
     return this.pluginRouter.getGroupDescribe(segments);
   }
@@ -210,6 +217,34 @@ export class TrieBackedRegistry {
 
   getCommandAt(segments: string[]): RegisteredCommand | null {
     return this.pluginRouter.getAt(segments);
+  }
+
+  protectionFor(route: RouteResult): { protectionClass: string; requiresSession: boolean } {
+    let protectionClass: string;
+    if (route.type === 'system-cmd') {
+      protectionClass = route.cmd.authProtection === 'public' ? 'public:system' : 'session:system';
+    } else if (route.type === 'command' || route.type === 'group' || route.type === 'not-found') {
+      protectionClass = 'session:plugin';
+    } else {
+      protectionClass = 'session:system';
+    }
+    return { protectionClass, requiresSession: protectionClass !== 'public:system' };
+  }
+
+  listProtectionCommands(): Array<{ path: string[]; protectionClass: string; requiresSession: boolean; available: boolean }> {
+    const systemCommands = this.systemRouter.listSystemCommandEntries().map(({ command, path }) => {
+      const protection = this.protectionFor({ type: 'system-cmd', cmd: command, rest: [] });
+      return { path, ...protection, available: true };
+    });
+    const pluginCommands = this.pluginRouter.listAll().map((command) => {
+      const protection = this.protectionFor({ type: 'command', command, rest: [] });
+      return {
+        path: [...command.manifest.segments],
+        ...protection,
+        available: command.available && !command.shadowed,
+      };
+    });
+    return [...systemCommands, ...pluginCommands];
   }
 
   // ─── Partial loading state ─────────────────────────────────────────────────

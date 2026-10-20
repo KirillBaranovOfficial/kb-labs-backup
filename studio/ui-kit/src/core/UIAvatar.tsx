@@ -2,6 +2,7 @@
  * UIAvatar component - User avatar
  *
  * Wraps Ant Design Avatar.
+  * @demoArgs {"children":"KB","shape":"circle","size":"large"}
  */
 
 import * as React from 'react';

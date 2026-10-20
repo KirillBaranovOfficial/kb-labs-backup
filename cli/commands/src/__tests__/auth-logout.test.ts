@@ -13,15 +13,9 @@ const mockCredLoad = vi.fn();
 const mockCredClear = vi.fn();
 const mockSessionLoad = vi.fn();
 const mockSessionClear = vi.fn();
+const mockLogout = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: class {
-    load = mockCredLoad;
-    clear = mockCredClear;
-  },
-  SessionManager: class {
-    load = mockSessionLoad;
-    clear = mockSessionClear;
-  },
+  AuthSessionOwner: class { logout = mockLogout; },
 }));
 
 import { authLogout } from '../commands/system/auth/auth-logout.js';
@@ -48,31 +42,38 @@ function makeCtx(captured: { errors: string[]; output: string[]; json: unknown[]
     } as any,
     runtime: { fs: {} as any, fetch: vi.fn(), env: vi.fn() },
     api: {} as any,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockLogout.mockImplementation(async () => {
+    const [machine, session] = await Promise.all([mockCredLoad(), mockSessionLoad()]);
+    if (!machine && !session) { return false; }
+    await Promise.all([mockCredClear(), mockSessionClear()]);
+    return true;
+  });
 });
 
 describe('kb auth logout', () => {
   it('LO-01: clears both stores when both exist', async () => {
     mockCredLoad.mockResolvedValueOnce({ accessToken: 'a' });
-    mockSessionLoad.mockResolvedValueOnce({ accessToken: 'b' });
+    mockSessionLoad.mockResolvedValueOnce({ gatewayUrl: 'https://gateway.test', refreshToken: 'refresh-b', accessToken: 'b' });
 
     const captured = { errors: [], output: [], json: [] };
     const exitCode = await authLogout.run(makeCtx(captured), [], {});
 
     expect(exitCode).toBe(0);
+    expect(mockLogout).toHaveBeenCalledOnce();
     expect(mockCredClear).toHaveBeenCalled();
     expect(mockSessionClear).toHaveBeenCalled();
   });
 
   it('LO-02: clears only the store that exists (session-only)', async () => {
     mockCredLoad.mockResolvedValueOnce(null);
-    mockSessionLoad.mockResolvedValueOnce({ accessToken: 'b' });
+    mockSessionLoad.mockResolvedValueOnce({ gatewayUrl: 'https://gateway.test', refreshToken: 'refresh-b', accessToken: 'b' });
 
     const captured = { errors: [], output: [], json: [] };
     const exitCode = await authLogout.run(makeCtx(captured), [], {});

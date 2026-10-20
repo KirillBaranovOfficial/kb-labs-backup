@@ -3,9 +3,14 @@
  */
 
 import type { StateBroker, BrokerStats, HealthStatus } from '../index';
+import { getHostServiceAddress, type HostServiceEnvironment } from '@kb-labs/core-platform';
 
 export class HTTPStateBroker implements StateBroker {
-  constructor(private baseURL: string = 'http://localhost:7777') {}
+  private readonly baseURL: string;
+
+  constructor(environment?: HostServiceEnvironment) {
+    this.baseURL = getHostServiceAddress('state-broker', environment);
+  }
 
   async get<T>(key: string): Promise<T | null> {
     try {

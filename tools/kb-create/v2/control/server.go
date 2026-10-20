@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"net"
 	"net/http"
@@ -28,6 +29,7 @@ type Server struct {
 	Runner  host.Runner
 	State   host.State
 	Version string
+	Restart func(context.Context) (RestartResponse, error)
 
 	token     string
 	address   string
@@ -57,7 +59,12 @@ func (s *Server) Start() error {
 	s.startedAt = time.Now().UTC()
 	s.queue = &Queue{Path: s.State.UpdateRequests()}
 	s.http = &http.Server{Handler: s.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second}
-	file := File{Protocol: ProtocolVersion, Address: s.address, Token: s.token, PID: os.Getpid(), Version: s.Version}
+	processIdentity, err := host.ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	file := File{Protocol: ProtocolVersion, Address: s.address, Token: s.token, PID: os.Getpid(), ProcessIdentity: processIdentity, Version: s.Version}
 	if err := writeControlFile(s.State.Control(), file); err != nil {
 		_ = listener.Close()
 		return err
@@ -91,14 +98,7 @@ func writeControlFile(path string, file File) error {
 	if err != nil {
 		return err
 	}
-	temp := path + ".tmp"
-	// WriteFile only applies the mode to a newly created file, so make sure a
-	// stale temp file cannot leave wider permissions behind.
-	_ = os.Remove(temp)
-	if err := os.WriteFile(temp, append(data, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, path)
+	return host.WriteRecordFile(path, append(data, '\n'))
 }
 
 func (s *Server) handler() http.Handler {
@@ -107,7 +107,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/host/restart", s.restart)
 	mux.HandleFunc("POST /v1/update-request", s.updateRequest)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		s.fail(w, http.StatusNotFound, contracts.NewLauncherError("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request.", nil))
+		s.fail(w, http.StatusNotFound, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request.", nil))
 	})
 	return s.guard(mux)
 }
@@ -117,7 +117,7 @@ func (s *Server) handler() http.Handler {
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorized(r) {
-			s.fail(w, http.StatusUnauthorized, contracts.NewLauncherError("KB_HOST_CONTROL_UNAUTHORIZED", "The launcher control channel rejected the request token.", "Read the current token from control.json in the launcher state directory.", nil))
+			s.fail(w, http.StatusUnauthorized, contracts.NewDiag("KB_HOST_CONTROL_UNAUTHORIZED", "The launcher control channel rejected the request token.", "Read the current token from control.json in the install-root host-state directory reported by `kb-create doctor`.", nil))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -158,6 +158,15 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 	// which is the least surprising behaviour for an idempotent request.
 	s.restartMu.Lock()
 	defer s.restartMu.Unlock()
+	if s.Restart != nil {
+		response, err := s.Restart(r.Context())
+		if err != nil {
+			s.failWith(w, err)
+			return
+		}
+		s.write(w, http.StatusOK, response)
+		return
+	}
 	stopped, err := s.Runner.Stop(r.Context())
 	if err != nil {
 		s.failWith(w, err)
@@ -176,23 +185,29 @@ func (s *Server) updateRequest(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	var input UpdateRequestInput
 	if err := decoder.Decode(&input); err != nil {
-		s.fail(w, http.StatusBadRequest, contracts.NewLauncherError("KB_RUNTIME_INPUT_INVALID", "The update request body is not valid.", "Send {\"version\":\"x.y.z\"} or {\"channel\":\"stable\"}.", err))
+		s.fail(w, http.StatusBadRequest, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "The update request body is not valid.", "Send {\"version\":\"x.y.z\"} or {\"channel\":\"stable\"}.", err))
 		return
 	}
 	request, err := s.queue.Add(input)
 	if errors.Is(err, errQueueFull) {
-		s.fail(w, http.StatusTooManyRequests, contracts.NewLauncherError("KB_RUNTIME_RATE_LIMITED", "Too many update requests are waiting.", "Wait for the pending update requests to be processed.", err))
+		limited := contracts.NewDiag("KB_RUNTIME_RATE_LIMITED", "Too many update requests are waiting.", "Wait for the pending update requests to be processed.", err)
+		limited.Meta = map[string]any{"retryAfter": "the pending update completes"}
+		s.fail(w, http.StatusTooManyRequests, limited)
 		return
 	}
 	if err != nil {
-		s.fail(w, http.StatusBadRequest, contracts.NewLauncherError("KB_RUNTIME_INPUT_INVALID", "The update request is not valid.", "Send exactly one of an exact version or a channel (stable, canary, experimental).", err))
+		diagnostic := contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "The update request is not valid.", "Send exactly one of an exact version or a channel (stable, canary, experimental).", err)
+		if input.Version != "" && input.Channel != "" {
+			diagnostic.Cause = "exactly one of version and channel is required"
+		}
+		s.fail(w, http.StatusBadRequest, diagnostic)
 		return
 	}
 	s.write(w, http.StatusAccepted, UpdateRequestResponse{OK: true, Protocol: ProtocolVersion, Request: request})
 }
 
 func (s *Server) failWith(w http.ResponseWriter, err error) {
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		status := http.StatusInternalServerError
 		if typed.Code == "KB_HOST_ALREADY_RUNNING" {
@@ -201,16 +216,19 @@ func (s *Server) failWith(w http.ResponseWriter, err error) {
 		s.fail(w, status, typed)
 		return
 	}
-	s.fail(w, http.StatusInternalServerError, contracts.NewLauncherError("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err))
+	s.fail(w, http.StatusInternalServerError, contracts.NewDiag("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err))
 }
 
-func (s *Server) fail(w http.ResponseWriter, status int, err *contracts.LauncherError) {
+func (s *Server) fail(w http.ResponseWriter, status int, err *diag.Diag) {
+	err = diag.FromError(err)
 	s.write(w, status, ErrorResponse{OK: false, Error: err})
 }
 
 func (s *Server) write(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	_ = diag.WriteHTTPJSON(w, status, body, func(cause error) any {
+		return ErrorResponse{OK: false, Error: contracts.NewDiag(
+			"KB_RUNTIME_UNEXPECTED", "The response could not be encoded.",
+			"Correct the launcher response data, then retry the request.", cause,
+		)}
+	})
 }

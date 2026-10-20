@@ -1,0 +1,21 @@
+{
+  "name": "@kb-labs/e2e-llm-deterministic",
+  "version": "1.0.0",
+  "description": "Deterministic LLM adapter used by installed-platform journeys",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": ["index.js", "manifest.js", "dist/manifest.json"],
+  "kb": {
+    "adapter": {
+      "manifest": "./manifest.js"
+    },
+    "requiredOutputs": ["./dist/manifest.json"]
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "UNLICENSED"
+}

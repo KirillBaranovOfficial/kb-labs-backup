@@ -5,67 +5,194 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
-	"strings"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Supervisor owns one host Runner and one control server.
 type Supervisor struct {
-	Runner  host.Runner
-	State   host.State
-	Version string
+	Runner       host.Runner
+	State        host.State
+	PlatformRoot string
+	Version      string
 }
 
 // Run starts the host, publishes the control channel and blocks until ctx is
 // cancelled; it then stops the host gracefully and removes its state files.
-// A second supervisor for the same state home fails with KB_HOST_ALREADY_RUNNING.
+// A second supervisor for the same installation state fails with KB_HOST_ALREADY_RUNNING.
 func (s *Supervisor) Run(ctx context.Context) error {
 	if err := s.State.Ensure(); err != nil {
-		return contracts.NewLauncherError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
+		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
-	if pid, ok := s.livePID(); ok {
-		e := contracts.NewLauncherError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil)
-		e.Details = map[string]string{"pid": strconv.Itoa(pid)}
+	if record, exists := readRecordFile(s.State); exists && host.ProcessAlive(record.PID) {
+		identityStatus := host.ProcessIdentityOf(record.PID, record.ProcessIdentity)
+		switch identityStatus {
+		case host.ProcessIdentityMatch:
+			if record.InstallationID == "" {
+				return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+			}
+			return Refusal(record, s.PlatformRoot)
+		case host.ProcessIdentityMismatch:
+			return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+		case host.ProcessIdentityUndetermined:
+			return host.UndeterminedProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+		default:
+			return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+		}
+	}
+	if record, ok := ReadRecord(s.State); ok {
+		e := Refusal(record, s.PlatformRoot)
 		return e
 	}
-	if err := os.WriteFile(s.State.SupervisorPID(), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
-		return contracts.NewLauncherError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
+	root, err := filepath.Abs(s.PlatformRoot)
+	if err != nil {
+		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot resolve the platform root for the launcher.", "Pass an accessible --platform-root.", err)
+	}
+	processIdentity, err := host.ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		return contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "The supervisor process identity could not be recorded.", "Start the supervisor through `"+contracts.ShellCommand("kb-create", "start", "--platform-root", root)+"` so the launcher supplies its per-start identity token.", err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(root)
+	if err != nil {
+		return contracts.NewDiag(contracts.CodeReceiptUnavailable, "The installation ownership identity could not be read.", "Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` and repair its layout before starting the host.", err)
+	}
+	record := Record{PID: os.Getpid(), ProcessIdentity: processIdentity, InstallationID: installationID, PlatformRoot: filepath.Clean(root)}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	if err := host.WriteRecordFile(s.State.SupervisorPID(), append(data, '\n')); err != nil {
+		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	defer os.Remove(s.State.SupervisorPID())
 	if _, err := s.Runner.Start(ctx); err != nil {
 		return err
 	}
-	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version}
+	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version, Restart: s.restart}
 	if err := server.Start(); err != nil {
 		_, _ = s.Runner.Stop(context.Background())
-		return contracts.NewLauncherError("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", err)
+		return contracts.NewDiag("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", err)
 	}
 	<-ctx.Done()
 	// Close the channel first so no restart races the shutdown stop.
 	_ = server.Close()
-	_, err := s.Runner.Stop(context.Background())
+	_, err = s.Runner.Stop(context.Background())
 	return err
 }
 
-// livePID returns the pid of a running supervisor for this state home.
-func (s *Supervisor) livePID() (int, bool) { return LivePID(s.State) }
+func (s *Supervisor) restart(ctx context.Context) (control.RestartResponse, error) {
+	previous, ok := s.Runner.(*host.ProcessRunner)
+	if !ok {
+		return control.RestartResponse{}, fmt.Errorf("supervisor restart requires the platform process runner")
+	}
+	outcome, err := host.RestartWithRecovery(ctx, s.PlatformRoot, previous,
+		func(ctx context.Context, runner *host.ProcessRunner) (host.Info, error) { return runner.Start(ctx) })
+	if outcome.Runner != nil {
+		s.Runner = outcome.Runner
+	}
+	if err != nil {
+		return control.RestartResponse{}, err
+	}
+	return control.RestartResponse{OK: true, Protocol: control.ProtocolVersion, Stopped: outcome.Stopped, Host: outcome.Info}, nil
+}
 
-// LivePID reads supervisor.pid and reports the pid when that process is alive.
-// A pid file that points at a dead process is stale and is removed.
-func LivePID(state host.State) (int, bool) {
+// livePID returns the pid of a running supervisor for this installation state.
+// Record identifies the platform root and process held by supervisor.pid.
+type Record struct {
+	PID             int    `json:"pid"`
+	ProcessIdentity string `json:"processIdentity,omitempty"`
+	InstallationID  string `json:"installationId"`
+	PlatformRoot    string `json:"platformRoot"`
+}
+
+// ReadRecord reads supervisor.pid. A dead process is stale and its file is removed.
+func ReadRecord(state host.State) (Record, bool) {
+	record, ok := readRecordFile(state)
+	if !ok {
+		return Record{}, false
+	}
+	if !host.ProcessAlive(record.PID) {
+		_ = os.Remove(state.SupervisorPID())
+		return Record{}, false
+	}
+	switch host.ProcessIdentityOf(record.PID, record.ProcessIdentity) {
+	case host.ProcessIdentityMatch:
+		if record.InstallationID != "" {
+			return record, true
+		}
+	case host.ProcessIdentityMismatch:
+	case host.ProcessIdentityUndetermined:
+	default:
+		return Record{}, false
+	}
+	return Record{}, false
+}
+
+func StaleRecord(state host.State) (Record, host.ProcessIdentityStatus, bool) {
+	record, ok := readRecordFile(state)
+	if !ok || !host.ProcessAlive(record.PID) {
+		return record, host.ProcessIdentityUndetermined, false
+	}
+	if record.InstallationID == "" {
+		return record, host.ProcessIdentityUndetermined, true
+	}
+	identityStatus := host.ProcessIdentityOf(record.PID, record.ProcessIdentity)
+	switch identityStatus {
+	case host.ProcessIdentityMatch:
+		return Record{}, identityStatus, false
+	case host.ProcessIdentityMismatch, host.ProcessIdentityUndetermined:
+		return record, identityStatus, true
+	default:
+		return record, host.ProcessIdentityUndetermined, true
+	}
+}
+
+func readRecordFile(state host.State) (Record, bool) {
 	data, err := os.ReadFile(state.SupervisorPID())
+	if err != nil {
+		return Record{}, false
+	}
+	var record Record
+	if err := json.Unmarshal(data, &record); err != nil || record.PID <= 0 {
+		_ = os.Remove(state.SupervisorPID())
+		return Record{}, false
+	}
+	return record, true
+}
+
+// LivePID reports only a supervisor serving the requested platform root.
+func LivePID(state host.State, platformRoot string) (int, bool) {
+	record, ok := ReadRecord(state)
+	if !ok {
+		return 0, false
+	}
+	installationID, err := versionroot.InstallationIDForPath(platformRoot)
 	if err != nil {
 		return 0, false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || !host.ProcessAlive(pid) {
-		_ = os.Remove(state.SupervisorPID())
+	if record.InstallationID != installationID {
 		return 0, false
 	}
-	return pid, true
+	return record.PID, true
+}
+
+func Refusal(record Record, requestedRoot string) *diag.Diag {
+	installationID, err := versionroot.InstallationIDForPath(requestedRoot)
+	if err == nil && record.InstallationID == installationID {
+		command := contracts.ShellCommand("kb-create", "status", "--platform-root", requestedRoot)
+		failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.",
+			"Use `"+command+"` to inspect it.", nil)
+		failure.Meta = map[string]any{"pid": strconv.Itoa(record.PID), "platformRoot": record.PlatformRoot, "nextCommand": command}
+		return failure
+	}
+	return host.RootConflict(record.PlatformRoot, record.PID)
 }

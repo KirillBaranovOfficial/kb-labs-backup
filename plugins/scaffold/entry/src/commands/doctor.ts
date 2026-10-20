@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { defineCommand, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { scanRoot, type Finding } from '@kb-labs/scaffold-core';
 
 interface DoctorFlags {
@@ -7,7 +7,7 @@ interface DoctorFlags {
   json?: boolean;
 }
 
-type DoctorResult = { packagesScanned: number; findings: Finding[] };
+type DoctorResult = { root: string; packagesScanned: number; findings: Finding[] };
 
 export default defineCommand({
   id: 'scaffold:doctor',
@@ -15,7 +15,7 @@ export default defineCommand({
 
   handler: {
     async execute(
-      ctx: PluginContextV3,
+      ctx: PluginCommandContextV3,
       input: DoctorFlags,
     ): Promise<CommandResult<DoctorResult>> {
       const root = resolve(input.path ?? '.kb/plugins');
@@ -24,8 +24,7 @@ export default defineCommand({
       try {
         scan = await scanRoot(root, { workspaceRoot });
       } catch (err) {
-        handleError(ctx, err, input.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return handleError(err);
       }
 
       const { errorCount, warnCount } = scan.findings.reduce(
@@ -37,21 +36,20 @@ export default defineCommand({
         { errorCount: 0, warnCount: 0 },
       );
       const hasErrors = errorCount > 0;
+      const result = {
+        root,
+        packagesScanned: scan.packagesScanned,
+        findings: scan.findings,
+      };
 
-      if (input.json) {
-        ctx.ui?.json?.({
-          root,
-          packagesScanned: scan.packagesScanned,
-          findings: scan.findings,
-        });
-      } else if (scan.findings.length === 0) {
+      if (!input.json && scan.findings.length === 0) {
         ctx.ui?.success?.(`Scanned ${scan.packagesScanned} package(s) — no issues found.`, {
           title: 'scaffold doctor',
           sections: [
             { items: [`Path: ${root}`] },
           ],
         });
-      } else {
+      } else if (!input.json) {
         const byPkg = new Map<string, Finding[]>();
         for (const f of scan.findings) {
           const list = byPkg.get(f.package) ?? [];
@@ -64,12 +62,7 @@ export default defineCommand({
           items: findings.map((f) => `${f.severity.toUpperCase()}  ${f.message}`),
         }));
 
-        if (hasErrors) {
-          ctx.ui?.error?.(`Found ${errorCount} error(s), ${warnCount} warning(s) in ${scan.packagesScanned} package(s).`, {
-            title: 'scaffold doctor',
-            sections,
-          });
-        } else {
+        if (!hasErrors) {
           ctx.ui?.warn?.(`Found ${warnCount} warning(s) in ${scan.packagesScanned} package(s).`, {
             title: 'scaffold doctor',
             sections,
@@ -77,20 +70,21 @@ export default defineCommand({
         }
       }
 
-      return hasErrors ? {
-        ok: false,
-        error: `${errorCount} error(s) found`,
-        result: {
-          packagesScanned: scan.packagesScanned,
-          findings: scan.findings,
-        },
-      } : {
-        ok: true,
-        result: {
-          packagesScanned: scan.packagesScanned,
-          findings: scan.findings,
-        },
-      };
+      return hasErrors
+        ? {
+            ok: false,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: `${errorCount} error(s) found`,
+              hint: 'Inspect error.diagnostics above and fix the affected plugin manifests, then rerun `kb scaffold doctor`.',
+              diagnostics: scan.findings.filter((finding) => finding.severity !== 'info').map((finding) => ({
+                code: 'KB_SCAFFOLD_DOCTOR_FINDING',
+                severity: finding.severity === 'warn' ? 'warning' as const : 'error' as const,
+                message: `${finding.package}: ${finding.message}`,
+              })),
+            },
+          }
+        : result;
     },
   },
 });

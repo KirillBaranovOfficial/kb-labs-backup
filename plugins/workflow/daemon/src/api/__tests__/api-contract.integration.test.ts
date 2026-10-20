@@ -5,6 +5,7 @@ import { registerCronAPI } from '../cron-api.js';
 import { registerJobsAPI } from '../jobs-api.js';
 import { registerWorkflowsAPI } from '../workflows-api.js';
 import { registerApprovalsAPI } from '../approvals-api.js';
+import { CronMutationRefusedError } from '../../cron-discovery.js';
 
 function createHostServiceMock() {
   return {
@@ -14,12 +15,8 @@ function createHostServiceMock() {
     listJobs: vi.fn(async () => ({ jobs: [{ id: 'job-1', type: 'test', status: 'running' }] })),
     getJobSteps: vi.fn(async () => [{ id: 's1', status: 'success' }]),
     getJobLogs: vi.fn(async () => [{ message: 'log' }]),
-    registerCron: vi.fn(() => ({ ok: true })),
-    unregisterCron: vi.fn(() => ({ ok: true })),
-    listCron: vi.fn(() => ({ crons: [{ id: 'c1', schedule: '* * * * *', jobType: 'test', enabled: true }] })),
-    triggerCron: vi.fn(async () => ({ ok: true })),
-    pauseCron: vi.fn(() => ({ ok: true })),
-    resumeCron: vi.fn(() => ({ ok: true })),
+    listCron: vi.fn(() => ({ crons: [{ id: 'c1', source: 'user', schedule: '* * * * *', target: { workflow: 'wf' }, enabled: true }], errors: [] })),
+    setCronEnabled: vi.fn(async (_id: string, enabled: boolean) => ({ enabled })),
     listWorkflows: vi.fn(async () => ({ workflows: [{ id: 'w1', name: 'wf', source: 'standalone' }] })),
     getWorkflow: vi.fn(async () => ({ id: 'w1', name: 'wf', source: 'standalone' })),
     runWorkflow: vi.fn(async () => ({ runId: 'r1', status: 'queued' })),
@@ -114,7 +111,7 @@ describe('Workflow API Contract Integration', () => {
       hostService.getJob.mockRejectedValueOnce(new Error('Job not found'));
       const res = await app.inject({ method: 'GET', url: '/api/v1/jobs/missing' });
       expect(res.statusCode).toBe(404);
-      expect(res.json()).toEqual({ ok: false, error: 'Job not found' });
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_JOB_NOT_FOUND', message: 'Job not found' } });
     });
 
     it('POST /api/v1/jobs/:jobId/cancel — cancels job', async () => {
@@ -139,6 +136,7 @@ describe('Workflow API Contract Integration', () => {
       hostService.getJobSteps.mockRejectedValueOnce(new Error('Job not found'));
       const res = await app.inject({ method: 'GET', url: '/api/v1/jobs/missing/steps' });
       expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_JOB_NOT_FOUND' } });
     });
   });
 
@@ -150,41 +148,34 @@ describe('Workflow API Contract Integration', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
         ok: true,
-        data: { crons: [{ id: 'c1', schedule: '* * * * *', jobType: 'test', enabled: true }] },
+        data: { crons: [{ id: 'c1', source: 'user', schedule: '* * * * *', target: { workflow: 'wf' }, enabled: true }], errors: [] },
       });
     });
 
-    it('POST /api/v1/crons — registers cron', async () => {
-      const res = await app.inject({
-        method: 'POST', url: '/api/v1/crons',
-        payload: { id: 'c2', schedule: '0 * * * *', jobType: 'test' },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(res.json().ok).toBe(true);
+    it('GET /api/v1/crons — reports an unavailable scheduler with its catalog code', async () => {
+      hostService.listCron.mockImplementationOnce(() => { throw new Error('Cron scheduler not available'); });
+      const res = await app.inject({ method: 'GET', url: '/api/v1/crons' });
+      expect(res.statusCode).toBe(503);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE' } });
     });
 
-    it('DELETE /api/v1/crons/:id — unregisters cron', async () => {
-      const res = await app.inject({ method: 'DELETE', url: '/api/v1/crons/c1' });
+    it('POST /api/v1/crons/:id/disable — persists disabled state', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/c1/disable' });
       expect(res.statusCode).toBe(200);
-      expect(res.json().ok).toBe(true);
+      expect(hostService.setCronEnabled).toHaveBeenCalledWith('c1', false);
+      expect(res.json()).toMatchObject({ ok: true, data: { enabled: false } });
     });
 
-    it('POST /api/v1/crons/:id/trigger — triggers cron', async () => {
-      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/c1/trigger' });
-      expect(res.statusCode).toBe(200);
-      expect(res.json().ok).toBe(true);
+    it('POST /api/v1/crons/:id/enable — refuses plugin cron with typed error', async () => {
+      hostService.setCronEnabled.mockRejectedValueOnce(new CronMutationRefusedError('plugin:qa:cleanup'));
+      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/plugin:qa:cleanup/enable' });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY' } });
     });
 
-    it('POST /api/v1/crons/:id/pause — pauses cron', async () => {
-      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/c1/pause' });
-      expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ ok: true, data: { ok: true } });
-    });
-
-    it('POST /api/v1/crons/:id/resume — resumes cron', async () => {
-      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/c1/resume' });
-      expect(res.statusCode).toBe(200);
-      expect(res.json().ok).toBe(true);
+    it('POST /api/v1/crons — rejects non-file registration surfaces', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/v1/crons', payload: {} });
+      expect(res.statusCode).toBe(404);
     });
 
     it('old /api/v1/cron path returns 404', async () => {
@@ -212,7 +203,7 @@ describe('Workflow API Contract Integration', () => {
       hostService.getWorkflow.mockResolvedValueOnce(null as any);
       const res = await app.inject({ method: 'GET', url: '/api/v1/workflows/missing' });
       expect(res.statusCode).toBe(404);
-      expect(res.json()).toEqual({ ok: false, error: 'Workflow not found' });
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_WORKFLOW_NOT_FOUND', message: 'Workflow not found' } });
     });
 
     it('GET /api/v1/workflows/:id/runs — lists runs for workflow', async () => {
@@ -237,6 +228,7 @@ describe('Workflow API Contract Integration', () => {
         payload: {},
       });
       expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_WORKFLOW_NOT_FOUND' } });
     });
 
     it('old POST /api/v1/workflows/:id/run path returns 404', async () => {
@@ -269,7 +261,14 @@ describe('Workflow API Contract Integration', () => {
       hostService.getRun.mockResolvedValueOnce(null as any);
       const res = await app.inject({ method: 'GET', url: '/api/v1/runs/missing' });
       expect(res.statusCode).toBe(404);
-      expect(res.json()).toEqual({ ok: false, error: 'Run not found' });
+      expect(res.json()).toMatchObject({
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND',
+          message: 'Workflow run missing was not found.',
+          hint: 'Run "kb workflow runs list" to inspect available runs.',
+        },
+      });
     });
 
     it('POST /api/v1/runs/:runId/cancel — cancels run', async () => {
@@ -288,6 +287,7 @@ describe('Workflow API Contract Integration', () => {
       hostService.cancelRun.mockRejectedValueOnce(new Error('Cannot cancel run in status: success'));
       const res = await app.inject({ method: 'POST', url: '/api/v1/runs/r1/cancel' });
       expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT' } });
     });
 
     it('old /workflows/runs/:runId/cancel path returns 404', async () => {
@@ -331,7 +331,7 @@ describe('Workflow API Contract Integration', () => {
       hostService.getRunLogs.mockRejectedValueOnce(new Error('storage unavailable'));
       const res = await app.inject({ method: 'GET', url: '/api/v1/runs/r1/logs' });
       expect(res.statusCode).toBe(500);
-      expect(res.json()).toEqual({ ok: false, error: 'storage unavailable' });
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED', message: 'storage unavailable' } });
     });
   });
 
@@ -352,6 +352,7 @@ describe('Workflow API Contract Integration', () => {
       hostService.getRun.mockResolvedValueOnce(null as any);
       const res = await app.inject({ method: 'GET', url: '/api/v1/runs/missing/approvals' });
       expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', message: 'Workflow run missing was not found.' } });
     });
 
     it('GET /api/v1/runs/:runId/approvals — empty list when no pending steps', async () => {
@@ -387,6 +388,7 @@ describe('Workflow API Contract Integration', () => {
         payload: { jobId: 'j1' },
       });
       expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_APPROVAL_INPUT_INVALID' } });
     });
 
     it('POST /api/v1/runs/:runId/approvals/resolve — 400 on invalid action', async () => {
@@ -395,6 +397,7 @@ describe('Workflow API Contract Integration', () => {
         payload: { jobId: 'j1', stepId: 's1', action: 'maybe' },
       });
       expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_APPROVAL_INPUT_INVALID' } });
     });
 
     it('POST /api/v1/runs/:runId/approvals/resolve — 404 when run not found', async () => {
@@ -404,6 +407,7 @@ describe('Workflow API Contract Integration', () => {
         payload: { jobId: 'j1', stepId: 's1', action: 'approve' },
       });
       expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND' } });
     });
 
     it('POST /api/v1/runs/:runId/approvals/resolve — 409 when step not waiting', async () => {
@@ -416,6 +420,7 @@ describe('Workflow API Contract Integration', () => {
         payload: { jobId: 'j1', stepId: 's1', action: 'approve' },
       });
       expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_APPROVAL_NOT_PENDING' } });
     });
 
     it('old /runs/:runId/pending-approvals path returns 404', async () => {

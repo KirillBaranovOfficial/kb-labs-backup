@@ -4,22 +4,10 @@
  */
 
 import { z } from 'zod';
+import { CliFlagDeclSchema } from '@kb-labs/plugin-contracts';
 import type { CommandManifest } from './types';
 
 const semverPattern = /^[\^~]?[\d]+\.[\d]+(\.[\d]+)?(-[\w\.-]+)?(\+[\w\.-]+)?$/;
-
-const FlagDefinitionSchema = z.object({
-  name: z.string().min(1).regex(/^[a-z0-9-]+$/, 'Flag name must be lowercase alphanumeric with hyphens'),
-  type: z.enum(['string', 'boolean', 'number', 'array']),
-  alias: z.string().length(1).regex(/^[a-z]$/i, 'Alias must be a single letter').optional(),
-  default: z.any().optional(),
-  description: z.string().optional(),
-  choices: z.array(z.string()).optional(),
-  required: z.boolean().optional(),
-}).refine(
-  (data) => !(data.choices && data.type !== 'string'),
-  { message: 'Choices are only allowed for string type flags' }
-);
 
 const EngineSchema = z.object({
   node: z.string().optional(),
@@ -38,16 +26,17 @@ export const CommandManifestSchema = z.object({
   describe: z.string().min(1),
   longDescription: z.string().optional(),
   requires: z.array(z.string()).optional(),
-  flags: z.array(FlagDefinitionSchema).optional(),
+  flags: z.array(z.custom(value => CliFlagDeclSchema.safeParse(value).success)).optional(),
   examples: z.array(z.string()).optional(),
   loader: z.any(),
   package: z.string().optional(),
   engine: EngineSchema,
   permissions: z.array(z.string()).optional(),
   telemetry: z.enum(['opt-in', 'off']).optional(),
-  manifestV2: z.any().optional(),
+  v3Manifest: z.any().optional(),
   pkgRoot: z.string().optional(),
   _synthetic: z.boolean().optional(),
+  unavailablePlugin: z.boolean().optional(),
   operationType: z.enum(['read', 'mutate', 'execute', 'analyze']).optional(),
 }).refine(
   (data) => {

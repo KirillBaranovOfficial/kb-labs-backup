@@ -31,13 +31,16 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import { createInMemoryDocumentDatabase, createInMemoryKVStore } from '@kb-labs/sdk/testing';
-import type { ICache } from '@kb-labs/core-platform';
+import type { ICache, ILogger } from '@kb-labs/core-platform';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
 import {
   UsersStore,
   CredentialsStore,
   MembershipsStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
+  PasswordResetStore,
   ProviderRegistry,
   type SessionsStoreOptions,
   createTenantResolver,
@@ -49,11 +52,13 @@ import {
   AuthService,
   type JwtConfig,
 } from '@kb-labs/gateway-auth';
+import { PlatformAuditStore } from '@kb-labs/core-platform';
 import { createUserAuthMiddleware } from '../user-auth-middleware.js';
 import { createAuthMiddleware } from '../middleware.js';
 import { registerAuthRoutes, type MachineAuthRoutesUserExt } from '../routes.js';
 import { registerUserAuthRoutes, createUserRefreshFn } from '../user-routes.js';
 import { COOKIE_ACCESS, COOKIE_REFRESH, COOKIE_CSRF } from '../user-cookies.js';
+import { registerGatewayUxBoundary, registerGatewayUxErrorResponses } from '../../ux-boundary.js';
 import bcryptjs from 'bcryptjs';
 
 // Minimal no-op ICache stub used to satisfy machine auth service constructor.
@@ -81,7 +86,9 @@ interface TestCtx {
   credentials: CredentialsStore;
   memberships: MembershipsStore;
   sessions: SessionsStore;
+  apiTokens: ApiTokensStore;
   invites: InvitesStore;
+  pdp: ReturnType<typeof createStubPDP>;
 }
 
 interface BuildAppOpts {
@@ -92,6 +99,7 @@ interface BuildAppOpts {
   /** Tenant used as the final fallback when Host resolves no tenant and the body
    *  carries none either. Defaults to TENANT_ID so existing tests are unaffected. */
   bootstrapTenantId?: string;
+  uxBoundary?: boolean;
 }
 
 async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
@@ -101,7 +109,10 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   const credentials = new CredentialsStore(docs);
   const memberships = new MembershipsStore(docs);
   const sessions = new SessionsStore(docs, SESSION_OPTS);
+  const apiTokens = new ApiTokensStore(docs);
   const invites = new InvitesStore(docs);
+  const passwordResets = new PasswordResetStore(docs);
+  const authAudit = new PlatformAuditStore(docs);
   const providers = new ProviderRegistry();
 
   const emailPwd = createEmailPasswordProvider({
@@ -126,6 +137,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
     memberships,
     sessions,
     invites,
+    passwordResets,
     providers,
     passwordPolicy,
     jwtConfig: JWT,
@@ -141,8 +153,11 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   const userRouteDeps = {
     userAuthService,
     users,
+    memberships,
     sessions,
+    apiTokens,
     invites,
+    authAudit,
     providers,
     pdp,
     tenantResolver,
@@ -150,7 +165,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
     cookieOpts: { cookieSecure: false },
     accessTtlSec: 900,
     refreshTtlSec: HOUR / 1000,
-    inviteTtlMs: HOUR,
+    inviteTtlMs: 7 * 24 * HOUR,
     jwtConfig: JWT,
     ...(rateLimiter ? { rateLimiter, authRateLimit: opts.rateLimit } : {}),
   };
@@ -164,14 +179,25 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
       userAuthService,
       cookieOpts: { cookieSecure: false },
     }),
+    userLogoutFn: (refreshToken) => userAuthService.logout(refreshToken),
     pdp,
   };
 
   const app = Fastify({ logger: false, trustProxy: true });
+  if (opts.uxBoundary) {
+    const logger: ILogger = {
+      info: () => {}, warn: () => {}, error: () => {}, fatal: () => {}, debug: () => {}, trace: () => {},
+      flush: async () => {},
+      child: () => logger,
+    };
+    registerGatewayUxBoundary(app, logger);
+  } else {
+    registerGatewayUxErrorResponses(app);
+  }
   await app.register(fastifyCookie);
 
   // User-auth middleware runs first (before machine Bearer check).
-  app.addHook('onRequest', createUserAuthMiddleware({ users, tenantResolver, jwtConfig: JWT }));
+  app.addHook('onRequest', createUserAuthMiddleware({ users, sessions, apiTokens, pdp, tenantResolver, jwtConfig: JWT }));
 
   // Machine auth middleware — skips if userAuthContext already set.
   app.addHook('onRequest', createAuthMiddleware(fakeCache, JWT, { authEnabled: !opts.authDisabled }));
@@ -183,7 +209,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   registerUserAuthRoutes(app, userRouteDeps);
 
   await app.ready();
-  return { app, users, credentials, memberships, sessions, invites };
+  return { app, users, credentials, memberships, sessions, apiTokens, invites, pdp };
 }
 
 // ── Seed helpers ──────────────────────────────────────────────────────────────
@@ -273,7 +299,7 @@ describe('POST /auth/login', () => {
     expect(names).toContain(COOKIE_CSRF);
   });
 
-  it('returns 401 with { error: "invalid_credentials" } on wrong password (CD-8)', async () => {
+  it('returns the shared credentials envelope on wrong password (CD-8)', async () => {
     const r = await ctx.app.inject({
       method: 'POST',
       url: '/auth/login',
@@ -282,7 +308,7 @@ describe('POST /auth/login', () => {
     });
 
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'invalid_credentials' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 
   it('returns 401 with identical shape on unknown email (CD-8)', async () => {
@@ -294,7 +320,7 @@ describe('POST /auth/login', () => {
     });
 
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'invalid_credentials' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 
   it('returns 400 when email is missing', async () => {
@@ -357,7 +383,34 @@ describe('POST /auth/login/cli', () => {
     expect(r.headers['set-cookie']).toBeUndefined();
   });
 
-  it('returns 401 with { error: "invalid_credentials" } on wrong password (same shape as /auth/login)', async () => {
+  it('returns the secured Gateway success envelope consumed by kb-create', async () => {
+    const ctx = await buildApp({ uxBoundary: true });
+    await seedAdmin(ctx);
+    try {
+      const response = await ctx.app.inject({
+        method: 'POST',
+        url: '/auth/login/cli',
+        headers: { host: HOST },
+        payload: { email: 'admin@test.com', password: 'Password123!' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        ok: true,
+        data: {
+          accessToken: expect.any(String),
+          refreshToken: expect.any(String),
+          expiresIn: expect.any(Number),
+          tenantId: TENANT_ID,
+        },
+      });
+      expect(response.headers['set-cookie']).toBeUndefined();
+    } finally {
+      await ctx.app.close();
+    }
+  });
+
+  it('returns the shared credentials envelope on CLI wrong password', async () => {
     const r = await ctx.app.inject({
       method: 'POST',
       url: '/auth/login/cli',
@@ -365,7 +418,7 @@ describe('POST /auth/login/cli', () => {
       payload: { email: 'admin@test.com', password: 'WrongPassword99!' },
     });
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'invalid_credentials' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 
   it('returns 400 when email or password is missing', async () => {
@@ -437,7 +490,7 @@ describe('POST /auth/refresh/cli', () => {
       method: 'POST', url: '/auth/refresh/cli', headers: { host: HOST }, payload: { refreshToken: 'not-a-jwt' },
     });
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'Unauthorized' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
   });
 });
 
@@ -805,14 +858,59 @@ describe('POST /auth/activate', () => {
     expect(cookies.map((c) => c.split('=')[0])).toContain(COOKIE_ACCESS);
   });
 
-  it('returns 401 for an invalid token', async () => {
+  // case: S-105.3
+  it('returns 422 for an unknown invite token', async () => {
     const r = await ctx.app.inject({
       method: 'POST',
       url: '/auth/activate',
       headers: { host: HOST },
       payload: { token: 'totally-invalid-token', password: 'NewPassword123!' },
     });
-    expect(r.statusCode).toBe(401);
+    expect(r.statusCode).toBe(422);
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_INVITE', message: 'The invitation is invalid, expired, or already used.', hint: expect.any(String) } });
+  });
+
+  // case: S-042.3
+  it('returns the catalogued invite error when an activation token is reused', async () => {
+    const invite = await ctx.invites.createInvite({
+      email: 'reused@test.com', tenantId: TENANT_ID, groupId: 'tenant-member', createdBy: 'admin-1', ttlMs: HOUR,
+    });
+    const payload = { token: invite.activationToken, password: 'NewPassword123!' };
+    const accepted = await ctx.app.inject({ method: 'POST', url: '/auth/activate', headers: { host: HOST }, payload });
+    expect(accepted.statusCode).toBe(200);
+    const reused = await ctx.app.inject({ method: 'POST', url: '/auth/activate', headers: { host: HOST }, payload });
+    expect(reused.statusCode).toBe(422);
+    expect(reused.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_INVITE', hint: expect.any(String) } });
+  });
+
+  // case: S-107.4
+  it('returns a catalogued password-policy failure without consuming the invite', async () => {
+    const invite = await ctx.invites.createInvite({
+      email: 'weak-password@test.com', tenantId: TENANT_ID, groupId: 'tenant-member', createdBy: 'admin-1', ttlMs: HOUR,
+    });
+    const weak = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/activate',
+      headers: { host: HOST },
+      payload: { token: invite.activationToken, password: 'weak' },
+    });
+    expect(weak.statusCode).toBe(400);
+    expect(weak.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        message: 'too_short',
+        hint: expect.stringContaining('password policy'),
+      },
+    });
+
+    const corrected = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/activate',
+      headers: { host: HOST },
+      payload: { token: invite.activationToken, password: 'NewPassword123!' },
+    });
+    expect(corrected.statusCode).toBe(200);
   });
 
   it('returns 400 when token is missing', async () => {
@@ -864,6 +962,14 @@ describe('POST /auth/password/change', () => {
     });
 
     expect(r.statusCode).toBe(400);
+    expect(r.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_AUTH_INVALID_CURRENT_PASSWORD',
+        message: 'Current password is incorrect',
+        hint: 'Check the current password and retry the password change.',
+      },
+    });
   });
 
   it('returns 401 without session cookie', async () => {
@@ -918,6 +1024,69 @@ describe('GET /auth/sessions', () => {
     expect(Array.isArray(body.sessions)).toBe(true);
     expect(body.sessions.length).toBeGreaterThanOrEqual(1);
     expect(body.sessions.some((s) => s.isCurrent)).toBe(true);
+  });
+});
+
+describe('personal API tokens', () => {
+  let ctx: TestCtx;
+  beforeEach(async () => {
+    ctx = await buildApp();
+    await seedAdmin(ctx);
+  });
+
+  it('creates, lists, authenticates with, and owner-revokes an API token', async () => {
+    const { cookieHeader, csrfToken } = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const created = await ctx.app.inject({
+      method: 'POST', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+      payload: { name: 'build agent' },
+    });
+    expect(created.statusCode).toBe(201);
+    const body = created.json() as { token: string; tokenRecord: { tokenId: string; userId: string } };
+    expect(body.token).toMatch(/^kbl_pat_/);
+    expect(body.tokenRecord).not.toHaveProperty('expiresAt');
+
+    const list = await ctx.app.inject({ method: 'GET', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader } });
+    expect(list.json()).toMatchObject({ tokens: [{ tokenId: body.tokenRecord.tokenId, userId: body.tokenRecord.userId, name: 'build agent' }] });
+    expect(JSON.stringify(list.json())).not.toContain(body.token);
+
+    expect((await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: { host: HOST, authorization: `Bearer ${body.token}` } })).statusCode).toBe(200);
+    const revoked = await ctx.app.inject({
+      method: 'POST', url: `/auth/tokens/${body.tokenRecord.tokenId}/revoke`,
+      headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect((await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: { host: HOST, authorization: `Bearer ${body.token}` } })).statusCode).toBe(401);
+  });
+
+  it('accepts a caller-selected token expiry and rejects expiry outside the supported range', async () => {
+    const { cookieHeader, csrfToken } = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const createdAt = Date.now();
+    const created = await ctx.app.inject({
+      method: 'POST', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+      payload: { name: 'expiring agent', expiresInDays: 90 },
+    });
+    expect(created.statusCode).toBe(201);
+    const record = created.json().tokenRecord as { expiresAt: number };
+    expect(record.expiresAt).toBeGreaterThanOrEqual(createdAt + 90 * 24 * HOUR - 5_000);
+    expect(record.expiresAt).toBeLessThanOrEqual(createdAt + 90 * 24 * HOUR + 5_000);
+
+    const invalid = await ctx.app.inject({
+      method: 'POST', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+      payload: { name: 'invalid expiry', expiresInDays: 366 },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', correlationId: expect.any(String) } });
+  });
+
+  it('does not let an owner revoke another user API token', async () => {
+    const { cookieHeader, csrfToken } = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const other = await ctx.apiTokens.create({ userId: 'other-user', tenantId: TENANT_ID, name: 'other CI', ttlMs: HOUR });
+    const response = await ctx.app.inject({
+      method: 'POST', url: `/auth/tokens/${other.record.tokenId}/revoke`,
+      headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(await ctx.apiTokens.findActive(other.token)).not.toBeNull();
   });
 });
 
@@ -1013,13 +1182,16 @@ describe('POST /auth/invites (admin only)', () => {
       method: 'POST',
       url: '/auth/invites',
       headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
-      payload: { email: 'newguy@test.com', groupId: 'tenant-member' },
+      payload: { email: 'newguy@test.com', role: 'member' },
     });
 
     expect(r.statusCode).toBe(201);
     const body = r.json() as { activationUrl: string; inviteId: string };
-    expect(body.activationUrl).toContain('/activate?token=');
+    expect(body.activationUrl).toContain('/activate/');
     expect(body.inviteId).toBeTruthy();
+    const created = await ctx.invites.findById(body.inviteId);
+    expect(created?.expiresAt).toBeGreaterThanOrEqual(Date.now() + 7 * 24 * HOUR - 5_000);
+    expect(created?.expiresAt).toBeLessThanOrEqual(Date.now() + 7 * 24 * HOUR + 5_000);
   });
 
   it('returns 403 for a non-admin member', async () => {
@@ -1053,7 +1225,7 @@ describe('POST /auth/invites (admin only)', () => {
       method: 'POST',
       url: '/auth/invites',
       headers: { host: HOST, cookie: memberCookies, 'x-csrf-token': memberCsrf },
-      payload: { email: 'another@test.com', groupId: 'tenant-member' },
+      payload: { email: 'another@test.com', role: 'member' },
     });
 
     expect(r.statusCode).toBe(403);
@@ -1110,6 +1282,89 @@ describe('GET /auth/users (admin only)', () => {
     const body = r.json() as { users: { userId: string }[] };
     expect(Array.isArray(body.users)).toBe(true);
     expect(body.users.some((u) => u.userId === 'admin-1')).toBe(true);
+    expect(body.users.find((u) => u.userId === 'admin-1')).toHaveProperty('role', 'admin');
+  });
+
+  // case: S-005.5
+  it('returns the shared authorization envelope with the missing permission', async () => {
+    const invite = await ctx.invites.createInvite({
+      email: 'member@test.com', tenantId: TENANT_ID, groupId: 'tenant-member',
+      createdBy: 'admin-1', ttlMs: HOUR,
+    });
+    await ctx.app.inject({ method: 'POST', url: '/auth/activate', headers: { host: HOST },
+      payload: { token: invite.activationToken, password: 'MemberPass123!' } });
+    const login = await ctx.app.inject({ method: 'POST', url: '/auth/login/cli', headers: { host: HOST },
+      payload: { email: 'member@test.com', password: 'MemberPass123!' } });
+    const { accessToken } = login.json() as { accessToken: string };
+
+    const response = await ctx.app.inject({ method: 'GET', url: '/auth/users',
+      headers: { host: HOST, authorization: `Bearer ${accessToken}` } });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_FORBIDDEN', message: 'Permission denied: users:read', hint: expect.any(String),
+      details: { permission: 'users:read' },
+    } });
+  });
+
+  it('changes a tenant user role and updates permissions on their next request', async () => {
+    await ctx.users.create({ userId: 'role-target', tenantId: TENANT_ID, email: 'member@test.com', status: 'active' });
+    await ctx.memberships.addMembership({ userId: 'role-target', tenantId: TENANT_ID, groupId: 'tenant-member' });
+    await ctx.credentials.setCredential({ userId: 'role-target', providerId: 'email-password', hash: await bcryptjs.hash('MemberPass123!', 4) });
+    const admin = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const changed = await ctx.app.inject({
+      method: 'POST', url: '/auth/users/role-target/role',
+      headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken },
+      payload: { role: 'admin' },
+    });
+    expect(changed.statusCode).toBe(200);
+    const listed = await ctx.app.inject({ method: 'GET', url: '/auth/users', headers: { host: HOST, cookie: admin.cookieHeader } });
+    expect(listed.json().users.find((user: { userId: string }) => user.userId === 'role-target').role).toBe('admin');
+    const member = await loginAndGetCookies(ctx.app, { email: 'member@test.com', password: 'MemberPass123!' });
+    const permissions = await ctx.app.inject({ method: 'GET', url: '/auth/permissions', headers: { host: HOST, cookie: member.cookieHeader } });
+    expect(permissions.json().permissions).toContain('users:read');
+  });
+
+  it('prevents disabling or demoting the final active administrator', async () => {
+    const admin = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const disable = await ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/disable',
+      headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken } });
+    expect(disable.statusCode).toBe(409);
+    expect(disable.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_LAST_ADMIN', hint: expect.any(String) } });
+    const demote = await ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/role',
+      headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken }, payload: { role: 'member' } });
+    expect(demote.statusCode).toBe(409);
+    expect(demote.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_LAST_ADMIN', hint: expect.any(String) } });
+    expect((await ctx.users.getById('admin-1'))?.status).toBe('active');
+  });
+
+  it('serializes concurrent demotions of the last two admins so exactly one remains active', async () => {
+    await seedAdmin(ctx, { userId: 'admin-2', email: 'admin2@test.com', password: 'Password123!' });
+    const admin = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    let permissionChecks = 0;
+    let releaseChecks!: () => void;
+    const bothChecksStarted = new Promise<void>((resolve) => { releaseChecks = resolve; });
+    const checkPermission = ctx.pdp.check.bind(ctx.pdp);
+    ctx.pdp.check = async (principal, permission) => {
+      if (permission === PERMISSIONS.USERS_WRITE) {
+        permissionChecks += 1;
+        if (permissionChecks === 2) {releaseChecks();}
+        if (permissionChecks <= 2) {await bothChecksStarted;}
+      }
+      return checkPermission(principal, permission);
+    };
+    const [firstResult, secondResult] = await Promise.all([
+      ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/role',
+        headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken }, payload: { role: 'member' } }),
+      ctx.app.inject({ method: 'POST', url: '/auth/users/admin-2/role',
+        headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken }, payload: { role: 'member' } }),
+    ]);
+
+    expect([firstResult.statusCode, secondResult.statusCode].sort()).toEqual([200, 409]);
+    const memberships = await ctx.memberships.listByTenant(TENANT_ID);
+    const adminMemberships = memberships.filter((membership) => membership.groupId === 'tenant-admin');
+    const activeAdmins = await Promise.all(adminMemberships.map(async ({ userId }) => ctx.users.getById(userId)));
+    expect(activeAdmins.filter((user) => user?.status === 'active')).toHaveLength(1);
   });
 });
 
@@ -1385,5 +1640,49 @@ describe('POST /auth/login — rate limiting', () => {
       payload: { email: 'admin@test.com', password: 'Password123!' },
     });
     expect(ok.statusCode).toBe(200);
+  });
+});
+
+describe('admin password reset links', () => {
+  it('creates a one-time tenant-scoped reset link and accepts it once', async () => {
+    const ctx = await buildApp();
+    await seedAdmin(ctx);
+    await ctx.users.create({ userId: 'member-reset', tenantId: TENANT_ID, email: 'member-reset@test.com', status: 'active' });
+    await ctx.credentials.setCredential({ userId: 'member-reset', providerId: 'email-password', hash: await bcryptjs.hash('OldPassword123!', 4) });
+    const admin = await ctx.app.inject({ method: 'POST', url: '/auth/login/cli', headers: { host: HOST }, payload: { email: 'admin@test.com', password: 'Password123!' } });
+    const adminToken = (admin.json() as { accessToken: string }).accessToken;
+    const issuedAt = Date.now();
+    const issued = await ctx.app.inject({
+      method: 'POST', url: '/auth/users/member-reset/password-reset-link',
+      headers: { host: HOST, authorization: `Bearer ${adminToken}` },
+    });
+    expect(issued.statusCode).toBe(201);
+    const { resetUrl, expiresAt } = issued.json() as { resetUrl: string; expiresAt: number };
+    expect(expiresAt).toBeGreaterThanOrEqual(issuedAt + 24 * HOUR - 5_000);
+    expect(expiresAt).toBeLessThanOrEqual(issuedAt + 24 * HOUR + 5_000);
+    const token = new URL(resetUrl).pathname.split('/').at(-1);
+    expect(token).toBeTruthy();
+
+    const applied = await ctx.app.inject({ method: 'POST', url: '/auth/password/reset', headers: { host: HOST }, payload: { token, newPassword: 'NewPassword123!' } });
+    expect(applied.statusCode).toBe(200);
+    const reused = await ctx.app.inject({ method: 'POST', url: '/auth/password/reset', headers: { host: HOST }, payload: { token, newPassword: 'OtherPassword123!' } });
+    expect(reused.statusCode).toBe(400);
+    expect(reused.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_PASSWORD_RESET', hint: expect.any(String) } });
+    const login = await ctx.app.inject({ method: 'POST', url: '/auth/login', headers: { host: HOST }, payload: { email: 'member-reset@test.com', password: 'NewPassword123!' } });
+    expect(login.statusCode).toBe(200);
+    await ctx.app.close();
+  });
+});
+
+describe('POST /auth/logout/cli', () => {
+  it('revokes the refresh family before the CLI removes its local session', async () => {
+    const ctx = await buildApp();
+    await seedAdmin(ctx);
+    const login = await ctx.app.inject({ method: 'POST', url: '/auth/login/cli', headers: { host: HOST }, payload: { email: 'admin@test.com', password: 'Password123!' } });
+    const refreshToken = (login.json() as { refreshToken: string }).refreshToken;
+    expect((await ctx.app.inject({ method: 'POST', url: '/auth/logout/cli', headers: { host: HOST }, payload: { refreshToken } })).statusCode).toBe(200);
+    const refresh = await ctx.app.inject({ method: 'POST', url: '/auth/refresh/cli', headers: { host: HOST }, payload: { refreshToken } });
+    expect(refresh.statusCode).toBe(401);
+    await ctx.app.close();
   });
 });

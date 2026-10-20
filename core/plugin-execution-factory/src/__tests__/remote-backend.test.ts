@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { RemoteBackend } from '../backends/remote.js';
-import type { IExecutionTransport, TransportExecutionResult } from '@kb-labs/core-contracts';
+import type { IExecutionTransport, TransportExecutionResult } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '../types.js';
 
 // Minimal valid ExecutionRequest for testing
@@ -43,7 +43,8 @@ describe('RemoteBackend', () => {
       const result = await backend.execute(makeRequest());
 
       expect(result.ok).toBe(false);
-      expect(result.error?.message).toContain('connection refused');
+      expect(result.error?.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(result.error?.message).not.toContain('connection refused');
     });
 
     it('passes the (possibly remapped) request to transport', async () => {
@@ -63,20 +64,20 @@ describe('RemoteBackend', () => {
       expect(passedRequest.pluginRoot).toBe('/workspace');
     });
 
-    it('includes backend:remote in metadata on success', async () => {
+    it('does not expose a roadmap-only mode in public metadata', async () => {
       const backend = new RemoteBackend({ transport: makeTransport() });
       const result = await backend.execute(makeRequest({ target: { environmentId: 'env_1' } }));
 
-      expect(result.metadata?.['backend']).toBe('remote');
+      expect(result.metadata?.['backend']).toBeUndefined();
       expect((result.metadata?.['target'] as Record<string, unknown>)?.['environmentId']).toBe('env_1');
     });
 
-    it('includes backend:remote in metadata on failure', async () => {
+    it('does not expose a roadmap-only mode in failure metadata', async () => {
       const backend = new RemoteBackend({
         transport: { execute: vi.fn().mockRejectedValue(new Error('err')) },
       });
       const result = await backend.execute(makeRequest());
-      expect(result.metadata?.['backend']).toBe('remote');
+      expect(result.metadata?.['backend']).toBeUndefined();
     });
   });
 

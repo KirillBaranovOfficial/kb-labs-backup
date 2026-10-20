@@ -41,6 +41,7 @@ export {
 } from "./operation-metrics-tracker.js";
 
 export { getListenOptions } from "./listen.js";
+export { sendAuthError } from "./auth-error.js";
 export {
   createDaemonServer,
   type ObservabilityCollectorLike,

@@ -4,7 +4,7 @@
  * manager (only `status()` is exercised by this module).
  */
 
-import { mkdtemp, mkdir, rm, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -83,6 +83,7 @@ describe("createProjectsRoutes", () => {
             lastUsedAt: "2026-01-01T00:00:00.000Z",
             inflight: 0,
             restarts: 2,
+            keptRunningSchedules: 0,
           },
         ],
       }),
@@ -92,7 +93,12 @@ describe("createProjectsRoutes", () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json() as DataBody<{ runtime: { state: string; restarts: number } }>;
-    expect(body.data.runtime).toEqual({ state: "ready", lastUsedAt: "2026-01-01T00:00:00.000Z", restarts: 2 });
+    expect(body.data.runtime).toEqual({
+      state: "ready",
+      lastUsedAt: "2026-01-01T00:00:00.000Z",
+      restarts: 2,
+      keptRunningSchedules: 0,
+    });
   });
 
   it("GET /api/v1/projects/:id returns KB_PROJECT_UNKNOWN for an unregistered id", async () => {
@@ -101,7 +107,12 @@ describe("createProjectsRoutes", () => {
     const res = await instance.inject({ method: "GET", url: "/api/v1/projects/prj_missing" });
 
     expect(res.statusCode).toBe(404);
-    expect((res.json() as ErrorBody).error.code).toBe("KB_PROJECT_UNKNOWN");
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: "KB_PROJECT_UNKNOWN",
+      message: expect.any(String),
+      hint: expect.any(String),
+      correlationId: expect.any(String),
+    } });
   });
 
   it("POST registers a folder that already has .kb/", async () => {
@@ -122,7 +133,7 @@ describe("createProjectsRoutes", () => {
     expect(await registry.list()).toHaveLength(1);
   });
 
-  it("POST without init reports KB_PROJECT_INIT_REQUIRED and registers nothing", async () => {
+  it("POST registers a folder without .kb/ and leaves it unchanged", async () => {
     const dir = await mkdtemp(join(tmpdir(), "kb-proj-"));
     const instance = await setup();
 
@@ -132,22 +143,8 @@ describe("createProjectsRoutes", () => {
       payload: { path: dir },
     });
 
-    expect(res.statusCode).toBe(409);
-    expect((res.json() as ErrorBody).error.code).toBe("KB_PROJECT_INIT_REQUIRED");
-    expect(await registry.list()).toHaveLength(0);
-  });
-
-  it("POST with init creates .kb/ and registers", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "kb-proj-"));
-    const instance = await setup();
-
-    const res = await instance.inject({
-      method: "POST",
-      url: "/api/v1/projects",
-      payload: { path: dir, init: true },
-    });
-
     expect(res.statusCode).toBe(201);
+    expect(await readdir(dir)).toEqual([]);
     expect(await registry.list()).toHaveLength(1);
   });
 
@@ -160,7 +157,8 @@ describe("createProjectsRoutes", () => {
     expect((res.json() as ErrorBody).error.code).toBe("KB_RUNTIME_INPUT_INVALID");
   });
 
-  it("POST rejects a duplicate registration with KB_PROJECT_ALREADY_REGISTERED", async () => {
+  // case: S-124.14
+  it("POST returns the existing project for a duplicate canonical path", async () => {
     const dir = await mkdtemp(join(tmpdir(), "kb-proj-"));
     await mkdir(join(dir, ".kb"));
     await registry.add(dir);
@@ -168,8 +166,16 @@ describe("createProjectsRoutes", () => {
 
     const res = await instance.inject({ method: "POST", url: "/api/v1/projects", payload: { path: dir } });
 
-    expect(res.statusCode).toBe(409);
-    expect((res.json() as ErrorBody).error.code).toBe("KB_PROJECT_ALREADY_REGISTERED");
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, data: { path: await realpath(dir), alreadyExisted: true } });
+
+    const renamed = await instance.inject({
+      method: "POST",
+      url: "/api/v1/projects",
+      payload: { path: dir, name: "another-name" },
+    });
+    expect(renamed.statusCode).toBe(409);
+    expect((renamed.json() as ErrorBody).error.code).toBe("KB_PROJECT_ALREADY_REGISTERED");
   });
 
   it("DELETE unregisters a project without touching its folder", async () => {

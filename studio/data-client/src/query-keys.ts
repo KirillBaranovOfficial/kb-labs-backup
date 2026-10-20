@@ -85,11 +85,6 @@ export const qk = {
     list: (projectId: string) => [...qk.projectPlugins.all, projectId] as const,
   },
 
-  // Per-project adapter configuration (stage 6, second slice).
-  projectAdapters: {
-    all: ['projectAdapters'] as const,
-    list: (projectId: string) => [...qk.projectAdapters.all, projectId] as const,
-  },
   workflows: {
     all: ['workflows'] as const,
     list: (filters?: WorkflowRunsFilters) => [...qk.workflows.all, 'list', filters ?? {}] as const,
@@ -125,4 +120,3 @@ export const qk = {
 
 // Backward compatibility
 export const queryKeys = qk;
-

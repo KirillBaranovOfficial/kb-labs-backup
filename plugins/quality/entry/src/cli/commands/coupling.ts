@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import { analyzeCoupling } from '@kb-labs/quality-core';
@@ -14,7 +14,7 @@ export default defineCommand<unknown, CLIInput<CouplingFlags>, unknown>({
   description: 'Show coupling metrics per package (afferent/efferent/instability)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<CouplingFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<CouplingFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QualityPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -22,8 +22,7 @@ export default defineCommand<unknown, CLIInput<CouplingFlags>, unknown>({
       const report = analyzeCoupling({ rootDir: cwd, layerMap: config?.layers, topN: flags.top });
 
       if (flags.json) {
-        ctx.ui?.json?.(report);
-        return { ok: true };
+        return report;
       }
 
       const sorted =
@@ -43,7 +42,7 @@ export default defineCommand<unknown, CLIInput<CouplingFlags>, unknown>({
         sections: [{ header: `Top ${top.length} by instability`, items }],
       });
 
-      return { ok: true };
+      return {  };
     },
   },
 });

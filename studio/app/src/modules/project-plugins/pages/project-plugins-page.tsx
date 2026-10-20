@@ -9,9 +9,12 @@
 import * as React from 'react';
 import {
   UIEmptyState,
+  UIButton,
+  UIInput,
   UIMessage,
   UIPage,
   UIPageHeader,
+  UIAlert,
   UISpin,
   UISwitch,
   UITable,
@@ -19,15 +22,20 @@ import {
   type UITableColumn,
 } from '@kb-labs/studio-ui-kit';
 import { useDataSources } from '@/providers/data-sources-provider';
-import { useProjectPlugins, useSetProjectPluginEnabled } from '@kb-labs/studio-data-client';
+import { useProjectPlugins, useSetProjectPluginEnabled, useInstallProjectPlugin, useUninstallProjectPlugin } from '@kb-labs/studio-data-client';
 import type { ProjectPluginEntry } from '@kb-labs/studio-data-client';
-import { ProjectPicker } from '@/components/project-picker';
+import { KBError } from '@kb-labs/studio-data-client';
+import { useProjectContext } from '@/providers/project-context-provider';
 
 export function ProjectPluginsPage() {
-  const [projectId, setProjectId] = React.useState<string | null>(null);
+  const { projectId } = useProjectContext();
+  const [spec, setSpec] = React.useState('');
   const { projectPlugins: source } = useDataSources();
   const { data: plugins, isLoading } = useProjectPlugins(source, projectId);
   const setEnabled = useSetProjectPluginEnabled(source, projectId);
+  const installPlugin = useInstallProjectPlugin(source, projectId);
+  const uninstallPlugin = useUninstallProjectPlugin(source, projectId);
+  const [installError, setInstallError] = React.useState<{ message: string; hint?: string } | null>(null);
 
   const handleToggle = React.useCallback(
     async (plugin: ProjectPluginEntry, enabled: boolean) => {
@@ -40,6 +48,31 @@ export function ProjectPluginsPage() {
     },
     [setEnabled],
   );
+
+  const handleInstall = React.useCallback(async () => {
+    const requested = spec.trim();
+    if (!projectId || !requested) {return;}
+    try {
+      setInstallError(null);
+      await installPlugin.mutateAsync(requested);
+      setSpec('');
+      UIMessage.success(`Installed ${requested} for this project`);
+    } catch (error) {
+      setInstallError({
+        message: error instanceof KBError ? error.message : 'Could not install the requested plugin.',
+        ...(error instanceof KBError && error.hint ? { hint: error.hint } : {}),
+      });
+    }
+  }, [installPlugin, projectId, spec]);
+
+  const handleUninstall = React.useCallback(async (packageId: string) => {
+    try {
+      await uninstallPlugin.mutateAsync(packageId);
+      UIMessage.success(`Uninstalled ${packageId} from this project`);
+    } catch (error) {
+      UIMessage.error(error instanceof Error ? error.message : 'Failed to uninstall the plugin');
+    }
+  }, [uninstallPlugin]);
 
   const columns: UITableColumn<ProjectPluginEntry>[] = [
     {
@@ -76,6 +109,16 @@ export function ProjectPluginsPage() {
         />
       ),
     },
+    {
+      key: 'actions',
+      title: '',
+      width: 120,
+      render: (_value, plugin) => (
+        <UIButton variant="text" danger loading={uninstallPlugin.isPending} onClick={() => handleUninstall(plugin.id)}>
+          Uninstall
+        </UIButton>
+      ),
+    },
   ];
 
   return (
@@ -83,8 +126,30 @@ export function ProjectPluginsPage() {
       <UIPageHeader
         title="Plugins"
         description="Enable or disable plugins for the selected project."
-        actions={<ProjectPicker value={projectId} onChange={setProjectId} />}
+        actions={(
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <UIInput
+              aria-label="Plugin package and version"
+              placeholder="@scope/plugin@1.2.3"
+              value={spec}
+              onChange={setSpec}
+              style={{ width: 240 }}
+            />
+            <UIButton variant="primary" disabled={!projectId || !spec.trim()} loading={installPlugin.isPending} onClick={handleInstall}>
+              Install
+            </UIButton>
+          </div>
+        )}
       />
+      {installError && (
+        <UIAlert
+          variant="error"
+          message={installError.message}
+          description={installError.hint}
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
       {!projectId ? null : isLoading ? (
         <UISpin />
       ) : !plugins || plugins.length === 0 ? (

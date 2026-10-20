@@ -20,9 +20,11 @@
 import fs from "fs-extra";
 import path from "node:path";
 import fg from "fast-glob";
-import type {
-  IStorage,
-  StorageMetadata,
+import {
+  resolveRuntimeStatePath,
+  type IStorage,
+  type PlatformDataContext,
+  type StorageMetadata,
 } from "@kb-labs/sdk/adapters";
 
 // Re-export manifest
@@ -32,8 +34,10 @@ export { manifest } from "./manifest.js";
  * Configuration for filesystem storage adapter.
  */
 export interface FilesystemStorageConfig {
-  /** Base directory for all file operations (default: process.cwd()) */
+  /** Base directory for all file operations (default: platform state storage for this project) */
   baseDir?: string;
+  workspace?: { cwd: string };
+  platformData?: PlatformDataContext;
 }
 
 /**
@@ -43,7 +47,7 @@ export class FilesystemStorageAdapter implements IStorage {
   private baseDir: string;
 
   constructor(config: FilesystemStorageConfig = {}) {
-    this.baseDir = config.baseDir ?? process.cwd();
+    this.baseDir = config.baseDir ?? resolveRuntimeStatePath(config.workspace?.cwd ?? process.cwd(), ["storage"]);
   }
 
   /**
@@ -115,8 +119,11 @@ export class FilesystemStorageAdapter implements IStorage {
     try {
       await fs.access(absolutePath);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return false;
+      }
+      throw error;
     }
   }
 

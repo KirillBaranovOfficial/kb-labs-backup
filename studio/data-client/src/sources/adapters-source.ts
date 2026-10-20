@@ -6,9 +6,6 @@
 import type {
   LLMUsageStats,
   EmbeddingsUsageStats,
-  VectorStoreUsageStats,
-  CacheUsageStats,
-  StorageUsageStats,
 } from '../contracts/adapters';
 
 /**
@@ -88,24 +85,6 @@ export interface AdaptersDataSource {
   getEmbeddingsUsage(options?: DateRangeOptions): Promise<EmbeddingsUsageStats>;
 
   /**
-   * Get VectorStore usage statistics
-   * @param options - Optional date range filter
-   */
-  getVectorStoreUsage(options?: DateRangeOptions): Promise<VectorStoreUsageStats>;
-
-  /**
-   * Get Cache usage statistics
-   * @param options - Optional date range filter
-   */
-  getCacheUsage(options?: DateRangeOptions): Promise<CacheUsageStats>;
-
-  /**
-   * Get Storage usage statistics
-   * @param options - Optional date range filter
-   */
-  getStorageUsage(options?: DateRangeOptions): Promise<StorageUsageStats>;
-
-  /**
    * Get daily aggregated LLM statistics for time-series charts
    * @param options - Optional date range filter
    */
@@ -117,21 +96,4 @@ export interface AdaptersDataSource {
    */
   getEmbeddingsDailyStats(options?: DateRangeOptions): Promise<DailyStats[]>;
 
-  /**
-   * Get daily aggregated VectorStore statistics for time-series charts
-   * @param options - Optional date range filter
-   */
-  getVectorStoreDailyStats(options?: DateRangeOptions): Promise<DailyStats[]>;
-
-  /**
-   * Get daily aggregated Cache statistics for time-series charts
-   * @param options - Optional date range filter
-   */
-  getCacheDailyStats(options?: DateRangeOptions): Promise<DailyStats[]>;
-
-  /**
-   * Get daily aggregated Storage statistics for time-series charts
-   * @param options - Optional date range filter
-   */
-  getStorageDailyStats(options?: DateRangeOptions): Promise<DailyStats[]>;
 }

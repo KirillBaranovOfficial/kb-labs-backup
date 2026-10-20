@@ -10,18 +10,19 @@
 
 import { createErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { ConfigWriteError } from './user-config/write-user-config.js';
+import { PluginSettingsSchemaLoadError } from './plugin-settings-schema.js';
 
-function unknownKeyEnvelope(error: ConfigWriteError): ErrorEnvelope {
+function unknownKeyEnvelope(error: ConfigWriteError<'KB_CONFIG_UNKNOWN_KEY'>): ErrorEnvelope {
   const suggestion = error.details.suggestion;
   return createErrorEnvelope('KB_CONFIG_UNKNOWN_KEY', {
     details: {
       path: error.details.path ?? '',
       suggestion: suggestion
-        ? `Did you mean "${replaceKey(error.details.path ?? '', error.details.key ?? '', suggestion)}"?`
+        ? `Did you mean "${replaceKey(error.details.path ?? '', error.metadata.key ?? '', suggestion)}"?`
         : 'No similar key was found.',
     },
-    cause: error.details.knownKeys
-      ? `"${error.details.parent || '(top level)'}" declares: ${error.details.knownKeys.split(',').join(', ')}`
+    cause: error.metadata.knownKeys
+      ? `"${error.metadata.parent || '(top level)'}" declares: ${error.metadata.knownKeys.split(',').join(', ')}`
       : undefined,
   });
 }
@@ -40,24 +41,65 @@ function suggestVariableName(path: string): string {
 
 /** Build the unified envelope for a failed config command. Never contains values. */
 export function configErrorEnvelope(error: unknown): ErrorEnvelope {
+  if (error !== null && typeof error === 'object' &&
+      'code' in error && error.code === 'KB_PROJECT_UNKNOWN') {
+    const details = 'details' in error && error.details !== null && typeof error.details === 'object'
+      ? error.details
+      : undefined;
+    const path = details !== undefined && 'path' in details && typeof details.path === 'string'
+      ? details.path
+      : '';
+    return createErrorEnvelope('KB_PROJECT_UNKNOWN', {
+      details: { path },
+    });
+  }
+  if (error instanceof PluginSettingsSchemaLoadError) {
+    return createErrorEnvelope('KB_PLUGIN_SETTINGS_SCHEMA_INVALID', {
+      details: { plugin: error.plugin },
+      cause: error.detail ?? error.message,
+    });
+  }
   if (!(error instanceof ConfigWriteError)) {
     return toErrorEnvelope(error);
   }
+  if (error.metadata.reason === 'project-scope-path') {
+    const command = error.details.nextCommand;
+    return createErrorEnvelope('KB_CONFIG_INVALID', {
+      details: { path: error.details.path, ...(command ? { nextCommand: command } : {}) },
+      message: `Configuration path ${error.details.path ?? '(empty)'} is not valid at project scope; project plugin settings must use plugins.<configSection>.<key>.`,
+      hint: command
+        ? `Run "${command}" to write the project setting.`
+        : 'Project plugin settings must use plugins.<configSection>.<key>; repeat the command with the corrected path and original value.',
+    });
+  }
   switch (error.code) {
+    case 'KB_PLUGIN_SETTINGS_INVALID':
+      return createErrorEnvelope('KB_PLUGIN_SETTINGS_INVALID', {
+        details: { path: error.details.path ?? '' },
+        cause: error.metadata.cause ?? error.message,
+      });
+    case 'KB_PLUGIN_SETTINGS_SCHEMA_INVALID':
+      return createErrorEnvelope('KB_PLUGIN_SETTINGS_SCHEMA_INVALID', {
+        details: { plugin: error.details.plugin ?? 'unknown' },
+        cause: error.metadata.cause ?? error.message,
+      });
     case 'KB_CONFIG_UNKNOWN_KEY':
       return unknownKeyEnvelope(error);
     case 'KB_CONFIG_SECRET_MISSING':
       return createErrorEnvelope('KB_CONFIG_SECRET_MISSING', {
-        details: { variable: error.details.variable ?? '', path: error.details.path ?? '' },
-        cause: `${error.details.path ?? 'The value'} is a secret and refers to \${${error.details.variable ?? ''}}, which is not set in this environment.`,
+        details: { variable: error.details.variable ?? '' },
+        cause: `${error.metadata.path ?? 'The value'} is a secret and refers to \${${error.details.variable ?? ''}}, which is not set in this environment.`,
       });
     case 'KB_CONFIG_SECRET_PLAINTEXT': {
       const path = error.details.path ?? '';
       const variable = suggestVariableName(path);
+      const scope = path.startsWith('platform.adapters.') || path.startsWith('platform.adapterOptions.')
+        ? '--scope platform '
+        : '';
       return createErrorEnvelope('KB_CONFIG_SECRET_PLAINTEXT', {
-        details: { path, example: `kb config set ${path} '\${${variable}}'` },
+        details: { path, example: `kb config set ${scope}${path} '\${${variable}}'` },
         cause:
-          error.details.reason === 'secret-shape'
+            error.metadata.reason === 'secret-shape'
             ? 'The value has the shape of a credential.'
             : 'The key is declared secret, so its value must be an ${ENV_VAR} reference.',
       });
@@ -67,10 +109,31 @@ export function configErrorEnvelope(error: unknown): ErrorEnvelope {
         details: { path: error.details.path ?? '' },
         cause: error.message,
       });
+    case 'KB_ADAPTER_NOT_INSTALLED':
+      return createErrorEnvelope('KB_ADAPTER_NOT_INSTALLED', {
+        details: {
+          package: error.details.package ?? '',
+          ...(error.details.slot ? { slot: error.details.slot } : {}),
+          ...(error.details.path ? { path: error.details.path } : {}),
+        },
+        ...(error.metadata.hint ? { hint: error.metadata.hint } : {}),
+      });
+    case 'KB_ADAPTER_SLOT_MISMATCH':
+      return createErrorEnvelope('KB_ADAPTER_SLOT_MISMATCH', {
+        details: {
+          package: error.details.package ?? '',
+          slot: error.details.slot ?? '',
+          ...(error.details.path ? { path: error.details.path } : {}),
+        },
+        ...(error.metadata.hint ? { hint: error.metadata.hint } : {}),
+      });
     case 'KB_CONFIG_INVALID':
       return createErrorEnvelope('KB_CONFIG_INVALID', {
         details: { path: error.details.path ?? '' },
         cause: error.message,
+        ...(error.metadata.hint ? { hint: error.metadata.hint } : {}),
       });
+    default:
+      return toErrorEnvelope(error);
   }
 }

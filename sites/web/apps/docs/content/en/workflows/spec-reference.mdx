@@ -1,7 +1,7 @@
 ---
 title: "Spec Reference"
 description: "Every field in WorkflowSpec, JobSpec, StepSpec with Zod validation rules."
-updatedAt: "2026-08-09"
+updatedAt: "2026-10-01"
 order: 2
 ---
 
@@ -115,28 +115,13 @@ Semantic grouping of steps for display. Steps reference phases by key via their 
 ```ts
 interface WorkflowTrigger {
   manual?: boolean;
-  push?: boolean;
-  webhook?: boolean | {
-    secret?: string;
-    path?: string;
-    headers?: Record<string, string>;
-  };
-  schedule?: {
-    cron: string;              // min length 1
-    timezone?: string;         // min length 1
-  };
 }
 ```
 
 ### Validation
 
 - **At least one trigger must be set.** The Zod `refine` catches empty trigger objects with the message "At least one trigger must be defined".
-- `webhook: true` is shorthand for "accept webhook, any path, no secret".
-- `webhook: { secret }` — verify HMAC signature against this secret.
-- `webhook: { path }` — mount at a specific route instead of the default.
-- `webhook: { headers }` — require specific headers on the incoming request.
-- `schedule.cron` — standard cron expression. The engine uses the adapter's cron implementation; 5-field expressions (`0 * * * *`) are the common case.
-- `schedule.timezone` — IANA timezone name (`Europe/London`, `America/New_York`). Defaults to the engine's timezone when omitted.
+- `manual: true` enables explicit runs from the CLI, Studio, or REST API.
 
 ## `WorkflowInputField`
 
@@ -149,7 +134,7 @@ interface WorkflowInputField {
 }
 ```
 
-Three primitive types only. There's no `object`, `array`, or custom type — if you need structured input, use `webhook` triggers with a custom payload schema enforced by the webhook handler.
+Three primitive types only. There's no `object`, `array`, or custom type. For structured run payloads, pass JSON with `kb workflow run --input` and read fields through `trigger.payload`.
 
 Keys in the `inputs` record become addressable as `${{ trigger.payload.<key> }}` inside `if` expressions and string interpolations.
 

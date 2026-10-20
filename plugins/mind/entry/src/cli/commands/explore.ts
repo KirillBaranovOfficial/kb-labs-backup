@@ -1,4 +1,4 @@
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { ExploreRequestSchema, type ExploreFlags, type ExploreResponse } from '@kb-labs/mind-contracts';
 import { buildMind } from '../../platform';
@@ -10,7 +10,7 @@ export default defineCommand<unknown, CLIInput<ExploreFlags>, ExploreResponse>({
   description: 'Task-orientation map — where to start and how involved a task looks',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ExploreFlags>): Promise<ExploreResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ExploreFlags>): Promise<ExploreResult> {
       const { flags } = input;
       const json = flags.format === 'json' || flags.json;
       try {
@@ -24,8 +24,7 @@ export default defineCommand<unknown, CLIInput<ExploreFlags>, ExploreResponse>({
         const res = await mind.explore(req);
 
         if (json) {
-          ctx.ui?.json?.(res);
-          return { ok: true, result: res };
+          return res;
         }
         if (res.files.length === 0) {
           ctx.ui?.warn?.(`No relevant files in index "${res.indexId}"`);
@@ -47,10 +46,9 @@ export default defineCommand<unknown, CLIInput<ExploreFlags>, ExploreResponse>({
             },
           );
         }
-        return { ok: true, result: res };
+        return res;
       } catch (err) {
-        handleError(ctx, err, json);
-        return { ok: false, error: 'Command failed' };
+        return handleError(err);
       }
     },
   },

@@ -1,6 +1,7 @@
 import type { AdapterManifest } from "@kb-labs/sdk/adapters";
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "state-broker",
   name: "StateBroker Cache",
@@ -11,7 +12,8 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "ICache",
-  defaultFor: ["cache"],
+  networkRequired: false,
+  defaultFor: { cache: [] },
   capabilities: {
     custom: {
       ttl: true,
@@ -21,12 +23,6 @@ export const manifest: AdapterManifest = {
     },
   },
   configSchema: {
-    url: {
-      type: "string",
-      default: "http://localhost:7777",
-      description:
-        "State daemon URL; falls back to in-memory mode when unavailable",
-    },
     namespace: {
       type: "string",
       default: "kb:",
@@ -34,5 +30,3 @@ export const manifest: AdapterManifest = {
     },
   },
 };
-
-export default manifest;

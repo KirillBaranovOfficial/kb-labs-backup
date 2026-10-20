@@ -12,6 +12,8 @@ import { createHmac } from 'node:crypto';
 import type { ILogger } from '@kb-labs/core-platform';
 import type { ManifestV3, WebhookHandlerDecl } from '@kb-labs/plugin-contracts';
 import { InMemoryCache } from '@kb-labs/core-platform/inmemory';
+import { createInMemoryDocumentDatabase } from '@kb-labs/sdk/testing';
+import { WebhookHistoryStore } from '../webhook/history-store.js';
 import { WebhookSecretStore } from '../webhook/secret-store.js';
 
 // ── Mock globalDispatcher before importing router ──────────────────────────────
@@ -91,6 +93,7 @@ async function buildApp(
     broker: broker as never,
     logger: noopLogger,
     manifests,
+    historyStore: new WebhookHistoryStore(createInMemoryDocumentDatabase()),
   });
   await app.ready();
   return app;
@@ -117,6 +120,7 @@ describe('registerWebhookRoutes — startup validation', () => {
         broker: broker as never,
         logger: noopLogger,
         manifests: [{ pluginId: PLUGIN_ID, manifest, pluginRoot: PLUGIN_ROOT }],
+        historyStore: new WebhookHistoryStore(createInMemoryDocumentDatabase()),
       }),
     ).rejects.toThrow(`webhook '${PLUGIN_ID}/push' has no auth config`);
     await app.close();
@@ -135,6 +139,7 @@ describe('registerWebhookRoutes — startup validation', () => {
       broker: broker as never,
       logger: noopLogger,
       manifests: [{ pluginId: PLUGIN_ID, manifest, pluginRoot: PLUGIN_ROOT }],
+      historyStore: new WebhookHistoryStore(createInMemoryDocumentDatabase()),
     });
     expect(count).toBe(2);
     await app.ready();
@@ -185,16 +190,15 @@ describe('registerWebhookRoutes — secret auth', () => {
     });
   });
 
-  it('missing x-kb-namespace header → 400', async () => {
+  it('missing x-kb-namespace header without valid webhook authentication → 401 catalog envelope', async () => {
     const res = await app.inject({
       method: 'POST',
       url: WEBHOOK_URL,
       headers: { 'X-Webhook-Secret': SECRET, 'Content-Type': 'application/json' },
       payload: makeBody({ event: 'alert' }),
     });
-    expect(res.statusCode).toBe(400);
-    const body = res.json() as { error: string };
-    expect(body.error).toContain('x-kb-namespace');
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
   });
 
   it('unknown event → 404', async () => {
@@ -225,6 +229,8 @@ describe('registerWebhookRoutes — secret auth', () => {
       payload: makeBody({ event: 'alert' }),
     });
     expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
+    expect(mockDispatcher.call).not.toHaveBeenCalled();
   });
 
   it('correct secret → 200 with result', async () => {
@@ -396,7 +402,7 @@ describe('registerWebhookRoutes — challenge', () => {
     const res = await app.inject({
       method: 'POST',
       url: WEBHOOK_URL,
-      headers: { 'x-kb-namespace': NS, 'Content-Type': 'application/json' },
+      headers: { 'x-kb-namespace': NS, 'X-Webhook-Secret': SECRET, 'Content-Type': 'application/json' },
       payload: makeBody({ type: 'url_verification', challenge: 'abc123xyz' }),
     });
     expect(res.statusCode).toBe(200);

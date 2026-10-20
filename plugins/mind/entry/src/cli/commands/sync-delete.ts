@@ -1,4 +1,4 @@
-import { defineCommand, handleError, confirmDestructive, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, confirmDestructive, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { type SyncDeleteFlags, type SyncResponse } from '@kb-labs/mind-contracts';
 import { buildMind } from '../../platform';
@@ -8,18 +8,17 @@ export default defineCommand<unknown, CLIInput<SyncDeleteFlags>, SyncResponse>({
   description: 'Remove documents from an index (incremental)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<SyncDeleteFlags>): Promise<CommandResult<SyncResponse>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<SyncDeleteFlags>): Promise<CommandResult<SyncResponse>> {
       try {
       const paths = input.argv ?? [];
       if (paths.length === 0) {
-        ctx.ui?.error?.('Provide one or more paths: kb mind sync delete <paths…>');
-        return { ok: false, error: 'Command failed' };
+
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'Provide one or more paths to delete.', hint: 'Run `kb mind sync delete <paths...>` with the paths to remove.' } };
       }
       // Destructive: blocks in EVERY mode until --yes (agents get a structured
       // confirmationRequired signal with severity/recovery, not a silent delete).
-      const blocked = confirmDestructive(ctx, {
+      const blocked = confirmDestructive({
         confirmed: input.flags.yes,
-        isJson: input.flags.json,
         action: {
           action: 'mind sync delete',
           resource: `index "${input.flags.index ?? 'default'}"`,
@@ -36,14 +35,12 @@ export default defineCommand<unknown, CLIInput<SyncDeleteFlags>, SyncResponse>({
       const mind = await buildMind(ctx.cwd);
       const res = await mind.syncDelete(paths, input.flags.index);
       if (input.flags.json) {
-        ctx.ui?.json?.(res);
-        return { ok: true, result: res };
+        return res;
       }
       ctx.ui?.success?.(`Sync delete → "${res.indexId}": ${res.deleted} chunk(s) removed`);
-      return { ok: true, result: res };
+      return res;
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed' };
+        return handleError(err);
       }
     },
   },

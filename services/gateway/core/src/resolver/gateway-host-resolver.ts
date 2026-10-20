@@ -6,7 +6,7 @@
  * only sees the IHostResolver interface.
  */
 
-import type { IHostResolver, HostResolution, ExecutionTarget } from '@kb-labs/core-contracts';
+import type { IHostResolver, HostResolution, ExecutionTarget } from '@kb-labs/core-platform';
 
 export interface GatewayHostResolverOptions {
   /** Gateway base URL (e.g., http://localhost:4000) */

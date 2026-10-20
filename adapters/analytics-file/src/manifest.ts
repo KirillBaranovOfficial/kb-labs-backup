@@ -9,6 +9,7 @@ import type { AdapterManifest } from "@kb-labs/sdk/adapters";
  * Adapter manifest for file-based analytics.
  */
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "analytics-file",
   name: "File Analytics",
@@ -18,11 +19,11 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "IAnalytics",
-  defaultFor: ["analytics"],
+  networkRequired: false,
   optional: {
     adapters: ["cache"], // Optional cache dependency for stats caching
   },
-  contexts: ["workspace", "analytics"], // Request runtime contexts
+  contexts: ["workspace", "analytics", "platformData"], // Request runtime contexts
   capabilities: {
     search: true,
     custom: {
@@ -35,6 +36,7 @@ export const manifest: AdapterManifest = {
     baseDir: {
       type: "string",
       description: "Base directory for analytics logs (default: <KB_HOME>/state/<projectId>/analytics/buffer)",
+      pathBase: 'platformData',
     },
     filenamePattern: {
       type: "string",

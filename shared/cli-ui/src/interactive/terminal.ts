@@ -4,6 +4,8 @@
  */
 
 import * as readline from 'node:readline';
+import { InteractiveInputRequiredError } from '@kb-labs/plugin-contracts';
+export { InteractiveInputRequiredError } from '@kb-labs/plugin-contracts';
 
 export interface Key {
   name: string;
@@ -20,6 +22,15 @@ export function isInteractive(): boolean {
     !process.env.CI &&
     !process.env.NO_INTERACTIVE
   );
+}
+
+/** Fail with a catalogued usage error when a CLI action needs terminal input. */
+export function requireInteractiveInput(
+  hint: string,
+  cause = 'Required input cannot be read in this execution context.',
+): void {
+  if (isInteractive()) return;
+  throw new InteractiveInputRequiredError(hint, cause);
 }
 
 export function enableRawMode(): void {

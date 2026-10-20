@@ -66,6 +66,11 @@ export async function registerWorkflowRoutes(
   server.route({
     method: 'GET',
     url: `${basePath}/workflows/runs/:runId/events`,
+    config: { ux: 'raw' },
+    schema: {
+      params: { type: 'object', properties: { runId: { type: 'string', minLength: 1 } }, required: ['runId'], additionalProperties: false },
+      querystring: { type: 'object', additionalProperties: false },
+    },
     handler: async (request, reply) => {
       const runId = getRunId(request.params)
 
@@ -138,6 +143,15 @@ export async function registerWorkflowRoutes(
   server.route({
     method: 'GET',
     url: `${basePath}/workflows/runs/:runId/logs`,
+    config: { ux: 'raw' },
+    schema: {
+      params: { type: 'object', properties: { runId: { type: 'string', minLength: 1 } }, required: ['runId'], additionalProperties: false },
+      querystring: {
+        type: 'object',
+        properties: { idleTimeoutMs: { type: 'string', pattern: '^[1-9][0-9]*$' } },
+        additionalProperties: false,
+      },
+    },
     handler: async (request, reply) => {
       const runId = getRunId(request.params)
       const query = request.query as { idleTimeoutMs?: string }

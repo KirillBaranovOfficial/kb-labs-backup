@@ -12,7 +12,7 @@
     "heroDocsBtn": "Документация",
     "apiDocsBtn": "Документация",
     "heroTitle": "Состояние",
-    "ctaDescription": "kb-dev start поднимает State Daemon автоматически. Меняешь backend в конфиге — сервисы не трогаешь.",
+    "ctaDescription": "На установленной платформе State Daemon запускается вместе с её сервисами. Установите KB Labs через kb-create, затем выберите backend в конфиге платформы.",
     "ctaTitle": "Запускается вместе с платформой.",
     "ctaInstallBtn": "Установить",
     "modes": [

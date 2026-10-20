@@ -122,8 +122,6 @@ export interface StateBroker {
 export interface StateBrokerOptions {
   /** Backend type */
   backend?: 'memory' | 'http';
-  /** URL for HTTP backend */
-  url?: string;
   /** Namespace prefix */
   namespace?: string;
 }

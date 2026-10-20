@@ -9,6 +9,7 @@ import type { AdapterManifest } from "@kb-labs/sdk/adapters";
  * Adapter manifest for filesystem storage.
  */
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "fs-storage",
   name: "Filesystem Storage",
@@ -18,6 +19,9 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "IStorage",
+  networkRequired: false,
+  defaultFor: { storage: [] },
+  contexts: ['workspace', 'platformData'],
   capabilities: {
     streaming: true,
     custom: {
@@ -28,8 +32,9 @@ export const manifest: AdapterManifest = {
   configSchema: {
     baseDir: {
       type: "string",
-      default: "process.cwd()",
-      description: "Base directory for all file operations",
+      description: "Base directory for all file operations; omitted paths use platform state for the current project",
+      pathBase: 'platformData',
+      defaultPath: { root: 'projectState', segments: ['storage'] },
     },
   },
 };

@@ -4,16 +4,18 @@
 package toolchain
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/kb-labs/clikit/diag"
 )
 
+//go:generate node generate-node-policy.mjs
+
 const (
-	SupportedNodeMajor = 24
 	SupportedPnpmMajor = 11
 	SupportedPnpm      = "11.4.0"
 )
@@ -32,9 +34,36 @@ func (e *ValidationError) Error() string {
 }
 
 func NodeRemediation() string {
-	return fmt.Sprintf("Update Node.js and retry (for nvm: `nvm install %d && nvm use %d`)", SupportedNodeMajor, SupportedNodeMajor)
+	diagnostic, err := nodeVersionDiagnostic("unknown")
+	if err != nil {
+		panic(err)
+	}
+	envelope, err := diag.ToEnvelope(diagnostic)
+	if err != nil {
+		panic(err)
+	}
+	return envelope.Hint
 }
 func PnpmRemediation() string { return fmt.Sprintf("Install pnpm@%s and retry", SupportedPnpm) }
+
+// NodeMissingDiagnostic reports that Node.js could not be executed at all.
+func NodeMissingDiagnostic() *diag.Diag {
+	diagnostic, err := diag.FromCatalog("KB_INSTALL_NODE_MISSING", map[string]string{"requirement": "Node.js"})
+	if err != nil {
+		panic(err)
+	}
+	return diagnostic
+}
+
+// NodeCheckDiagnostic preserves a structured preflight failure or reports that
+// no Node.js executable could be run.
+func NodeCheckDiagnostic(err error) *diag.Diag {
+	var failure *diag.Diag
+	if errors.As(err, &failure) {
+		return failure
+	}
+	return NodeMissingDiagnostic()
+}
 
 func Version(binary string) (string, error) {
 	if strings.TrimSpace(binary) == "" {
@@ -50,9 +79,21 @@ func Version(binary string) (string, error) {
 func ValidateNode(version string) error {
 	major, err := major(version)
 	if err != nil || major != SupportedNodeMajor {
-		return &ValidationError{Tool: "Node.js", Detected: version, Requirement: fmt.Sprintf("Node.js %d.x only", SupportedNodeMajor), Remediation: NodeRemediation()}
+		actualVersion := strings.TrimPrefix(strings.TrimSpace(version), "v")
+		diagnostic, diagnosticErr := nodeVersionDiagnostic(actualVersion)
+		if diagnosticErr != nil {
+			return diagnosticErr
+		}
+		return diagnostic
 	}
 	return nil
+}
+
+func nodeVersionDiagnostic(actualVersion string) (*diag.Diag, error) {
+	return diag.FromCatalog("KB_NODE_VERSION_UNSUPPORTED", map[string]string{
+		"requiredMajor": strconv.Itoa(SupportedNodeMajor),
+		"actualVersion": actualVersion,
+	})
 }
 
 func ValidatePnpm(version string) error {
@@ -71,15 +112,6 @@ func Validate(status Status, requirePnpm bool) error {
 		return ValidatePnpm(status.PnpmVersion)
 	}
 	return nil
-}
-
-func ConfirmUpdate(in io.Reader, out io.Writer, issue *ValidationError) bool {
-	if issue == nil {
-		return false
-	}
-	fmt.Fprintf(out, "%s\nWould you like to update now? [y/N] ", issue.Error())
-	line, _ := bufio.NewReader(in).ReadString('\n')
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y")
 }
 
 func major(version string) (int, error) {

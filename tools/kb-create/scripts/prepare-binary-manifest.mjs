@@ -3,7 +3,8 @@
 // Converts the exact GoReleaser checksum output into the binary part of the
 // unified release-index input. It never resolves a channel or a "latest"
 // release; the tag and asset bytes are explicit inputs.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -19,7 +20,20 @@ const required = name => {
 const checksumsPath = required('--checksums');
 const repository = required('--repository');
 const releaseTag = required('--release-tag');
+const version = required('--version');
 const output = required('--output');
+const assetBaseURL = value('--asset-base-url');
+if (assetBaseURL) {
+  let parsed;
+  try {
+    parsed = new URL(assetBaseURL);
+  } catch {
+    throw new Error('--asset-base-url must be an absolute HTTP(S) URL');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.search || parsed.hash) {
+    throw new Error('--asset-base-url must be an absolute HTTP(S) URL without query or fragment');
+  }
+}
 // Author and ops tools are not part of a user installation (ADR-0045): the
 // index lists only what the launcher may install. kb-dev in particular is how
 // platform authors run services from the monorepo, never how a user runs one.
@@ -33,7 +47,7 @@ for (const line of entries) {
   if (!match) continue;
   const [, sha256, rawFilename] = match;
   const filename = rawFilename.replace(/^\*+/, '');
-  const target = filename.match(/^(kb-[a-z0-9-]+)-(darwin|linux|windows)-(amd64|arm64)(\.exe)?$/);
+  const target = filename.match(/^(kb-[a-z0-9-]+)-(darwin|linux)-(amd64|arm64)$/);
   if (!target) continue;
   const [, id, os, arch] = target;
   if (AUTHOR_AND_OPS_TOOLS.has(id)) continue;
@@ -42,11 +56,15 @@ for (const line of entries) {
   seen.add(key);
   binaries.push({
     id,
+    version,
     os,
     arch,
     filename,
     sha256: sha256.toLowerCase(),
-    url: `https://github.com/${repository}/releases/download/${releaseTag}/${filename}`,
+    sizeBytes: statSync(join(dirname(checksumsPath), filename)).size,
+    url: assetBaseURL
+      ? `${assetBaseURL.replace(/\/$/, '')}/${filename}`
+      : `https://github.com/${repository}/releases/download/${releaseTag}/${filename}`,
   });
 }
 

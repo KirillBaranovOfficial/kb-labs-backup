@@ -2,226 +2,240 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import {
-  readMarketplaceLock,
-  writeMarketplaceLock,
-  addToMarketplaceLock,
-  removeFromMarketplaceLock,
-  createEmptyLock,
-  createMarketplaceEntry,
-} from '../marketplace-lock.js';
+import { fileURLToPath } from 'node:url';
+import { readMarketplaceLock, writeMarketplaceLock, createEmptyLock, addToMarketplaceLock, removeFromMarketplaceLock, validateMarketplaceLock } from '../marketplace-lock.js';
 import { DiagnosticCollector } from '../diagnostics.js';
 
-describe('marketplace-lock', () => {
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
+
+describe('marketplace-lock v3', () => {
+  it('identifies the first invalid entry and runtime validation reason', () => {
+    const result = validateMarketplaceLock({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@kb-labs/broken': { version: '1.0.0', integrity: 'sha999-bad', package: '@kb-labs/broken', enabled: true, source: 'marketplace' },
+      },
+    }, 'platform');
+
+    expect(result).toMatchObject({ valid: false, entry: '@kb-labs/broken' });
+    if (!result.valid) {expect(result.reason).toMatch(/integrity/i);}
+  });
+
+  it('rejects machine adapter entries in project scope and accepts them in platform scope', () => {
+    const lock = {
+      schema: 'kb.marketplace/3',
+      plugins: {},
+      adapters: {
+        '@kb-labs/adapters-sqlite': { version: '1.0.0', integrity: 'sha512-YQ==', resolvedPath: 'node_modules/@kb-labs/adapters-sqlite', enabled: true, source: 'platform' },
+      },
+    };
+
+    expect(validateMarketplaceLock(lock, 'project')).toMatchObject({
+      valid: false,
+      reason: 'project lock must not contain adapters',
+    });
+    expect(validateMarketplaceLock(lock, 'platform').valid).toBe(true);
+  });
+
+  it('rejects platform plugin entries in project scope with the offending ID and reason', () => {
+    const lock = {
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@kb-labs/example': { version: '1.0.0', integrity: 'sha512-YQ==', package: '@kb-labs/example', resolvedPath: 'node_modules/@kb-labs/example', enabled: true, source: 'platform' },
+      },
+    };
+
+    expect(validateMarketplaceLock(lock, 'project')).toMatchObject({
+      valid: false,
+      entry: '@kb-labs/example',
+      reason: 'source must be marketplace or local in project locks',
+    });
+    expect(validateMarketplaceLock(lock, 'platform').valid).toBe(true);
+  });
+
+  it('runtime project-scope reads reject platform plugin entries', async () => {
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@kb-labs/example': { version: '1.0.0', integrity: 'sha512-YQ==', package: '@kb-labs/example', resolvedPath: 'node_modules/@kb-labs/example', enabled: true, source: 'platform' },
+      },
+    }));
+    const diag = new DiagnosticCollector();
+
+    expect(await readMarketplaceLock(tmpDir, diag, 'project')).toBeNull();
+    expect(diag.getEvents()).toContainEqual(expect.objectContaining({
+      code: 'LOCK_SCHEMA_INVALID',
+      message: expect.stringContaining('@kb-labs/example'),
+    }));
+  });
+
+  it('runtime project-scope reads reject a present adapters section', async () => {
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {},
+      adapters: {},
+    }));
+    const diag = new DiagnosticCollector();
+
+    expect(await readMarketplaceLock(tmpDir, diag, 'project')).toBeNull();
+    expect(diag.getEvents()).toContainEqual(expect.objectContaining({
+      code: 'LOCK_SCHEMA_INVALID',
+      message: expect.stringContaining('project lock must not contain adapters'),
+    }));
+  });
+
   let tmpDir: string;
-  let diag: DiagnosticCollector;
+  beforeEach(async () => { tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-lock-test-')); });
+  afterEach(async () => { await fs.rm(tmpDir, { recursive: true, force: true }); });
 
-  beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-lock-test-'));
-    diag = new DiagnosticCollector();
+  // case: S-179.1
+  it('loads the committed developer workspace lock with the v3 validator', async () => {
+    const diag = new DiagnosticCollector();
+    const lock = await readMarketplaceLock(workspaceRoot, diag);
+
+    expect(lock?.schema).toBe('kb.marketplace/3');
+    expect(Object.keys(lock?.plugins ?? {}).length).toBeGreaterThan(0);
+    expect(diag.getEvents().filter(event => event.severity === 'error')).toEqual([]);
   });
 
-  afterEach(async () => {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+  // case: S-179.4
+  it('keeps workspace plugins and adapters in their v3 lock sections', async () => {
+    const lock = await readMarketplaceLock(workspaceRoot, new DiagnosticCollector());
+    expect(Object.keys(lock?.plugins ?? [])).toEqual(expect.arrayContaining([
+      '@kb-labs/agents',
+      '@kb-labs/clickup',
+      '@kb-labs/commit',
+      '@kb-labs/devlink',
+      '@kb-labs/github',
+      '@kb-labs/host-agent',
+      '@kb-labs/impact',
+      '@kb-labs/inbox',
+      '@kb-labs/marketplace',
+      '@kb-labs/marketplace-registry',
+      '@kb-labs/mind',
+      '@kb-labs/policy',
+      '@kb-labs/qa',
+      '@kb-labs/quality',
+      '@kb-labs/release',
+      '@kb-labs/review',
+      '@kb-labs/scaffold',
+      '@kb-labs/site-tools',
+      '@kb-labs/steward',
+      '@kb-labs/workflow',
+    ]));
+    expect(Object.keys(lock?.adapters ?? [])).toEqual(expect.arrayContaining([
+      '@kb-labs/adapters-analytics-duckdb',
+      '@kb-labs/adapters-analytics-file',
+      '@kb-labs/adapters-analytics-sqlite',
+      '@kb-labs/adapters-environment-docker',
+      '@kb-labs/adapters-eventbus-cache',
+      '@kb-labs/adapters-fs',
+      '@kb-labs/adapters-kblabs-gateway',
+      '@kb-labs/adapters-log-document',
+      '@kb-labs/adapters-log-ringbuffer',
+      '@kb-labs/adapters-mongodb',
+      '@kb-labs/adapters-openai',
+      '@kb-labs/adapters-pino',
+      '@kb-labs/adapters-qdrant',
+      '@kb-labs/adapters-redis',
+      '@kb-labs/adapters-s3',
+      '@kb-labs/adapters-service-transport-http',
+      '@kb-labs/adapters-snapshot-localfs',
+      '@kb-labs/adapters-sqlite',
+      '@kb-labs/adapters-state-broker',
+      '@kb-labs/adapters-telegram',
+      '@kb-labs/adapters-vibeproxy',
+      '@kb-labs/adapters-voyage-ai',
+      '@kb-labs/adapters-workspace-agent',
+      '@kb-labs/adapters-workspace-localfs',
+      '@kb-labs/adapters-workspace-worktree',
+      '@kb-labs/data-store',
+    ]));
   });
 
-  describe('readMarketplaceLock', () => {
-    it('returns null and info diagnostic when file does not exist', async () => {
-      const result = await readMarketplaceLock(tmpDir, diag);
-      expect(result).toBeNull();
-      expect(diag.getEvents()).toHaveLength(1);
-      expect(diag.getEvents()[0]!.code).toBe('LOCK_NOT_FOUND');
-      expect(diag.getEvents()[0]!.severity).toBe('info');
-    });
-
-    it('returns null with error on invalid JSON', async () => {
-      await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
-      await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'not json', 'utf-8');
-
-      const result = await readMarketplaceLock(tmpDir, diag);
-      expect(result).toBeNull();
-      expect(diag.getEvents()[0]!.code).toBe('LOCK_PARSE_ERROR');
-    });
-
-    it('returns null with error on wrong schema', async () => {
-      await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
-      await fs.writeFile(
-        path.join(tmpDir, '.kb', 'marketplace.lock'),
-        JSON.stringify({ schema: 'wrong', installed: {} }),
-        'utf-8',
-      );
-
-      const result = await readMarketplaceLock(tmpDir, diag);
-      expect(result).toBeNull();
-      expect(diag.getEvents()[0]!.code).toBe('LOCK_SCHEMA_INVALID');
-    });
-
-    it('reads valid lock file', async () => {
-      const lock = createEmptyLock();
-      lock.installed['@kb-labs/test'] = createMarketplaceEntry({
-        version: '1.0.0',
-        integrity: 'sha256-abc',
-        resolvedPath: './node_modules/@kb-labs/test',
-        source: 'marketplace',
-        primaryKind: 'plugin',
-      provides: ['plugin'],
-      });
-
-      await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
-      await fs.writeFile(
-        path.join(tmpDir, '.kb', 'marketplace.lock'),
-        JSON.stringify(lock, null, 2),
-        'utf-8',
-      );
-
-      const result = await readMarketplaceLock(tmpDir, diag);
-      expect(result).not.toBeNull();
-      expect(result!.schema).toBe('kb.marketplace/2');
-      expect(result!.installed['@kb-labs/test']).toBeDefined();
-      expect(result!.installed['@kb-labs/test']!.version).toBe('1.0.0');
-      expect(diag.hasErrors()).toBe(false);
-    });
+  it('writes sorted, machine independent project pins', async () => {
+    const lock = createEmptyLock();
+    lock.plugins['z-plugin'] = { version: '1.2.3', integrity: 'sha512-abc', package: 'z-plugin', source: 'marketplace', enabled: true };
+    lock.plugins['@scope/a-plugin'] = { version: '4.5.6', integrity: 'sha512-def', package: '@scope/a-plugin', source: 'marketplace', enabled: false };
+    await writeMarketplaceLock(tmpDir, lock);
+    const raw = await fs.readFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'utf8');
+    expect(raw).toContain('"schema": "kb.marketplace/3"');
+    expect(Object.keys(JSON.parse(raw).plugins)).toEqual(['@scope/a-plugin', 'z-plugin']);
+    expect(raw).not.toMatch(/resolvedPath|installedAt|\/Users\/|[A-Z]:\\/);
+    expect(await readMarketplaceLock(tmpDir, new DiagnosticCollector())).toEqual(lock);
   });
 
-  describe('writeMarketplaceLock', () => {
-    it('creates .kb dir and writes atomically', async () => {
-      const lock = createEmptyLock();
-      await writeMarketplaceLock(tmpDir, lock);
-
-      const content = await fs.readFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'utf-8');
-      const parsed = JSON.parse(content);
-      expect(parsed.schema).toBe('kb.marketplace/2');
-      expect(parsed.installed).toEqual({});
-    });
+  it('rejects v2 with a coded diagnostic and exact regeneration command', async () => {
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({ schema: 'kb.marketplace/2', installed: {} }));
+    const diag = new DiagnosticCollector();
+    expect(await readMarketplaceLock(tmpDir, diag)).toBeNull();
+    expect(diag.getEvents()[0]?.code).toBe('LOCK_SCHEMA_INVALID');
+    expect(diag.getEvents()[0]?.remediation).toContain('kb marketplace sync');
   });
 
-  describe('addToMarketplaceLock', () => {
-    it('creates lock file if it does not exist', async () => {
-      const entry = createMarketplaceEntry({
-        version: '2.0.0',
-        integrity: 'sha256-xyz',
-        resolvedPath: './node_modules/@kb-labs/new',
-        source: 'marketplace',
-        primaryKind: 'plugin',
-      provides: ['plugin', 'cli-command'],
-      });
+  it('rejects machine-specific paths in project pins', async () => {
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3', plugins: { demo: { version: '1.0.0', integrity: 'sha512-x', package: 'demo-entry', enabled: true, source: 'marketplace', resolvedPath: '/machine/store/demo' } },
+    }));
+    const diag = new DiagnosticCollector();
+    expect(await readMarketplaceLock(tmpDir, diag)).toBeNull();
+    expect(diag.getEvents()[0]?.code).toBe('LOCK_SCHEMA_INVALID');
+  });
 
-      const result = await addToMarketplaceLock(tmpDir, '@kb-labs/new', entry);
-      expect(result.installed['@kb-labs/new']).toBeDefined();
-      expect(result.installed['@kb-labs/new']!.version).toBe('2.0.0');
-      expect(result.installed['@kb-labs/new']!.provides).toEqual(['plugin', 'cli-command']);
-
-      // Verify written to disk
-      const diskLock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(diskLock!.installed['@kb-labs/new']!.version).toBe('2.0.0');
-    });
-
-    it('adds to existing lock without overwriting others', async () => {
-      const entry1 = createMarketplaceEntry({
-        version: '1.0.0', integrity: 'sha256-a',
-        resolvedPath: './a', source: 'marketplace', primaryKind: 'plugin',
-      provides: ['plugin'],
-      });
-      const entry2 = createMarketplaceEntry({
-        version: '2.0.0', integrity: 'sha256-b',
-        resolvedPath: './b', source: 'local', primaryKind: 'plugin',
-      provides: ['plugin', 'workflow'],
-      });
-
-      await addToMarketplaceLock(tmpDir, '@kb-labs/a', entry1);
-      await addToMarketplaceLock(tmpDir, '@kb-labs/b', entry2);
-
-      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(Object.keys(lock!.installed)).toHaveLength(2);
-      expect(lock!.installed['@kb-labs/a']!.version).toBe('1.0.0');
-      expect(lock!.installed['@kb-labs/b']!.source).toBe('local');
+  it('rejects a marketplace pin without its package name through the lock schema diagnostic', async () => {
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'marketplace' } },
+    }));
+    const diag = new DiagnosticCollector();
+    expect(await readMarketplaceLock(tmpDir, diag)).toBeNull();
+    expect(diag.getEvents()[0]).toMatchObject({
+      code: 'LOCK_SCHEMA_INVALID',
+      remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.',
     });
   });
 
-  describe('removeFromMarketplaceLock', () => {
-    it('returns false if lock does not exist', async () => {
-      const result = await removeFromMarketplaceLock(tmpDir, '@kb-labs/none');
-      expect(result).toBe(false);
-    });
-
-    it('returns false if package not in lock', async () => {
-      const entry = createMarketplaceEntry({
-        version: '1.0.0', integrity: 'sha256-a',
-        resolvedPath: './a', source: 'marketplace', primaryKind: 'plugin',
-      provides: ['plugin'],
-      });
-      await addToMarketplaceLock(tmpDir, '@kb-labs/a', entry);
-
-      const result = await removeFromMarketplaceLock(tmpDir, '@kb-labs/missing');
-      expect(result).toBe(false);
-    });
-
-    it('removes existing entry and persists', async () => {
-      const entry = createMarketplaceEntry({
-        version: '1.0.0', integrity: 'sha256-a',
-        resolvedPath: './a', source: 'marketplace', primaryKind: 'plugin',
-      provides: ['plugin'],
-      });
-      await addToMarketplaceLock(tmpDir, '@kb-labs/a', entry);
-
-      const result = await removeFromMarketplaceLock(tmpDir, '@kb-labs/a');
-      expect(result).toBe(true);
-
-      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/a']).toBeUndefined();
+  it('rejects a platform plugin pin without its package name through the lock schema diagnostic', async () => {
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'platform', resolvedPath: 'node_modules/@kb-labs/commit-entry' } },
+    }));
+    const diag = new DiagnosticCollector();
+    expect(await readMarketplaceLock(tmpDir, diag)).toBeNull();
+    expect(diag.getEvents()[0]).toMatchObject({
+      code: 'LOCK_SCHEMA_INVALID',
+      remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.',
     });
   });
 
-  describe('createMarketplaceEntry', () => {
-    it('sets installedAt to current time', () => {
-      const before = new Date().toISOString();
-      const entry = createMarketplaceEntry({
-        version: '1.0.0', integrity: 'sha256-test',
-        resolvedPath: './test', source: 'local', primaryKind: 'plugin',
-      provides: ['plugin'],
-      });
-      const after = new Date().toISOString();
+  // case: S-179.15
+  it('rejects an invalid lock before writing and identifies the plugin missing its package', async () => {
+    const invalidLock = JSON.parse(JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'marketplace' } },
+    }));
 
-      expect(entry.installedAt >= before).toBe(true);
-      expect(entry.installedAt <= after).toBe(true);
-      expect(entry.source).toBe('local');
+    await expect(writeMarketplaceLock(tmpDir, invalidLock)).rejects.toMatchObject({
+      name: 'MarketplaceLockValidationError',
+      code: 'LOCK_SCHEMA_INVALID',
+      pluginId: '@kb-labs/commit',
+      remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.',
+      message: expect.stringContaining('@kb-labs/commit'),
     });
+    await expect(fs.access(path.join(tmpDir, '.kb'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 
-    it('sets primaryKind from opts', () => {
-      const entry = createMarketplaceEntry({
-        version: '1.0.0', integrity: 'sha256-test',
-        resolvedPath: './test', source: 'local', primaryKind: 'adapter',
-        provides: ['adapter'],
-      });
-      expect(entry.primaryKind).toBe('adapter');
-    });
-
-    it('defaults enabled to true', () => {
-      const entry = createMarketplaceEntry({
-        version: '1.0.0', integrity: 'sha256-test',
-        resolvedPath: './test', source: 'local', primaryKind: 'plugin',
-        provides: ['plugin'],
-      });
-      expect(entry.enabled).toBe(true);
-    });
-
-    it('includes signature when provided', () => {
-      const entry = createMarketplaceEntry({
-        version: '1.0.0', integrity: 'sha256-test',
-        resolvedPath: './test', source: 'marketplace', primaryKind: 'plugin',
-      provides: ['plugin'],
-        signature: {
-          algorithm: 'ed25519',
-          value: 'base64sig',
-          signer: 'kb-labs-platform',
-          signedAt: '2026-01-01T00:00:00Z',
-          verifiedChecks: ['integrity', 'types'],
-        },
-      });
-
-      expect(entry.signature).toBeDefined();
-      expect(entry.signature!.signer).toBe('kb-labs-platform');
-      expect(entry.signature!.verifiedChecks).toContain('integrity');
-    });
+  it('mutates pins without changing a disabled entry and removes pins', async () => {
+    await addToMarketplaceLock(tmpDir, 'demo', { version: '1.0.0', integrity: 'sha512-x', package: 'demo', source: 'marketplace', enabled: false });
+    await addToMarketplaceLock(tmpDir, 'demo', { version: '1.0.0', integrity: 'sha512-x', package: 'demo', source: 'marketplace', enabled: true });
+    const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+    expect(lock?.plugins.demo?.enabled).toBe(false);
+    expect(await removeFromMarketplaceLock(tmpDir, 'demo')).toBe(true);
   });
 });

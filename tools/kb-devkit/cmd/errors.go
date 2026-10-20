@@ -1,13 +1,39 @@
 package cmd
 
-import "github.com/kb-labs/clikit/diag"
+import (
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/devkit/internal/engine"
+)
 
-// Error codes for kb-devkit, with default hints. Mirrors the platform's
-// ERROR_HINTS registry (core/config/src/errors/kb-error.ts).
-const codeUnknown = "ERR_UNKNOWN"
+func commandFailure(command string) error {
+	return diag.New("KB_RUNTIME_COMMAND_FAILED", "The command could not complete.",
+		diag.WithMeta(map[string]any{"command": command}))
+}
 
-func init() {
-	diag.RegisterHints(map[string]string{
-		codeUnknown: "re-run with --output=json to see the structured error",
-	})
+func taskFailure(result engine.TaskResult, data any) error {
+	code := "KB_DEVKIT_TASK_FAILED"
+	meta := map[string]any{
+		"package": result.Package,
+		"task":    result.Task,
+		"logPath": result.LogPath,
+	}
+	if result.LogError != "" {
+		code = "KB_DEVKIT_TASK_LOG_UNAVAILABLE"
+		meta["logDirectory"] = result.LogDirectory
+		meta["logError"] = result.LogError
+	}
+	return diag.New(code, "",
+		diag.WithMeta(meta),
+		diag.WithData(data))
+}
+
+func taskGraphFailure(err *engine.TaskGraphError) error {
+	return diag.New("KB_DEVKIT_TASK_GRAPH_INVALID", "",
+		diag.WithMeta(map[string]any{
+			"package":        err.Package,
+			"task":           err.Task,
+			"dependency":     err.Dependency,
+			"dependencyTask": err.DependencyTask,
+		}),
+	)
 }

@@ -5,7 +5,7 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client.js';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client.js';
 
 interface RunDetailParams {
   runId: string;
@@ -29,12 +29,12 @@ export default defineHandler({
       throw new Error('Missing runId parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/runs/${encodeURIComponent(runId)}`;
+    const url = `${daemonUrl}/runs/${encodeURIComponent(runId)}`;
 
     ctx.platform.logger.info(`[run-detail-handler] Fetching run ${runId} from ${url}`);
 
     try {
-      const response = await fetch(url);
+      const response = await fetchWorkflowApi(url);
 
       if (!response.ok) {
         if (response.status === 404) {

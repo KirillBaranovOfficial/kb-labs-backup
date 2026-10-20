@@ -8,13 +8,15 @@ import { UIPage, UIPageHeader, UIPageSection } from '@kb-labs/sdk/studio'
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  UIButton, UITypographyText,
+  UIButton, UITypographyText, UISkeletonText,
   UITitle, UIAlert, UIList, UIListItem, UIAccordion, UITabs, UIJsonViewer,
 } from '@kb-labs/sdk/studio'
 import type { UIAccordionItem, UITabItem } from '@kb-labs/sdk/studio'
 import { useData, useMutateData, useSSE } from '@kb-labs/sdk/studio'
 import type { WorkflowRun, JobRun, StepRun } from '@kb-labs/workflow-contracts'
 import type { WorkflowLogEvent } from '@kb-labs/workflow-contracts/rest-api'
+import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes'
+import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker'
 import { WorkflowStatusBadge } from '../components/shared/WorkflowStatusBadge'
 import { ConnectionBadge } from '../components/shared/ConnectionBadge'
 import { ApprovalModal } from '../components/ApprovalModal'
@@ -25,6 +27,23 @@ import { ViewModeSelector } from '../components/shared/ViewModeSelector'
 
 const Text = UITypographyText
 const Title = UITitle
+
+export function RunInputs({ inputs }: { inputs?: Record<string, unknown> }) {
+  if (!inputs || Object.keys(inputs).length === 0) {return null}
+  return (
+    <section aria-label="Submitted inputs" style={{ margin: '12px 0 20px' }}>
+      <Title level={4}>Submitted Inputs</Title>
+      <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 12px', margin: 0 }}>
+        {Object.entries(inputs).map(([name, value]) => (
+          <React.Fragment key={name}>
+            <dt style={{ fontWeight: 600 }}>{`${name}:`}</dt>
+            <dd style={{ margin: 0 }}>{typeof value === 'string' ? value : JSON.stringify(value)}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+    </section>
+  )
+}
 
 // --- GitHub Actions style execution log ---
 
@@ -476,18 +495,12 @@ function JobStepLog({ events, run, onApprove }: JobStepLogProps) {
 
 // ─── Skeleton ──────────────────────────────────────────────────────
 
-const SKEL: React.CSSProperties = {
-  background: 'var(--border-primary)',
-  borderRadius: 4,
-  animation: 'kb-skel-pulse 1.5s ease-in-out infinite',
-}
 function SkeletonBlock({ width, height, style }: { width: number | string; height: number; style?: React.CSSProperties }) {
-  return <div style={{ ...SKEL, width, height, ...style }} />
+  return <UISkeletonText width={width} height={height} style={style} />
 }
 function RunDetailSkeleton() {
   return (
     <>
-      <style>{`@keyframes kb-skel-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
       <div style={{ display: 'flex', gap: 12, padding: '12px 16px', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 8, marginBottom: 24 }}>
         <SkeletonBlock width={60} height={20} /><SkeletonBlock width={120} height={20} /><SkeletonBlock width={80} height={20} /><SkeletonBlock width={140} height={20} style={{ marginLeft: 'auto' }} />
       </div>
@@ -535,9 +548,10 @@ const STATE_EVENT_PREFIXES = ['run.', 'job.', 'step.']
 export default function WorkflowRunDetail() {
   const params = useParams<{ runId: string }>()
   const runId = params.runId ?? null
+  const { projectId, picker, hasProjects } = useWorkflowProject()
   const { data: runData, isLoading, error, refetch } = useData<{ run: WorkflowRun }>(
-    runId ? `/exec/api/v1/runs/${runId}` : '/exec/api/v1/runs/__none__',
-    { enabled: !!runId, pollingMs: 10_000 },
+    projectWorkflowEndpoint(projectId, runId ? `runs/${encodeURIComponent(runId)}` : 'runs/__none__'),
+    { enabled: !!runId && hasProjects, pollingMs: 10_000 },
   )
 
   const [localRun, setLocalRun] = useState<WorkflowRun | null>(null)
@@ -547,11 +561,11 @@ export default function WorkflowRunDetail() {
   }, [runData])
 
   const run = localRun
-  const cancelMutation = useMutateData<void, void>(`/exec/api/v1/runs/${runId ?? '__none__'}/cancel`)
+  const cancelMutation = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `runs/${encodeURIComponent(runId ?? '__none__')}/cancel`))
   const resolveApproval = useMutateData<
     { runId: string; jobId: string; stepId: string; action: string; comment?: string },
     unknown
-  >(`/exec/api/v1/runs/${runId ?? '__none__'}/approvals/resolve`)
+  >(projectWorkflowEndpoint(projectId, `runs/${encodeURIComponent(runId ?? '__none__')}/approvals/resolve`))
   const isRunActive = run != null && !TERMINAL_STATUSES.has(run.status)
 
   const [lastEventAt, setLastEventAt] = useState<Date | undefined>(undefined)
@@ -562,7 +576,7 @@ export default function WorkflowRunDetail() {
   }, [])
 
   const { events, error: logError, connectionStatus } = useSSE<WorkflowLogEvent>(
-    isRunActive && runId && !isLoading ? `/exec/api/v1/runs/${runId}/events` : null,
+    isRunActive && runId && !isLoading ? projectWorkflowEndpoint(projectId, `runs/${encodeURIComponent(runId)}/events`) : null,
     { events: 'workflow.event', terminalEvents: ['workflow.done'], params: { follow: 1 }, reconnect: true, onEvent: handleSseEvent },
   )
 
@@ -616,6 +630,7 @@ export default function WorkflowRunDetail() {
         ]}
         actions={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {picker}
             <ConnectionBadge status={connectionStatus} lastEventAt={lastEventAt} />
             <UIButton onClick={() => refetch()} disabled={isLoading}>
               Refresh
@@ -697,6 +712,14 @@ export default function WorkflowRunDetail() {
             )}
             <span style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-primary)' }} />
             <ViewModeSelector views={VIEW_MODES} current={viewMode} onChange={setViewMode} />
+            {runId && projectId && (
+              <Link
+                to={`/observability/logs?projectId=${encodeURIComponent(projectId)}&executionId=${encodeURIComponent(runId)}`}
+                style={{ color: 'var(--link)', fontSize: 13 }}
+              >
+                Inspect run logs
+              </Link>
+            )}
           </div>
 
           {run.result?.summary && (
@@ -704,6 +727,8 @@ export default function WorkflowRunDetail() {
               {run.result.summary}
             </Text>
           )}
+
+          <RunInputs inputs={run.inputs} />
 
           {isRunActive && logError && connectionStatus !== 'reconnecting' && (
             <UIAlert variant="warning" message="Reconnecting to event stream…" description="Using polling as fallback" style={{ marginBottom: 12 }} />
@@ -794,7 +819,6 @@ export default function WorkflowRunDetail() {
       <ApprovalModal
         open={approvalStep !== null}
         step={approvalStep}
-        runId={runId ?? ''}
         onClose={() => setApprovalStep(null)}
         onResolve={handleApprovalResolve}
         isLoading={resolveApproval.isLoading}

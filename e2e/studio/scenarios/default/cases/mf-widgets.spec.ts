@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
 import { GATEWAY, REST } from '@kb-labs/e2e-shared/urls.js'
 
 /**
@@ -25,7 +25,7 @@ type StudioEntry = {
 }
 
 async function getStudioRegistry(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
 ): Promise<StudioEntry[]> {
   // REST API exposes the studio registry used by the shell to init MF
   const res = await request.get(`${REST}/api/v1/studio/registry`)
@@ -48,7 +48,7 @@ function resolveUrl(url: string, gatewayOrigin: string): string {
 
 test('MW-01: REST /api/v1/studio/registry — returns plugin list', async ({ request }) => {
   const res = await request.get(`${REST}/api/v1/studio/registry`)
-  test.skip(res.status() === 404, 'studio/registry endpoint not available in this build')
+  expect(res.status() === 404, 'studio/registry endpoint not available in this build').toBe(false)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const plugins: unknown[] = body.data?.plugins ?? body.plugins ?? []
@@ -59,10 +59,10 @@ test('MW-01: REST /api/v1/studio/registry — returns plugin list', async ({ req
 
 test('MW-02: every remoteEntryUrl resolves to application/javascript (not HTML)', async ({ request }) => {
   const registryRes = await request.get(`${REST}/api/v1/studio/registry`)
-  test.skip(registryRes.status() === 404, 'studio/registry not available')
+  expect(registryRes.status() === 404, 'studio/registry not available').toBe(false)
 
   const plugins = await getStudioRegistry(request)
-  test.skip(plugins.length === 0, 'no plugins registered in studio registry')
+  expect(plugins.length === 0, 'no plugins registered in studio registry').toBe(false)
 
   const failures: string[] = []
 
@@ -108,10 +108,10 @@ test('MW-03: workflow remoteEntry.js — returns JavaScript through gateway', as
   const workflowPlugin = plugins.find(
     p => p.pluginId?.includes('workflow') || p.remoteName?.includes('workflow'),
   )
-  test.skip(!workflowPlugin, 'workflow plugin not in studio registry — check install')
+  expect(!workflowPlugin, 'workflow plugin not in studio registry — check install').toBe(false)
 
   const url = resolveUrl((workflowPlugin!.remoteEntryUrl ?? '').split('?')[0], GATEWAY)
-  test.skip(!url || url === GATEWAY, 'workflow remoteEntryUrl missing')
+  expect(url === GATEWAY, 'workflow remoteEntryUrl missing').toBe(false)
 
   const res = await request.get(url)
   expect(res.status()).toBe(200)
@@ -141,11 +141,11 @@ test('MW-04: gateway /plugins/* proxy — no double-prefix redirect', async ({ r
 test('MW-05: remoteEntry.js has short Cache-Control (must-revalidate)', async ({ request }) => {
   const plugins = await getStudioRegistry(request)
   const first = plugins.find(p => p.remoteEntryUrl)
-  test.skip(!first, 'no plugins with remoteEntryUrl in registry')
+  expect(!first, 'no plugins with remoteEntryUrl in registry').toBe(false)
 
   const url = resolveUrl((first!.remoteEntryUrl ?? '').split('?')[0], GATEWAY)
   const res = await request.get(url)
-  test.skip(res.status() !== 200, 'remoteEntry.js not reachable — skipping cache check')
+  expect(res.status(), 'remoteEntry.js must be reachable before checking cache headers').toBe(200)
 
   const cc = res.headers()['cache-control'] ?? ''
   // remoteEntry.js must NOT be cached long-term (would break plugin updates)
@@ -159,18 +159,18 @@ test('MW-05: remoteEntry.js has short Cache-Control (must-revalidate)', async ({
 test('MW-06: hash-named JS chunks served correctly through gateway', async ({ request }) => {
   const plugins = await getStudioRegistry(request)
   const first = plugins.find(p => p.remoteEntryUrl)
-  test.skip(!first, 'no plugins in studio registry')
+  expect(!first, 'no plugins in studio registry').toBe(false)
 
   // Load remoteEntry.js and find a referenced chunk URL (hashed filenames)
   const entryUrl = resolveUrl((first!.remoteEntryUrl ?? '').split('?')[0], GATEWAY)
   const entryRes = await request.get(entryUrl)
-  test.skip(entryRes.status() !== 200, 'remoteEntry.js not available — skipping chunk check')
+  expect(entryRes.status() !== 200, 'remoteEntry.js not available — skipping chunk check').toBe(false)
 
   const entryBody = await entryRes.text()
 
   // Extract a chunk filename referenced in remoteEntry.js (pattern: "hash.js")
   const chunkMatch = entryBody.match(/"([a-f0-9]{8,}\.[a-z0-9]+\.js)"/i)
-  test.skip(!chunkMatch, 'no hashed chunk filenames found in remoteEntry.js')
+  expect(chunkMatch, 'remoteEntry.js must reference a hashed chunk').not.toBeNull()
 
   // Build the chunk URL relative to the plugin's widget base path
   const pluginBase = entryUrl.substring(0, entryUrl.lastIndexOf('/'))
@@ -191,13 +191,13 @@ test('MW-06: hash-named JS chunks served correctly through gateway', async ({ re
 test('MW-07: remoteEntry.js has CORS headers for cross-origin MF loading', async ({ request }) => {
   const plugins = await getStudioRegistry(request)
   const first = plugins.find(p => p.remoteEntryUrl)
-  test.skip(!first, 'no plugins in studio registry')
+  expect(!first, 'no plugins in studio registry').toBe(false)
 
   const url = resolveUrl((first!.remoteEntryUrl ?? '').split('?')[0], GATEWAY)
   const res = await request.get(url, {
     headers: { Origin: 'http://localhost:3000' },
   })
-  test.skip(res.status() !== 200, 'remoteEntry.js not available')
+  expect(res.status() !== 200, 'remoteEntry.js not available').toBe(false)
 
   // CORS must be present when studio is served from a different origin than the API
   const acao = res.headers()['access-control-allow-origin']

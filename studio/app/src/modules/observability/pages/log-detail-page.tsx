@@ -8,7 +8,7 @@ import {
   UISpace,
   UIButton,
   UICopyButton,
-  UISpin,
+  UISkeleton,
   UIIcon,
   UIInput,
   UIList,
@@ -225,9 +225,7 @@ export function LogDetailPage() {
   if (loading) {
     return (
       <UIPage>
-        <div style={{ textAlign: 'center', padding: '100px 0' }}>
-          <UISpin size="large" tip="Loading log details..." />
-        </div>
+        <UISkeleton active avatar lines={7} />
       </UIPage>
     );
   }

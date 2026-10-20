@@ -7,7 +7,7 @@
  * Rules (ids):
  *   command-verb-vocabulary  the last segment of a multi-segment command path is a verb from
  *                            the closed vocabulary (list show add remove create delete install
- *                            uninstall enable disable get set update run status doctor start stop).
+ *                            uninstall enable disable get set update run validate status doctor start stop commit).
  *                            Single-segment paths (`kb <namespace>` default command) are not checked.
  *   command-path-case        every path segment is lowercase kebab-case ([a-z][a-z0-9]*(-[a-z0-9]+)*).
  *   command-operation-type   operationType, when set, is read | mutate | analyze | execute.
@@ -40,11 +40,11 @@ import { pathToFileURL } from 'node:url';
 import { findPluginEntryPackages, runLint } from './lib/boundary-common.mjs';
 
 export const CHECK_NAME = 'manifest-command-naming';
-export const RULES = ['command-verb-vocabulary', 'command-path-case', 'mutate-json-flag', 'command-operation-type'];
+export const RULES = ['command-verb-vocabulary', 'command-path-case', 'mutate-json-flag', 'command-operation-type', 'manifest-example-command-path'];
 
 export const VERBS = new Set([
   'list', 'show', 'add', 'remove', 'create', 'delete', 'install', 'uninstall',
-  'enable', 'disable', 'get', 'set', 'update', 'run', 'status', 'doctor', 'start', 'stop',
+  'enable', 'disable', 'get', 'set', 'update', 'run', 'validate', 'status', 'doctor', 'start', 'stop', 'commit',
 ]);
 
 // read/mutate/analyze per 06 section 3; 'execute' is a valid fourth type (author decision).
@@ -110,6 +110,24 @@ export function validateManifest(manifest) {
         );
       }
     }
+
+    for (const example of cmd.examples ?? []) {
+      const invocation = example.split(/\s+—\s+/u, 1)[0].split(/\s+#/u, 1)[0].trim();
+      const tokens = invocation.split(/\s+/u);
+      const commandTokens = tokens[0] === 'kb' ? tokens.slice(1) : tokens;
+      const declaredPaths = (manifest.cli?.commands ?? [])
+        .map((candidate) => candidate.path.trim().split(/\s+/u));
+      const resolves = declaredPaths.some((candidate) =>
+        candidate.every((segment, index) => commandTokens[index] === segment),
+      );
+      if (!resolves) {
+        report(
+          'manifest-example-command-path',
+          `example "${example}" does not resolve to a declared CLI command path`,
+          'Make the example invoke a path declared in cli.commands.',
+        );
+      }
+    }
   }
   return out;
 }
@@ -152,8 +170,10 @@ export function collect(root, env = process.env) {
   for (const pkg of findPluginEntryPackages(root)) {
     const manifestRel = pkg.json?.kb?.manifest;
     if (typeof manifestRel !== 'string') continue;
-    // dist/manifest.json sits next to the compiled manifest module
-    const jsonPath = join(pkg.dir, manifestRel.replace(/\.[cm]?js$/, '.json'));
+    // The shared devkit emitter always writes the declarative artifact here,
+    // regardless of whether the compiled module is manifest.js or manifest.v3.js.
+    const jsonRel = 'dist/manifest.json';
+    const jsonPath = join(pkg.dir, jsonRel);
     if (!existsSync(jsonPath)) {
       if (changed && !changed.some((f) => f.startsWith(`${pkg.relDir}/`))) skipped.push(pkg.relDir);
       else unscanned.push(pkg.relDir);
@@ -170,7 +190,7 @@ export function collect(root, env = process.env) {
         package: pkg.relDir,
         target: manifestRel,
         file: `${pkg.relDir}/package.json`,
-        message: `${pkg.relDir}: cannot parse ${manifestRel.replace(/\.[cm]?js$/, '.json')}: ${err.message}`,
+        message: `${pkg.relDir}: cannot parse ${jsonRel}: ${err.message}`,
       });
       continue;
     }

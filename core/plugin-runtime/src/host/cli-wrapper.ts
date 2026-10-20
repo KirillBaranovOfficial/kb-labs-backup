@@ -12,17 +12,43 @@ import type {
   StandardMeta,
   PluginContextDescriptor,
 } from '@kb-labs/plugin-contracts';
+import { isErrorCode, toErrorEnvelope, type ValidatedErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 
 /**
- * Check whether a handler returned the canonical command result.
+ * A command failure is the only structured handler result. Success values are
+ * always plain command data, even when that data contains an `ok` field.
  */
-function isCommandResult<T>(value: unknown): value is CommandResult<T> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'ok' in value &&
-    typeof (value as { ok?: unknown }).ok === 'boolean'
-  );
+function commandFailureError(value: unknown, binaryName?: string): ValidatedErrorEnvelope | undefined {
+  if (!isUxResultCandidate(value) || value.ok !== false || !('error' in value)) {
+    return undefined;
+  }
+  const error = value.error;
+  if (typeof error !== 'object' || error === null || Array.isArray(error) ||
+      !('code' in error) || typeof error.code !== 'string' ||
+      !('message' in error) || typeof error.message !== 'string' ||
+      ('hint' in error && error.hint !== undefined && typeof error.hint !== 'string') ||
+      ((!('hint' in error) || error.hint === undefined) && !isErrorCode(error.code))) {
+    return undefined;
+  }
+  return toErrorEnvelope(error, binaryName ? { binary: binaryName } : {});
+}
+
+function isFailureClaim(value: unknown): boolean {
+  return isUxResultCandidate(value) && value.ok === false;
+}
+
+function contractViolation(meta: StandardMeta): CommandResultWithMeta<never> {
+  return {
+    exitCode: 1,
+    ok: false,
+    error: {
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      message: 'Plugin command violated the command result contract.',
+      hint: 'Return command data, or return a typed failure with a catalogued code, message, and hint.',
+    },
+    meta: meta as StandardMeta & Record<string, unknown>,
+  };
 }
 
 /**
@@ -48,7 +74,7 @@ function toStandardMeta(
  * Wrap RunResult from runner into CLI-specific CommandResultWithMeta
  *
  * CLI commands can return either:
- * - CommandResult<T> with ok, result, meta
+ * - CommandFailure for an operation failure
  * - T directly (data only, defaults to exitCode: 0)
  * - void/undefined (defaults to exitCode: 0)
  *
@@ -63,19 +89,27 @@ export function wrapCliResult<T>(
   const { data, executionMeta } = runResult;
   const standardMeta = toStandardMeta(executionMeta, descriptor);
 
-  // Case 1: Handler returned CommandResult
-  if (isCommandResult<T>(data)) {
-    const ok = data.ok;
-    const exitCode = ok ? 0 : 1;
+  // A handler must return its payload; only this boundary builds the success envelope.
+  if (isUxResult(data)) {
+    return contractViolation(standardMeta);
+  }
+
+  const binaryName = descriptor.hostContext.host === 'cli' ? descriptor.hostContext.binaryName : undefined;
+  const failureError = commandFailureError(data, binaryName);
+  if (isFailureClaim(data) && !failureError) {
+    return contractViolation(standardMeta);
+  }
+
+  // Case 1: Handler returned the shared typed failure.
+  if (failureError) {
     const mergedMeta: StandardMeta & Record<string, unknown> = {
-      ...data.meta,
       ...standardMeta,
     };
 
     return {
-      exitCode,
-      ok,
-      result: data.result as T | undefined,
+      exitCode: 1,
+      ok: false,
+      error: failureError,
       meta: mergedMeta,
     };
   }

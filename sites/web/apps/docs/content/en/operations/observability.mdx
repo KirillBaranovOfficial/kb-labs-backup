@@ -187,11 +187,13 @@ Standard event types:
 - `llm.completion.completed` — `{ totalTokens, totalCost, model, tier, durationMs }`
 - `llm.chatWithTools.completed` — same plus tool call counts
 - `embeddings.embed.completed` — `{ totalTokens, totalCost, durationMs }`
-- `vectorStore.search.completed` — `{ totalSearches, durationMs }`
-- `cache.hit` / `cache.miss` — `{ namespace, durationMs }`
-- `storage.read.completed` / `storage.write.completed` — `{ bytesRead, bytesWritten, durationMs }`
 - `plugin.command.completed` / `plugin.command.failed` — `{ pluginId, commandId, durationMs, exitCode }`
 - `workflow.run.completed` / `workflow.run.failed` — `{ workflowId, runId, durationMs, jobsTotal, jobsFailed }`
+
+Cache, storage, and vector-store adapter operations are operational telemetry,
+not product analytics events. They do not create rows in the analytics event
+store; inspect the relevant adapter or observability surface for operational
+health instead.
 
 Plugins can emit custom events via `useAnalytics().track(name, payload)`.
 
@@ -207,7 +209,7 @@ analytics.getDailyStats({ groupBy, breakdownBy, metrics }); // time-series
 
 See [Adapters → IAnalytics](/adapters/interfaces/analytics) for the full query API.
 
-The REST API exposes these queries at `/api/v1/analytics/*` so Studio dashboards can read them without plugin code. See [`routes/analytics.ts`](plugins/rest-api/app/src/routes/analytics.ts).
+The REST service exposes these queries under the selected project at `/api/v1/projects/<project-id>/rest/analytics/*`. Replace `<project-id>` with the `id` returned by `kb project list --json`; Studio uses the same project-scoped route. See [REST API](/services/rest-api).
 
 ### Analytics vs metrics
 

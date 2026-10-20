@@ -25,6 +25,7 @@ import { AuthProvider, useAuth } from '../auth-provider.js';
 const ME_RESPONSE = { userId: 'u1', email: 'alice@test.com', tenantId: 'kb-cloud' };
 // Use string literals — test verifies behavior, not specific enum values.
 const PERMS_RESPONSE = { permissions: ['users:read'] };
+const success = <T,>(data: T) => ({ ok: true, data });
 
 function mockFetch(responses: Record<string, { status: number; body: unknown }>) {
   return vi.fn((url: string) => {
@@ -78,10 +79,35 @@ afterEach(() => {
 });
 
 describe('AuthProvider initial load', () => {
-  it('sets status=authenticated when /api/auth/me succeeds', async () => {
+  it('opens a local machine session without prompting for login', async () => {
     vi.stubGlobal('fetch', mockFetch({
-      '/api/auth/me': { status: 200, body: ME_RESPONSE },
-      '/api/auth/permissions': { status: 200, body: PERMS_RESPONSE },
+      '/api/auth/me': {
+        status: 200,
+        body: success({ userId: 'local-admin', email: 'local-admin', tenantId: 'local' }),
+      },
+      '/api/auth/permissions': {
+        status: 200,
+        body: success({ permissions: ['platform-settings:read'] }),
+      },
+    }));
+
+    render(
+      <AuthProvider>
+        <TestComponent />
+      </AuthProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('status').textContent).toBe('authenticated'),
+    );
+    expect(screen.getByTestId('email').textContent).toBe('local-admin');
+  });
+
+  // case: S-020.3
+  it('decodes the Gateway success envelope when restoring /api/auth/me', async () => {
+    vi.stubGlobal('fetch', mockFetch({
+      '/api/auth/me': { status: 200, body: success(ME_RESPONSE) },
+      '/api/auth/permissions': { status: 200, body: success(PERMS_RESPONSE) },
     }));
 
     render(
@@ -102,9 +128,19 @@ describe('AuthProvider initial load', () => {
     expect(screen.queryByTestId('role')).toBeNull(); // No role field
   });
 
-  it('sets status=anonymous when /api/auth/me returns 401', async () => {
+  // case: S-020.2
+  it('sets status=anonymous for the gateway KB_AUTH_REQUIRED response from /api/auth/me', async () => {
     vi.stubGlobal('fetch', mockFetch({
-      '/api/auth/me': { status: 401, body: { error: 'Unauthorized' } },
+      '/api/auth/me': {
+        status: 401,
+        body: {
+          error: {
+            code: 'KB_AUTH_REQUIRED',
+            message: 'Authentication is required.',
+            hint: 'Run "kb auth login".',
+          },
+        },
+      },
       '/api/auth/permissions': { status: 401, body: {} },
     }));
 
@@ -120,12 +156,13 @@ describe('AuthProvider initial load', () => {
     expect(screen.getByTestId('permCount').textContent).toBe('0');
   });
 
-  it('loads permissions into Set when authenticated', async () => {
+  // case: S-106.6
+  it('decodes the Gateway success envelope when loading permissions into Set', async () => {
     vi.stubGlobal('fetch', mockFetch({
-      '/api/auth/me': { status: 200, body: ME_RESPONSE },
+      '/api/auth/me': { status: 200, body: success(ME_RESPONSE) },
       '/api/auth/permissions': {
         status: 200,
-        body: { permissions: ['users:read', 'invites:read'] },
+        body: success({ permissions: ['users:read', 'invites:read'] }),
       },
     }));
 
@@ -162,11 +199,12 @@ describe('AuthProvider initial load', () => {
 });
 
 describe('login()', () => {
+  // case: S-020.3
   it('transitions to authenticated on successful login', async () => {
     vi.stubGlobal('fetch', mockFetch({
       '/api/auth/me': { status: 401, body: {} },
       '/api/auth/permissions': { status: 401, body: {} },
-      '/api/auth/login': { status: 200, body: ME_RESPONSE },
+      '/api/auth/login': { status: 200, body: success(ME_RESPONSE) },
     }));
 
     let authRef: ReturnType<typeof useAuth> | null = null;
@@ -188,9 +226,9 @@ describe('login()', () => {
 
     // Override fetch for subsequent calls after login
     vi.stubGlobal('fetch', mockFetch({
-      '/api/auth/login': { status: 200, body: ME_RESPONSE },
-      '/api/auth/me': { status: 200, body: ME_RESPONSE },
-      '/api/auth/permissions': { status: 200, body: PERMS_RESPONSE },
+      '/api/auth/login': { status: 200, body: success(ME_RESPONSE) },
+      '/api/auth/me': { status: 200, body: success(ME_RESPONSE) },
+      '/api/auth/permissions': { status: 200, body: success(PERMS_RESPONSE) },
     }));
 
     await act(async () => {
@@ -236,8 +274,8 @@ describe('login()', () => {
 describe('logout()', () => {
   it('transitions to anonymous after logout', async () => {
     vi.stubGlobal('fetch', mockFetch({
-      '/api/auth/me': { status: 200, body: ME_RESPONSE },
-      '/api/auth/permissions': { status: 200, body: PERMS_RESPONSE },
+      '/api/auth/me': { status: 200, body: success(ME_RESPONSE) },
+      '/api/auth/permissions': { status: 200, body: success(PERMS_RESPONSE) },
       '/api/auth/logout': { status: 200, body: { ok: true } },
     }));
 
@@ -274,9 +312,9 @@ describe('logout()', () => {
         logoutHeaders.push((init?.headers as Record<string, string>) ?? {});
       }
       const body = String(url).includes('/me')
-        ? ME_RESPONSE
+        ? success(ME_RESPONSE)
         : String(url).includes('/permissions')
-          ? PERMS_RESPONSE
+          ? success(PERMS_RESPONSE)
           : { ok: true };
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
     }) as unknown as typeof fetch;
@@ -341,13 +379,13 @@ describe('auth:unauthenticated event — loading guard', () => {
       resolveMe({
         ok: true,
         status: 200,
-        json: () => Promise.resolve(ME_RESPONSE),
+        json: () => Promise.resolve(success(ME_RESPONSE)),
       });
     });
 
     // The stub for permissions also needs to work now.
     vi.stubGlobal('fetch', mockFetch({
-      '/api/auth/permissions': { status: 200, body: PERMS_RESPONSE },
+      '/api/auth/permissions': { status: 200, body: success(PERMS_RESPONSE) },
     }));
 
     // Ultimately lands on authenticated (not anonymous from the spurious event).
@@ -360,8 +398,8 @@ describe('auth:unauthenticated event — loading guard', () => {
 describe('auth:unauthenticated event', () => {
   it('transitions to anonymous when event is dispatched', async () => {
     vi.stubGlobal('fetch', mockFetch({
-      '/api/auth/me': { status: 200, body: ME_RESPONSE },
-      '/api/auth/permissions': { status: 200, body: PERMS_RESPONSE },
+      '/api/auth/me': { status: 200, body: success(ME_RESPONSE) },
+      '/api/auth/permissions': { status: 200, body: success(PERMS_RESPONSE) },
     }));
 
     render(
@@ -399,8 +437,8 @@ describe('AuthProvider uses authUrl() (issue #246 regression)', () => {
     const { authUrl } = await import('../api-base.js');
 
     vi.stubGlobal('fetch', mockFetch({
-      '/api/auth/me': { status: 200, body: ME_RESPONSE },
-      '/api/auth/permissions': { status: 200, body: PERMS_RESPONSE },
+      '/api/auth/me': { status: 200, body: success(ME_RESPONSE) },
+      '/api/auth/permissions': { status: 200, body: success(PERMS_RESPONSE) },
     }));
 
     render(

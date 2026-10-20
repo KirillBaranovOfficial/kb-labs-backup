@@ -52,5 +52,3 @@ export const manifest = {
 
   permissions: pluginPermissions,
 } as const;
-
-export default manifest;

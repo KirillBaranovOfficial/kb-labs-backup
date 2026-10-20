@@ -1,41 +1,9 @@
 import { KBError, errorCodes } from '../errors/kb-error';
 import type { ResponseError } from './types';
-import type { ErrorEnvelope } from '@kb-labs/rest-api-contracts';
-
-/**
- * Error envelope structure
- */
-interface ErrorEnvelopeResponse {
-  ok: false;
-  error: {
-    code: string;
-    message: string;
-    details?: Record<string, unknown>;
-    cause?: string;
-    traceId?: string;
-  };
-  meta?: {
-    requestId: string;
-    durationMs: number;
-    apiVersion: string;
-  };
-}
-
-/**
- * Type guard for ErrorEnvelopeResponse
- */
-function isErrorEnvelopeResponse(obj: unknown): obj is ErrorEnvelopeResponse {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    'ok' in obj &&
-    (obj as { ok: unknown }).ok === false &&
-    'error' in obj &&
-    typeof (obj as { error: unknown }).error === 'object' &&
-    (obj as { error: unknown }).error !== null &&
-    'message' in (obj as { error: object }).error
-  );
-}
+import { isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
+import { toErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import type { ErrorEnvelope as RestApiErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { ulid } from 'ulid';
 
 export function mapFetchError(error: unknown, response?: Response): KBError {
   if (!response) {
@@ -49,49 +17,63 @@ export function mapFetchError(error: unknown, response?: Response): KBError {
   }
 
   const parsedBody = error;
-  const errorEnvelope =
-    parsedBody && typeof parsedBody === 'object' && isErrorEnvelopeResponse(parsedBody)
-      ? (parsedBody as ErrorEnvelopeResponse)
-      : null;
+  if (isUxResultCandidate(parsedBody) && parsedBody.ok === false && 'error' in parsedBody) {
+    const envelope = toErrorEnvelope(parsedBody.error);
+    return new KBError(
+      envelope.code,
+      envelope.message,
+      response.status,
+      undefined,
+      envelope.hint,
+      envelope.correlationId,
+    );
+  }
+
   const httpError: ResponseError = {
     status: response.status,
     statusText: response.statusText,
     data: parsedBody ?? null,
   };
 
-  // Map error codes from api-contracts
+  // Preserve status semantics for responses outside the shared result contract.
   const statusCode = response.status;
-  let errorMessage: string | undefined = undefined;
-  if (errorEnvelope !== null) {
-    const envelope: ErrorEnvelopeResponse = errorEnvelope;
-    errorMessage = envelope.error.message;
-  }
-  
+
   if (statusCode === 404) {
-    return new KBError(errorCodes.NOT_FOUND, errorMessage || 'Resource not found', 404, httpError);
+    return new KBError(errorCodes.NOT_FOUND, 'Resource not found', 404, httpError);
   }
   if (statusCode === 401) {
-    return new KBError(errorCodes.AUTH_ERROR, errorMessage || 'Authentication failed', 401, httpError);
+    return new KBError(errorCodes.AUTH_ERROR, 'Authentication failed', 401, httpError);
   }
   if (statusCode === 403) {
-    return new KBError(errorCodes.AUTH_ERROR, errorMessage || 'Forbidden', 403, httpError);
+    return new KBError(errorCodes.AUTH_ERROR, 'Forbidden', 403, httpError);
   }
   if (statusCode === 409) {
-    return new KBError(errorCodes.CONFLICT, errorMessage || 'Conflict', 409, httpError);
+    return new KBError(errorCodes.CONFLICT, 'Conflict', 409, httpError);
   }
   if (statusCode === 429) {
-    return new KBError(errorCodes.RATE_LIMIT, errorMessage || 'Rate limit exceeded', 429, httpError);
+    return new KBError(errorCodes.RATE_LIMIT, 'Rate limit exceeded', 429, httpError);
   }
   if (statusCode >= 500) {
-    return new KBError(errorCodes.SERVER_ERROR, errorMessage || 'Server error', statusCode, httpError);
+    return new KBError(errorCodes.SERVER_ERROR, 'Server error', statusCode, httpError);
   }
-  return new KBError(errorCodes.NETWORK_ERROR, errorMessage || httpError.statusText || 'Request failed', statusCode, httpError);
+  return new KBError(errorCodes.NETWORK_ERROR, httpError.statusText || 'Request failed', statusCode, httpError);
+}
+
+export function mapInvalidResultEnvelope(status: number): KBError {
+  return new KBError(
+    'KB_RUNTIME_UNEXPECTED',
+    'The operation failed unexpectedly.',
+    status,
+    undefined,
+    'Copy diagnostics and contact support.',
+    `studio-${ulid()}`,
+  );
 }
 
 /**
  * Map error envelope to KBError
  */
-export function mapErrorEnvelope(envelope: ErrorEnvelope): KBError {
+export function mapErrorEnvelope(envelope: RestApiErrorEnvelope): KBError {
   const httpError: ResponseError = {
     status: 400, // Default status
     statusText: envelope.error.message,
@@ -125,4 +107,3 @@ export function mapErrorEnvelope(envelope: ErrorEnvelope): KBError {
 
   return new KBError(errorCodes.SERVER_ERROR, envelope.error.message, 500, httpError);
 }
-

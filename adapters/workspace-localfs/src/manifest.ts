@@ -1,6 +1,7 @@
 import type { AdapterManifest } from '@kb-labs/sdk/adapters';
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'localfs-workspace-provider',
   name: 'LocalFS Workspace Provider',
@@ -10,7 +11,8 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'IWorkspaceProvider',
-  defaultFor: ['workspaceProvider'],
+  networkRequired: false,
+  defaultFor: { workspaceProvider: [] },
   contexts: ['workspace'],
   capabilities: {
     custom: {

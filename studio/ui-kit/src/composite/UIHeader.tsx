@@ -3,6 +3,7 @@
  *
  * Displays page title with optional subtitle, breadcrumbs, and actions.
  * NO hardcoded colors, uses Ant Design theme.
+ * @demoArgs {"title":"Workspace overview","subtitle":"A concise summary of the current project"}
  */
 
 import * as React from 'react';

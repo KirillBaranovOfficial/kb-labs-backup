@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 const ConfigFilename = "kb.config.jsonc"
@@ -67,6 +68,11 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	// was dropped whenever a manifest declared a /platform/adapters default.
 	config := map[string]any{"platform": map[string]any{"version": plan.ServiceGraph.PlatformVersion, "adapters": stringMapAsAny(adapters)}, "plugins": stringMapAsAny(plugins)}
 	merge(config, extra)
+	// Development workspace resolution is enabled only by the checkout's
+	// explicit marker. The installer must never activate that source.
+	if platformConfig, ok := config["platform"].(map[string]any); ok {
+		delete(platformConfig, "mode")
+	}
 	applyHostSection(config)
 	// A manifest default is only a baseline; a binding the resolver actually
 	// chose for this plan must win over it on the same key.
@@ -170,6 +176,13 @@ func reapplyResolved(config map[string]any, parent, key string, resolved map[str
 		return
 	}
 	for name, value := range resolved {
+		// The package selected by the resolver can be represented by a
+		// subpath export in the sealed platform default (for example,
+		// adapters-sqlite/kv). Keep that full module specifier when it points
+		// at the same package; ConfigPatch.Value only carries package@version.
+		if module, ok := target[name].(string); ok && strings.HasPrefix(module, value+"/") {
+			continue
+		}
 		target[name] = value
 	}
 }
@@ -197,41 +210,15 @@ func Write(plan contracts.ResolvedInstallPlan) (Output, error) {
 	if err := os.MkdirAll(filepath.Join(root, ".kb"), 0o750); err != nil {
 		return Output{}, fmt.Errorf("create config root: %w", err)
 	}
-	// The platform owns the generated full configuration. Projects retain their
-	// own minimal platform pointer through the existing scaffold contract.
+	// The platform owns generated configuration. Selecting a project is only a
+	// registry operation; the installer never writes into the repository.
 	path := filepath.Join(root, ".kb", ConfigFilename)
 	if err := writeAtomic(path, output.Config, 0o600); err != nil {
 		return Output{}, fmt.Errorf("replace runtime config: %w", err)
 	}
-	if plan.Request.ProjectRoot != "" && plan.Request.ProjectRoot != root {
-		if err := writeProjectPointer(plan.Request.ProjectRoot, root); err != nil {
-			return Output{}, fmt.Errorf("write project config pointer: %w", err)
-		}
-	}
 	return output, nil
 }
 
-func writeProjectPointer(projectRoot, platformRoot string) error {
-	if err := os.MkdirAll(filepath.Join(projectRoot, ".kb"), 0o750); err != nil {
-		return err
-	}
-	path := filepath.Join(projectRoot, ".kb", ConfigFilename)
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	data, err := json.MarshalIndent(map[string]any{"platform": map[string]string{"dir": platformRoot}}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeAtomic(path, append(data, '\n'), 0o600)
-}
-
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, data, mode); err != nil {
-		return err
-	}
-	return os.Rename(temporary, path)
+	return versionroot.AtomicWriteFile(path, data, mode)
 }

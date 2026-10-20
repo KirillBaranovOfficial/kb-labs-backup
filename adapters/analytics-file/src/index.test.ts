@@ -9,7 +9,7 @@ import type {
   AnalyticsContext,
   IAnalytics,
 } from "@kb-labs/sdk/adapters";
-import { readFile, unlink, mkdir } from "node:fs/promises";
+import { readFile, unlink, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
@@ -22,6 +22,15 @@ describe("FileAnalytics - Manifest-based Context Injection", () => {
     if (!existsSync(testDir)) {
       await mkdir(testDir, { recursive: true });
     }
+  });
+
+  // case: S-211.5
+  it("surfaces analytics directory read errors instead of returning empty data", async () => {
+    const invalidDir = path.join(testDir, 'not-a-directory');
+    await writeFile(invalidDir, 'file', 'utf8');
+    const analytics = createAdapter({ baseDir: invalidDir }, {}) as IAnalytics;
+
+    await expect(analytics.getEvents!()).rejects.toThrow();
   });
 
   afterEach(async () => {

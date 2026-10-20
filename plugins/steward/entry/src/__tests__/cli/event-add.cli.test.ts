@@ -36,7 +36,7 @@ describe('steward:event.add', () => {
       }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedAddEvent).toHaveBeenCalledWith({
       subjectType: 'person',
       subjectId: 'per_1',
@@ -54,12 +54,12 @@ describe('steward:event.add', () => {
       mockCLIInput({ flags: { 'subject-type': 'bogus', 'subject-id': 'x' } }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe('INVALID_ARGS');
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
+      expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddEvent).not.toHaveBeenCalled();
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('missing --subject-id is a validation error', async () => {
@@ -67,11 +67,11 @@ describe('steward:event.add', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: { 'subject-type': 'person' } }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe('INVALID_ARGS');
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
+      expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddEvent).not.toHaveBeenCalled();
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

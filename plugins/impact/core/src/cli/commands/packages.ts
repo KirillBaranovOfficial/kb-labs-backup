@@ -1,4 +1,4 @@
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import {
   findWorkspaceRoot,
   detectChangedPackages,
@@ -25,7 +25,7 @@ export default defineCommand<unknown, PkgInput, unknown>({
 
   handler: {
     async execute(
-      ctx: PluginContextV3<unknown>,
+      ctx: PluginCommandContextV3<unknown>,
       input: PkgInput,
     ): Promise<CommandResult<unknown>> {
       const flags = input.flags ?? (input as unknown as PkgFlags);
@@ -34,17 +34,16 @@ export default defineCommand<unknown, PkgInput, unknown>({
       try {
         root = findWorkspaceRoot();
       } catch {
-        if (flags.json) {ctx.ui?.json?.({ packages: { direct: [], dependent: [], transitive: [] } });}
-        else {ctx.ui?.warn?.('Could not find workspace root');}
-        return { ok: false, error: 'Could not find workspace root' };
+        if (!flags.json) {ctx.ui?.warn?.('Could not find workspace root');}
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Could not find workspace root', hint: "Run `kb impact packages --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const changed = detectChangedPackages(root);
       if (changed.length === 0) {
         const empty = { packages: { direct: [], dependent: [], transitive: [] }, tests: { mustRun: [], noTests: [] }, recommendations: [] };
-        if (flags.json) {ctx.ui?.json?.(empty);}
+        if (flags.json) {return empty;}
         else {ctx.ui?.success?.('No changes detected');}
-        return { ok: true, result: empty };
+        return empty;
       }
 
       const graph = buildReverseDependencyGraph(root);
@@ -56,7 +55,7 @@ export default defineCommand<unknown, PkgInput, unknown>({
       const result = { packages, tests, build, recommendations };
 
       if (flags.json) {
-        ctx.ui?.json?.(result);
+        return result;
       } else {
         ctx.ui?.write?.(formatHumanReadable({
           packages,
@@ -67,7 +66,7 @@ export default defineCommand<unknown, PkgInput, unknown>({
         }));
       }
 
-      return { ok: true, result };
+      return result;
     },
   },
 });

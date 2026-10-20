@@ -1,18 +1,25 @@
 import {
+  GATEWAY_SERVICE_NETWORK,
+  PlatformAuditStore,
+  createErrorEnvelope,
+  ErrorEnvelopeError,
   logDiagnosticEvent,
+  readInstalledPlatformIdentity,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
+import { requireProjectContext } from "@kb-labs/core-runtime";
 import {
   createInMemoryDocumentDatabase,
   createInMemoryKVStore,
 } from "@kb-labs/core-platform/inmemory";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
-import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
+import { requireEnvironmentSecret, runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import type {
   IHostStore,
   AuthConfig,
   GatewayConfig,
 } from "@kb-labs/gateway-contracts";
+import type { ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
 import type { IContextLogger } from "@kb-labs/core-platform";
 import type { IDocumentDatabase } from "@kb-labs/core-platform/adapters";
 import { HostStore } from "@kb-labs/gateway-core";
@@ -21,7 +28,9 @@ import {
   CredentialsStore,
   MembershipsStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
+  PasswordResetStore,
   loadIdentityProviders,
   createPasswordPolicy,
   createUserAuthService,
@@ -40,6 +49,7 @@ import type { IKVStore } from "@kb-labs/core-platform/adapters";
 import { createRegistry } from "@kb-labs/core-registry";
 import { loadGatewayConfig } from "./config.js";
 import { resolveAccess, resolveBootstrapTenantId } from "./access.js";
+import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
 import { createServer, type UserAuthServerDeps } from "./server.js";
 import { HostRegistry } from "./hosts/registry.js";
 import { registerPressureLimits } from "./pressure/index.js";
@@ -50,13 +60,12 @@ import type { HostRoutes } from "./host-routes.js";
 export async function bootstrap(
   repoRoot: string = process.cwd(),
 ): Promise<void> {
+  requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET");
   await runService({
     appId: "gateway",
+    ...GATEWAY_SERVICE_NETWORK,
+    projectScope: "required",
     startDir: repoRoot,
-    defaultPort: 4000,
-    portEnvVar: "GATEWAY_PORT",
-    defaultHost: "0.0.0.0",
-    hostEnvVar: "GATEWAY_HOST",
     platform: {
       assemblyHook: makeAssemblyHook(),
     },
@@ -67,9 +76,10 @@ export async function bootstrap(
 /**
  * Gateway service body. Importable and side-effect-free: it only starts work
  * when called with a resolved {@link ServiceContext}. The gateway is the
- * network's edge (not a target in the transport map), so it listens on
- * `config.port + ctx.netOffset`; the offset is resolved once by the launcher
- * and the gateway never reads KB_NET_OFFSET itself.
+ * network's edge (not a target in the transport map), so it listens on the
+ * port resolved by `@kb-labs/shared-daemon` from the service transport or the
+ * module's port environment/default plus the one network offset. The gateway
+ * never resolves KB_NET_OFFSET itself.
  */
 export async function setup(
   ctx: ServiceContext,
@@ -82,6 +92,8 @@ export async function setup(
  * the resolved gateway config in memory without writing config files.
  */
 export interface GatewayEmbedOptions {
+  /** Selects whether the gateway's config and plugin discovery use platform or project roots. */
+  configScope?: 'platform' | 'project';
   /**
    * Called with the validated gateway config before anything is derived from
    * it (bind host, access mode, upstreams). May throw to refuse startup.
@@ -93,11 +105,25 @@ export interface GatewayEmbedOptions {
    * `upstreams` of its config.
    */
   projectRouting?: ProjectRouting;
+  /** Project route IDs and internal bases derived from service manifests. */
+  projectServices?: readonly ProjectServiceDeclaration[];
+  /** Project-aware connection resolver; local hosts bind it to runtime leases. */
+  projectServiceTransport?: Pick<IServiceTransport, "resolveProjectService">;
   /**
    * Machine-level API routes of the host, mounted after the global auth hooks
    * (so they need no auth of their own).
    */
   hostRoutes?: HostRoutes;
+}
+
+/** Select the config root using the same scope contract for preflight and startup. */
+export function resolveGatewayConfigRoot(
+  roots: Pick<ServiceContext, 'platformRoot'> & { projectRoot?: string },
+  configScope: GatewayEmbedOptions['configScope'] = 'project',
+): string {
+  return configScope === 'platform'
+    ? roots.platformRoot
+    : requireProjectContext(roots.projectRoot);
 }
 
 /** Gateway service body with embedding hooks; {@link setup} is the no-hook case. */
@@ -106,32 +132,30 @@ export async function startGateway(
     platform,
     projectRoot,
     platformRoot,
-    netOffset,
+    port: listenPort,
     logger: serviceLogger,
   }: ServiceContext,
   options: GatewayEmbedOptions,
 ): Promise<() => Promise<void>> {
+  const configRoot = resolveGatewayConfigRoot({ projectRoot, platformRoot }, options.configScope);
   const logger = serviceLogger
     .forComponent("gateway-bootstrap")
     .forOperation("gateway.bootstrap");
   logger.info("Platform initialized", { projectRoot, platformRoot });
 
-  // 2. Load gateway config — reads platform baseline + project layer +
-  // `.kb/overlays/*.jsonc`. Use the resolved roots from core-runtime
-  // (which honour KB_PROJECT_ROOT and the platform.dir override) rather
-  // than process.cwd() — in installed mode the gateway process is
-  // spawned with cwd at the platform root, and we MUST not conflate
-  // that with the project root.
-  const loadedConfig = await loadGatewayConfig(projectRoot, platformRoot);
+  // 2. Load gateway config from the selected service scope. The embedded
+  // machine Gateway uses platformRoot; standalone Gateway uses projectRoot.
+  // Keep the platform root separate so installed-mode defaults resolve from
+  // the platform even when the selected project lives elsewhere.
+  const loadedConfig = await loadGatewayConfig(configRoot, platformRoot);
   const config = options.configure
     ? options.configure(loadedConfig)
     : loadedConfig;
   const access = resolveAccess(config);
-  const listenPort = config.port + netOffset;
   logger.info("Gateway config loaded", {
     port: listenPort,
     upstreams: Object.keys(config.upstreams),
-    projectRoot,
+    configRoot,
     platformRoot,
     configProviderIds: config.auth?.providers
       ? Object.keys(config.auth.providers)
@@ -178,7 +202,10 @@ export async function startGateway(
       refreshTtlMs: refreshTtlSec * 1000,
       graceWindowMs,
     });
+    const apiTokens = new ApiTokensStore(docs);
     const invites = new InvitesStore(docs);
+    const passwordResets = new PasswordResetStore(docs);
+    const authAudit = new PlatformAuditStore(docs);
 
     // Identity providers are loaded from config (ADR-0020, DD-3). An
     // empty/absent `auth.providers` registers the built-in email-password
@@ -208,6 +235,7 @@ export async function startGateway(
       memberships,
       sessions,
       invites,
+      passwordResets,
       providers,
       passwordPolicy,
       jwtConfig: {
@@ -232,6 +260,7 @@ export async function startGateway(
       users,
       credentials,
       memberships,
+      providers: await providers.operationalList(),
       bcryptCost,
       logger,
     }).catch((err): BootstrapStatus => {
@@ -289,7 +318,7 @@ export async function startGateway(
       );
     }
 
-    const authReadiness = () =>
+    const authReadiness = async () =>
       evaluateAuthReadiness({
         authEnabled: access.authEnabled,
         loopbackOnly: isLoopbackHost(access.bindHost),
@@ -298,14 +327,19 @@ export async function startGateway(
         bootstrap: { status: bootstrapStatus, email: adminEmail },
         users,
         memberships,
+        credentials,
+        providers: await providers.operationalList(),
       });
     await logAuthReadiness(authReadiness, logger);
 
     userAuth = {
       userAuthService,
       users,
+      memberships,
       sessions,
+      apiTokens,
       invites,
+      authAudit,
       providers,
       pdp,
       tenantResolver,
@@ -363,8 +397,8 @@ export async function startGateway(
   let webhookManifests: WebhookManifestEntry[] = [];
   try {
     const pluginRegistry = await createRegistry({
-      root: projectRoot,
-      platformRoot: platformRoot !== projectRoot ? platformRoot : undefined,
+      root: configRoot,
+      platformRoot: platformRoot !== configRoot ? platformRoot : undefined,
       cache: { ttlMs: 600_000, adapter: cache },
     });
     const snapshot = pluginRegistry.snapshot();
@@ -424,12 +458,12 @@ export async function startGateway(
     });
   }
 
-  // 8. Register HTTP pressure-control limits (ADR-0056). No-op when
-  //    `gateway.pressure` is absent or disabled in config.
+  // 8. Register HTTP pressure-control limits (ADR-0056). Secured mode gets
+  //    the shared default tenant limit unless the operator overrides it.
   if (platform.hasResourceBroker) {
     registerPressureLimits(
       platform.resourceBroker,
-      config.pressure,
+      resolveGatewayPressureConfig(config, access.authEnabled),
       platform.logger,
     );
   } else {
@@ -452,6 +486,21 @@ export async function startGateway(
   }
 
   // 10. Create server with injected registry, transport and optional user auth deps
+  const installedIdentity = await readInstalledPlatformIdentity(platformRoot);
+  const installationId = process.env.KB_INSTALLATION_ID;
+  if (installedIdentity && !installationId) {
+    throw new ErrorEnvelopeError(createErrorEnvelope("KB_INSTALL_RECEIPT_UNAVAILABLE", {
+      cause: "The installed Gateway launcher did not provide KB_INSTALLATION_ID.",
+      hint: `Run \"kb-create update --platform-root ${platformRoot}\" or reinstall the platform, then retry.`,
+    }));
+  }
+  if (installedIdentity && installationId !== installedIdentity.id) {
+    throw new ErrorEnvelopeError(createErrorEnvelope("KB_INSTALL_RECEIPT_UNAVAILABLE", {
+      cause: "The installed Gateway identity does not match the active platform receipt.",
+      hint: `Run \"kb-create update --platform-root ${platformRoot}\" or reinstall the platform, then retry.`,
+    }));
+  }
+
   const server = await createServer(
     { ...config, port: listenPort },
     cache,
@@ -463,6 +512,10 @@ export async function startGateway(
     webhookManifests,
     options.projectRouting,
     options.hostRoutes,
+    undefined,
+    { installationId: installationId ?? installedIdentity?.id },
+    options.projectServices,
+    options.projectServiceTransport,
   );
 
   // 11. Listen

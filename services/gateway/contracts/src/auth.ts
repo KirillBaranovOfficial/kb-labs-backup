@@ -1,10 +1,12 @@
 import { z } from 'zod';
 
-export const TokenTypeSchema = z.enum(['user', 'cli', 'machine']);
+export const TokenTypeSchema = z.enum(['user_access', 'user_refresh', 'machine_access', 'machine_refresh']);
+export const AuthContextTypeSchema = z.enum(['user', 'cli', 'machine']);
 
 export const AuthContextSchema = z.object({
-  type: TokenTypeSchema,
+  type: AuthContextTypeSchema,
   userId: z.string(),
+  tokenId: z.string().min(1).optional(),
   namespaceId: z.string(),
   tier: z.enum(['free', 'pro', 'enterprise']),
   permissions: z.array(z.string()),
@@ -64,6 +66,7 @@ export const JwtPayloadSchema = z.object({
   type: TokenTypeSchema,
   /** Permissions embedded in the token at issuance time. */
   permissions: z.array(z.string()).optional(),
+  jti: z.string().min(1),
   iat: z.number(),
   exp: z.number(),
 });

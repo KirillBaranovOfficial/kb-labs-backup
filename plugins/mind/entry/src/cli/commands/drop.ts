@@ -1,4 +1,4 @@
-import { defineCommand, handleError, confirmDestructive, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, confirmDestructive, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { DropRequestSchema, type DropFlags, type DropResponse } from '@kb-labs/mind-contracts';
 import { buildMind } from '../../platform';
@@ -10,15 +10,14 @@ export default defineCommand<unknown, CLIInput<DropFlags>, DropResponse>({
   description: 'Drop an entire index — remove all its vectors and its manifest',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<DropFlags>): Promise<DropResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<DropFlags>): Promise<DropResult> {
       const { flags } = input;
       const json = flags.json;
       try {
         // Destructive: blocks in EVERY mode until --yes (agents get a structured
         // confirmationRequired signal with severity/recovery, not a silent drop).
-        const blocked = confirmDestructive(ctx, {
+        const blocked = confirmDestructive({
           confirmed: flags.yes,
-          isJson: json,
           action: {
             action: 'mind drop',
             resource: `index "${flags.index}"`,
@@ -37,16 +36,14 @@ export default defineCommand<unknown, CLIInput<DropFlags>, DropResponse>({
         const res = await mind.drop(req);
 
         if (json) {
-          ctx.ui?.json?.(res);
-          return { ok: true, result: res };
+          return res;
         }
         ctx.ui?.success?.(
           `Dropped "${res.indexId}" — removed ${res.droppedChunks} vector(s), ${res.droppedFiles} doc(s)`,
         );
-        return { ok: true, result: res };
+        return res;
       } catch (err) {
-        handleError(ctx, err, json);
-        return { ok: false, error: 'Command failed' };
+        return handleError(err);
       }
     },
   },

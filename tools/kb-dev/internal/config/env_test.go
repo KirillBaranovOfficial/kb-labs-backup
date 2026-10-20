@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/kb-labs/clikit/secretstate"
 )
 
 // ── expandString ─────────────────────────────────────────────────────────────
@@ -15,6 +17,19 @@ func TestExpandStringNoPlaceholder(t *testing.T) {
 	}
 	if got != "hello world" {
 		t.Errorf("got %q, want %q", got, "hello world")
+	}
+}
+
+func TestExpandEnvDoesNotReceiveCompletedBootstrapCredentialFromSharedProjection(t *testing.T) {
+	record := secretstate.NewRecord()
+	record.SetRequirement(secretstate.BootstrapPasswordEnvironment, "private-test-value")
+	record.MarkBootstrapCompleted("provisioned")
+	projection := secretstate.ProjectHost(record)
+	if _, found := projection.Values[secretstate.BootstrapPasswordEnvironment]; found {
+		t.Fatal("shared host projection included a completed bootstrap credential")
+	}
+	if err := expandEnvWithProjection(minimalYAMLWithEnvVar("${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD}"), t.TempDir(), projection); err == nil {
+		t.Fatal("kb-dev config loader expanded the completed bootstrap credential")
 	}
 }
 
@@ -166,18 +181,6 @@ func TestExpandEnvFromDotEnvFile(t *testing.T) {
 	}
 	if got := yf.Services["api"].Env["SECRET"]; got != "mysecret" {
 		t.Errorf("got %q, want %q", got, "mysecret")
-	}
-}
-
-func TestExpandEnvFromV2LauncherSecretStore(t *testing.T) {
-	dir := t.TempDir()
-	writeDotEnvTo(t, filepath.Join(dir, ".kb", "v2", "secrets.env"), "V2_LAUNCHER_TOKEN=private\n")
-	yf := minimalYAMLWithEnvVar("${V2_LAUNCHER_TOKEN}")
-	if err := expandEnv(yf, dir); err != nil {
-		t.Fatal(err)
-	}
-	if got := yf.Services["api"].Env["SECRET"]; got != "private" {
-		t.Fatalf("SECRET = %q", got)
 	}
 }
 

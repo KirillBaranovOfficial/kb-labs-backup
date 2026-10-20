@@ -25,9 +25,6 @@ import type { INotifier, ILLM, IEmbeddings, IVectorStore, IAnalytics, ILogger, P
 import {
   AnalyticsLLM,
   AnalyticsEmbeddings,
-  AnalyticsVectorStore,
-  AnalyticsCache,
-  AnalyticsStorage,
   createPIIRedactionLLM,
 } from '@kb-labs/core-platform';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
@@ -54,10 +51,10 @@ import { wrapDocumentDatabase, wrapKVStore } from './database-governance.js';
 // ─── Shared helpers ─────────────────────────────────────────────────────────
 
 /** Create a denied stub that throws PermissionError on any property access. */
-function createDeniedService<T>(serviceName: string): T {
+function createDeniedService<T>(serviceName: string, pluginId: string): T {
   return new Proxy({} as object, {
     get() {
-      throw new PermissionError(`Platform service '${serviceName}' access denied`);
+      throw new PermissionError(`Platform service '${serviceName}' access denied`, { plugin: pluginId, permission: `platform.${serviceName}` });
     },
   }) as unknown as T;
 }
@@ -69,7 +66,7 @@ const wrapLogger: AdapterMiddlewareFn<PlatformServices['logger']> = (adapter, ct
 
 const wrapLlm: AdapterMiddlewareFn<LLMAdapter> = (adapter, ctx) => {
   if (!ctx.permissions.platform?.llm) {
-    return createDeniedService<LLMAdapter>('llm');
+    return createDeniedService<LLMAdapter>('llm', ctx.pluginId);
   }
 
   const allowedModels =
@@ -81,6 +78,7 @@ const wrapLlm: AdapterMiddlewareFn<LLMAdapter> = (adapter, ctx) => {
     if (allowedModels && model && !allowedModels.includes(model)) {
       throw new PermissionError(
         `LLM model '${model}' not allowed. Permitted: ${allowedModels.join(', ')}`,
+        { plugin: ctx.pluginId, permission: 'platform.llm' },
       );
     }
   };
@@ -102,7 +100,7 @@ const wrapLlm: AdapterMiddlewareFn<LLMAdapter> = (adapter, ctx) => {
 
 const wrapEmbeddings: AdapterMiddlewareFn<EmbeddingsAdapter> = (adapter, ctx) => {
   if (!ctx.permissions.platform?.embeddings) {
-    return createDeniedService<EmbeddingsAdapter>('embeddings');
+    return createDeniedService<EmbeddingsAdapter>('embeddings', ctx.pluginId);
   }
   return {
     embed: (text) => adapter.embed(text),
@@ -114,7 +112,7 @@ const wrapEmbeddings: AdapterMiddlewareFn<EmbeddingsAdapter> = (adapter, ctx) =>
 
 const wrapVectorStore: AdapterMiddlewareFn<VectorStoreAdapter> = (adapter, ctx) => {
   if (!ctx.permissions.platform?.vectorStore) {
-    return createDeniedService<VectorStoreAdapter>('vectorStore');
+    return createDeniedService<VectorStoreAdapter>('vectorStore', ctx.pluginId);
   }
 
   const rawPermission = ctx.permissions.platform.vectorStore;
@@ -192,7 +190,7 @@ const wrapVectorStore: AdapterMiddlewareFn<VectorStoreAdapter> = (adapter, ctx) 
 const wrapCache: AdapterMiddlewareFn<CacheAdapter> = (adapter, ctx) => {
   const perm = ctx.permissions.platform?.cache;
 
-  if (!perm) {return createDeniedService<CacheAdapter>('cache');}
+  if (!perm) {return createDeniedService<CacheAdapter>('cache', ctx.pluginId);}
 
   const checkKey = (key: string) => {
     if (perm === true) {return;}
@@ -200,6 +198,7 @@ const wrapCache: AdapterMiddlewareFn<CacheAdapter> = (adapter, ctx) => {
     if (!allowed.some((ns) => key.startsWith(ns))) {
       throw new PermissionError(
         `Cache key '${key}' not allowed. Permitted namespaces: ${allowed.join(', ')}`,
+        { plugin: ctx.pluginId, permission: 'platform.cache' },
       );
     }
   };
@@ -209,7 +208,7 @@ const wrapCache: AdapterMiddlewareFn<CacheAdapter> = (adapter, ctx) => {
     set: async (key, value, ttl) => { checkKey(key); return adapter.set(key, value, ttl); },
     delete: async (key) => { checkKey(key); return adapter.delete(key); },
     clear: async (pattern) => {
-      if (perm !== true) {throw new PermissionError('Cache.clear() requires full cache permission');}
+      if (perm !== true) {throw new PermissionError('Cache.clear() requires full cache permission', { plugin: ctx.pluginId, permission: 'platform.cache.clear' });}
       return adapter.clear(pattern);
     },
     zadd: async (key, score, member) => { checkKey(key); return adapter.zadd(key, score, member); },
@@ -221,7 +220,7 @@ const wrapCache: AdapterMiddlewareFn<CacheAdapter> = (adapter, ctx) => {
 
 const wrapStorage: AdapterMiddlewareFn<StorageAdapter> = (adapter, ctx) => {
   const perm = ctx.permissions.platform?.storage;
-  if (!perm) {return createDeniedService<StorageAdapter>('storage');}
+  if (!perm) {return createDeniedService<StorageAdapter>('storage', ctx.pluginId);}
 
   const checkPath = (path: string) => {
     if (perm === true) {return;}
@@ -229,6 +228,7 @@ const wrapStorage: AdapterMiddlewareFn<StorageAdapter> = (adapter, ctx) => {
     if (!allowed.some((base) => path.startsWith(base))) {
       throw new PermissionError(
         `Storage path '${path}' not allowed. Permitted paths: ${allowed.join(', ')}`,
+        { plugin: ctx.pluginId, permission: 'platform.storage' },
       );
     }
   };
@@ -244,7 +244,7 @@ const wrapStorage: AdapterMiddlewareFn<StorageAdapter> = (adapter, ctx) => {
 
 const wrapNotifier: AdapterMiddlewareFn<INotifier> = (adapter, ctx) => {
   const perm = ctx.permissions.platform?.notifier;
-  if (!perm) {return createDeniedService<INotifier>('notifier');}
+  if (!perm) {return createDeniedService<INotifier>('notifier', ctx.pluginId);}
 
   const canEmit = perm.emit === true;
   const subPerm = perm.subscribe;
@@ -255,7 +255,7 @@ const wrapNotifier: AdapterMiddlewareFn<INotifier> = (adapter, ctx) => {
   return {
     notify: canEmit
       ? (event) => adapter.notify({ ...event, source: ctx.pluginId })
-      : () => Promise.reject(new PermissionError('Notifier emit access denied')),
+      : () => Promise.reject(new PermissionError('Notifier emit access denied', { plugin: ctx.pluginId, permission: 'platform.notifier.emit' })),
 
     subscribe: subPerm
       ? (filter, handler) =>
@@ -264,7 +264,7 @@ const wrapNotifier: AdapterMiddlewareFn<INotifier> = (adapter, ctx) => {
             if (allowedSeverity && !allowedSeverity.includes(event.severity ?? 'info')) {return;}
             await handler(event);
           })
-      : () => { throw new PermissionError('Notifier subscribe access denied'); },
+      : () => { throw new PermissionError('Notifier subscribe access denied', { plugin: ctx.pluginId, permission: 'platform.notifier.subscribe' }); },
   } satisfies INotifier;
 };
 
@@ -277,7 +277,7 @@ const wrapNotifier: AdapterMiddlewareFn<INotifier> = (adapter, ctx) => {
  * Platform-only fields (e.g. serviceTransport) live in PlatformServices only
  * and must NOT be in this registry — they are excluded from plugin context.
  * until a corresponding entry is added. Each entry declares (in pipeline order):
- *   - analyticsFactory:      optional tracking wrap (before router)
+ *   - analyticsFactory:      optional product-usage tracking (LLM and embeddings)
  *   - routerFactory:         optional platform-level routing (LLMRouter, etc.)
  *   - resourceBrokerFactory: optional rate limiting / queuing
  *   - postAssemblyFactory:   optional outermost wrap (e.g. PII redaction)
@@ -323,8 +323,6 @@ export const ADAPTER_REGISTRY = {
   },
 
   vectorStore: {
-    analyticsFactory: (raw: IVectorStore, analytics: IAnalytics) =>
-      new AnalyticsVectorStore(raw, analytics),
     resourceBrokerFactory: (raw: IVectorStore, broker: unknown) =>
       createQueuedVectorStore(broker as IResourceBroker, raw),
     governance: { strategy: 'wrap', fn: wrapVectorStore },
@@ -332,15 +330,11 @@ export const ADAPTER_REGISTRY = {
   },
 
   cache: {
-    analyticsFactory: (raw: CacheAdapter, analytics: IAnalytics) =>
-      new AnalyticsCache(raw, analytics),
     governance: { strategy: 'wrap', fn: wrapCache },
     ipc: { strategy: 'proxy', create: (t) => new CacheProxy(t) },
   },
 
   storage: {
-    analyticsFactory: (raw: StorageAdapter, analytics: IAnalytics) =>
-      new AnalyticsStorage(raw, analytics),
     governance: { strategy: 'wrap', fn: wrapStorage },
     ipc: { strategy: 'proxy', create: (t) => new StorageProxy(t) },
   },

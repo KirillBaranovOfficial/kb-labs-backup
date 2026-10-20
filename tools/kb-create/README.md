@@ -36,22 +36,25 @@ scenario, or the interactive install command.
 `apply` and `update` require an immutable release index and request. Recovery
 operations deliberately require only `--platform-root` (and a snapshot for
 rollback), so they recover the verified V2 receipt rather than recalculating a
-new plan. Raw package-manager transcript is private under `.kb/logs/`; failed
-operations add a redacted dossier under `.kb/diagnostics/`.
+new plan. Raw package-manager transcript is private under
+`$PLATFORM_ROOT/installer/logs/`; failed operations add a redacted dossier under
+`$PLATFORM_ROOT/installer/diagnostics/`.
 
 CI and agents may pass the request file unchanged, or use direct flags such
-as `--request-platform-root`, `--platform-version`/`--platform-channel`,
+as `--platform-root`, `--platform-version`/`--platform-channel`,
 `--sdk-version`, `--plugins id@version,...`, `--adapters id@version,...`,
 `--service-profile`, `--policy`, and `--offline`. Both forms normalize into
 the same `InstallRequest` before resolution; flags never build a separate
 shell-level install sequence.
 
-For a human, run `kb-create install`. It checks Node.js 24 before prompting,
-uses the release index saved by `install.sh` and defaults the platform root to
-`~/kb-platform`. It gathers scenario answers, resolves and displays the plan,
-then applies that plan through the same engine used by CI. Local access is the
-default; secured access remains available in the scenario. After installation,
-run `cd ~/any-project && kb commit`.
+For a human, run `kb-create install`. The platform supports exactly one Node.js
+major, the latest LTS major declared by the root `package.json` `engines.node`.
+On a mismatch, the installer prints the exact command to switch to that major.
+It uses the release index saved by `install.sh` and defaults the platform root
+to `~/kb-platform`. It gathers scenario answers, resolves and displays the
+plan, then applies that plan through the same engine used by CI. Local access
+is the default; secured access remains available in the scenario. After
+installation, run `cd ~/any-project && kb commit`.
 
 ## Scenarios
 
@@ -71,17 +74,20 @@ Release automation creates the index with
 `go run ./v2/cmd/kb-create-release-index --input manifest-export.json
 --manifest-root staging-root --output release-index.json` after generating the
 binary manifest from the exact published checksums with
-`node scripts/prepare-binary-manifest.mjs`. The command reads the exact V2
-manifests staged with each artifact and replaces any hand-authored config
-projection; missing/mismatched manifests fail the release. The resulting
-index contains the shared compatibility matrix for platform, SDK and binaries,
-rejects channels that point outside its platform set, and seals the canonical
-payload with a digest. `kb-create` verifies both the digest and matrix before
-resolving.
+`node scripts/prepare-binary-manifest.mjs --checksums checksums.txt --repository OWNER/REPO --release-tag TAG --version VERSION --output binary-manifest.json`.
+The version comes from the release plan and is recorded on each binary entry.
+The common `@kb-labs/devkit/tsup/node` build hook emits each service and adapter
+manifest as `dist/manifest.json`; release-index preparation reads only that
+artifact and fails when a staged package declares a manifest but the artifact
+is missing. The resulting index records the actual platform, SDK, and binary
+versions and their explicit compatibility relations in the matrix, then seals
+the canonical payload with a digest. `kb-create` verifies the digest and uses
+the matrix as its compatibility gate.
 
 Secret input uses `--secret-env requirement.id=ENV_VAR`, so CI/agents pass a
 reference to process environment rather than secret text through argv/JSON.
-V2 stores the value only in `.kb/v2/secrets.env` (0600); generated config,
+V2 stores secret values and bootstrap lifecycle facts together in
+`.kb/v2/secret-state.json` (0600); generated config,
 receipt, scenario state, logs, diagnostics and telemetry retain only the
 manifest requirement or environment variable name. The launcher hands the
 private store to the host process as its environment (see Host supervision).
@@ -110,7 +116,7 @@ without it the commands print short text. All take `--platform-root`.
   launcher runs that command directly (`ProcessRunner`: own process group, pid
   file and log in the state home, health polling, SIGTERM then kill after the
   grace period). The host process gets the launcher's environment, then the
-  platform's secrets (`.kb/v2/secrets.env`, variable names only), then the
+  platform's secrets (`.kb/v2/secret-state.json`, variable names only), then the
   spec's `env`.
 - `start` spawns `kb-create supervise` detached. `supervise` (foreground; the
   future autostart entry) keeps the host and serves the control channel.
@@ -146,7 +152,15 @@ steps (`swap` package):
 
 `rollback` without `--snapshot` undoes the last update: the receipt records the
 snapshot taken before it (`KB_UPDATE_NO_SNAPSHOT` when there is none). Failures
-write a diagnostic dossier under `.kb/diagnostics/`.
+write a diagnostic dossier under `$PLATFORM_ROOT/installer/diagnostics/`.
+
+Uninstall and rollback require explicit confirmation. A terminal prompts with
+the affected platform scope; uninstall preserves project files. Non-interactive
+and `--json` callers must pass `--yes`, for example:
+
+```bash
+kb-create uninstall --platform-root ./ci-platform --yes
+```
 
 ### Doctor: installation and platform, and recovery
 
@@ -203,7 +217,7 @@ flowchart TD
   E --> F["InstallReceipt + immutable snapshot"]
   F --> G["Render config + service graph"]
   G --> H["Verify config + host declaration, trial-run the host"]
-  H --> I["Success or LauncherError + diagnostic bundle"]
+  H --> I["Success or shared clikit result + diagnostic bundle"]
   F --> J["doctor --fix / update / uninstall / rollback (around the host)"]
 ```
 
@@ -271,18 +285,37 @@ adapter version, but it never silently changes an explicit pin:
 
 | Policy | Behaviour |
 |---|---|
-| `strict` (default for CI/agents) | Exact pins must be compatible or resolution fails. |
-| `compatible` (interactive install default) | Resolver may choose only unpinned compatible versions and displays the resolved set before apply. |
-| `upgrade-safe` (explicit update only) | Resolver may advance unpinned artifacts within the defined compatibility policy; a snapshot is mandatory. |
+| `strict` (default for CI/agents) | Platform/SDK selections need an exact relation in the sealed matrix; component constraints must exactly name the selected version. |
+| `compatible` (wizard default) | Exact relations or declared semver ranges may admit the selected version; pins are never changed silently. |
+Updates recheck every plugin and adapter from the active receipt before writing
+a snapshot or changing installed files. Incompatible updates return
+`KB_UPDATE_INCOMPATIBLE` with the blocking component and range. A lower semantic
+version is refused with `KB_UPDATE_DOWNGRADE_REFUSED`; use `kb-create rollback`
+to return to a prior release.
 
-No intersecting range produces `KB_INSTALL_INCOMPATIBLE_COMPONENTS` before
-download or config writes. A missing capability produces
+Compatibility ranges accept exact full `major.minor.patch` SemVer versions,
+`*`, `^`, `~`, comparison operators, whitespace-conjoined comparisons, and
+`||` alternatives. Prereleases participate in SemVer precedence without npm's
+prerelease exclusion rule. Partial versions, embedded wildcards, hyphen ranges
+and comma-separated comparators are rejected at seal time. Numeric version and
+prerelease identifiers must fit an unsigned 64-bit integer. No intersecting range produces
+`KB_INSTALL_INCOMPATIBLE_COMPONENTS` before download or config writes. A missing capability produces
 `KB_INSTALL_PROVIDER_UNRESOLVED`; a competing explicit binding produces
 `KB_INSTALL_PROVIDER_AMBIGUOUS`. Each error names the selected versions or
 providers, the manifest constraint that rejected them and safe alternatives.
-A plugin or adapter without a range is `unknown compatibility`, never silently
-universal: it needs explicit user policy during migration and becomes a
-publish-time failure for official artifacts after the migration window.
+A plugin or adapter without a range supplies no component-specific constraint;
+the resolver cannot infer compatibility from the absent field. Release authors
+must publish explicit ranges before claiming cross-version compatibility.
+
+To plan against canary, pass the channel and the wizard-compatible policy:
+
+```sh
+kb-create plan --platform-channel canary --policy compatible --index release-index.json --input request.json --json
+```
+
+The receipt records the resolved channel and exact platform version. Use
+`kb-create rollback --yes --json` to return to a saved release; `update` refuses
+a lower semantic version.
 
 The resolver also validates graph completeness before `apply`: required
 providers, ports, dependency targets, offline artifacts and mandatory service
@@ -345,18 +378,19 @@ and uses the same engine/recovery model.
 
 ## Errors, logs and diagnostics
 
-Every operation uses one redacted `LauncherError` contract:
+CLI failures use the shared `clikit/diag` diagnostic and result envelope:
 
 ```text
-code, stage(resolve|apply|verify|recover), retryable,
-message, safe cause, hint, correlation ID, safe details
+ok, error { code, message, hint, correlationId, details }
 ```
 
-The error is rendered for humans, returned through `--json` and agent
-protocol, persisted in the journal/receipt, and consumed by `doctor --fix`.
+Human mode renders the same catalogued `KB_*` code, message, hint and
+correlation ID. JSON mode returns the shared error envelope. Wrapped Go causes
+remain internal and are never serialized; unexpected causes are recorded in a
+structured local log keyed by the correlation ID.
 
 Each invocation writes a full local log. A failure additionally writes a
-redacted dossier under `.kb/diagnostics/<correlation-id>/` with resolved plan,
+redacted dossier under `$PLATFORM_ROOT/installer/diagnostics/<correlation-id>/` with resolved plan,
 receipt/snapshot metadata, engine journal, package-manager output, toolchain,
 config hashes and the service graph. The CLI prints one recovery
 command and the bundle path so users can attach it to an issue without manual
@@ -404,7 +438,7 @@ The launcher may be released only when all are true:
 ## Delivery sequence
 
 1. Define V2 contracts and fixture catalog: request, matrix, resolved plan,
-   receipt, snapshot and `LauncherError` schemas.
+   receipt, snapshot and shared platform error schemas.
 2. Complete the V2 runtime's resolved-plan application, journal and receipt
    events; it owns execution semantics rather than adapting old state.
 3. Implement config/service graph renderer and verifier, then make offline

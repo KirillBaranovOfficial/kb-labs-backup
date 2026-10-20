@@ -393,7 +393,7 @@ export function DashboardView({ run, onApprove }: DashboardViewProps) {
   const failedSteps    = allSteps.filter((s) => s.status === 'failed');
   const skippedSteps   = allSteps.filter((s) => s.status === 'skipped' || s.status === 'cancelled');
   const futureSteps    = allSteps.filter(
-    (s) => s.status === 'queued' || (s.status as string) === 'pending',
+    (s) => s.status === 'queued',
   );
 
   // Show preparing state when run is active but no step has started yet

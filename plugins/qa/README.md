@@ -26,6 +26,7 @@ tracking over time.
 - Trend analysis — quality direction over a sliding window of runs
 - Per-package timelines and grouped error patterns
 - JSON output everywhere for agent and CI consumption
+- Case-first catalog validation and run-derived release coverage
 
 ---
 
@@ -77,6 +78,22 @@ kb qa baseline update                  # run full QA and save as new baseline
 kb qa baseline status                  # show current baseline snapshot
 ```
 
+### Case catalog and coverage
+
+```bash
+kb qa cases list
+kb qa cases validate
+kb qa coverage show --json
+kb qa coverage show --level release --mode local --run .journey/reports/service-local.json
+```
+
+The catalog defaults to `docs/qa/scenarios`; set `qa.casesPath` to use another
+directory. Cases declare stable step ids, tests claim the steps they verify,
+and run results determine `PASS`, `FAIL`, `NOT RUN`, or `NOT COVERED`. Use
+`--mode local` or `--mode secured`; `--level release` exits nonzero until every
+active release case passes for that mode. Pass multiple result files as
+comma-separated paths to `--run`.
+
 **Full command reference**
 
 | Command | Description |
@@ -89,6 +106,9 @@ kb qa baseline status                  # show current baseline snapshot
 | `kb qa regressions` | Detect regressions (CI gate) |
 | `kb qa baseline update` | Save current results as baseline |
 | `kb qa baseline status` | Show baseline snapshot |
+| `kb qa cases list` | List cases in the configured catalog |
+| `kb qa cases validate` | Validate catalog metadata, step ids, and test claims |
+| `kb qa coverage show` | Generate per-step coverage from claims and run results |
 
 ---
 

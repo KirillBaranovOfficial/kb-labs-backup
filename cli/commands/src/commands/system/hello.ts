@@ -7,10 +7,13 @@ type HelloFlags = {
 
 type HelloResult = CommandResult & {
   message: string;
+  status: 'ready';
 };
 
 export const hello = defineSystemCommand<HelloFlags, HelloResult>({
   name: 'hello',
+  scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description: 'Print Hello World',
   longDescription: 'Prints "Hello World" — a simple smoke-test for CLI functionality',
   category: 'info',
@@ -32,10 +35,8 @@ export const hello = defineSystemCommand<HelloFlags, HelloResult>({
 
     if (!flags.json) {
       ctx.ui?.write(`${message}\n`);
-    } else {
-      ctx.ui?.json({ message, status: 'ready' });
     }
 
-    return { ok: true, message };
+    return {  message, status: 'ready' };
   },
 });

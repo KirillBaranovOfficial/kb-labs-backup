@@ -24,7 +24,7 @@ describe('steward:project.list', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: { status: 'active' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedListProjects).toHaveBeenCalledWith({ status: 'active' });
     expect(captured.chain[0]).toHaveLength(1);
   });
@@ -34,7 +34,7 @@ describe('steward:project.list', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await command.execute(ctx, mockCLIInput({ flags: {} }));
+    const result = await command.execute(ctx, mockCLIInput({ flags: {} }));
 
     expect(captured.infos[0]?.message).toMatch(/no projects/i);
   });
@@ -46,8 +46,8 @@ describe('steward:project.list', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await command.execute(ctx, mockCLIInput({ flags: { json: true } }));
+    const result = await command.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(captured.json[0]).toMatchObject({ ok: true, result: [{ id: 'prj_1' }] });
+    expect(result).toMatchObject([{ id: 'prj_1' }]);
   });
 });

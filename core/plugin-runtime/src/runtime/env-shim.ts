@@ -2,6 +2,7 @@
  * Sandboxed environment variable access
  */
 
+import { matchesPermissionPattern } from '@kb-labs/plugin-contracts';
 import type { PermissionSpec, EnvShim } from '@kb-labs/plugin-contracts';
 
 /**
@@ -18,6 +19,7 @@ const ALWAYS_ALLOWED = [
 
 export interface CreateEnvShimOptions {
   permissions: PermissionSpec;
+  environment?: Record<string, string | undefined>;
 }
 
 /**
@@ -26,31 +28,23 @@ export interface CreateEnvShimOptions {
  * Non-whitelisted vars return undefined (no error thrown).
  */
 export function createEnvShim(options: CreateEnvShimOptions): EnvShim {
-  const { permissions } = options;
+  const { permissions, environment } = options;
   const allowedPatterns = permissions.env?.read ?? [];
 
   return (key: string): string | undefined => {
     // Check always allowed
     if (ALWAYS_ALLOWED.includes(key)) {
-      return process.env[key];
+      return environment?.[key] ?? process.env[key];
     }
 
     // Check whitelist patterns
-    const isAllowed = allowedPatterns.some(pattern => {
-      if (pattern.endsWith('*')) {
-        // Prefix match: "KB_*" matches "KB_ANYTHING"
-        const prefix = pattern.slice(0, -1);
-        return key.startsWith(prefix);
-      }
-      // Exact match
-      return key === pattern;
-    });
+    const isAllowed = allowedPatterns.some(pattern => matchesPermissionPattern(key, pattern));
 
     if (!isAllowed) {
       // Return undefined for non-allowed vars (no error)
       return undefined;
     }
 
-    return process.env[key];
+    return environment?.[key] ?? process.env[key];
   };
 }

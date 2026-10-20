@@ -1,68 +1,69 @@
-/**
- * @module @kb-labs/studio-app/components/widget-error-boundary
- * Error Boundary for widget isolation — keeps one widget crash from affecting the rest of the page.
- */
+/** @module @kb-labs/studio-app/components/widget-error-boundary */
 
 import * as React from 'react';
 import { UIButton, UITypographyText, UITag } from '@kb-labs/studio-ui-kit';
-import { AlertTriangle, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
+import { AlertTriangle, RotateCcw } from 'lucide-react';
+import { normalizeStudioFailure, recordStudioFailure, type StudioFailure } from '@kb-labs/studio-federation';
 import { trackWidgetEvent } from '../utils/analytics';
 
 export interface WidgetErrorBoundaryProps {
   widgetId?: string;
   pluginId?: string;
   children: React.ReactNode;
-  fallback?: React.ComponentType<{ error: Error; resetError: () => void }>;
 }
 
 interface State {
   hasError: boolean;
-  error: Error | null;
-  detailsOpen: boolean;
+  failure: StudioFailure | null;
+  copied: boolean;
 }
 
 export class WidgetErrorBoundary extends React.Component<WidgetErrorBoundaryProps, State> {
   constructor(props: WidgetErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, error: null, detailsOpen: false };
+    this.state = { hasError: false, failure: null, copied: false };
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
-    return { hasError: true, error };
+    return { hasError: true, failure: normalizeStudioFailure(error) };
   }
 
-  override componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+  override componentDidCatch(_error: Error, _errorInfo: React.ErrorInfo): void {
+    const { failure } = this.state;
+    if (!failure) {
+      return;
+    }
     if (this.props.widgetId && this.props.pluginId) {
       trackWidgetEvent('error', {
         widgetId: this.props.widgetId,
         pluginId: this.props.pluginId,
-        code: error.message,
+        code: failure.code,
       });
     }
-    console.error('[WidgetErrorBoundary]', error, errorInfo);
+    recordStudioFailure('Studio widget failed', failure);
   }
 
   resetError = (): void => {
-    this.setState({ hasError: false, error: null, detailsOpen: false });
+    this.setState({ hasError: false, failure: null, copied: false });
   };
 
-  toggleDetails = (): void => {
-    this.setState((s) => ({ detailsOpen: !s.detailsOpen }));
+  copyDiagnostics = (): void => {
+    const { failure } = this.state;
+    if (!failure) {
+      return;
+    }
+    navigator.clipboard.writeText(`${failure.code}\n${failure.correlationId}`).then(() => {
+      this.setState({ copied: true });
+    });
   };
 
   override render(): React.ReactNode {
-    if (!this.state.hasError || !this.state.error) {
+    const { hasError, failure, copied } = this.state;
+    if (!hasError || !failure) {
       return this.props.children;
     }
 
-    if (this.props.fallback) {
-      const Fallback = this.props.fallback;
-      return <Fallback error={this.state.error} resetError={this.resetError} />;
-    }
-
-    const { error, detailsOpen } = this.state;
     const { widgetId, pluginId } = this.props;
-
     return (
       <div style={{
         height: '100%',
@@ -76,96 +77,27 @@ export class WidgetErrorBoundary extends React.Component<WidgetErrorBoundaryProp
         backgroundColor: 'var(--bg-secondary)',
         overflow: 'hidden',
       }}>
-        {/* Header row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <AlertTriangle size={14} style={{ color: 'var(--error)', flexShrink: 0 }} />
-          <UITypographyText strong style={{ fontSize: 13 }}>Widget error</UITypographyText>
+          <UITypographyText strong style={{ fontSize: 13 }}>Widget failed</UITypographyText>
         </div>
-
-        {/* Context */}
         {(pluginId || widgetId) && (
           <UITypographyText type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
             {[pluginId, widgetId].filter(Boolean).join(' › ')}
           </UITypographyText>
         )}
-
-        {/* Message — truncated */}
-        <UITypographyText
-          type="secondary"
-          style={{
-            fontSize: 12,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-          }}
-        >
-          {error.message || 'Unknown error'}
-        </UITypographyText>
-
-        {/* Actions */}
+        <UITypographyText type="secondary" style={{ fontSize: 12 }}>{failure.message}</UITypographyText>
+        <UITypographyText type="secondary" style={{ fontSize: 11 }}>{failure.hint}</UITypographyText>
         <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-          <UIButton size="small" icon={<RotateCcw size={11} />} onClick={this.resetError}>
-            Retry
-          </UIButton>
-          <button
-            onClick={this.toggleDetails}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 3,
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: 'var(--text-tertiary)',
-              fontSize: 11,
-            }}
-          >
-            {detailsOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-            Details
-          </button>
+          <UIButton size="small" icon={<RotateCcw size={11} />} onClick={this.resetError}>Retry</UIButton>
+          <UIButton size="small" onClick={this.copyDiagnostics}>{copied ? 'Copied' : 'Copy diagnostics'}</UIButton>
         </div>
-
-        {/* Expandable details */}
-        {detailsOpen && (
-          <div style={{
-            marginTop: 4,
-            border: '1px solid var(--border-primary)',
-            borderRadius: 4,
-            overflow: 'hidden',
-          }}>
-            <div style={{
-              padding: '6px 8px',
-              borderBottom: error.stack ? '1px solid var(--border-primary)' : undefined,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}>
-              <UITag variant="error" style={{ margin: 0, fontSize: 10 }}>{error.name}</UITag>
-            </div>
-            {error.stack && (
-              <div style={{
-                padding: '6px 8px',
-                maxHeight: 120,
-                overflowY: 'auto',
-                background: 'var(--bg-tertiary)',
-              }}>
-                <pre style={{
-                  margin: 0,
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  lineHeight: 1.5,
-                  color: 'var(--text-secondary)',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                }}>
-                  {error.stack}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <UITag variant="error" style={{ margin: 0, fontSize: 10 }}>{failure.code}</UITag>
+          <UITypographyText type="secondary" style={{ fontSize: 11 }}>
+            Correlation ID: {failure.correlationId}
+          </UITypographyText>
+        </div>
       </div>
     );
   }

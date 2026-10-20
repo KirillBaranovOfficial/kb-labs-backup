@@ -19,7 +19,8 @@ import type {
 export { manifest } from './manifest.js';
 
 interface WorkspaceContext {
-  cwd?: string;
+  projectRoot?: string;
+  platformRoot?: string;
 }
 
 export interface WorktreeWorkspaceAdapterConfig {
@@ -28,7 +29,7 @@ export interface WorktreeWorkspaceAdapterConfig {
   initSubmodules?: boolean;
   installDeps?: boolean;
   /**
-   * Relative paths (from repo root) of tool dist/ directories to symlink from the
+   * Relative paths (from platform root) of tool dist/ directories to symlink from the
    * platform into the worktree. Only link tool binaries the agent should never
    * rebuild — package dist/ directories are left absent so agent builds write into
    * the worktree, not the platform.
@@ -51,6 +52,8 @@ interface WorktreeRecord {
   runId?: string;
   /** Reference count — number of jobs currently using this workspace */
   refCount: number;
+  repoRoot: string;
+  worktreeBaseDir: string;
 }
 
 const TIMEOUTS = {
@@ -61,8 +64,9 @@ const TIMEOUTS = {
 } as const;
 
 export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
-  private readonly repoRoot: string;
-  private readonly worktreeBaseDir: string;
+  private readonly configuredProjectRoot?: string;
+  private readonly configuredPlatformRoot?: string;
+  private readonly worktreeDir: string;
   private readonly defaultBranch: string;
   private readonly initSubmodules: boolean;
   private readonly installDeps: boolean;
@@ -70,8 +74,9 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
   private readonly records = new Map<string, WorktreeRecord>();
 
   constructor(config: WorktreeWorkspaceAdapterConfig = {}) {
-    this.repoRoot = path.resolve(config.workspace?.cwd ?? process.cwd());
-    this.worktreeBaseDir = path.resolve(this.repoRoot, config.worktreeDir ?? '.worktrees');
+    this.configuredProjectRoot = config.workspace?.projectRoot;
+    this.configuredPlatformRoot = config.workspace?.platformRoot;
+    this.worktreeDir = config.worktreeDir ?? '.worktrees';
     this.defaultBranch = config.branch ?? 'main';
     this.initSubmodules = config.initSubmodules ?? true;
     this.installDeps = config.installDeps ?? true;
@@ -86,11 +91,27 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     const runId = (request.metadata as Record<string, unknown>)?.runId as string | undefined;
     const onProgress = request.onProgress;
 
-    if (!existsSync(this.worktreeBaseDir)) {
-      mkdirSync(this.worktreeBaseDir, { recursive: true });
+    const safeBranch = branch.replace(/[^a-zA-Z0-9_\-./]/g, '');
+    if (!safeBranch || safeBranch !== branch) {
+      throw new Error(`Invalid branch name: ${branch}`);
     }
 
-    const worktreePath = path.join(this.worktreeBaseDir, workspaceId);
+    const projectRoot = request.projectRoot ?? this.configuredProjectRoot;
+    const platformRoot = request.platformRoot ?? this.configuredPlatformRoot;
+    if (!projectRoot) {
+      throw new Error('Workspace materialization needs the owning project root. Pass projectRoot from the project runtime.');
+    }
+    if (this.toolDistPaths.length > 0 && !platformRoot) {
+      throw new Error('Workspace materialization needs the platform root to link CLI tools. Pass platformRoot from the platform runtime.');
+    }
+    const repoRoot = path.resolve(projectRoot);
+    const worktreeBaseDir = path.resolve(repoRoot, this.worktreeDir);
+
+    if (!existsSync(worktreeBaseDir)) {
+      mkdirSync(worktreeBaseDir, { recursive: true });
+    }
+
+    const worktreePath = path.join(worktreeBaseDir, workspaceId);
 
     // Reuse existing worktree (retry scenario — same run, same workspace)
     if (existsSync(worktreePath)) {
@@ -105,13 +126,13 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
           rootPath: worktreePath,
           createdAt: existing.createdAt,
           updatedAt: new Date().toISOString(),
-          metadata: { branch, runId, repoRoot: this.repoRoot, reused: true },
+          metadata: { branch, runId, repoRoot, reused: true },
         };
       }
       // Worktree exists on disk but not in records (stale) — reuse anyway
       onProgress?.({ stage: 'reuse', message: 'Reusing existing worktree (recovered)', progress: 100 });
       const now = new Date().toISOString();
-      this.records.set(workspaceId, { workspaceId, worktreePath, branch, status: 'ready', createdAt: now, runId, refCount: 1 });
+      this.records.set(workspaceId, { workspaceId, worktreePath, branch, status: 'ready', createdAt: now, runId, refCount: 1, repoRoot, worktreeBaseDir });
       return {
         workspaceId,
         provider: 'worktree',
@@ -119,13 +140,8 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         rootPath: worktreePath,
         createdAt: now,
         updatedAt: now,
-        metadata: { branch, runId, repoRoot: this.repoRoot, reused: true },
+        metadata: { branch, runId, repoRoot, reused: true },
       };
-    }
-
-    const safeBranch = branch.replace(/[^a-zA-Z0-9_\-./]/g, '');
-    if (!safeBranch || safeBranch !== branch) {
-      throw new Error(`Invalid branch name: ${branch}`);
     }
 
     const progress = (stage: string, message: string, pct?: number) => {
@@ -137,14 +153,14 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       progress('worktree', `Creating worktree from ${safeBranch}...`, 10);
       await this.exec(
         `git worktree add --detach "${worktreePath}" ${safeBranch}`,
-        this.repoRoot,
+        repoRoot,
         TIMEOUTS.worktree,
       );
       progress('worktree', 'Worktree created', 25);
 
       // Stage 1b: Symlink the root .env — it's gitignored so `git worktree add`
       // never copies it, and its contents aren't per-worktree specific.
-      this.symlinkEnvFromRoot(worktreePath);
+      this.symlinkEnvFromRoot(worktreePath, repoRoot);
 
       // Stage 2: Initialize submodules
       if (this.initSubmodules) {
@@ -174,7 +190,7 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       // are left absent so agent builds produce output in the worktree, not the platform.
       if (this.toolDistPaths.length > 0) {
         progress('dist-links', 'Linking platform tool binaries...', 95);
-        await this.symlinkDistFromPlatform(worktreePath);
+        if (platformRoot) await this.symlinkDistFromPlatform(worktreePath, platformRoot);
         progress('dist-links', 'Tool binaries linked', 98);
       }
 
@@ -188,6 +204,8 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         createdAt: new Date().toISOString(),
         runId,
         refCount: 1,
+        repoRoot,
+        worktreeBaseDir,
       };
       this.records.set(workspaceId, record);
 
@@ -198,13 +216,13 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         rootPath: worktreePath,
         createdAt: record.createdAt,
         updatedAt: record.createdAt,
-        metadata: { branch, runId, repoRoot: this.repoRoot },
+        metadata: { branch, runId, repoRoot, platformRoot },
       };
     } catch (error) {
       progress('failed', `Provisioning failed: ${error instanceof Error ? error.message : String(error)}`);
 
       try {
-        await this.exec(`git worktree remove "${worktreePath}" --force`, this.repoRoot, TIMEOUTS.cleanup);
+        await this.exec(`git worktree remove "${worktreePath}" --force`, repoRoot, TIMEOUTS.cleanup);
       } catch { /* ignore cleanup errors */ }
 
       throw new Error(
@@ -242,34 +260,37 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     }
 
     try {
-      await this.exec(`git worktree remove "${record.worktreePath}" --force`, this.repoRoot, TIMEOUTS.cleanup);
+      await this.exec(`git worktree remove "${record.worktreePath}" --force`, record.repoRoot, TIMEOUTS.cleanup);
     } catch {
       if (existsSync(record.worktreePath)) {
         rmSync(record.worktreePath, { recursive: true, force: true });
       }
       try {
-        await this.exec('git worktree prune', this.repoRoot, TIMEOUTS.cleanup);
+        await this.exec('git worktree prune', record.repoRoot, TIMEOUTS.cleanup);
       } catch { /* ignore */ }
     }
 
     this.records.delete(workspaceId);
   }
 
-  async startupCleanup(): Promise<void> {
-    if (!existsSync(this.worktreeBaseDir)) {
+  async startupCleanup(projectRoot = this.configuredProjectRoot): Promise<void> {
+    if (!projectRoot) return;
+    const repoRoot = path.resolve(projectRoot);
+    const worktreeBaseDir = path.resolve(repoRoot, this.worktreeDir);
+    if (!existsSync(worktreeBaseDir)) {
       return;
     }
-    const entries = readdirSync(this.worktreeBaseDir);
+    const entries = readdirSync(worktreeBaseDir);
     for (const entry of entries) {
-      const worktreePath = path.join(this.worktreeBaseDir, entry);
+      const worktreePath = path.join(worktreeBaseDir, entry);
       try {
-        await this.exec(`git worktree remove "${worktreePath}" --force`, this.repoRoot, TIMEOUTS.cleanup);
+        await this.exec(`git worktree remove "${worktreePath}" --force`, repoRoot, TIMEOUTS.cleanup);
       } catch {
         rmSync(worktreePath, { recursive: true, force: true });
       }
     }
     try {
-      await this.exec('git worktree prune', this.repoRoot, TIMEOUTS.cleanup);
+      await this.exec('git worktree prune', repoRoot, TIMEOUTS.cleanup);
     } catch { /* ignore */ }
     this.records.clear();
   }
@@ -302,13 +323,13 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
    * Package dist/ directories that the agent may build are intentionally left absent so
    * agent builds write into the worktree, not the platform.
    *
-   * Default tool paths to link (relative to repo root):
+   * Default tool paths to link (relative to platform root):
    *   cli/bin/dist  — makes `pnpm kb` resolve to the platform's compiled CLI binary
    */
-  private async symlinkDistFromPlatform(worktreePath: string): Promise<void> {
+  private async symlinkDistFromPlatform(worktreePath: string, platformRoot: string): Promise<void> {
     const toolDists = this.toolDistPaths;
     for (const relative of toolDists) {
-      const platDist = path.join(this.repoRoot, relative);
+      const platDist = path.join(platformRoot, relative);
       if (!existsSync(platDist)) continue;
       const worktreeDist = path.join(worktreePath, relative);
       if (!existsSync(worktreeDist)) {
@@ -322,8 +343,8 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     }
   }
 
-  private symlinkEnvFromRoot(worktreePath: string): void {
-    const rootEnv = path.join(this.repoRoot, '.env');
+  private symlinkEnvFromRoot(worktreePath: string, repoRoot: string): void {
+    const rootEnv = path.join(repoRoot, '.env');
     if (!existsSync(rootEnv)) return;
     const worktreeEnv = path.join(worktreePath, '.env');
     if (existsSync(worktreeEnv)) return;

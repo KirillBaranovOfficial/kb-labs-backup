@@ -11,16 +11,33 @@ import type {
   JobLogsResponse,
   CronListResponse,
   WorkflowInfo,
+  WorkflowRun,
   WorkflowListResponse,
 } from '@kb-labs/workflow-contracts';
-import { useEnv } from '@kb-labs/sdk';
+import { deriveProjectId, getHostServiceAddress, useEnv } from '@kb-labs/sdk';
+import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
+import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
+import { isUxResult } from '@kb-labs/core-platform/ux-result';
+import type { ErrorCode } from '@kb-labs/core-platform/error-envelope';
+
+export class WorkflowDaemonError extends Error {
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+    readonly hint?: string,
+  ) {
+    super(message);
+    this.name = 'WorkflowDaemonError';
+  }
+}
 
 /** Workflow run summary returned by GET /api/v1/runs */
 export interface WorkflowRunSummary {
   id: string;
+  workflowId: string;
   name: string;
   version?: string;
-  status: 'queued' | 'running' | 'success' | 'failed' | 'cancelled';
+  status: WorkflowRun['status'];
   trigger?: {
     type: string;
     actor?: string;
@@ -80,7 +97,7 @@ export interface WorkflowMetricsData {
     total: number;
     queued: number;
     running: number;
-    completed: number;
+    success: number;
     failed: number;
     cancelled: number;
   };
@@ -88,7 +105,7 @@ export interface WorkflowMetricsData {
     total: number;
     queued: number;
     running: number;
-    completed: number;
+    success: number;
     failed: number;
   };
   [key: string]: unknown;
@@ -123,24 +140,44 @@ export interface JobStatusDetail extends Omit<JobStatusInfo, 'result'> {
   }>;
 }
 
-const DEFAULT_DAEMON_URL = 'http://localhost:7778';
 
 export interface DaemonClientOptions {
   url?: string;
+  projectId?: string;
 }
 
-/**
- * Get workflow daemon URL from environment or default
- */
-export function getWorkflowDaemonUrl(): string {
-  return useEnv('WORKFLOW_DAEMON_URL') ?? DEFAULT_DAEMON_URL;
+/** Build the only installed workflow API address: through the project gateway route. */
+export function getWorkflowDaemonUrl(
+  projectId = useEnv('KB_PROJECT_ID') ?? deriveProjectId(process.cwd()),
+): string {
+  if (!projectId) {
+    throw new Error('Workflow needs a registered project. Run `kb project add` from the project directory, then retry.');
+  }
+  const gatewayUrl = getHostServiceAddress('gateway', {
+    KB_GATEWAY_URL: useEnv('KB_GATEWAY_URL'),
+  });
+  return `${gatewayUrl.replace(/\/$/, '')}${projectWorkflowRoute(projectId)}`;
 }
 
 export class WorkflowDaemonClient {
   private readonly baseUrl: string;
 
   constructor(options: DaemonClientOptions = {}) {
-    this.baseUrl = options.url ?? useEnv('WORKFLOW_DAEMON_URL') ?? DEFAULT_DAEMON_URL;
+    const projectId = options.projectId ?? useEnv('KB_PROJECT_ID') ?? deriveProjectId(process.cwd());
+    this.baseUrl = options.url ?? getWorkflowDaemonUrl(projectId);
+  }
+
+  private async authorizedFetch(url: string, init?: RequestInit): Promise<Response> {
+    return gatewayApiFetch(url, init);
+  }
+
+  /** Send an API request through this client's project route and gateway auth. */
+  fetchApi(url: string, init?: RequestInit): Promise<Response> {
+    return this.authorizedFetch(url, init);
+  }
+
+  async fetchRunEvents(runId: string, init?: RequestInit): Promise<Response> {
+    return this.authorizedFetch(this.getRunEventsUrl(runId), init);
   }
 
   /**
@@ -183,7 +220,7 @@ export class WorkflowDaemonClient {
    * Health check
    */
   async health(): Promise<{ ok: boolean; service: string }> {
-    const response = await fetch(`${this.baseUrl}/health`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/health`);
     if (!response.ok) {
       throw new Error(`Health check failed: ${response.statusText}`);
     }
@@ -194,7 +231,7 @@ export class WorkflowDaemonClient {
    * Get workflow metrics (raw metrics data from daemon)
    */
   async getMetrics(): Promise<WorkflowMetricsData> {
-    const response = await fetch(`${this.baseUrl}/metrics`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/metrics`);
     if (!response.ok) {
       throw new Error(`Failed to get metrics: ${response.statusText}`);
     }
@@ -207,7 +244,7 @@ export class WorkflowDaemonClient {
    */
   async getJobStatus(jobId: string): Promise<JobStatusDetail> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs/${encodedJobId}`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -223,7 +260,7 @@ export class WorkflowDaemonClient {
    */
   async getJobSteps(jobId: string): Promise<JobStepsResponse> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}/steps`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs/${encodedJobId}/steps`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -239,7 +276,7 @@ export class WorkflowDaemonClient {
    */
   async getJobLogs(jobId: string): Promise<JobLogsResponse['logs']> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}/logs`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs/${encodedJobId}/logs`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -255,26 +292,41 @@ export class WorkflowDaemonClient {
    * Get active executions
    */
   async getExecutions(): Promise<JobStatusInfo[]> {
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs`);
     if (!response.ok) {
       throw new Error(`Failed to get executions: ${response.statusText}`);
     }
     const data = await this.parseJsonResponse<unknown>(response);
     const unwrapped = this.unwrapData<{ jobs?: JobStatusInfo[] }>(data);
     const jobs = unwrapped.jobs ?? [];
-    return jobs.filter((job) => job.status === 'running' || job.status === 'pending');
+    return jobs.filter((job) => job.status === 'running' || job.status === 'queued');
   }
 
   /**
    * Get cron jobs
    */
   async getCronJobs(): Promise<CronListResponse> {
-    const response = await fetch(`${this.baseUrl}/api/v1/cron`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/crons`);
     if (!response.ok) {
       throw new Error(`Failed to get cron jobs: ${response.statusText}`);
     }
     const data = await this.parseJsonResponse<unknown>(response);
     return this.unwrapData<CronListResponse>(data);
+  }
+
+  async setCronEnabled(id: string, enabled: boolean): Promise<{ enabled: boolean }> {
+    const action = enabled ? 'enable' : 'disable';
+    const response = await this.authorizedFetch(`${this.baseUrl}/crons/${encodeURIComponent(id)}/${action}`, {
+      method: 'POST',
+    });
+    const data = await this.parseJsonResponse<unknown>(response);
+    if (!response.ok) {
+      if (isUxResult(data) && !data.ok) {
+        throw new WorkflowDaemonError(data.error.code, data.error.message, data.error.hint);
+      }
+      throw new Error(`Failed to ${action} cron: ${response.statusText}`);
+    }
+    return this.unwrapData<{ enabled: boolean }>(data);
   }
 
   /**
@@ -285,7 +337,7 @@ export class WorkflowDaemonClient {
     input?: unknown;
     priority?: number;
   }): Promise<{ id: string; status: string }> {
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -306,7 +358,7 @@ export class WorkflowDaemonClient {
 
     const payload = await this.parseJsonResponse<unknown>(response);
     const data = this.unwrapData<{ jobId: string }>(payload);
-    return { id: data.jobId, status: 'pending' };
+    return { id: data.jobId, status: 'queued' };
   }
 
   /**
@@ -323,7 +375,7 @@ export class WorkflowDaemonClient {
     if (params.tags) { query.set('tags', params.tags); }
 
     const qs = query.toString();
-    const response = await fetch(`${this.baseUrl}/api/v1/workflows${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/workflows${qs ? `?${qs}` : ''}`);
     if (!response.ok) {
       throw new Error(`Failed to list workflows: ${response.statusText}`);
     }
@@ -337,7 +389,7 @@ export class WorkflowDaemonClient {
    */
   async getWorkflow(id: string): Promise<WorkflowInfo> {
     const encodedId = encodeURIComponent(id);
-    const response = await fetch(`${this.baseUrl}/api/v1/workflows/${encodedId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/workflows/${encodedId}`);
     if (response.status === 404) {
       throw new Error(`Workflow ${id} not found`);
     }
@@ -362,7 +414,7 @@ export class WorkflowDaemonClient {
     if (params.workflowId) { query.set('workflowId', params.workflowId); }
 
     const qs = query.toString();
-    const response = await fetch(`${this.baseUrl}/api/v1/runs${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs${qs ? `?${qs}` : ''}`);
     if (!response.ok) {
       throw new Error(`Failed to list runs: ${response.statusText}`);
     }
@@ -376,7 +428,7 @@ export class WorkflowDaemonClient {
    */
   async getRun(runId: string): Promise<WorkflowRunDetail> {
     const encodedId = encodeURIComponent(runId);
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}`);
     if (response.status === 404) {
       throw new Error(`Run ${runId} not found`);
     }
@@ -406,7 +458,7 @@ export class WorkflowDaemonClient {
 
     const encodedId = encodeURIComponent(runId);
     const qs = query.toString();
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}/logs${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/logs${qs ? `?${qs}` : ''}`);
     if (response.status === 404) {
       throw new Error(`Run ${runId} not found`);
     }
@@ -422,7 +474,7 @@ export class WorkflowDaemonClient {
    * Stream run events via SSE (returns a ReadableStream or EventSource-compatible URL)
    */
   getRunEventsUrl(runId: string): string {
-    return `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/events`;
+    return `${this.baseUrl}/runs/${encodeURIComponent(runId)}/events`;
   }
 
   /**
@@ -440,7 +492,7 @@ export class WorkflowDaemonClient {
     }>;
   }> {
     const encodedId = encodeURIComponent(runId);
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}/approvals`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/approvals`);
     if (!response.ok) {
       const message = await response
         .json()
@@ -477,7 +529,7 @@ export class WorkflowDaemonClient {
     data?: Record<string, unknown>
   ): Promise<{ runId: string; jobId: string; stepId: string; action: string; resolved: boolean }> {
     const encodedId = encodeURIComponent(runId);
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}/approvals/resolve`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/approvals/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jobId, stepId, action, comment, data }),
@@ -501,7 +553,7 @@ export class WorkflowDaemonClient {
    */
   async cancelRun(runId: string): Promise<void> {
     const encodedId = encodeURIComponent(runId);
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}/cancel`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
@@ -522,8 +574,8 @@ export class WorkflowDaemonClient {
     workflowId: string,
     request: WorkflowRunRequest = {}
   ): Promise<{ runId: string; status: string }> {
-    const response = await fetch(
-      `${this.baseUrl}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`,
+    const response = await this.authorizedFetch(
+      `${this.baseUrl}/workflows/${encodeURIComponent(workflowId)}/runs`,
       {
         method: 'POST',
         headers: {
@@ -534,10 +586,19 @@ export class WorkflowDaemonClient {
     );
 
     if (!response.ok) {
-      const error = (await response.json().catch(() => ({ error: response.statusText }))) as {
-        error?: string;
-      };
-      throw new Error(error.error || `Failed to run workflow: ${response.statusText}`);
+      const payload: unknown = await response.json().catch(() => undefined);
+      const envelope = asRecord(payload);
+      const error = asRecord(envelope.error);
+      const message = typeof error.message === 'string'
+        ? error.message
+        : typeof envelope.message === 'string'
+          ? envelope.message
+          : typeof envelope.error === 'string'
+            ? envelope.error
+            : `Failed to run workflow: ${response.statusText}`;
+      const code = typeof error.code === 'string' ? error.code : typeof envelope.code === 'string' ? envelope.code : undefined;
+      const hint = typeof error.hint === 'string' ? error.hint : typeof envelope.hint === 'string' ? envelope.hint : undefined;
+      throw new Error([code, message, hint].filter(Boolean).join(': '));
     }
 
     const payload = await this.parseJsonResponse<{ ok: boolean; data?: { runId: string; status: string } }>(response);
@@ -551,8 +612,8 @@ export class WorkflowDaemonClient {
     runId: string,
     request: WorkflowRerunRequest = {},
   ): Promise<{ runId: string; status: string }> {
-    const response = await fetch(
-      `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/rerun`,
+    const response = await this.authorizedFetch(
+      `${this.baseUrl}/runs/${encodeURIComponent(runId)}/rerun`,
       {
         method: 'POST',
         headers: {
@@ -581,8 +642,8 @@ export class WorkflowDaemonClient {
     runId: string,
     request: WorkflowRestartRequest = {},
   ): Promise<WorkflowRestartResponse> {
-    const response = await fetch(
-      `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/restart`,
+    const response = await this.authorizedFetch(
+      `${this.baseUrl}/runs/${encodeURIComponent(runId)}/restart`,
       {
         method: 'POST',
         headers: {
@@ -602,4 +663,15 @@ export class WorkflowDaemonClient {
     const payload = await this.parseJsonResponse<{ ok: boolean; data?: WorkflowRestartResponse }>(response);
     return this.unwrapData<WorkflowRestartResponse>(payload);
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+/** Shared authenticated fetch for REST handlers that proxy workflow responses. */
+export function fetchWorkflowApi(url: string, init?: RequestInit): Promise<Response> {
+  return new WorkflowDaemonClient().fetchApi(url, init);
 }

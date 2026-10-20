@@ -27,6 +27,10 @@ export interface SideBorderBoxOptions {
   status?: 'success' | 'error' | 'warning' | 'info';
   timing?: number;
   summary?: Record<string, string | number | boolean>;
+  /** Disable wrapping when output is captured so complete error text stays searchable. */
+  wrap?: boolean;
+  /** Terminal columns for the output stream when wrapping is enabled. */
+  width?: number;
 }
 
 export interface RichSectionItem {
@@ -49,15 +53,14 @@ export interface SectionContent {
  * Create a side-bordered box with modern design
  */
 export function sideBorderBox(options: SideBorderBoxOptions): string {
-  const { title, sections, footer, status, timing, summary } = options;
+  const { title, sections, footer, status, timing, summary, wrap = true } = options;
   const lines: string[] = [];
 
-  const terminalWidth =
-    typeof process !== 'undefined' && process.stdout?.columns
-      ? process.stdout.columns
-      : 80;
+  const terminalWidth = options.width ?? (
+    typeof process !== 'undefined' && process.stdout?.columns ? process.stdout.columns : 80
+  );
   // Available width for item content: terminalWidth minus "│  " prefix (3) and 1 right margin
-  const itemMaxWidth = Math.max(40, terminalWidth - 4);
+  const itemMaxWidth = wrap ? Math.max(1, terminalWidth - 4) : Number.POSITIVE_INFINITY;
 
   // Title line: ◆  Title
   const titleLine = `${safeColors.primary('◆')}  ${safeColors.bold(title)}`;
@@ -319,7 +322,7 @@ export function sideBorderChain(items: SideBorderChainItem[]): string {
   if (items.length === 0) { return ''; }
   if (items.length === 1) {
     const item = items[0]!;
-    return sideBorderBox({ title: item.title, sections: item.sections, status: item.status, timing: item.timing });
+    return sideBorderBox({ title: item.title, sections: item.sections, summary: item.summary, status: item.status, timing: item.timing });
   }
 
   const lines: string[] = [];

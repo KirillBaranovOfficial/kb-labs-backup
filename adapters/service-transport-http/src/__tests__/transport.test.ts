@@ -39,6 +39,24 @@ async function startHttpTestService(): Promise<{ app: FastifyInstance; port: num
 // connectionInfo()
 // ---------------------------------------------------------------------------
 
+describe('resolveProjectService()', () => {
+  it('resolves cloud project services by project id and service id', async () => {
+    const transport = new HttpServiceTransport({
+      services: {},
+      projectServices: {
+        project_a: { rest: { url: 'http://rest.project-a.svc:8080' } },
+      },
+    });
+
+    await expect(transport.resolveProjectService?.('project_a', 'rest')).resolves.toMatchObject({
+      baseUrl: 'http://rest.project-a.svc:8080',
+      pathPrefix: '',
+    });
+    await expect(transport.resolveProjectService?.('project_b', 'rest')).resolves.toBeUndefined();
+    await transport.destroy();
+  });
+});
+
 describe('connectionInfo()', () => {
   it('returns { baseUrl, socketPath } for unix config', () => {
     const config: HttpServiceTransportConfig = {

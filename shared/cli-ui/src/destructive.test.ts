@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { confirmDestructive, renderDestructiveMessage, type DestructiveAction } from './destructive';
 
 const ACTION: DestructiveAction = {
@@ -11,71 +11,64 @@ const ACTION: DestructiveAction = {
   blastRadius: { count: 100, unit: 'vectors', scope: 'whole index' },
 };
 
-function ctx() {
-  return { ui: { json: vi.fn(), warn: vi.fn(), error: vi.fn() } };
-}
-
 describe('confirmDestructive', () => {
-  it('returns null (proceed) when confirmed, emitting nothing', () => {
-    const c = ctx();
-    expect(confirmDestructive(c, { confirmed: true, action: ACTION })).toBeNull();
-    expect(c.ui.json).not.toHaveBeenCalled();
-    expect(c.ui.warn).not.toHaveBeenCalled();
+  it('returns null (proceed) when confirmed', () => {
+    expect(confirmDestructive({ confirmed: true, action: ACTION })).toBeNull();
   });
 
-  it('blocks with a typed failure and warns the human when not confirmed', () => {
-    const c = ctx();
-    expect(confirmDestructive(c, { confirmed: false, isJson: false, action: ACTION })).toMatchObject({
+  it('blocks with a typed failure for the shared human renderer when not confirmed', () => {
+    const result = confirmDestructive({ confirmed: false, action: ACTION });
+    expect(result).toMatchObject({
       ok: false,
-      error: { code: 'CONFIRMATION_REQUIRED', kind: 'validation' },
-      result: { confirmationRequired: true },
+      error: {
+        code: 'KB_RUNTIME_CONFIRMATION_REQUIRED',
+        kind: 'validation',
+        details: { confirmationRequired: 'true', destructive: 'true', action: 'mind drop' },
+      },
     });
-    expect(c.ui.warn).toHaveBeenCalledTimes(1);
-    expect(c.ui.json).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('result');
   });
 
-  it('emits a machine-readable signal in json mode (agent sees blast radius)', () => {
-    const c = ctx();
-    const res = confirmDestructive(c, { confirmed: false, isJson: true, action: ACTION });
+  it('returns a machine-readable signal in json mode (agent sees blast radius)', () => {
+    const res = confirmDestructive({ confirmed: false, action: ACTION });
     expect(res).toMatchObject({
       ok: false,
-      error: { code: 'CONFIRMATION_REQUIRED' },
-      result: { confirmationRequired: true },
+      error: { code: 'KB_RUNTIME_CONFIRMATION_REQUIRED' },
     });
-    expect(c.ui.warn).not.toHaveBeenCalled();
-    const sig = (c.ui.json as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
-    expect(sig).toMatchObject({
-      ok: false,
-      confirmationRequired: true,
-      destructive: true,
-      irreversible: false,
-      reversible: true,
+    const details = res!.error.details ?? {};
+    expect(details).toMatchObject({
+      confirmationRequired: 'true',
+      destructive: 'true',
+      irreversible: 'false',
+      reversible: 'true',
       severity: 'high',
       action: 'mind drop',
       resource: 'index "code"',
       confirmWith: '--yes',
+      blastRadiusCount: '100',
+      blastRadiusUnit: 'vectors',
+      blastRadiusScope: 'whole index',
+      recovery: 're-index from source',
     });
-    expect(sig.blastRadius).toEqual({ count: 100, unit: 'vectors', scope: 'whole index' });
-    expect(sig.recovery).toBe('re-index from source');
-    expect(String(sig.message)).toContain('mind drop');
+    expect(res!.error.message).toContain('mind drop');
   });
 
   it('marks irreversible actions and omits a recovery field when none', () => {
-    const c = ctx();
-    confirmDestructive(c, {
+    const res = confirmDestructive({
       confirmed: false,
-      isJson: true,
       action: { ...ACTION, reversible: false, recovery: undefined },
     });
-    const sig = (c.ui.json as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
-    expect(sig.irreversible).toBe(true);
-    expect('recovery' in sig).toBe(false);
+    expect(res).not.toBeNull();
+    const error = res!.error;
+    expect(error.code).toBe('KB_RUNTIME_CONFIRMATION_REQUIRED');
+    if (error.code !== 'KB_RUNTIME_CONFIRMATION_REQUIRED') throw new Error('Unexpected confirmation error code');
+    expect(Object.entries(error.details ?? {})).toContainEqual(['irreversible', 'true']);
+    expect(error.details && 'recovery' in error.details).toBe(false);
   });
 
-  it('falls back to ui.error when ui.warn is absent', () => {
-    const c = { ui: { error: vi.fn() } };
-    confirmDestructive(c, { confirmed: false, isJson: false, action: ACTION });
-    expect(c.ui.error).toHaveBeenCalledTimes(1);
+  it('returns a failure for the shared renderer without a UI context', () => {
+    const result = confirmDestructive({ confirmed: false, action: ACTION });
+    expect(result?.error).toMatchObject({ code: 'KB_RUNTIME_CONFIRMATION_REQUIRED', hint: expect.any(String) });
   });
 });
 

@@ -5,7 +5,7 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client.js';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client.js';
 
 interface RunsListQuery {
   status?: string;
@@ -39,12 +39,12 @@ export default defineHandler({
       params.append('status', validatedStatus);
     }
 
-    const url = `${daemonUrl}/api/v1/runs?${params}`;
+    const url = `${daemonUrl}/runs?${params}`;
 
     ctx.platform.logger.info(`[runs-list-handler] Fetching runs from ${url}`);
 
     try {
-      const response = await fetch(url);
+      const response = await fetchWorkflowApi(url);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);

@@ -2,6 +2,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ILogger } from '@kb-labs/core-platform';
 import { createDaemonServer, type ObservabilityCollectorLike } from '../daemon-server.js';
 
+declare module 'fastify' {
+  interface FastifyContextConfig {
+    registryAccess?: 'public' | 'service' | 'user' | 'admin';
+  }
+}
+
 function makeLogger(): ILogger {
   const log: ILogger = {
     trace: vi.fn(),
@@ -10,6 +16,7 @@ function makeLogger(): ILogger {
     warn: vi.fn(),
     error: vi.fn(),
     fatal: vi.fn(),
+    flush: vi.fn().mockResolvedValue(undefined),
     child: vi.fn().mockImplementation(() => makeLogger()),
   };
   return log;
@@ -68,6 +75,20 @@ describe('createDaemonServer()', () => {
     expect(observability.register).toHaveBeenCalledWith(
       expect.objectContaining({ inject: expect.any(Function) }),
     );
+  });
+
+  it('applies standard route metadata to every observability endpoint', async () => {
+    const seen: Array<string | undefined> = [];
+    const server = await make({
+      standardRouteConfig: { registryAccess: 'user' },
+      onRequest: async (request) => { seen.push(request.routeOptions.config.registryAccess); },
+    });
+
+    for (const url of ['/health', '/ready', '/metrics', '/observability/describe', '/observability/health']) {
+      const response = await server.inject({ method: 'GET', url });
+      expect(response.statusCode).toBe(200);
+    }
+    expect(seen).toEqual(['user', 'user', 'user', 'user', 'user']);
   });
 
   // --- request correlation ---

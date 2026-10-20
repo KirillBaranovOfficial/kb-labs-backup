@@ -1,36 +1,22 @@
-import { createRegistry } from '@kb-labs/core-registry';
+import { createHealthContributor, createRegistry, type SystemHealthSnapshot } from '@kb-labs/core-registry';
 import { generateExamples } from '../../utils/generate-examples';
 import {
   defineSystemCommand,
-  type ErrorResult,
-  type SuccessResult,
+  throwSystemCommandError,
 } from '@kb-labs/shared-command-kit';
 
 type HealthFlags = {
   json: { type: 'boolean'; description?: string };
 };
 
-type HealthSnapshot = {
-  status: string;
-  version: { kbLabs?: string; cli?: string; rest?: string; git?: { sha: string; dirty?: boolean } };
-  registry: { total: number; withRest: number; withStudio: number; errors: number; generatedAt: string; expiresAt?: string; partial?: boolean; stale?: boolean };
-  uptimeSec: number;
-};
-
-type HealthSuccess = SuccessResult<{
-  healthStatus: 'healthy' | 'degraded' | 'unhealthy';
-  snapshot: HealthSnapshot;
-}>;
-
-type HealthFailure = ErrorResult<{
-  healthStatus: 'healthy' | 'degraded' | 'unhealthy';
-  snapshot?: HealthSnapshot;
-}>;
-
-type HealthResult = HealthSuccess | HealthFailure;
+type HealthSnapshot = SystemHealthSnapshot;
+type HealthResult = SystemHealthSnapshot;
 
 export const health = defineSystemCommand<HealthFlags, HealthResult>({
   name: 'health',
+  scope: 'platform',
+  authProtection: 'public',
+  jsonTest: { safeArgs: [] },
   description: 'Report overall CLI health snapshot',
   longDescription: 'Shows the kb.health/1 snapshot shared with REST and Studio.',
   category: 'info',
@@ -49,8 +35,12 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
     finishEvent: 'HEALTH_FINISHED',
   },
   async handler(ctx, _argv, _flags) {
+    const executionBackend = ctx.executionBackend;
     const cliApi = await createRegistry({
       cache: { ttlMs: 5000 },
+      healthContributors: executionBackend
+        ? [createHealthContributor('execution', () => executionBackend.health())]
+        : [],
     });
 
     try {
@@ -64,86 +54,74 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
 
       ctx.platform?.logger?.info('Health check completed', { status: snapshot.status });
 
-      return {
-        ok: true,
-        status: snapshot.status === 'healthy' ? 'success' as const : 'warning' as const,
-        healthStatus: (snapshot.status as HealthResult['healthStatus']) || 'unhealthy',
-        snapshot: snapshot as HealthSnapshot,
-      };
+      return snapshot as HealthSnapshot;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ctx.platform?.logger?.error('Health check failed', error instanceof Error ? error : undefined, { error: message });
-
-      return {
-        ok: false,
-        status: 'error' as const,
-        healthStatus: 'degraded' as const,
-        error: message,
-      };
+      throwSystemCommandError(message, "Run `kb info health --help` to review valid inputs and recovery steps, then retry.");
     } finally {
       await cliApi.dispose();
     }
   },
   // eslint-disable-next-line sonarjs/cognitive-complexity -- Complex health status formatting with nested conditions for different health states
-  formatter(result, ctx, flags) {
-    // Auto-handle JSON mode
-    if (flags.json) {
-      const jsonOutput = result.snapshot || {
-        schema: 'kb.health/1',
-        status: result.healthStatus,
-        error: !result.ok ? result.error : undefined,
-      };
-      ctx.ui?.json?.(jsonOutput);
+  formatter(result, ctx) {
+    const snapshot = result;
+    const gitInfo = snapshot.version.git
+      ? `${snapshot.version.git.sha}${snapshot.version.git.dirty ? ' (dirty)' : ''}`
+      : 'n/a';
+
+    const sections = [
+      {
+        header: 'Status',
+        items: [
+          `Status: ${result.status}`,
+          `KB Labs: ${snapshot.version.kbLabs}`,
+          `CLI: ${ctx.hostContext?.host === 'cli' ? ctx.hostContext.cliVersion : process.env.CLI_VERSION ?? '0.0.0'}`,
+          `REST: ${snapshot.version.rest}`,
+          `Git: ${gitInfo}`,
+        ],
+      },
+      {
+        header: 'Registry',
+        items: [
+          `Plugins: ${snapshot.registry.total} total (rest ${snapshot.registry.withRest}, studio ${snapshot.registry.withStudio})`,
+          `Errors: ${snapshot.registry.errors}`,
+          `Generated: ${snapshot.registry.generatedAt}`,
+          `Expires: ${snapshot.registry.expiresAt ?? 'n/a'}`,
+          `Partial: ${snapshot.registry.partial ? 'yes' : 'no'}`,
+          `Stale: ${snapshot.registry.stale ? 'yes' : 'no'}`,
+        ],
+      },
+      ...(snapshot.components.filter(component => component.id === 'execution').map(component => ({
+        header: 'Execution',
+        items: [
+          `Health: ${component.status ?? 'unknown'}`,
+          `Workers: ${formatWorkers(component.details?.workers)}`,
+          `Mode: ${String(component.details?.executionMode ?? 'unknown')}`,
+          `Last failure: ${formatFailure(component.details?.lastStartFailure)}`,
+        ],
+      }))),
+      {
+        header: 'System',
+        items: [`Uptime: ${snapshot.uptimeSec}s`],
+      },
+    ];
+
+    if (result.status === 'healthy') {
+      ctx.ui.success('System Health', { sections });
     } else {
-      if (!result.ok) {
-        ctx.ui.error('System Health', {
-          sections: [
-            {
-              header: 'Status',
-              items: [`Status: ${result.healthStatus}`, `Error: ${result.error}`],
-            },
-          ],
-        });
-      } else if (result.snapshot) {
-        const snapshot = result.snapshot;
-        const gitInfo = snapshot.version.git
-          ? `${snapshot.version.git.sha}${snapshot.version.git.dirty ? ' (dirty)' : ''}`
-          : 'n/a';
-
-        const sections = [
-          {
-            header: 'Status',
-            items: [
-              `Status: ${result.healthStatus}`,
-              `KB Labs: ${snapshot.version.kbLabs}`,
-              `CLI: ${ctx.hostContext?.host === 'cli' ? ctx.hostContext.cliVersion : process.env.CLI_VERSION ?? '0.0.0'}`,
-              `REST: ${snapshot.version.rest}`,
-              `Git: ${gitInfo}`,
-            ],
-          },
-          {
-            header: 'Registry',
-            items: [
-              `Plugins: ${snapshot.registry.total} total (rest ${snapshot.registry.withRest}, studio ${snapshot.registry.withStudio})`,
-              `Errors: ${snapshot.registry.errors}`,
-              `Generated: ${snapshot.registry.generatedAt}`,
-              `Expires: ${snapshot.registry.expiresAt ?? 'n/a'}`,
-              `Partial: ${snapshot.registry.partial ? 'yes' : 'no'}`,
-              `Stale: ${snapshot.registry.stale ? 'yes' : 'no'}`,
-            ],
-          },
-          {
-            header: 'System',
-            items: [`Uptime: ${snapshot.uptimeSec}s`],
-          },
-        ];
-
-        if (result.healthStatus === 'healthy') {
-          ctx.ui.success('System Health', { sections });
-        } else {
-          ctx.ui.warn('System Health', { sections });
-        }
-      }
+      ctx.ui.warn('System Health', { sections });
     }
   },
 });
+
+function formatWorkers(value: unknown): string {
+  if (!value || typeof value !== 'object') return 'n/a';
+  const workers = value as Record<string, unknown>;
+  return `total ${String(workers.total ?? 0)}, idle ${String(workers.idle ?? 0)}, busy ${String(workers.busy ?? 0)}, queued ${String(workers.queued ?? 0)}, queue limit ${String(workers.queueLimit ?? 0)}`;
+}
+
+function formatFailure(value: unknown): string {
+  if (!value || typeof value !== 'object') return 'none';
+  const failure = value as Record<string, unknown>;
+  return `${String(failure.code ?? 'unknown')} at ${String(failure.at ?? 'unknown time')}`;
+}

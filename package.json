@@ -58,8 +58,8 @@
     "coverage:check": "node scripts/merge-coverage.mjs --check",
     "coverage:json": "./tools/kb-devkit/kb-devkit run test:coverage && node scripts/merge-coverage.mjs --json",
     "ports:generate": "node scripts/generate-ports-doc.mjs",
-    "ports:check": "node scripts/checks/check-ports.mjs",
-    "boundaries:check": "node scripts/checks/check-plugin-imports.mjs && node scripts/checks/check-platform-spawn.mjs && node scripts/checks/check-plugin-peer-deps.mjs && node scripts/checks/check-manifest-command-naming.mjs",
+    "ports:check": "./tools/kb-devkit/kb-devkit check --only check-ports",
+    "boundaries:check": "./tools/kb-devkit/kb-devkit check",
     "test:checks": "node --test scripts/checks/boundary-lints.test.mjs",
     "test": "./tools/kb-devkit/kb-devkit run test",
     "test:catalog": "node scripts/test-catalog.mjs",
@@ -73,6 +73,8 @@
     "@kb-labs/adapters-log-document": "workspace:*"
   },
   "devDependencies": {
+    "@kb-labs/core-discovery": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/devkit": "workspace:*",
     "@types/node": "^24.3.3",
     "js-yaml": "^4.3.2",
@@ -88,7 +90,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=11.0.0"
   },
   "packageManager": "pnpm@11.4.0",

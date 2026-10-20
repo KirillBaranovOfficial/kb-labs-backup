@@ -75,6 +75,7 @@ export class EntityRegistry implements IEntityRegistry {
       getManifest: (id) => this.manifests.get(id),
       root: this.root,
       platformVersion: opts.platformVersion ?? PLATFORM_VERSION,
+      healthContributors: opts.healthContributors ?? [],
     });
   }
 
@@ -202,6 +203,10 @@ export class EntityRegistry implements IEntityRegistry {
       return this.snapshotMgr.createEmpty();
     }
     return this.buildSnapshot();
+  }
+
+  findStoredPluginPackageForRestPrefix(requestedPrefix: string, basePath: string): Promise<string | undefined> {
+    return this.discovery.findStoredPluginPackageForRestPrefix(requestedPrefix, basePath);
   }
 
   onChange(cb: (diff: RegistryDiff) => void): () => void {

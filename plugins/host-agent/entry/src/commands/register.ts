@@ -1,9 +1,10 @@
 /**
- * workspace:register command (alias: agent:register)
+ * workspace:register command
  * Register this machine with a Platform Gateway and save credentials to ~/.kb/agent.json.
  */
 
-import { defineCommand, validationError, handleError, type PluginContextV3, type CLIInput, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3, type CLIInput, type CommandResult } from '@kb-labs/sdk';
+import { GatewayApiError, gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 import { writeFile, mkdir, stat } from 'node:fs/promises';
 import { join, resolve, normalize } from 'node:path';
 import { homedir, hostname } from 'node:os';
@@ -19,6 +20,8 @@ interface RegisterFlags {
 
 type RegisterResult = {
   configPath?: string;
+  hostId?: string;
+  clientId?: string;
 };
 
 export default defineCommand({
@@ -26,7 +29,7 @@ export default defineCommand({
   description: 'Register this machine with a Platform Gateway',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<RegisterFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<RegisterFlags>) {
       const flags = input.flags;
       const gatewayUrl = (flags.gateway ?? '').replace(/\/$/, '');
       const name = flags.name ?? '(this machine)';
@@ -39,7 +42,7 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<RegisterFlags>): Promise<CommandResult<RegisterResult>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RegisterFlags>): Promise<CommandResult<RegisterResult>> {
       const flags = input.flags;
       const gatewayUrl = (flags.gateway ?? '').replace(/\/$/, '');
       const name = flags.name ?? hostname();
@@ -56,21 +59,18 @@ export default defineCommand({
         let pathStat: Awaited<ReturnType<typeof stat>> | null = null;
         try { pathStat = await stat(resolved); } catch { /* will error below */ }
         if (!pathStat?.isDirectory()) {
-          validationError(ctx, `Workspace path does not exist or is not a directory: ${resolved}`, undefined, flags.json);
-          return { ok: false, error: `Workspace path does not exist or is not a directory: ${resolved}` };
+          return validationError(`Workspace path does not exist or is not a directory: ${resolved}`);
         }
         workspacePaths.push(resolved);
       }
 
       if (!gatewayUrl) {
-        validationError(ctx, '--gateway is required', 'Usage: kb workspace:register --gateway http://localhost:4000', flags.json);
-        return { ok: false, error: '--gateway is required' };
+        return validationError('--gateway is required', 'Usage: kb workspace:register --gateway http://localhost:4000');
       }
 
       // Validate URL
       if (!gatewayUrl.startsWith('http://') && !gatewayUrl.startsWith('https://')) {
-        validationError(ctx, 'Invalid gateway URL — must start with http:// or https://', undefined, flags.json);
-        return { ok: false, error: 'Invalid gateway URL' };
+        return validationError('Invalid gateway URL — must start with http:// or https://');
       }
 
       ctx.ui?.info?.(`Registering with Gateway: ${gatewayUrl}`);
@@ -78,41 +78,39 @@ export default defineCommand({
       // POST /auth/register
       let res: Response;
       try {
-        res = await fetch(`${gatewayUrl}/auth/register`, {
+        res = await gatewayApiFetch(`${gatewayUrl}/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, namespaceId, capabilities: ['filesystem', 'git', 'execution', 'search', 'shell'] }),
         });
       } catch (err) {
-        handleError(ctx, err instanceof Error ? new Error(`Failed to reach Gateway: ${err.message}`) : err, flags.json);
-        return { ok: false, error: err instanceof Error ? `Failed to reach Gateway: ${err.message}` : String(err) };
+        if (err instanceof GatewayApiError) {
+          return handleError(err);
+        }
+        const causeMessage = err instanceof Error ? err.message : String(err);
+        return handleError(new Error(`Failed to reach Gateway: ${causeMessage}`));
       }
 
       if (!res.ok) {
-        const rawBody = await res.text().catch(() => '');
-        const body = rawBody.slice(0, 200).replace(/[\r\n]/g, ' ');
-        handleError(ctx, new Error(`Gateway returned ${res.status}: ${body}`), flags.json);
-        return { ok: false, error: `Gateway returned ${res.status}: ${body}` };
+        const message = `Gateway returned HTTP ${res.status}. Check the gateway and retry kb workspace:register --gateway ${gatewayUrl}.`;
+        return handleError(new Error(message));
       }
 
       let data: { clientId?: string; clientSecret?: string; hostId?: string };
       try {
         data = await res.json() as typeof data;
       } catch {
-        handleError(ctx, new Error('Gateway response is not valid JSON'), flags.json);
-        return { ok: false, error: 'Gateway response is not valid JSON' };
+        return handleError(new Error('Gateway response is not valid JSON'));
       }
 
       if (!data.clientId || !data.clientSecret || !data.hostId) {
-        handleError(ctx, new Error('Gateway response is missing required fields (clientId, clientSecret, hostId)'), flags.json);
-        return { ok: false, error: 'Gateway response is missing required fields' };
+        return handleError(new Error('Gateway response is missing required fields (clientId, clientSecret, hostId)'));
       }
 
       // Format validation — secrets must be non-empty strings with safe characters only
       const SECRET_PATTERN = /^[A-Za-z0-9_\-+/=]{16,}$/;
       if (typeof data.clientSecret !== 'string' || !SECRET_PATTERN.test(data.clientSecret)) {
-        handleError(ctx, new Error('Gateway returned an invalid client secret (unexpected format)'), flags.json);
-        return { ok: false, error: 'Gateway returned an invalid client secret' };
+        return handleError(new Error('Gateway returned an invalid client secret (unexpected format)'));
       }
 
       // Write ~/.kb/agent.json
@@ -137,7 +135,7 @@ export default defineCommand({
       await writeFile(configPath, JSON.stringify(agentConfig, null, 2), { mode: 0o600 });
 
       if (flags.json) {
-        ctx.ui?.json?.({ configPath, hostId: data.hostId, clientId: data.clientId });
+        return { configPath, hostId: data.hostId, clientId: data.clientId };
       } else {
         ctx.ui?.success?.('Workspace Agent registered', {
           sections: [{
@@ -154,7 +152,7 @@ export default defineCommand({
         });
       }
 
-      return { ok: true, result: { configPath } };
+      return { configPath };
     },
   },
 });

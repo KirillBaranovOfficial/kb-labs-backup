@@ -29,7 +29,6 @@ describe('workflow:runs cancel', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
     expect(cancelRun).toHaveBeenCalledWith('run-abc');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Cancellation Requested');
@@ -50,8 +49,7 @@ describe('workflow:runs cancel', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: { runId: 'run-abc', cancelled: true } });
+    expect(result).toMatchObject({ runId: 'run-abc', cancelled: true });
   });
 
   it('RCX-03: --run-id flag works as alias for positional argument', async () => {
@@ -67,7 +65,6 @@ describe('workflow:runs cancel', () => {
       mockCLIInput({ argv: [], flags: { 'run-id': 'run-flag-001' } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(cancelRun).toHaveBeenCalledWith('run-flag-001');
   });
 
@@ -83,8 +80,8 @@ describe('workflow:runs cancel', () => {
       mockCLIInput({ argv: [], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length + captured.warnings.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RCX-05: daemon unavailable returns exitCode 1', async () => {
@@ -102,7 +99,7 @@ describe('workflow:runs cancel', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
   });
 
   it('RCX-06: daemon returns error (run not found / already finished) returns exitCode 1', async () => {
@@ -120,7 +117,7 @@ describe('workflow:runs cancel', () => {
       mockCLIInput({ argv: ['run-finished'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 });

@@ -84,7 +84,7 @@ export default async function StateBrokerPage({ params }: Props) {
           <Container className="relative z-10">
             <div className="mx-auto max-w-2xl text-center">
               {/* i18n-ignore: brand + port label */}
-              <Eyebrow className="mb-4">State · :7777</Eyebrow>
+              <Eyebrow className="mb-4">State · host-managed</Eyebrow>
               <h1 className="mb-5 text-4xl font-bold leading-tight tracking-tight text-kb-text sm:text-5xl">
                 {t('heroTitle')}{' '}
                 <GradientText>{t('heroTitleHighlight')}</GradientText>

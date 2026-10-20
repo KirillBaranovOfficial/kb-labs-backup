@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { defineCommand, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { analyzeCiReliability, loadCiDossiers } from '@kb-labs/qa-core';
 import type { QaCiOverviewFlags } from './flags.js';
 
@@ -8,13 +8,13 @@ export default defineCommand<unknown, CLIInput<QaCiOverviewFlags>, unknown>({
   id: 'qa:ci-overview',
   description: 'Show a compact CI reliability overview from captured dossiers',
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaCiOverviewFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaCiOverviewFlags>): Promise<CommandResult> {
       const cwd = ctx.cwd ?? process.cwd();
       const inputPath = resolve(cwd, input.flags.input);
       const dossiers = loadCiDossiers(inputPath);
       if (dossiers.length === 0) {
-        ctx.ui?.error?.(`No CI dossiers found under ${inputPath}. Run \`kb qa ci evidence capture\` in CI first.`);
-        return { ok: false, error: 'Command failed' };
+
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No CI dossiers were found under ${inputPath}.`, hint: 'Run `kb qa ci evidence capture` in CI, then rerun `kb qa ci overview`.' } };
       }
       const overview = analyzeCiReliability(dossiers);
       if (input.flags.output) {
@@ -23,7 +23,7 @@ export default defineCommand<unknown, CLIInput<QaCiOverviewFlags>, unknown>({
         writeFileSync(output, `${JSON.stringify(overview, null, 2)}\n`);
       }
       if (input.flags.json) {
-        ctx.ui?.json?.(overview);
+        return overview;
       } else {
         ctx.ui?.success?.(`CI reliability (${overview.runsAnalyzed} run${overview.runsAnalyzed === 1 ? '' : 's'})`, {
           sections: [
@@ -40,7 +40,7 @@ export default defineCommand<unknown, CLIInput<QaCiOverviewFlags>, unknown>({
           ],
         });
       }
-      return { ok: true };
+      return {  };
     },
   },
 });

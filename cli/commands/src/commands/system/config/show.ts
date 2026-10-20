@@ -8,15 +8,17 @@
  * project root holds only a pointer + mergeable overrides.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCataloguedFailure, type CommandResult } from '@kb-labs/shared-command-kit';
 import { loadPlatformConfig } from '@kb-labs/core-runtime';
 import {
+  configErrorEnvelope,
   loadEffectiveConfig,
   type ConfigLayerName,
   type ValueProvenance,
 } from '@kb-labs/core-config';
 import { generateExamples } from '../../../utils/generate-examples';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
+import { manifestSettingsLayers, resolveConfigRoots } from './shared';
 
 // ── Redaction ────────────────────────────────────────────────────────────────
 
@@ -31,15 +33,15 @@ const REDACTED = '***REDACTED***';
 
 // ── Row model ────────────────────────────────────────────────────────────────
 
-type ConfigFieldSource = 'platform' | 'project' | 'both' | 'ignored';
+type ConfigFieldSource = 'manifest' | 'generated' | 'platform' | 'project' | 'overlay' | 'both' | 'ignored';
 
 type ConfigRow = {
   source: ConfigFieldSource;
   field: string;
   value: unknown;
   /**
-   * Config layer that supplied the value (ADR-0047): generated (installer),
-   * platform (user, platform scope), project (user, project scope) or overlay.
+   * Config layer that supplied the value (ADR-0052): manifest, generated,
+   * platform, project store or project overlay.
    * Absent when the layered read could not attribute the field.
    */
   layer?: ConfigLayerName;
@@ -65,6 +67,9 @@ function attachProvenance(rows: ConfigRow[], provenance: Record<string, ValuePro
     if (origin) {
       row.layer = origin.layer;
       row.file = origin.source;
+      if (row.source !== 'both' && row.source !== 'ignored') {
+        row.source = origin.layer;
+      }
     }
   }
 }
@@ -162,13 +167,9 @@ function buildRows(
 
   // 3. Other top-level product config fields (e.g. `services`, `plugins`) that
   //    live outside the PlatformConfig merge policy. These have no
-  //    CONFIG_FIELD_SCOPE entry, so loadPlatformConfig never merges them —
-  //    `effectiveConfig` only reflects the *project* file. A field the
-  //    installer wrote into the platform-owned config (ADR-0013) but the
-  //    project file never mentions would otherwise be invisible. Union both
-  //    raw layers so platform-only product sections still show up, with the
-  //    project's value winning when both declare the same field (matching
-  //    the "mergeable, project overrides platform" default policy).
+  //    CONFIG_FIELD_SCOPE entry, so loadPlatformConfig does not merge them
+  //    into PlatformConfig. Use the full effective config for defaults and
+  //    project settings, while retaining raw platform values for provenance.
   const rawPlatformConfig = (result.rawPlatformConfig ?? {}) as Record<string, unknown>;
   const effectiveConfig = (result.effectiveConfig ?? {}) as Record<string, unknown>;
   const otherTopFields = new Set([...Object.keys(rawPlatformConfig), ...Object.keys(effectiveConfig)]);
@@ -220,7 +221,8 @@ type ConfigShowFlags = {
 };
 
 type ConfigShowResult = CommandResult & {
-  rows?: ConfigRow[];
+  envelope?: import('@kb-labs/core-platform').ErrorEnvelope;
+  fields?: ConfigRow[];
   sameLocation?: boolean;
   platformRoot?: string;
   projectRoot?: string;
@@ -230,10 +232,12 @@ type ConfigShowResult = CommandResult & {
 
 export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>({
   name: 'show',
+  scope: 'project',
+  jsonTest: { safeArgs: [] },
   description: 'Show the effective (merged) platform config with per-field provenance',
   longDescription:
-    'Resolves the fully-merged platform config (platform root + project overrides) and ' +
-    'prints each field alongside where it came from: platform, project, both, or ignored ' +
+    'Resolves the fully-merged config (manifest defaults, generated and platform config, project settings, and overlays) and ' +
+    'prints each field alongside where it came from: manifest, generated, platform, project, both, or ignored ' +
     '(a project attempt to override a platform-only field). Sensitive values ' +
     '(keys, secrets, tokens, passwords, credentials) are always redacted.',
   category: 'config',
@@ -251,39 +255,38 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
     finishEvent: 'CONFIG_SHOW_FINISHED',
   },
   async handler(ctx) {
-    const cwd = getContextCwd(ctx);
-    const result = await loadPlatformConfig({ startDir: cwd, loadEnvFile: false });
-    const rows = buildRows(result);
+    try {
+      const cwd = getContextCwd(ctx);
+      const roots = await resolveConfigRoots(cwd);
+      if (!roots.projectId) {
+        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config show".`, { path: roots.configRoot });
+      }
+      const result = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: cwd, loadEnvFile: false, projectId: roots.projectId });
+      const rows = buildRows(result);
 
-    // Provenance is additive: a failure to read the layers must not hide the config itself.
-    const effective = await loadEffectiveConfig(result.projectRoot, {
-      platformRoot: result.sameLocation ? undefined : result.platformRoot,
-    }).catch(() => null);
-    attachProvenance(rows, effective?.provenance);
+      // Platform provenance remains available from the platform config layer.
+      const effective = await loadEffectiveConfig(roots.configRoot, {
+        platformRoot: result.platformRoot,
+        projectId: roots.projectId,
+        pluginDefaults: manifestSettingsLayers(result),
+      }).catch(() => null);
+      attachProvenance(rows, effective?.provenance);
 
-    return {
-      ok: true,
-      status: 'success' as const,
-      rows,
-      sameLocation: result.sameLocation,
-      platformRoot: result.platformRoot,
-      projectRoot: result.projectRoot,
-      generated: result.sources.generated,
-    };
-  },
-  formatter(result, ctx, flags) {
-    const rows = result.rows ?? [];
+      return {
 
-    if (flags.json) {
-      ctx.ui?.json?.({
+        fields: rows,
         sameLocation: result.sameLocation,
         platformRoot: result.platformRoot,
         projectRoot: result.projectRoot,
-        generated: result.generated,
-        fields: rows,
-      });
-      return;
+        generated: result.sources.generated,
+      };
+    } catch (error) {
+      const envelope = configErrorEnvelope(error);
+      throwSystemCataloguedError(envelope);
     }
+  },
+  formatter(result, ctx, flags) {
+    const rows = result.fields ?? [];
 
     if (rows.length === 0) {
       ctx.ui.success('Effective Config', {

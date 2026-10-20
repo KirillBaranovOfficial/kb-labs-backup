@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerObservabilityRoutes } from '../observability';
+import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 
 const BASE_CONFIG: RestApiConfig = {
   port: 3000,
@@ -23,25 +24,53 @@ global.fetch = mockFetch as any;
 
 describe('registerObservabilityRoutes', () => {
   let app: ReturnType<typeof Fastify>;
+  let previousStateDaemonUrl: string | undefined;
   const repoRoot = '/mock/repo';
 
   beforeEach(async () => {
+    previousStateDaemonUrl = process.env.KB_STATE_DAEMON_URL;
+    process.env.KB_STATE_DAEMON_URL = 'http://127.0.0.1:43127';
     vi.clearAllMocks();
     app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
     await registerObservabilityRoutes(app, BASE_CONFIG, repoRoot);
   });
 
   afterEach(async () => {
     await app.close();
+    if (previousStateDaemonUrl === undefined) { delete process.env.KB_STATE_DAEMON_URL; }
+    else { process.env.KB_STATE_DAEMON_URL = previousStateDaemonUrl; }
   });
 
   describe('GET /api/v1/observability/state-broker', () => {
+    it('returns the typed missing-address failure without fetching a default URL', async () => {
+      delete process.env.KB_STATE_DAEMON_URL;
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/observability/state-broker',
+      });
+
+
+      expect(response.statusCode).toBe(503);
+      expect(response.json().error).toMatchObject({
+        code: 'KB_HOST_SERVICE_ADDRESS_MISSING',
+        hint: expect.any(String),
+        correlationId: expect.any(String),
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('returns State Broker statistics', async () => {
       const mockStats = {
-        totalEntries: 42,
-        hitRate: 0.85,
-        namespaces: ['mind', 'workflow'],
         uptime: 3600,
+        totalEntries: 42,
+        totalSize: 1024,
+        hitRate: 0.85,
+        missRate: 0.15,
+        evictions: 0,
+        namespaces: { mind: { entries: 42, size: 1024, oldestEntry: 0 } },
+        byTenant: {},
       };
 
       mockFetch.mockResolvedValue({
@@ -76,7 +105,7 @@ describe('registerObservabilityRoutes', () => {
 
       mockFetch.mockResolvedValue({
         ok: true,
-        json: vi.fn().mockResolvedValue({}),
+        json: vi.fn().mockResolvedValue({ uptime: 0, totalEntries: 0, totalSize: 0, hitRate: 0, missRate: 0, evictions: 0, namespaces: {} }),
       });
 
       const response = await app.inject({
@@ -96,25 +125,17 @@ describe('registerObservabilityRoutes', () => {
       delete process.env.KB_STATE_DAEMON_URL;
     });
 
-    it('falls back to default URL when env var not set', async () => {
+    it('does not fall back to a default URL when the host address is missing', async () => {
       delete process.env.KB_STATE_DAEMON_URL;
-
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: vi.fn().mockResolvedValue({}),
-      });
 
       const response = await app.inject({
         method: 'GET',
         url: '/api/v1/observability/state-broker',
       });
 
-      expect(response.statusCode).toBe(200);
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:7777/stats',
-        expect.anything()
-      );
+      expect(response.statusCode).toBe(503);
+      expect(response.json().error.code).toBe('KB_HOST_SERVICE_ADDRESS_MISSING');
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('returns 503 when State Broker responds with error status', async () => {
@@ -133,9 +154,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('STATE_BROKER_UNAVAILABLE');
-      expect(payload.error.message).toContain('not available');
-      expect(payload.error.details.status).toBe(500);
+      expect(payload.error).toMatchObject({ code: 'KB_SERVICE_UNAVAILABLE', hint: expect.any(String) });
     });
 
     it('returns 503 when State Broker times out', async () => {
@@ -153,9 +172,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('STATE_BROKER_TIMEOUT');
-      expect(payload.error.message).toContain('did not respond in time');
-      expect(payload.error.details.isTimeout).toBe(true);
+      expect(payload.error).toMatchObject({ code: 'KB_SERVICE_UNAVAILABLE', hint: expect.any(String) });
     });
 
     it('returns 503 when State Broker connection fails', async () => {
@@ -170,9 +187,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('STATE_BROKER_ERROR');
-      expect(payload.error.message).toBe('Connection refused');
-      expect(payload.error.details.isTimeout).toBe(false);
+      expect(payload.error).toMatchObject({ code: 'KB_SERVICE_UNAVAILABLE', hint: expect.any(String) });
     });
 
     it('handles non-Error exceptions', async () => {
@@ -187,9 +202,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('STATE_BROKER_ERROR');
-      expect(payload.error.message).toBe('String error');
+      expect(payload.error).toMatchObject({ code: 'KB_SERVICE_UNAVAILABLE', hint: expect.any(String) });
     });
   });
 });
-

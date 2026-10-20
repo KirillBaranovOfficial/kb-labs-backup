@@ -1,4 +1,4 @@
-import { defineCommand, useLoader, TimingTracker, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useLoader, TimingTracker, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { discoverMonorepos, buildPackageMapFiltered, analyzePackageDeps, loadState, diagnose } from '@kb-labs/devlink-core';
 import type { DevlinkStatus, DiagnosticIssue } from '@kb-labs/devlink-contracts';
 
@@ -21,7 +21,7 @@ export default defineCommand<unknown, StatusInput, StatusResult>({
   description: 'Show current state of cross-repo dependencies with diagnostics',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: StatusInput): Promise<CommandResult<StatusResult>> {
+    async execute(ctx: PluginCommandContextV3, input: StatusInput): Promise<CommandResult<StatusResult>> {
       const tracker = new TimingTracker();
       const flags = (input.flags ?? input) as StatusFlags;
       const outputJson = flags.json ?? false;
@@ -53,8 +53,7 @@ export default defineCommand<unknown, StatusInput, StatusResult>({
         diagnostics = diagnose(monorepos, packageMap, rootDir);
       } catch (err) {
         loader.fail('Analysis failed');
-        handleError(ctx, err, outputJson);
-        return { ok: false, error: 'Unable to read DevLink status' };
+        return handleError(err);
       }
 
       loader.succeed('Analysis complete');
@@ -74,7 +73,7 @@ export default defineCommand<unknown, StatusInput, StatusResult>({
       };
 
       if (outputJson) {
-        ctx.ui?.json?.(result);
+        return result;
       } else {
         const sections = [
           {
@@ -124,7 +123,7 @@ export default defineCommand<unknown, StatusInput, StatusResult>({
         });
       }
 
-      return { ok: true, result, meta: { timing: tracker.total() } };
+      return result;
     },
   },
 });

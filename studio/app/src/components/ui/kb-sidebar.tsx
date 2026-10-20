@@ -158,10 +158,13 @@ export function KBSidebar({
 
     const findOpenKeys = (path: string, navItems: NavigationItem[]): string[] => {
       for (const item of navItems) {
+        if (item.path === path || (item.path && path.startsWith(item.path + '/'))) {
+          return [item.key];
+        }
         if (item.children) {
           const childKeys = findOpenKeys(path, item.children);
           if (childKeys.length > 0) {
-            return [item.key || item.path || `item-${Math.random()}`, ...childKeys];
+            return [item.key, ...childKeys];
           }
         }
       }
@@ -170,6 +173,12 @@ export function KBSidebar({
 
     return findOpenKeys(currentPath, items);
   }, [currentPath, items]);
+
+  const [expandedMenuKeys, setExpandedMenuKeys] = React.useState<string[]>(openKeys);
+
+  React.useEffect(() => {
+    setExpandedMenuKeys((currentKeys) => Array.from(new Set([...currentKeys, ...openKeys])));
+  }, [openKeys]);
 
   const handleMenuClick = (e: { key: string }) => {
     const path = keyToPathMap.get(e.key);
@@ -253,7 +262,8 @@ export function KBSidebar({
         <Menu
           mode="inline"
           selectedKeys={selectedKeys}
-          defaultOpenKeys={openKeys}
+          openKeys={collapsed ? [] : expandedMenuKeys}
+          onOpenChange={(keys) => setExpandedMenuKeys(keys.map(String))}
           items={mainItems}
           onClick={handleMenuClick}
           className={styles.menu}

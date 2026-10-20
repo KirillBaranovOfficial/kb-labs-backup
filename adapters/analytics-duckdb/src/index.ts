@@ -12,7 +12,7 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBValue } from '@duckdb/node-api';
 import { mkdir } from 'node:fs/promises';
-import { dirname, join, isAbsolute } from 'node:path';
+import { dirname } from 'node:path';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import type {
   IAnalytics,
@@ -25,6 +25,7 @@ import type {
   BufferStatus,
   DlqStatus,
   DailyStats,
+  PlatformDataContext,
 } from '@kb-labs/sdk/adapters';
 import {
   CREATE_EVENTS_TABLE,
@@ -43,6 +44,8 @@ export interface DuckDBAnalyticsOptions {
   context?: AnalyticsContext;
   /** Workspace context injected by core-runtime (provides cwd for relative path resolution) */
   workspace?: { cwd: string };
+  /** Runtime context for platform-owned output paths. */
+  platformData?: PlatformDataContext;
   /** Analytics context injected by core-runtime (for auto-enrichment) */
   analytics?: AnalyticsContext;
 }
@@ -63,7 +66,7 @@ export class DuckDBAnalytics implements IAnalytics {
     // No explicit path: per-project runtime state lives outside the repository (ADR-0044).
     this.dbPath = rawPath === undefined
       ? resolveRuntimeStatePath(cwd, ['analytics', 'analytics.duckdb'])
-      : isAbsolute(rawPath) ? rawPath : join(cwd, rawPath);
+      : rawPath;
     this.context = options.context ?? options.analytics ?? {
       source: { product: 'unknown', version: '0.0.0' },
       runId: `run-${Date.now()}`,

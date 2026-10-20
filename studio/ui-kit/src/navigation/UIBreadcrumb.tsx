@@ -3,6 +3,7 @@
  *
  * Wraps Ant Design Breadcrumb with simplified API.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"items":[{"title":"Workspace"},{"title":"Gateway"},{"title":"Settings"}]}
  */
 
 import * as React from 'react';

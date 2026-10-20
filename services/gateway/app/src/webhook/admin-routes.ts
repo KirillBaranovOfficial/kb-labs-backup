@@ -19,11 +19,13 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import { sendAuthError } from '../auth/error-response.js';
 import type { ICache, ILogger } from '@kb-labs/core-platform';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import { WebhookSecretStore } from './secret-store.js';
 import { provisionWebhook, type ProvisionBackend } from './provision.js';
 import type { WebhookManifestEntry } from './router.js';
+import type { WebhookHistoryStore } from './history-store.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,6 +37,7 @@ export interface RegisterWebhookAdminRoutesOptions {
   baseUrl: string;
   /** Rate limiter — admin routes are always rate-limited. */
   broker: IResourceBroker;
+  historyStore: WebhookHistoryStore;
 }
 
 // ── Rate limit resources ──────────────────────────────────────────────────────
@@ -42,6 +45,7 @@ export interface RegisterWebhookAdminRoutesOptions {
 const RL_PROVISION = 'webhook-admin:provision';
 const RL_LIST = 'webhook-admin:list';
 const RL_REVOKE = 'webhook-admin:revoke';
+const RL_HISTORY = 'webhook-admin:history';
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -49,7 +53,7 @@ export function registerWebhookAdminRoutes(
   scope: FastifyInstance,
   options: RegisterWebhookAdminRoutesOptions,
 ): void {
-  const { cache, logger, backend, manifests, baseUrl, broker } = options;
+  const { cache, logger, backend, manifests, baseUrl, broker, historyStore } = options;
   const secretStore = new WebhookSecretStore(cache);
 
   // Register per-resource rate limits.
@@ -57,13 +61,41 @@ export function registerWebhookAdminRoutes(
   broker.registerLimit(RL_PROVISION, { requestsPerMinute: 10 });
   broker.registerLimit(RL_LIST, { requestsPerMinute: 60 });
   broker.registerLimit(RL_REVOKE, { requestsPerMinute: 10 });
+  broker.registerLimit(RL_HISTORY, { requestsPerMinute: 60 });
+
+  // ── GET /api/v1/webhooks/history/:webhookId ─────────────────────────────────
+
+  scope.get<{ Params: { webhookId: string } }>(
+    '/api/v1/webhooks/history/:webhookId',
+    async (request, reply) => {
+      const auth = request.authContext;
+      if (!auth) {
+        return sendAuthError(reply, 401);
+      }
+
+      const acquired = await broker.tryAcquire(RL_HISTORY);
+      try {
+        if (!acquired.allowed) {
+          const retryAfterSec = acquired.waitTimeMs ? Math.max(1, Math.ceil(acquired.waitTimeMs / 1000)) : 1;
+          return reply.code(429).header('Retry-After', String(retryAfterSec)).send({ error: 'Too Many Requests' });
+        }
+        const record = await historyStore.get(auth.namespaceId, request.params.webhookId);
+        if (!record) {
+          return reply.code(404).send({ error: 'Webhook history record not found' });
+        }
+        return reply.code(200).send({ record });
+      } finally {
+        await acquired.release();
+      }
+    },
+  );
 
   // ── POST /api/v1/webhooks/provision ─────────────────────────────────────────
 
   scope.post('/api/v1/webhooks/provision', async (request, reply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     // Acquire rate-limit token for the FULL duration of the handler so the
@@ -117,7 +149,7 @@ export function registerWebhookAdminRoutes(
   scope.get('/api/v1/webhooks', async (request, reply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     const acquired = await broker.tryAcquire(RL_LIST);
@@ -165,7 +197,7 @@ export function registerWebhookAdminRoutes(
     async (request, reply) => {
       const auth = request.authContext;
       if (!auth) {
-        return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
       }
 
       const acquired = await broker.tryAcquire(RL_REVOKE);
@@ -191,7 +223,7 @@ export function registerWebhookAdminRoutes(
     async (request, reply) => {
       const auth = request.authContext;
       if (!auth) {
-        return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
       }
 
       const acquired = await broker.tryAcquire(RL_REVOKE);

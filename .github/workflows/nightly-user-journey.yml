@@ -1,0 +1,123 @@
+name: Nightly user journeys
+
+on:
+  schedule:
+    - cron: '0 21 * * *' # 00:00 Europe/Moscow
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # Updates the pinned status issue and failure-fingerprint issues.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer:
+    name: Fresh install journeys
+    uses: ./.github/workflows/reusable-installer-journey.yml
+    permissions:
+      contents: read
+
+  report:
+    name: Nightly report and issue sync
+    if: always()
+    needs: [installer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          pattern: service-journey-results-*
+          path: .journey/nightly-results/service-details
+          merge-multiple: true
+      - name: Collect reusable workflow results
+        env:
+          INSTALLER_RESULT: ${{ needs.installer.result }}
+        run: |
+          mkdir -p .journey/nightly-results
+          RESULT="$INSTALLER_RESULT" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = os.environ['RESULT']
+          status = 'PASS' if result == 'success' else 'FAIL' if result == 'failure' else 'BLOCKED'
+          Path('.journey/nightly-results/installer-job-result.json').write_text(json.dumps({'schema':'kb.service-journey/v1', 'steps':[{'name': 'installer journey jobs', 'capability':'installer-journeys', 'mode':'nightly', 'status':status, 'duration_seconds':0.0, 'message':'passed' if status == 'PASS' else f'GitHub job result: {result}'}]}) + '\n')
+          PY
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with: { run_install: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Build the case coverage CLI
+        run: |
+          make build -C tools/kb-devkit
+          pnpm install --frozen-lockfile
+          ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa-entry
+      - name: Run report and issue-sync unit tests
+        run: python3 -m unittest discover -s e2e/journey -p 'test_*.py' -v
+      - name: Compute local and secured release case coverage
+        run: |
+          run_files=$(find .journey/nightly-results -type f -name 'service-*.json' -print | sort | paste -sd, -)
+          for mode in local secured; do
+            args=(qa coverage show --level release --mode "$mode" --json)
+            if [ -n "$run_files" ]; then args+=(--run "$run_files"); fi
+            node ./cli/bin/dist/bin.js "${args[@]}" > ".journey/nightly-results/case-coverage-${mode}.json" || true
+          done
+      - name: Download previous nightly JSON artifact
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous_run=$(gh run list --workflow nightly-user-journey.yml --status completed --limit 10 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$previous_run" ]; then
+            gh run download "$previous_run" --name "nightly-user-journey-$previous_run" --dir .journey/previous || true
+          fi
+          find .journey/nightly-results/service-details -type f -name '*.json' -exec cp {} .journey/nightly-results/ \; 2>/dev/null || true
+      - name: Aggregate matrix, compare yesterday, and sync issues
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NIGHTLY_STATUS_ISSUE: '0'
+        run: |
+          if [ -f .journey/previous/report.json ]; then
+            python3 e2e/journey/nightly_report.py --results .journey/nightly-results --previous .journey/previous --case-coverage .journey/nightly-results/case-coverage-local.json --case-coverage .journey/nightly-results/case-coverage-secured.json --json .journey/nightly-results/report.json --summary .journey/nightly-results/report.md || true
+          else
+            python3 e2e/journey/nightly_report.py --results .journey/nightly-results --case-coverage .journey/nightly-results/case-coverage-local.json --case-coverage .journey/nightly-results/case-coverage-secured.json --json .journey/nightly-results/report.json --summary .journey/nightly-results/report.md || true
+          fi
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'e2e/journey')
+          from nightly_report import GitHubClient, sync_issues
+          import json
+          with open('.journey/nightly-results/report.json') as source:
+              report = json.load(source)
+          changes = sync_issues(GitHubClient(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_TOKEN']), report, int(os.environ['NIGHTLY_STATUS_ISSUE']), os.environ['GITHUB_RUN_URL'])
+          print(json.dumps(changes, sort_keys=True))
+          PY
+      - name: Add detailed report to job summary
+        if: always()
+        run: cat .journey/nightly-results/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: nightly-user-journey-${{ github.run_id }}
+          path: .journey/nightly-results/
+          retention-days: 90
+          if-no-files-found: error
+      - name: Fail when required capability checks failed
+        if: always()
+        run: python3 -c "import json,sys; r=json.load(open('.journey/nightly-results/report.json')); print(r['status']); sys.exit(0 if r['status']=='PASS' else 1)"

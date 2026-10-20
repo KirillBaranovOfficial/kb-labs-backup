@@ -21,21 +21,11 @@ describe('Runtime API', () => {
   let testDir: string;
 
   beforeEach(async () => {
-    // Create temporary test directory in user's home dir (not /var or /tmp)
-    // to avoid DENIED_PATTERNS blocking (/var/, /etc/, /usr/)
-    const homeDir = os.homedir();
-    const testRoot = path.join(homeDir, '.kb-runtime-test');
-    await fs.mkdir(testRoot, { recursive: true });
-    testDir = await fs.mkdtemp(path.join(testRoot, 'test-'));
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-runtime-test-'));
   });
 
   afterEach(async () => {
-    // Clean up test directory
-    try {
-      await fs.rm(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    await fs.rm(testDir, { recursive: true, force: true });
   });
 
   describe('fs.readFile', () => {
@@ -45,6 +35,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -59,6 +50,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -70,6 +62,7 @@ describe('Runtime API', () => {
     it('should reject reading outside cwd', async () => {
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -88,6 +81,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -103,6 +97,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -119,6 +114,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -137,6 +133,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -153,6 +150,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -172,6 +170,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -190,6 +189,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -213,6 +213,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -230,6 +231,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -246,6 +248,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -257,6 +260,7 @@ describe('Runtime API', () => {
     it('should return false for non-existent file', async () => {
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -268,6 +272,7 @@ describe('Runtime API', () => {
     it('should return false for forbidden paths (not throw)', async () => {
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -285,6 +290,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -301,6 +307,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -321,6 +328,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -338,6 +346,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -356,6 +365,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -375,6 +385,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -398,6 +409,7 @@ describe('Runtime API', () => {
 
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir,
@@ -415,6 +427,7 @@ describe('Runtime API', () => {
     it('should resolve paths relative to cwd', () => {
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: '/test/plugin',
       });
@@ -426,6 +439,7 @@ describe('Runtime API', () => {
     it('should make paths relative to cwd', () => {
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: '/test/plugin',
       });
@@ -437,6 +451,7 @@ describe('Runtime API', () => {
     it('should join path segments', () => {
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: '/test',
       });
@@ -448,6 +463,7 @@ describe('Runtime API', () => {
     it('should get dirname', () => {
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: '/test',
       });
@@ -459,6 +475,7 @@ describe('Runtime API', () => {
     it('should get basename', () => {
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: '/test',
       });
@@ -473,6 +490,7 @@ describe('Runtime API', () => {
     it('should get extname', () => {
       const permissions: PermissionSpec = {};
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: '/test',
       });
@@ -491,6 +509,7 @@ describe('Runtime API', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -509,6 +528,7 @@ describe('Runtime API', () => {
       const permissions: PermissionSpec = {};
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -524,6 +544,7 @@ describe('Runtime API', () => {
       const permissions: PermissionSpec = {};
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -543,6 +564,7 @@ describe('Runtime API', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -561,6 +583,7 @@ describe('Runtime API', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });

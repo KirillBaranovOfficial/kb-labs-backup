@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { defineCommand, type CLIInput, type PluginContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
 import {
   discoverCurrentPackages,
   mergeConfigWithFlow,
@@ -145,7 +145,7 @@ export default defineCommand({
   description: 'Pack the currently-committed package versions for a flow into real npm tarballs, once, for `release deliver` to ship',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<StageFlags>): Promise<CommandResult<StagePayload>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<StageFlags>): Promise<CommandResult<StagePayload>> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -156,8 +156,7 @@ export default defineCommand({
       const flowResult = resolveFlowName(baseConfig, flags);
       if (typeof flowResult !== 'string') {
         const msg = `release:stage ${flowResult.error}`;
-        if (flags.json) { ctx.ui?.json?.({ error: msg }); } else { ctx.ui?.error?.(msg); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Check the flow name and configuration, then retry `kb release stage`.' } };
       }
       const flowName = flowResult;
 
@@ -172,8 +171,8 @@ export default defineCommand({
 
       if (discovered.length === 0) {
         const msg = `No packages found for flow "${flowName}"`;
-        if (flags.json) { ctx.ui?.json?.({ outDir, artifacts: [] }); } else { ctx.ui?.write?.(msg); }
-        return { ok: false, error: 'Command failed' };
+        if (!flags.json) { ctx.ui?.write?.(msg); }
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release stage --help` to review its inputs and recovery steps, then retry." } };
       }
 
       // versionMap must cover the WHOLE workspace, not just this flow's packages:
@@ -213,9 +212,7 @@ export default defineCommand({
 
       const result: StagePayload = { outDir, artifacts };
       if (flags.json) {
-        const response = { ok: true as const, result };
-        ctx.ui?.json?.(response);
-        return response;
+        return result;
       }
 
       ctx.ui?.sideBox?.({
@@ -227,7 +224,7 @@ export default defineCommand({
         status: 'success',
       });
 
-      return { ok: true, result };
+      return result;
     },
   },
 });

@@ -43,6 +43,14 @@ import type {
   RestHostContext,
 } from "@kb-labs/plugin-contracts";
 import { DEFAULT_PERMISSIONS } from "@kb-labs/plugin-contracts";
+import { toErrorEnvelope } from "@kb-labs/core-platform";
+import {
+  createUxFailureResult,
+  createUxSuccessResult,
+  isUxResult,
+  isUxResultCandidate,
+} from "@kb-labs/core-platform/ux-result";
+import { createErrorEnvelope, isErrorCode, normalizeHttpFailure, statusForHttpFailure } from "@kb-labs/core-platform";
 import type { ExecutionBackend } from "../types.js";
 import { createExecutionId, normalizeHeaders } from "../utils.js";
 
@@ -192,19 +200,20 @@ export async function mountRoutes(
               String(Math.round(result.executionTimeMs)),
             );
 
-            return reply.send(result.data);
+            if (isUxResultCandidate(result.data) && result.data.ok === false && 'error' in result.data) {
+              const failure = normalizeHttpFailure(result.data, { correlationId: requestId, statusCode: 502 });
+              return reply.code(statusForHttpFailure(result.data, 502)).send(failure);
+            }
+            return reply.send(isUxResult(result.data) ? result.data : createUxSuccessResult(result.data));
           } else {
             // Error response
             reply.header("X-Request-Id", requestId);
             reply.header("X-Trace-Id", traceId);
             reply.header("X-Execution-Id", executionId);
 
-            const statusCode = getStatusCodeForError(result.error?.code);
-            return reply.code(statusCode).send({
-              error: result.error?.message ?? "Unknown error",
-              code: result.error?.code,
-              requestId,
-            });
+            const error = toRestErrorEnvelope(result.error, requestId);
+            const statusCode = getStatusCodeForError(error.code);
+            return reply.code(statusCode).send(createUxFailureResult(error));
           }
         } catch (error) {
           // Unexpected error (should not happen - backend returns Result, not throws)
@@ -213,11 +222,8 @@ export async function mountRoutes(
             "Handler execution failed unexpectedly",
           );
 
-          return reply.code(500).send({
-            error:
-              error instanceof Error ? error.message : "Internal server error",
-            requestId,
-          });
+          const envelope = toRestErrorEnvelope(error, requestId);
+          return reply.code(500).send(createUxFailureResult(envelope));
         }
       },
     );
@@ -238,6 +244,15 @@ export async function mountRoutes(
  */
 function getStatusCodeForError(code?: string): number {
   switch (code) {
+    case "KB_RUNTIME_INPUT_INVALID":
+    case "KB_CONFIG_INVALID":
+    case "VALIDATION_ERROR":
+      return 400;
+    case "KB_PROJECT_PATH_NOT_FOUND":
+    case "KB_PLUGIN_NOT_FOUND":
+      return 404;
+    case "KB_PLUGIN_PERMISSION_DENIED":
+      return 403;
     case "TIMEOUT":
       return 504; // Gateway Timeout
     case "ABORTED":
@@ -246,8 +261,6 @@ function getStatusCodeForError(code?: string): number {
       return 403; // Forbidden
     case "HANDLER_NOT_FOUND":
       return 404; // Not Found
-    case "VALIDATION_ERROR":
-      return 400; // Bad Request
     case "HANDLER_CONTRACT_ERROR":
       return 500; // Internal Server Error (contract violation is our bug)
     case "QUEUE_FULL":
@@ -260,4 +273,23 @@ function getStatusCodeForError(code?: string): number {
     default:
       return 500; // Internal Server Error
   }
+}
+
+function toRestErrorEnvelope(error: unknown, correlationId: string) {
+  const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+  if (code === "VALIDATION_ERROR") {
+    return createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
+      correlationId,
+      hint: "Correct the request fields and retry.",
+    });
+  }
+  if (code && isErrorCode(code)) {
+    return createErrorEnvelope(code, {
+      correlationId,
+      ...(code === "KB_RUNTIME_INPUT_INVALID" ? { hint: "Correct the request fields and retry." } : {}),
+    });
+  }
+  return toErrorEnvelope(error, { correlationId });
 }

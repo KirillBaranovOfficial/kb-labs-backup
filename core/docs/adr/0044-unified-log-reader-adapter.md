@@ -30,7 +30,7 @@ The current logging system has **two separate storage backends** with no unified
    ```
 
 2. **SQLite persistence exists but is unused**
-   - Logs are written to `.kb/database/kb.sqlite` automatically
+   - Logs use the platform-configured SQLite database under the platform data root
    - REST API only reads from ring buffer (last 1000 logs)
    - Frontend cannot access historical logs beyond buffer capacity
 

@@ -7,6 +7,8 @@ export interface QAPluginConfig {
   defaultTasks?: string[];
   /** CI evidence collection and analysis settings. */
   ci?: QACiConfig;
+  /** Case catalog directory. Default: docs/qa/scenarios. */
+  casesPath?: string;
 }
 
 export interface QACiConfig {

@@ -12,9 +12,11 @@ composable yet and still runs standalone.
 
 ## What it does
 
-- **One external port.** The gateway listens on `gateway.port + KB_NET_OFFSET`
-  (default 4000). Marketplace and state bind ephemeral `127.0.0.1` ports chosen
-  by the host before the platform launches.
+- **One external port.** The gateway bind address comes from the platform's
+  `serviceTransport.listenAddress("gateway")` when present; otherwise
+  `GATEWAY_PORT` or the service default (4000) is shifted by `KB_NET_OFFSET`.
+  Marketplace and state bind ephemeral `127.0.0.1` ports chosen by the host
+  before the platform launches.
 - **Generated topology (B8).** The host builds the `serviceTransport` services
   map for the modules it runs and installs it in-process during platform
   assembly, and adds the gateway routes `/api/v1/marketplace` and
@@ -60,9 +62,11 @@ Top-level `host` section of the KB config (all optional):
 
 ## Project runtimes (model B)
 
-`GET|POST|... /api/v1/projects/{projectId}/<module>/<path>` is answered by the
-runtime of that project (`<module>` is `rest` or `workflow`; the rest of the
-path reaches the module unchanged). The gateway authenticates first, then asks
+`GET|POST|... /api/v1/projects/{projectId}/<serviceId>/<path>` is answered by the
+declared service of that project (`<serviceId>` is `rest`, `workflow`, `mcp`, or
+another manifest-declared project service). The Gateway rewrites the service path
+to its internal base. MCP Streamable HTTP is available at
+`/api/v1/projects/{projectId}/mcp`. The gateway authenticates first, then asks
 the host's `ProjectRuntimeManager`, which:
 
 - checks the id against the project registry (exact `prj_...` id only; unknown

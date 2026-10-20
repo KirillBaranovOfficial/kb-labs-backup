@@ -13,22 +13,28 @@ import {
 } from '@kb-labs/sdk/studio';
 import { useData } from '@kb-labs/sdk/studio';
 import type { JobStatusInfo, JobListFilter } from '@kb-labs/workflow-contracts';
+import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes';
 import { UICard } from '@kb-labs/sdk/studio';
 import { UIPage, UIPageHeader } from '@kb-labs/sdk/studio';
+import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker';
 
 const STATUS_COLORS: Record<string, string> = {
-  pending: 'default',
+  queued: 'default',
   running: 'processing',
-  completed: 'success',
+  success: 'success',
   failed: 'error',
   cancelled: 'warning',
+  skipped: 'default',
+  dlq: 'error',
 };
 
 export default function WorkflowsJobs() {
   const [filters, setFilters] = React.useState<JobListFilter>({ limit: 50 });
+  const { projectId, picker, hasProjects } = useWorkflowProject();
 
-  const { data: jobsData, isLoading } = useData<{ jobs: JobStatusInfo[] }>('/exec/api/v1/jobs', {
+  const { data: jobsData, isLoading } = useData<{ jobs: JobStatusInfo[] }>(projectWorkflowEndpoint(projectId, 'jobs'), {
     params: filters as Record<string, string | number | boolean>,
+    enabled: hasProjects,
   });
 
   const formatDate = (date?: Date | string) => {
@@ -137,6 +143,7 @@ export default function WorkflowsJobs() {
       <UIPageHeader
         title="Background Jobs"
         description="Monitor background job execution and status"
+        actions={picker}
         breadcrumbs={[
           { title: 'Home', href: '/' },
           { title: 'Workflows', href: '/workflows' },
@@ -153,11 +160,13 @@ export default function WorkflowsJobs() {
           value={filters.status}
           onChange={(status) => setFilters({ ...filters, status: status as typeof filters.status })}
           options={[
-            { label: 'Pending', value: 'pending' },
+            { label: 'Queued', value: 'queued' },
             { label: 'Running', value: 'running' },
-            { label: 'Completed', value: 'completed' },
+            { label: 'Success', value: 'success' },
             { label: 'Failed', value: 'failed' },
             { label: 'Cancelled', value: 'cancelled' },
+            { label: 'Skipped', value: 'skipped' },
+            { label: 'Dead letter', value: 'dlq' },
           ]}
         />
         <UISelect

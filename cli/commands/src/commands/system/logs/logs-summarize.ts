@@ -3,7 +3,7 @@
  * Agent-first: ask a natural-language question about logs.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../../utils/generate-examples';
 import { platform } from '@kb-labs/core-runtime';
 import { parseRelativeTime, computeLogStats } from './logs-utils';
@@ -100,6 +100,8 @@ function fallbackSummary(stats: ReturnType<typeof computeLogStats>): string {
 
 export const logsSummarize = defineSystemCommand<Flags, LogSummarizeResult>({
   name: 'summarize',
+  scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command may invoke a model service to summarize logs." },
   description: 'AI-powered log analysis — ask a question about your logs',
   category: 'logs',
   examples: generateExamples('logs summarize', 'kb', [
@@ -116,7 +118,7 @@ export const logsSummarize = defineSystemCommand<Flags, LogSummarizeResult>({
   async handler(_ctx, argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return { ok: false, error: 'Log reader not available. Ensure platform is initialized.' };
+      throwSystemCommandError('Log reader not available. Ensure platform is initialized.', "Run `kb logs summarize --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const question = argv[0] || 'What happened recently? Summarize errors and notable events.';
@@ -153,7 +155,7 @@ export const logsSummarize = defineSystemCommand<Flags, LogSummarizeResult>({
     }
 
     return {
-      ok: true,
+
       question,
       summary: aiSummary,
       llmUsed,
@@ -167,17 +169,6 @@ export const logsSummarize = defineSystemCommand<Flags, LogSummarizeResult>({
     };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui.json(result);
-      return;
-    }
-
-    if (!result.ok) {
-      const error = typeof result.error === 'string' ? result.error : 'Unknown';
-      ctx.ui.error('Log Summarize', { sections: [{ header: 'Error', items: [error] }] });
-      return;
-    }
-
     ctx.ui.write(`Question: ${result.question}\n`);
     ctx.ui.write(`${result.llmUsed ? '(AI-powered)' : '(Statistical fallback)'}\n\n`);
     ctx.ui.write((result.summary ?? '') + '\n');

@@ -11,8 +11,10 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { WorkflowEngine } from '../engine.js';
+import { EnvSecretProvider } from '../secrets.js';
 import type { WorkflowSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
 import type { ICache, IEventBus } from '@kb-labs/core-platform';
+import { InMemoryStorage } from '@kb-labs/core-platform/inmemory';
 import { mockLogger, type MockLoggerInstance } from '@kb-labs/shared-testing';
 
 // Mock Cache
@@ -116,16 +118,21 @@ class MockEventBus implements IEventBus {
 describe('WorkflowEngine', () => {
   let cache: MockCache;
   let events: MockEventBus;
+  let storage: InMemoryStorage;
   let logger: MockLoggerInstance;
   let engine: WorkflowEngine;
 
   beforeEach(() => {
     cache = new MockCache();
     events = new MockEventBus();
+    storage = new InMemoryStorage();
     logger = mockLogger();
 
     engine = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
+      secretProvider: new EnvSecretProvider(),
       cache,
+      storage,
       events,
       logger,
       maxWorkflowDepth: 2,
@@ -140,7 +147,9 @@ describe('WorkflowEngine', () => {
     });
 
     it('should use default maxWorkflowDepth if not provided', () => {
-      const engine2 = new WorkflowEngine({ cache, events, logger });
+      const engine2 = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
+      secretProvider: new EnvSecretProvider(), cache, events, logger, storage });
       expect(engine2.maxWorkflowDepth).toBe(2);
     });
   });
@@ -169,6 +178,36 @@ describe('WorkflowEngine', () => {
       const storedRun = await engine.getRun(run.id);
       expect(storedRun).toBeDefined();
       expect(storedRun?.id).toBe(run.id);
+    });
+
+    it('reopens workflow history and step output from storage with a fresh engine cache', async () => {
+      const run = await engine.createRun({ spec: simpleSpec, trigger: { type: 'manual' } });
+      const job = run.jobs[0]!;
+      const step = job.steps[0]!;
+      await engine.markJobStarted(run.id, job.id);
+      await engine.markStepStarted(run.id, job.id, step.id);
+      await engine.markStepCompleted(run.id, job.id, step.id, { message: 'persisted-after-restart' });
+      await engine.markJobCompleted(run.id, job.id);
+
+      const stored = await storage.read(`workflows/${run.id}.json`);
+      expect(stored).not.toBeNull();
+      expect(JSON.parse(stored!.toString('utf8'))).toMatchObject({
+        id: run.id, status: 'success',
+        jobs: [{ steps: [{ outputs: { message: 'persisted-after-restart' } }] }],
+      });
+
+      const restarted = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
+      secretProvider: new EnvSecretProvider(),
+        cache: new MockCache(), storage, events: new MockEventBus(), logger: mockLogger(),
+      });
+      await expect(restarted.getRun(run.id)).resolves.toMatchObject({
+        id: run.id, status: 'success',
+        jobs: [{ steps: [{ outputs: { message: 'persisted-after-restart' } }] }],
+      });
+      await expect(restarted.getAllRuns()).resolves.toEqual([
+        expect.objectContaining({ id: run.id, status: 'success' }),
+      ]);
     });
   });
 
@@ -316,31 +355,30 @@ describe('WorkflowEngine', () => {
 
     it('recovers parked parents after an engine restart and reconciles concurrent children', async () => {
       const pairs = await Promise.all(Array.from({ length: 4 }, async () => {
+        const child = await engine.createRun({
+          spec,
+          trigger: { type: 'manual' },
+        });
+        const childJob = child.jobs[0]!;
+        const childStep = childJob.steps[0]!;
+        await engine.markJobStarted(child.id, childJob.id);
+        await engine.markStepStarted(child.id, childJob.id, childStep.id);
+        await engine.markStepCompleted(child.id, childJob.id, childStep.id, { ok: true });
+        await engine.markJobCompleted(child.id, childJob.id);
+
+        // Persist a parent waiter only after the child is already terminal,
+        // modeling a process boundary where no child terminal event reached it.
         const parent = await engine.createRun({ spec, trigger: { type: 'manual' } });
         const parentJob = parent.jobs[0]!;
         const parentStep = parentJob.steps[0]!;
-        const child = await engine.createRun({
-          spec,
-          trigger: { type: 'workflow', parentRunId: parent.id },
-          metadata: { parentRunId: parent.id },
-        });
         await engine.markJobStarted(parent.id, parentJob.id);
         await engine.markStepWaitingChild(parent.id, parentJob.id, parentStep.id, child.id);
-        await engine.markStepCompleted(child.id, child.jobs[0]!.id, child.jobs[0]!.steps[0]!.id, { ok: true });
-        // Model a daemon dying after child state is persisted but before its
-        // terminal event is delivered to the parent coordinator.
-        await engine.getStateStore().updateJob(child.id, child.jobs[0]!.id, (job) => {
-          job.status = 'success';
-          job.finishedAt = new Date().toISOString();
-        });
-        await engine.getStateStore().updateRun(child.id, (run) => {
-          run.status = 'success';
-          run.finishedAt = new Date().toISOString();
-        });
         return { parent, parentJob };
       }));
 
-      const restarted = new WorkflowEngine({ cache, events, logger, maxWorkflowDepth: 2 });
+      const restarted = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
+      secretProvider: new EnvSecretProvider(), cache, events, logger, storage, maxWorkflowDepth: 2 });
       await expect(restarted.reconcileChildInvocations()).resolves.toBe(4);
 
       await Promise.all(pairs.map(async ({ parent, parentJob }) => {
@@ -408,6 +446,55 @@ describe('WorkflowEngine', () => {
   });
 
   describe('Job failure: run status and downstream (B-029, B-030)', () => {
+    const expectTerminalFailureHistory = async (diagnostic: string) => {
+      const spec: WorkflowSpec = {
+        name: 'Resolution Failure',
+        version: '1.0.0',
+        on: { manual: true },
+        jobs: {
+          main: {
+            runsOn: 'local',
+            retries: { max: 0, backoff: 'exp', initialIntervalMs: 100 },
+            steps: [{ name: 'Failing step', uses: 'plugin:failure/handler' }],
+          },
+        },
+      };
+      const run = await engine.createRun({ spec, trigger: { type: 'manual' } });
+      const jobId = run.jobs[0]!.id;
+      const stepId = run.jobs[0]!.steps[0]!.id;
+
+      await engine.markJobStarted(run.id, jobId);
+      await engine.markStepStarted(run.id, jobId, stepId);
+      await engine.markStepFailed(run.id, jobId, stepId, new Error(diagnostic));
+      await engine.markJobFailed(run.id, jobId, new Error(diagnostic));
+
+      expect(await engine.getRun(run.id)).toMatchObject({
+        status: 'failed',
+        result: { status: 'failed', error: { message: diagnostic } },
+        jobs: [{ status: 'failed', error: { message: diagnostic }, steps: [{ status: 'failed', error: { message: diagnostic } }] }],
+      });
+      const historyEntry = (await engine.getAllRuns()).find((entry) => entry.id === run.id);
+      expect(historyEntry).toMatchObject({
+        status: 'failed',
+        result: { status: 'failed', error: { message: diagnostic } },
+      });
+    };
+
+    // case: S-029.2
+    it('persists terminal history and diagnostics when a handler throws', async () => {
+      await expectTerminalFailureHistory('Step handler threw: handler failure diagnostic');
+    });
+
+    // case: S-029.2
+    it('persists terminal history and diagnostics when a plugin is missing', async () => {
+      await expectTerminalFailureHistory('Plugin @kb-labs/missing was not found');
+    });
+
+    // case: S-029.2
+    it('persists terminal history and diagnostics when a command is unknown', async () => {
+      await expectTerminalFailureHistory('Command workflow.unknown is not registered');
+    });
+
     it('B-029: terminal job failure sets run status to "failed", not "dlq"', async () => {
       const spec: WorkflowSpec = {
         name: 'Fail Test',
@@ -526,7 +613,7 @@ describe('WorkflowEngine', () => {
     };
 
     async function createFinishedRun(): Promise<WorkflowRun> {
-      const run = await engine.createRun({ spec: snapshotSpec, trigger: { type: 'manual' } });
+      const run = await engine.createRun({ spec: snapshotSpec, trigger: { type: 'manual' }, metadata: { workflowId: 'snapshot-test' } });
       // Simulate finalizing so snapshot is created
       await engine.finalizeRun(run.id, 'failed', {});
       return (await engine.getRun(run.id))!;
@@ -550,6 +637,7 @@ describe('WorkflowEngine', () => {
       const replayed = await engine.replayRun(original.id);
 
       expect(replayed!.status).toBe('queued');
+      expect(replayed!.metadata?.['workflowId']).toBe('snapshot-test');
       expect(replayed!.startedAt).toBeUndefined();
       expect(replayed!.finishedAt).toBeUndefined();
     });
@@ -644,7 +732,7 @@ describe('WorkflowEngine', () => {
           },
         },
       };
-      const run = await engine.createRun({ spec: multiJobSpec, trigger: { type: 'manual' } });
+      const run = await engine.createRun({ spec: multiJobSpec, trigger: { type: 'manual' }, metadata: { workflowId: 'multi-job-replay' } });
       await engine.finalizeRun(run.id, 'failed', {});
       const original = (await engine.getRun(run.id))!;
 
@@ -683,7 +771,7 @@ describe('WorkflowEngine', () => {
           },
         },
       };
-      const run = await engine.createRun({ spec: multiJobSpec, trigger: { type: 'manual' } });
+      const run = await engine.createRun({ spec: multiJobSpec, trigger: { type: 'manual' }, metadata: { workflowId: 'multi-job-blocking' } });
       await engine.finalizeRun(run.id, 'failed', {});
       const original = (await engine.getRun(run.id))!;
 
@@ -926,13 +1014,15 @@ describe('WorkflowEngine', () => {
       'pre-existing behavior (queued jobs were already in cleanupStaleRuns\'s ' +
       'force-fail condition before this rework) — documented here so the ' +
       'exemption\'s exact boundary is explicit rather than assumed.', async () => {
-      const run = await engine.createRun({ spec: approvalSpec, trigger: { type: 'manual' } });
+      const run = await engine.createRun({ spec: approvalSpec, trigger: { type: 'manual' }, metadata: { workflowId: 'approval-flow' } });
       const job = run.jobs[0]!;
       const step = job.steps[0]!;
 
       await engine.markJobStarted(run.id, job.id);
       await engine.markStepWaitingApproval(run.id, job.id, step.id);
       await engine.resolveApproval(run.id, job.id, step.id, 'approve');
+
+      expect((await engine.getRun(run.id))?.metadata?.['workflowId']).toBe('approval-flow');
 
       await engine.cleanupStaleRuns();
 
@@ -1000,7 +1090,10 @@ describe('WorkflowEngine', () => {
       'against the same store — modeling a stray/duplicate daemon launch) ' +
       'happens to run its own startup sweep.', async () => {
       const liveDaemon = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
+      secretProvider: new EnvSecretProvider(),
         cache,
+        storage,
         events,
         logger,
         instanceId: 'daemon-live',
@@ -1018,7 +1111,10 @@ describe('WorkflowEngine', () => {
       // (e.g. a stray/duplicate launch) and runs its own one-time cleanup.
       const strayLogger = mockLogger();
       const strayDaemon = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
+      secretProvider: new EnvSecretProvider(),
         cache,
+        storage,
         events,
         logger: strayLogger,
         instanceId: 'daemon-stray',
@@ -1042,7 +1138,10 @@ describe('WorkflowEngine', () => {
       'lease is actually gone — a real restart succeeding a truly-dead daemon ' +
       'must keep cleaning up orphaned runs exactly as before.', async () => {
       const crashedDaemon = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
+      secretProvider: new EnvSecretProvider(),
         cache,
+        storage,
         events,
         logger,
         instanceId: 'daemon-crashed',
@@ -1057,10 +1156,13 @@ describe('WorkflowEngine', () => {
       // renewal — nothing is heartbeating it any more). Simulate that by
       // removing the lease key directly from the shared cache, the same
       // outcome the real TTL produces once the owning process is truly gone.
-      await cache.delete('kb:daemon:lease');
+      await cache.delete('workflow:project:prj_0000000000000001:kb:daemon:lease');
 
       const restartedDaemon = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
+      secretProvider: new EnvSecretProvider(),
         cache,
+        storage,
         events,
         logger,
         instanceId: 'daemon-restarted',

@@ -32,6 +32,8 @@ services:
     container_name: kb-state-daemon
     ports:
       - "7777:7777"
+    environment:
+      - KB_STATE_DAEMON_PORT=7777
     # No adapters, no persistence (InMemoryStateBroker) — see plugins/state/daemon/Dockerfile.
     # A restart wipes any in-flight locks; that is current, expected behaviour.
     restart: unless-stopped
@@ -50,6 +52,7 @@ services:
       - KB_REGISTRY_PORT=5071
       - KB_SITE_URL=${KB_SITE_URL:-https://kblabs.ru}
       - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
+      - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     depends_on:
@@ -89,10 +92,9 @@ services:
       - NODE_ENV=production
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
+      - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
     volumes:
-      - gateway_data:/app/.kb/database
-      - gateway_storage:/app/.kb/storage
-      - gateway_analytics:/app/.kb/analytics
+      - gateway_data:/app/.kb/data
     depends_on:
       - kb-redis
     restart: unless-stopped
@@ -107,6 +109,7 @@ services:
       - "5050:5050"
     environment:
       - NODE_ENV=production
+      - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
     depends_on:
       - kb-redis
     restart: unless-stopped
@@ -122,7 +125,7 @@ services:
     environment:
       - NODE_ENV=production
     volumes:
-      - workflow_analytics:/app/.kb/analytics
+      - gateway_data:/app/.kb/data
     depends_on:
       - kb-redis
     restart: unless-stopped
@@ -170,7 +173,4 @@ networks:
 volumes:
   redis_data:
   gateway_data:
-  gateway_storage:
-  gateway_analytics:
-  workflow_analytics:
   minio_data:

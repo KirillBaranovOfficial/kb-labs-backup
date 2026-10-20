@@ -18,7 +18,7 @@
 
 import { readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { defineCommand, type CLIInput, type PluginContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
 import {
   mergeConfigWithFlow,
   resolvePublishTag,
@@ -109,14 +109,13 @@ export default defineCommand({
   description: 'Ship the tarballs `release stage` already packed to a target (npm) — no packing, no rebuild',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<DeliverFlags>): Promise<CommandResult<DeliverPayload>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<DeliverFlags>): Promise<CommandResult<DeliverPayload>> {
       const { flags } = input;
       const target = flags.target ?? 'npm';
 
       if (target !== 'npm') {
         const msg = `release:deliver --target ${target} is not implemented — only "npm" ships this pass (see release plan's out-of-scope section for github-release/mirror)`;
-        if (flags.json) { ctx.ui?.json?.({ error: msg }); } else { ctx.ui?.error?.(msg); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Use `kb release deliver --target npm` after the release plan is ready.' } };
       }
 
       const cwd = ctx.cwd || process.cwd();
@@ -128,21 +127,18 @@ export default defineCommand({
       const flowResult = resolveFlowName(baseConfig, flags);
       if (typeof flowResult !== 'string') {
         const msg = `release:deliver ${flowResult.error}`;
-        if (flags.json) { ctx.ui?.json?.({ error: msg }); } else { ctx.ui?.error?.(msg); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Check the release flow configuration, then rerun `kb release deliver`.' } };
       }
       const config: ReleaseConfig = mergeConfigWithFlow(baseConfig, flowResult);
 
       const artifactsDir = join(repoRoot, flags['artifacts-dir'] ?? '.kb/release/artifacts');
       const manifest = loadManifest(artifactsDir);
       if (!Array.isArray(manifest)) {
-        if (flags.json) { ctx.ui?.json?.({ error: manifest.error }); } else { ctx.ui?.error?.(manifest.error); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: manifest.error, hint: 'Run `kb release stage` to create artifacts, then retry delivery.' } };
       }
       if (manifest.length === 0) {
         const msg = `manifest.json at ${artifactsDir} lists no packages`;
-        if (flags.json) { ctx.ui?.json?.({ error: msg }); } else { ctx.ui?.error?.(msg); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Run `kb release stage` to create package artifacts, then retry delivery.' } };
       }
 
       const dryRun = flags['dry-run'];
@@ -190,8 +186,8 @@ export default defineCommand({
 
         writeGithubStepSummary(buildFailureSummaryMarkdown(target, publishedList.length, failedList));
 
-        const response = { ok: false as const, error: 'Delivery failed', result };
-        if (flags.json) { ctx.ui?.json?.(response); } else {
+        const response = { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: 'Delivery failed', hint: 'Inspect failed package details, resolve registry errors, then retry delivery.' } };
+        if (!flags.json) {
           ctx.ui?.sideBox?.({
             title: 'Deliver — npm',
             sections: [{
@@ -207,9 +203,7 @@ export default defineCommand({
 
       if (dryRun) {
         const result: DeliverPayload = { success: true, target, published: publishResult.results.map(r => ({ name: r.name, version: r.version })) };
-        const response = { ok: true as const, result };
-        if (flags.json) { ctx.ui?.json?.(response); }
-        return response;
+        return result;
       }
 
       // Post-delivery verification against the real registry — this is the
@@ -251,9 +245,8 @@ export default defineCommand({
 
       if (flags.json) {
         const response = verifyIssues.length === 0
-          ? { ok: true as const, result }
-          : { ok: false as const, error: 'Delivery verification failed', result };
-        ctx.ui?.json?.(response);
+          ? result
+          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: 'Delivery verification failed after publish completed', hint: 'Packages were published; inspect verification issues and rerun `kb release deliver` to confirm.' } };
         return response;
       }
 
@@ -267,8 +260,8 @@ export default defineCommand({
       });
 
       return verifyIssues.length === 0
-        ? { ok: true, result }
-        : { ok: false, error: 'Delivery verification failed', result };
+        ? result
+        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery verification failed', hint: "Run `kb release deliver --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

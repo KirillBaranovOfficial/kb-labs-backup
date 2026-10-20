@@ -24,8 +24,20 @@
 // ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
 
-export { AdapterUnavailableError } from "./errors.js";
+export { AdapterUnavailableError, AdapterCredentialsMissingError, AdapterOperationError, AdapterConfigError, AdapterProjectScopeError, getAdapterConfigurationCommand, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError } from "./errors.js";
+export type { TypedPlatformError } from "./errors.js";
+export { getHostServiceAddress, HostServiceAddressError } from "./host-service-address.js";
+export { PLATFORM_AUDIT_COLLECTION, PlatformAuditStore } from './audit-store.js';
+export type { AuthAuditInput, McpToolCallAuditInput, PlatformAuditEvent } from './audit-store.js';
+export type { HostServiceEnvironment, HostServiceId } from "./host-service-address.js";
+export { GATEWAY_SERVICE_NETWORK, resolveCliGatewayTarget, readInstalledPlatformIdentity, resolveGatewayServiceAddress, resolveServiceListenAddress } from "./service-listen-address.js";
+export type { CliGatewayTarget } from "./service-listen-address.js";
+export type {
+  ResolvedServiceListenAddress,
+  ServiceNetworkSettings,
+} from "./service-listen-address.js";
 export * from "./error-envelope/index.js";
+export * from "./http-failure/index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ADAPTER DEFAULTS — per-slot fallback policy (consulted by the loader)
@@ -42,6 +54,7 @@ export type {
 // ADAPTER INTERFACES (replaceable implementations via kb.config.json)
 // ═══════════════════════════════════════════════════════════════════════════
 
+export type { PlatformDataContext } from "./adapters/platform-data.js";
 export type {
   AdapterManifest,
   AdapterType,
@@ -52,6 +65,11 @@ export type {
   AdapterMiddlewareDecl,
   RawMiddlewareDecl,
 } from "./adapters/adapter-manifest.js";
+export { adapterManifestProvidesSlot } from "./adapters/adapter-manifest.js";
+export { declaredManifestPath, loadAdapterManifest, resolveAdapterManifestModulePath, resolveInstalledAdapterPackageRoot } from "./adapters/adapter-manifest-loader.js";
+export { ENTITY_MANIFEST_KINDS, manifestKindFromSchema } from "./entity-manifest-kind.js";
+export type { EntityManifestKind } from "./entity-manifest-kind.js";
+export type { AdapterManifestLoadResult, AdapterManifestSource } from "./adapters/adapter-manifest-loader.js";
 
 export type { IAnalytics } from "./adapters/analytics.js";
 
@@ -108,9 +126,6 @@ export type {
 // Analytics wrappers
 export { AnalyticsLLM } from "./wrappers/analytics-llm.js";
 export { AnalyticsEmbeddings } from "./wrappers/analytics-embeddings.js";
-export { AnalyticsVectorStore } from "./wrappers/analytics-vector-store.js";
-export { AnalyticsCache } from "./wrappers/analytics-cache.js";
-export { AnalyticsStorage } from "./wrappers/analytics-storage.js";
 export {
   ScopedAnalytics,
   createScopedAnalytics,
@@ -163,6 +178,8 @@ export type {
 // Context-aware logging contract
 export {
   createContextLogger,
+  createProcessRootLogContext,
+  registerProcessSensitiveValues,
   isAgentDiagnosticsEnabled,
   PLATFORM_LOG_FIELDS,
   type IContextLogger,
@@ -173,6 +190,7 @@ export {
   type PlatformLogContext,
   type PluginLogContext,
 } from "./logging/context.js";
+export { logUnexpectedCliError } from "./logging/unexpected-error.js";
 export {
   logDiagnosticEvent,
   type DiagnosticLogEvent,
@@ -245,9 +263,15 @@ export type {
   ReserveEnvironmentRequest,
   ReservedEnvironment,
   StartEnvironmentRequest,
+  EnvironmentExecutionPolicy,
   EnvironmentDescriptor,
   EnvironmentStatusResult,
   EnvironmentProviderCapabilities,
+} from "./environment/environment-provider.js";
+export {
+  EnvironmentProvisioningError,
+  EnvironmentTeardownError,
+  type EnvironmentProvisioningFailureCause,
 } from "./environment/environment-provider.js";
 
 // Workspace lifecycle abstraction
@@ -361,6 +385,7 @@ export type {
 export type {
   IServiceTransport,
   ServiceConnectionInfo,
+  ProjectServiceConnectionInfo,
   ServiceListenAddress,
   ServiceTransportRequest,
   ServiceTransportResponse,

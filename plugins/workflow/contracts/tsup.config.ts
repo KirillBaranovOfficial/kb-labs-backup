@@ -7,5 +7,6 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'rest-api': 'src/rest-api.ts',
+    routes: 'src/routes.ts',
   },
 })

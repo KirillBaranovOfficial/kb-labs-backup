@@ -10,6 +10,7 @@ import {
   initPlatform,
   loadPlatformConfig,
   platform,
+  isWorkspaceDevelopmentMode,
 } from "@kb-labs/core-runtime";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import {
@@ -65,13 +66,14 @@ async function main(): Promise<number> {
     moduleUrl: import.meta.url,
     startDir: process.cwd(),
     loadEnvFile: true,
+    projectScope: "platform",
   });
   await initPlatform(
     loaded.platformConfig,
-    loaded.projectRoot,
+    loaded.platformRoot,
     undefined,
-    loaded.platformRoot !== loaded.projectRoot ? loaded.platformRoot : undefined,
-    makeAssemblyHook(),
+    undefined,
+    { assemblyHook: makeAssemblyHook(), workspaceDevelopment: isWorkspaceDevelopmentMode(loaded) },
   );
   try {
     const config = loaded.effectiveConfig ?? loaded.rawConfig;
@@ -110,7 +112,14 @@ function exitAfterFlush(code: number): void {
   });
 }
 
-main().then(exitAfterFlush, (error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+main().then(exitAfterFlush, (_error: unknown) => {
+  const code = "KB_INSTALL_RECOVERY_FAILED";
+  const message = "The recovery tool could not load the platform configuration.";
+  const hint = `Run \"kb-create doctor --platform-root ${process.cwd()}\" to inspect the platform, then retry recovery.`;
+  if (process.argv.includes("--json")) {
+    process.stdout.write(`${JSON.stringify({ ok: false, error: { code, message, hint } })}\n`);
+  } else {
+    process.stderr.write(`${code}: ${message}\nNext: ${hint}\n`);
+  }
   exitAfterFlush(1);
 });

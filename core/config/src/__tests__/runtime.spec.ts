@@ -85,9 +85,10 @@ describe("runtime utils", () => {
       const res = await readJsonWithDiagnostics(file);
       expect(res.ok).toBe(false);
       if (!res.ok) {
-        expect(
-          res.diagnostics.find((d) => d.code === "JSON_PARSE_FAILED"),
-        ).toBeTruthy();
+        expect(res.diagnostics.find((d) => d.code === "JSON_PARSE_FAILED")).toMatchObject({
+          path: file,
+          hint: `Run \`python3 -m json.tool "${file}"\`, then repair the config.`,
+        });
       }
     });
 
@@ -96,9 +97,10 @@ describe("runtime utils", () => {
       const res = await readJsonWithDiagnostics(file);
       expect(res.ok).toBe(false);
       if (!res.ok) {
-        expect(
-          res.diagnostics.find((d) => d.code === "FILE_READ_FAILED"),
-        ).toBeTruthy();
+        expect(res.diagnostics.find((d) => d.code === "FILE_READ_FAILED")).toMatchObject({
+          path: file,
+          hint: `Check access with \`ls -l "${file}"\`, then repair the config.`,
+        });
       }
     });
   });

@@ -20,14 +20,21 @@ func ConfigureDetached(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
 
-func terminateProcessGroup(pid int) { _ = syscall.Kill(-pid, syscall.SIGTERM) }
-func killProcessGroup(pid int)      { _ = syscall.Kill(-pid, syscall.SIGKILL) }
+func TerminateProcessIfIdentity(pid int, processIdentity string) bool {
+	return signalWithProcessIdentity(pid, processIdentity, func() error { return syscall.Kill(pid, syscall.SIGTERM) })
+}
 
-// TerminateProcess asks a single process (the supervisor) to shut down.
-func TerminateProcess(pid int) { _ = syscall.Kill(pid, syscall.SIGTERM) }
+func KillProcessIfIdentity(pid int, processIdentity string) bool {
+	return signalWithProcessIdentity(pid, processIdentity, func() error { return syscall.Kill(pid, syscall.SIGKILL) })
+}
 
-// KillProcess force-kills a single process.
-func KillProcess(pid int) { _ = syscall.Kill(pid, syscall.SIGKILL) }
+func TerminateProcessGroupIfIdentity(pid int, processIdentity string) bool {
+	return signalWithProcessIdentity(pid, processIdentity, func() error { return syscall.Kill(-pid, syscall.SIGTERM) })
+}
+
+func KillProcessGroupIfIdentity(pid int, processIdentity string) bool {
+	return signalWithProcessIdentity(pid, processIdentity, func() error { return syscall.Kill(-pid, syscall.SIGKILL) })
+}
 
 // ProcessAlive reports whether pid exists (EPERM still means it exists).
 func ProcessAlive(pid int) bool { return processAlive(pid) }

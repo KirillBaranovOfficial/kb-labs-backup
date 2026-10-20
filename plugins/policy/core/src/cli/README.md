@@ -42,8 +42,8 @@ export const run = defineCommand({
     // 3. Output result
     ctx.ui?.write(`Result: ${result}\n`);
 
-    // 4. Return structured result
-    return { ok: true, result };
+    // 4. Return plain command data; the shared boundary builds the envelope
+    return result;
   }
 });
 ```
@@ -82,7 +82,7 @@ cli: {
 - **Use `ctx.ui`** for formatted output (not `process.stdout`, see [Migration Guide](../../../docs/MIGRATION-ui-output.md))
 - **Delegate to `core/`** - keep CLI layer thin
 - **Type your flags** - use typed flag definitions
-- **Return structured results** - `{ ok: true, result: ... }`
+- **Return plain command data** - the shared boundary builds the result envelope
 
 ### ❌ DON'T
 
@@ -100,7 +100,7 @@ export const run = defineCommand({
   name: getCommandId('template:simple'),
   async handler(ctx) {
     ctx.logger?.info('Running simple command');
-    return { ok: true };
+    return {};
   }
 });
 ```
@@ -138,13 +138,11 @@ export const run = defineCommand({
   async handler(ctx, argv, flags) {
     const result = { message: 'Hello', count: 42 };
 
-    if (flags.json) {
-      ctx.ui?.json(result);
-    } else {
+    if (!flags.json) {
       ctx.ui?.write(`Message: ${result.message}\n`);
     }
 
-    return { ok: true, result };
+    return result;
   }
 });
 ```

@@ -1,14 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createIsolatedExecutionBackend } from '../isolated-backend.js';
-import type { IHostResolver, HostResolution, IExecutionTransport } from '@kb-labs/core-contracts';
+import type { IHostResolver, HostResolution, IExecutionTransport } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '../types.js';
 
 function makeLocalBackend() {
   return {
-    platform: {} as any,
+    platform: { logger: testLogger } as unknown as Parameters<typeof createIsolatedExecutionBackend>[0]['localBackend']['platform'],
     mode: 'in-process' as const,
   };
 }
+
+const testLogger = {
+  trace: vi.fn(),
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  fatal: vi.fn(),
+  child: () => testLogger,
+};
 
 function makeRequest(overrides: Partial<ExecutionRequest> = {}): ExecutionRequest {
   return {
@@ -16,7 +26,12 @@ function makeRequest(overrides: Partial<ExecutionRequest> = {}): ExecutionReques
     handlerRef: '/path/to/handler.js',
     pluginRoot: '/path/to',
     input: {},
-    descriptor: {} as any,
+    descriptor: {
+      hostType: 'workflow',
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
+      requestId: 'request-001',
+    } as unknown as ExecutionRequest['descriptor'],
     ...overrides,
   };
 }
@@ -100,8 +115,13 @@ describe('RoutingBackend — workspace-agent routing', () => {
     }));
 
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('NO_HOST_AVAILABLE');
-    expect(result.error?.message).toContain('pinned');
+    expect(result.error).toMatchObject({
+      envelope: {
+        code: 'KB_RUNTIME_UNEXPECTED',
+        hint: 'Start a workspace agent that matches this target, then retry the command.',
+        details: { target: 'workspace-agent' },
+      },
+    });
   });
 
   it('skips workspace-agent routing when no hostResolver configured', async () => {

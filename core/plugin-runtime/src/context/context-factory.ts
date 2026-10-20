@@ -13,7 +13,7 @@ import type {
   CleanupFn,
 } from "@kb-labs/plugin-contracts";
 import { getLoggerMetadataFromHost } from "@kb-labs/plugin-contracts";
-import { createContextLogger } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope } from "@kb-labs/core-platform";
 
 import { createId } from "../utils/index.js";
 import { createTraceContext } from "./trace.js";
@@ -69,6 +69,12 @@ export interface CreateContextOptions {
    * Output directory for artifacts (optional)
    */
   outdir?: string;
+
+  /** Environment values explicitly supplied for this execution. */
+  environment?: Record<string, string | undefined>;
+
+  /** Enforce only the manifest's filesystem patterns, with no local defaults. */
+  strictFilesystemPermissions?: boolean;
 
   /**
    * Resolved adapter middlewares from loaded adapter manifests.
@@ -163,9 +169,12 @@ export function createPluginContextV3<TConfig = unknown>(
 
   // 4. Create runtime API (sandboxed fs, fetch, env)
   const runtime = createRuntimeAPI({
+    pluginId: descriptor.pluginId,
     permissions: descriptor.permissions,
     cwd,
     outdir,
+    environment: options.environment,
+    strictFilesystemPermissions: options.strictFilesystemPermissions,
   });
 
   // 5. Apply adapter middlewares + permission governance to platform services.
@@ -203,7 +212,14 @@ export function createPluginContextV3<TConfig = unknown>(
     : protectedLogger;
 
   // 5.3. If eventEmitter provided, also wrap UI to stream ui.info/warn/error/write calls
-  const finalUI = eventEmitter ? createStreamingUI(ui, eventEmitter) : ui;
+  const streamedUI = eventEmitter ? createStreamingUI(ui, eventEmitter) : ui;
+  const finalUI = descriptor.hostType === "cli"
+    ? {
+        ...streamedUI,
+        json: () => { throw commandUIContractViolation('json'); },
+        error: () => { throw commandUIContractViolation('error'); },
+      }
+    : streamedUI;
 
   const enrichedPlatform: PluginServices = {
     ...governedPlatform,
@@ -296,4 +312,14 @@ export function createPluginContextV3<TConfig = unknown>(
     traceId,
     spanId,
   };
+}
+
+function commandUIContractViolation(method: 'json' | 'error'): Error & { code: string; hint: string } {
+  const envelope = createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+    message: `Plugin command called ctx.ui.${method}().`,
+  });
+  return Object.assign(new Error(envelope.message), {
+    code: envelope.code,
+    hint: envelope.hint,
+  });
 }

@@ -7,7 +7,7 @@
  */
 
 import { homedir } from 'node:os';
-import { createErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { createValidatedErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { isProjectRegistryError } from './errors.js';
 
 /** Replaces the home directory prefix with `~` so envelopes never carry it. */
@@ -20,7 +20,7 @@ function redactHome(value: string): string {
 export function projectErrorEnvelope(error: unknown): ErrorEnvelope {
   if (isProjectRegistryError(error)) {
     const details = Object.fromEntries(Object.entries(error.details).map(([k, v]) => [k, redactHome(v)]));
-    return createErrorEnvelope(error.code, { cause: redactHome(error.message), details });
+    return createValidatedErrorEnvelope(error.code, { cause: redactHome(error.message), details });
   }
   return toErrorEnvelope(error);
 }

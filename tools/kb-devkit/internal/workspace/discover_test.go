@@ -233,3 +233,40 @@ func mustWritePackage(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+func TestCategoryPatternsDiscoverNonPnpmPackagesAndResolveBuildTask(t *testing.T) {
+	root := t.TempDir()
+	mustWritePackage(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "library", "package.json"), `{"name":"@kb/library"}`)
+	mustWritePackage(t, filepath.Join(root, "e2e", "fixtures", "adapters", "deterministic", "package.json"), `{"name":"@kb/e2e-deterministic"}`)
+	cfg := &config.DevkitConfig{
+		Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{
+			{Name: "library", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+			{Name: "e2e-pack-extra", Category: config.CategoryConfig{Match: []string{"e2e/fixtures/adapters/*"}, Preset: "node-lib"}},
+		}},
+		Tasks: map[string]config.TaskConfig{"build": {
+			{Categories: []string{"library"}, Command: "tsup"},
+			{Categories: []string{"e2e-pack-extra"}, Command: "node build-fixture.mjs"},
+		}},
+	}
+	ws, err := New(root, cfg)
+	if err != nil {
+		t.Fatalf("workspace.New error: %v", err)
+	}
+	if len(ws.Packages) != 2 {
+		t.Fatalf("discovered package count = %d, want pnpm package plus category-declared fixture", len(ws.Packages))
+	}
+	fixture, ok := ws.PackageByPath(filepath.Join(root, "e2e", "fixtures", "adapters", "deterministic"))
+	if !ok || fixture.Category != "e2e-pack-extra" || !fixture.BuildTarget {
+		t.Fatalf("fixture graph entry = (%+v, %v), want category and resolved build task", fixture, ok)
+	}
+	cfg.Tasks["build"] = config.TaskConfig{{Categories: []string{"library"}, Command: "tsup"}}
+	withoutTarget, err := New(root, cfg)
+	if err != nil {
+		t.Fatalf("workspace.New after task mutation error: %v", err)
+	}
+	fixture, ok = withoutTarget.PackageByPath(filepath.Join(root, "e2e", "fixtures", "adapters", "deterministic"))
+	if !ok || fixture.BuildTarget {
+		t.Fatalf("fixture build-target flag = (%+v, %v), want discovered package without a build target", fixture, ok)
+	}
+}

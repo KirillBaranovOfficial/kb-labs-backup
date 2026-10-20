@@ -5,7 +5,14 @@
  */
 
 import type { PluginContextV3 } from './context.js';
-import type { FailureInfo, FailureKind } from '@kb-labs/core-contracts';
+import type { FailureKind } from '@kb-labs/core-contracts';
+import type {
+  DetailsOptionFor,
+  ErrorEnvelope,
+  PlatformErrorCode,
+  ProductErrorCode,
+  ValidatedErrorEnvelope,
+} from '@kb-labs/core-platform/error-envelope';
 
 /**
  * Standard metadata automatically injected by runtime
@@ -62,25 +69,32 @@ export interface StandardMeta {
  *
  * @template T Result data type
  */
-export interface CommandError extends Omit<FailureInfo, 'kind'> {
+type CommandErrorFields = Pick<ErrorEnvelope, 'message' | 'cause' | 'diagnostics'> & {
+  correlationId?: string;
   kind?: FailureKind;
-}
+};
 
-export interface CommandSuccess<T = unknown> {
-  ok: true;
-  result?: T;
-  meta?: Record<string, unknown>;
-}
+export type CataloguedCommandErrorFor<C extends PlatformErrorCode> = CommandErrorFields & { code: C; hint?: string } & DetailsOptionFor<C>;
+
+type CataloguedCommandError = {
+  [C in PlatformErrorCode]: CataloguedCommandErrorFor<C>;
+}[PlatformErrorCode];
+
+type ProductCommandError = CommandErrorFields & {
+  code: ProductErrorCode;
+  hint: string;
+  details?: Record<string, string>;
+};
+
+export type CommandError = CataloguedCommandError | ProductCommandError | ValidatedErrorEnvelope;
 
 export interface CommandFailure {
   ok: false;
-  error: string | CommandError;
-  result?: unknown;
-  meta?: Record<string, unknown>;
+  error: CommandError;
 }
 
-/** Canonical command result returned by plugin commands. */
-export type CommandResult<T = unknown> = CommandSuccess<T> | CommandFailure;
+/** A command returns plain data or the single typed failure result. */
+export type CommandResult<T = unknown> = T | CommandFailure;
 
 /**
  * Final command result with injected standard metadata
@@ -102,6 +116,9 @@ export interface CommandResultWithMeta<T = unknown> {
    * Structured result data (optional)
    */
   result?: T;
+
+  /** Catalogued command failure when `ok` is false. */
+  error?: CommandError;
 
   /**
    * Metadata with both standard (injected by runtime) and custom (from handler) fields

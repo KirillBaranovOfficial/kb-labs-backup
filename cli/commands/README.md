@@ -12,6 +12,10 @@
 
 ## 🏗️ Architecture
 
+The built-in `kb mcp config <claude|codex|cursor>` command prints a client
+configuration for the current registered project. Secured installations use
+`KB_MCP_TOKEN` for the gateway-issued Bearer token.
+
 ### Core Components
 
 #### Command Registry
@@ -70,6 +74,14 @@ const registry = await registerCommands(manifests);
 ```
 
 ## ✨ Features
+
+### Gateway authentication
+
+The built-in `kb auth` commands manage human Gateway sessions, one-time admin
+password-reset links, and personal API tokens for agents and CI. Run
+`kb auth tokens --name "nightly CI"` to create a token, `kb auth tokens` to list
+your own tokens, or `kb auth tokens --revoke tok_abc123` to revoke one.
+Token secrets are shown once and inherit the owner's current role.
 
 ```
 kb-labs-cli/packages/commands/src/
@@ -218,11 +230,38 @@ pnpm build
 ```
 
 ### Adding New Commands
-
 1. Run `kb plugins scaffold my-plugin` to generate a manifest v2 skeleton.
 2. Implement your command handler in `src/commands/<name>.ts`.
 3. Update manifest permissions and metadata as needed.
 4. Build your package and test with `kb marketplace plugins list`.
+
+### Listing and binding adapters
+
+`kb adapter list` reports the platform's effective adapter package,
+mode, and storage directory. For providers with manifest-declared credentials,
+`--json` also reports `credentialsStatus` and missing credential names without
+exposing values. JSON includes every runtime slot and marks provider-backed
+slots that need explicit configuration.
+
+```bash
+kb adapter list --json
+```
+
+`kb adapter bind <slot> <package-id>` writes a platform binding at
+`platform.adapters.<slot>`. Adapter options are also platform scoped. Run these
+commands from the platform root:
+
+```bash
+kb config set --scope platform platform.adapterOptions.storage '{"baseDir":"override-data"}'
+kb adapter bind storage @kb-labs/adapters-fs
+kb adapter unbind storage
+```
+
+The platform includes `@kb-labs/adapters-fs` for storage. Other adapter
+packages must be installed at platform scope before binding.
+
+`--dry-run` validates the binding without writing platform config; `--json`
+returns the same operation result as a machine-readable object.
 
 ## Migration from Legacy Commands
 

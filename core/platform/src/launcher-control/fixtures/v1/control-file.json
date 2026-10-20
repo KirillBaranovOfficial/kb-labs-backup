@@ -1,10 +1,11 @@
 {
-  "description": "Shape of control.json in the launcher state directory (file mode 0600). Not an HTTP exchange.",
+  "description": "Shape of control.json in the install-root host-state directory (file mode 0600). Not an HTTP exchange.",
   "file": {
     "protocol": 1,
     "address": "$string",
     "token": "$string",
     "pid": "$number",
+    "processIdentity": "$string",
     "version": "$string"
   }
 }

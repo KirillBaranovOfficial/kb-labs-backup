@@ -5,17 +5,17 @@
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import type { DashboardStatsResponse } from '@kb-labs/workflow-contracts';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
 
 export default defineHandler({
   async execute(ctx: PluginContextV3, _input: RestInput<unknown>): Promise<DashboardStatsResponse> {
     const daemonUrl = getWorkflowDaemonUrl();
-    const url = `${daemonUrl}/api/v1/stats`;
+    const url = `${daemonUrl}/stats`;
 
     ctx.platform.logger.info(`[stats-handler] Fetching stats from ${url}`);
 
     try {
-      const response = await fetch(url);
+      const response = await fetchWorkflowApi(url);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);

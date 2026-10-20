@@ -3,7 +3,7 @@
  * Atomic step: reads plan, runs checks, emits output marker for workflow.
  */
 
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3, useLoader, useConfig } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3, useLoader, useConfig } from '@kb-labs/sdk';
 import {
   planRelease,
   runReleaseChecks,
@@ -69,7 +69,7 @@ export default defineCommand({
   description: 'Run pre-release checks from release config',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ChecksFlags>): Promise<ReleaseChecksResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ChecksFlags>): Promise<ReleaseChecksResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -87,12 +87,11 @@ export default defineCommand({
       if (checks.length === 0) {
         const msg = 'No checks configured in release config';
         if (flags.json) {
-          ctx.ui?.json?.({ ok: true, failed: [], results: [], message: msg });
+          return { failed: [], results: [], message: msg };
         } else {
           ctx.ui?.write?.(msg);
         }
-        console.log('::kb-output::' + JSON.stringify({ ok: true, failed: [] }));
-        return { ok: true, result: { ok: true, failed: [], results: [] } };
+        return { ok: true, failed: [], results: [] };
       }
 
       // Opt-in preflight: default behaviour (flag absent) is unchanged.
@@ -105,18 +104,25 @@ export default defineCommand({
         });
         if (!pre.ok) {
           const preReport = buildReleaseRunReport({ results: [], preflight: pre, flow: flags.flow, scope: flags.scope });
-          const failedPre = pre.checks.filter(c => c.status === 'failed').map(c => `preflight:${c.id}`);
-          console.log('::kb-output::' + JSON.stringify({ ok: false, failed: failedPre }));
+          const failure = preReport.failures[0]?.error;
+          const diagnostics = preReport.failures.map((finding) => ({
+            code: finding.error.code,
+            message: `${finding.checkId} (${finding.package}): ${finding.rootCause} [${finding.classification}]`,
+            severity: finding.optional ? 'warning' as const : 'error' as const,
+            ...(finding.packagePath ? { path: finding.packagePath } : {}),
+            hint: finding.hint,
+          }));
+          const outcome = failure
+            ? { ok: false as const, error: { code: failure.code, message: failure.message, hint: failure.hint ?? 'Resolve the failed preflight check, then retry `kb release checks`.', diagnostics } }
+            : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release preflight failed.', hint: "Run `kb release doctor` to see the failed preflight checks and exact recovery steps.", diagnostics } };
           if (flags.json) {
-            ctx.ui?.json?.({ ok: false, failed: failedPre, results: [], report: preReport });
-          } else {
-            ctx.ui?.sideBox?.({
-              title: 'Preflight failed - checks not run',
-              sections: [{ header: 'Failed', items: renderFailureLines(preReport.failures) }],
-              status: 'error',
-            });
           }
-          return { ok: false, error: 'Command failed', result: { ok: false, failed: failedPre, results: [], report: preReport } };
+          ctx.ui?.sideBox?.({
+            title: 'Preflight failed - checks not run',
+            sections: [{ header: 'Failed', items: renderFailureLines(preReport.failures) }],
+            status: 'error',
+          });
+          return outcome;
         }
       }
 
@@ -165,6 +171,16 @@ export default defineCommand({
       // A failed optional check is reported (still listed in `failed`) but must not fail the run.
       const ok = results.every(r => r.ok || r.optional);
       const failed = results.filter(r => !r.ok).map(r => r.id);
+      const diagnostics = runReport.failures.map((finding) => ({
+        code: finding.error.code,
+        message: `${finding.checkId} (${finding.package}): ${finding.rootCause} [${finding.classification}]`,
+        severity: finding.optional ? 'warning' as const : 'error' as const,
+        ...(finding.packagePath ? { path: finding.packagePath } : {}),
+        hint: finding.hint,
+      }));
+      const outcome = ok
+        ? { ok: true, failed, results, report: runReport }
+        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release checks failed.', hint: "Run `kb release doctor` to verify the environment, then inspect the failed checks and rerun `kb release checks`.", diagnostics } };
 
       if (ok) {
         checksLoader.succeed(`All ${results.length} check(s) passed`);
@@ -172,11 +188,8 @@ export default defineCommand({
         checksLoader.fail(`${failed.length} check(s) failed`);
       }
 
-      console.log('::kb-output::' + JSON.stringify({ ok, failed }));
-
       if (flags.json) {
-        ctx.ui?.json?.({ ok, failed, results, report: runReport });
-        return ok ? { ok: true, result: { ok, failed, results, report: runReport } } : { ok: false, error: 'Command failed', result: { ok, failed, results, report: runReport } };
+        return outcome;
       }
 
       ctx.ui?.sideBox?.({
@@ -185,7 +198,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok: true, result: { ok, failed, results, report: runReport } } : { ok: false, error: 'Command failed', result: { ok, failed, results, report: runReport } };
+      return outcome;
     },
   },
 });

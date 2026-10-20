@@ -55,12 +55,19 @@ describe('validatePlatformUserConfig', () => {
   })
 
   it('validates the execution section through the existing schema', () => {
-    expect(validatePlatformUserConfig({ platform: { execution: { mode: 'container' } } })[0]?.path).toBe(
-      'platform.execution.container',
-    )
+    expect(validatePlatformUserConfig({ platform: { execution: { mode: 'container' } } })).toEqual([])
     expect(validatePlatformUserConfig({ platform: { execution: { mode: 'bogus' } } })[0]?.path).toBe(
       'platform.execution.mode',
     )
+  })
+
+  it('rejects roadmap-only remote mode with the supported modes and exact config command', () => {
+    expect(validatePlatformUserConfig({ platform: { execution: { mode: 'remote' } } })).toEqual([
+      expect.objectContaining({
+        path: 'platform.execution.mode',
+        hint: 'Supported modes are auto, in-process, subprocess, worker-pool, container. Run `kb config set platform.execution.mode in-process --scope platform`.',
+      }),
+    ])
   })
 
   it('validates numeric core limits', () => {

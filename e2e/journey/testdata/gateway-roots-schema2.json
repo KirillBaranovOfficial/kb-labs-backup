@@ -1,0 +1,10 @@
+{
+  "schema": 2,
+  "roots": [
+    {
+      "platformRoot": "/private/tmp/x34-gateway-fixture/platform/current",
+      "installationId": "7eac56bf88aa1c6025ad98139c990a60",
+      "url": "http://127.0.0.1:4100"
+    }
+  ]
+}

@@ -93,7 +93,7 @@ export const setup = {
 
   notes: [
     'Run `kb commit` to analyze changes and generate commit plan.',
-    'Set KB_COMMIT_LLM_ENABLED=false to use heuristics only.',
+    'Generating a plan needs an LLM: bind one with `kb adapter bind llm <installed-adapter-package>`.',
     'Use `kb commit:open` to view current plan before applying.',
   ],
 };

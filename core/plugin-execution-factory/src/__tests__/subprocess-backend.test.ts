@@ -49,7 +49,6 @@ describe('SubprocessBackend diagnostics', () => {
       runner: {
         runInSubprocess: vi.fn(),
       } as any,
-      ipcServerFactory: vi.fn(),
     });
 
     const result = await backend.execute(createRequest());

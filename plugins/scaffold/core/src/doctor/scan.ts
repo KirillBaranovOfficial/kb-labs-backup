@@ -132,12 +132,12 @@ export interface ScanResult {
 }
 
 interface LockEntry {
-  resolvedPath?: string;
+  link?: string;
   enabled?: boolean;
 }
 
 interface MarketplaceLockShape {
-  installed?: Record<string, LockEntry>;
+  plugins?: Record<string, LockEntry>;
 }
 
 async function readLock(
@@ -178,7 +178,7 @@ export interface ScanOptions {
    * Workspace root containing `.kb/marketplace.lock`. When provided, each
    * scaffolded plugin found is cross-checked against the lock — missing
    * entries surface as warnings so the user knows to `kb marketplace
-   * plugins link` or rerun `kb scaffold`.
+   * link --link` or rerun `kb scaffold`.
    */
   workspaceRoot?: string;
 }
@@ -244,7 +244,7 @@ export async function scanRoot(
  * plugin's entry package is registered in `.kb/marketplace.lock`.
  *
  * Produces:
- *  - warn  "plugin not registered in marketplace.lock (run `kb marketplace plugins link ...`)"
+ *  - warn  "plugin not registered in marketplace.lock (run `kb marketplace plugins add --link ...`)"
  *  - warn  "lock entry points elsewhere"
  *  - info  "plugin disabled in lock"
  */
@@ -270,7 +270,7 @@ async function checkLockSync(
     // not entry package names (e.g. @kb-labs/my-notifier-entry).
     const id = pkgName.replace(/-entry$/, '');
 
-    if (!lock || !lock.installed) {
+    if (!lock || !lock.plugins) {
       out.push({
         severity: 'warn',
         package: pkgName,
@@ -280,13 +280,13 @@ async function checkLockSync(
       return out;
     }
 
-    const lockEntry = lock.installed[id];
+    const lockEntry = lock.plugins[id];
     if (!lockEntry) {
       const hint = relative(workspaceRoot, entryPkgDir);
       out.push({
         severity: 'warn',
         package: pkgName,
-        message: `not registered in marketplace.lock — run: kb marketplace plugins link ${hint}`,
+        message: `not registered in marketplace.lock — run: kb marketplace plugins add --link ${hint}`,
       });
       continue;
     }
@@ -299,13 +299,13 @@ async function checkLockSync(
       });
     }
 
-    if (typeof lockEntry.resolvedPath === 'string') {
-      const lockAbs = resolvePath(workspaceRoot, lockEntry.resolvedPath);
+    if (typeof lockEntry.link === 'string') {
+      const lockAbs = resolvePath(workspaceRoot, lockEntry.link);
       if (lockAbs !== entryPkgDir) {
         out.push({
           severity: 'warn',
           package: pkgName,
-          message: `lock points at ${lockEntry.resolvedPath} but scaffolded package is at ${relative(workspaceRoot, entryPkgDir)}`,
+          message: `lock points at ${lockEntry.link} but scaffolded package is at ${relative(workspaceRoot, entryPkgDir)}`,
         });
       }
     }

@@ -65,7 +65,7 @@ pnpm kb marketplace install @kb-labs/plugin-name
 Or for development (link local source):
 
 ```bash
-pnpm kb marketplace plugins link .
+pnpm kb marketplace plugins add .
 ```
 
 ---

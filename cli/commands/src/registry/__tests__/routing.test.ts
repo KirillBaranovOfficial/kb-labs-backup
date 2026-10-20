@@ -33,6 +33,8 @@ function makeRegistry() {
 function makeSystemCmd(name: string, aliases: string[] = []): SystemCommand {
   return {
     name,
+    scope: 'project',
+    jsonTest: { noSafeValidPath: 'Registry fixture command.' },
     describe: `System command: ${name}`,
     category: 'system',
     aliases,
@@ -153,6 +155,26 @@ describe('User-Defined Aliases', () => {
 
     // Bare alias
     expect(reg.resolve(['mpl']).type).toBe('command');
+  });
+
+  it('resolves grouped system command aliases at the CLI root', () => {
+    const groupedCommand = makeSystemCmd('version', ['version']);
+    const group: SystemGroup = {
+      name: 'info',
+      describe: 'System information commands',
+      commands: [groupedCommand],
+    };
+
+    reg.registerGroup(group);
+
+    expect(reg.resolve(['info', 'version'])).toMatchObject({
+      type: 'system-cmd',
+      cmd: groupedCommand,
+    });
+    expect(reg.resolve(['version'])).toMatchObject({
+      type: 'system-cmd',
+      cmd: groupedCommand,
+    });
   });
 
   it('getCommandAt retrieves by canonical segments', () => {

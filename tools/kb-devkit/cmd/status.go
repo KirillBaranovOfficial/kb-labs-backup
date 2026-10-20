@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/spf13/cobra"
@@ -86,11 +87,10 @@ func outputStatusJSON(results map[string]checks.PackageResult) error {
 		}
 	}
 
-	_ = JSONOut(out)
 	if !out.OK {
-		return errSilent
+		return commandFailure("kb-devkit status")
 	}
-	return nil
+	return JSONOut(out)
 }
 
 func outputStatusHuman(results map[string]checks.PackageResult) error {
@@ -111,10 +111,10 @@ func outputStatusHuman(results map[string]checks.PackageResult) error {
 
 	healthy, warning, errCount := 0, 0, 0
 
-	fmt.Printf("\n%s\n\n", o.label.Render("KB Devkit — Workspace Status"))
+	clikitcommand.Printf("\n%s\n\n", o.label.Render("KB Devkit — Workspace Status"))
 
 	for _, cat := range categories {
-		fmt.Printf("  %s\n", o.dim.Render("["+cat+"]"))
+		clikitcommand.Printf("  %s\n", o.dim.Render("["+cat+"]"))
 
 		for _, r := range byCategory[cat] {
 			state := "healthy"
@@ -136,7 +136,7 @@ func outputStatusHuman(results map[string]checks.PackageResult) error {
 				errCount++
 			}
 
-			fmt.Printf("  %s %-40s  %s\n",
+			clikitcommand.Printf("  %s %-40s  %s\n",
 				o.StatusIcon(state),
 				r.Package.Name,
 				o.dim.Render(r.Package.RelPath),
@@ -145,21 +145,24 @@ func outputStatusHuman(results map[string]checks.PackageResult) error {
 			if state != "healthy" {
 				for _, issue := range r.Issues {
 					if issue.Severity == checks.SeverityError {
-						fmt.Printf("       %s\n", o.dim.Render("↳ "+issue.Message))
+						clikitcommand.Printf("       %s\n", o.dim.Render("↳ "+issue.Message))
 					}
 				}
 			}
 		}
-		fmt.Println()
+		clikitcommand.Println()
 	}
 
-	fmt.Printf("  %s  %s  %s  (%d total)\n",
+	clikitcommand.Printf("  %s  %s  %s  (%d total)\n",
 		o.StatusIcon("healthy")+" "+fmt.Sprintf("%d healthy", healthy),
 		o.StatusIcon("warning")+" "+fmt.Sprintf("%d warning", warning),
 		o.StatusIcon("error")+" "+fmt.Sprintf("%d error", errCount),
 		healthy+warning+errCount,
 	)
-	fmt.Println()
+	clikitcommand.Println()
 
+	if errCount > 0 {
+		return commandFailure("kb-devkit status")
+	}
 	return nil
 }

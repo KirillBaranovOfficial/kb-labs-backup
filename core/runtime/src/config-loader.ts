@@ -10,17 +10,11 @@
  *    These are *two different logical roots* — see `resolveRoots` docs for
  *    the distinction.
  *
- *  - Load the layers of platform configuration (precedence, low to high,
- *    ADR-0047 / ADR-0012: generated < platform user < project user < overlays):
- *      0. Installer-GENERATED config from `<root>/.kb/generated/*.json|jsonc`
- *         (optional — absent until the installer generates config).
- *      1. Platform defaults from `<platformRoot>/.kb/kb.config.json`
- *         (optional — absent in solo dev mode).
- *      2. Project config from `<projectRoot>/.kb/kb.config.json`
- *         (optional — absent when running outside a project).
+ *  - Load platform-owned config layers (precedence, low to high): plugin
+ *    manifest defaults < generated platform config < platform user config <
+ *    project store < project store overlays.
  *
- *  - Deep-merge the two layers (project overrides platform defaults) using
- *    `mergeDefined` from `@kb-labs/core-config`.
+ *  - Never consult the consumer repository for KB configuration files.
  *
  *  - Optionally load the `.env` file from `projectRoot`.
  *
@@ -53,16 +47,49 @@ import {
   loadGeneratedLayer,
   loadOverlays,
   mergeOverlay,
+  readProjectSettings,
+  projectOverlaysPath,
+  projectSettingsPath,
+  PluginSettingsSchemaLoadError,
+  JsoncSyntaxError,
+  resolvePluginSettingsValidator,
   validateProductConfig,
   type Diagnostic,
   type FieldMergePolicy,
 } from "@kb-labs/core-config";
-import { resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
+import { DiscoveryManager } from "@kb-labs/core-discovery";
+import { findRegisteredProjectRoot, resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
+import { canonicalizeProjectPath, createProjectRegistry, ProjectRegistryError } from "@kb-labs/core-project-registry";
+import { AdapterProjectScopeError, PlatformConfigError, registerProcessSensitiveValues } from "@kb-labs/core-platform";
 
 import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
 import { interpolateConfig } from "./config-interpolation.js";
+import { requireProjectContext } from "./project-context.js";
 import { applyLocalNetworkOffset } from "./config-net-offset.js";
 import { PLATFORM_CONFIG_PRODUCT } from "./schema/platform-config-schema.js";
+import { discoverAdapters } from "./discover-adapters.js";
+
+function collectDeclaredSecretValues(
+  value: unknown,
+  secretFields: ReadonlySet<string>,
+  parentField?: string,
+  output: string[] = [],
+): string[] {
+  if (typeof value === 'string') {
+    if (parentField && secretFields.has(parentField)) output.push(value);
+    return output;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectDeclaredSecretValues(entry, secretFields, parentField, output);
+    return output;
+  }
+  if (typeof value === 'object' && value !== null) {
+    for (const [key, nested] of Object.entries(value)) {
+      collectDeclaredSecretValues(nested, secretFields, key, output);
+    }
+  }
+  return output;
+}
 
 function expandPlatformDir(raw: string, projectRoot: string): string {
   let value = raw.trim();
@@ -80,6 +107,8 @@ const CONFIG_RELATIVE_PATHS = [
 ] as const;
 
 export interface LoadPlatformConfigOptions {
+  /** Load platform configuration without resolving a current project. */
+  projectScope?: 'required' | 'platform';
   /**
    * `import.meta.url` of the calling entrypoint (CLI bin or service entry).
    * Used to locate the installed `node_modules/@kb-labs/*` tree reliably in
@@ -96,6 +125,8 @@ export interface LoadPlatformConfigOptions {
    * Environment variables map. Defaults to `process.env`.
    */
   env?: NodeJS.ProcessEnv;
+  /** Registry-selected project identity, supplied by the platform launcher. */
+  projectId?: string;
   /**
    * When `true` (default), loads `<projectRoot>/.env` into `process.env`
    * before reading config. Does not override variables already set.
@@ -103,7 +134,7 @@ export interface LoadPlatformConfigOptions {
   loadEnvFile?: boolean;
 }
 
-export interface LoadPlatformConfigResult {
+interface LoadPlatformConfigResultBase {
   /**
    * Effective `platform` configuration: project config deep-merged on top of
    * platform defaults. Always defined — an empty object when neither layer
@@ -111,8 +142,7 @@ export interface LoadPlatformConfigResult {
    */
   platformConfig: PlatformConfig;
   /**
-   * Raw contents of the *project* config file, if one was found. Used by the
-   * CLI to expose the full user-facing config via `useConfig()`.
+   * Raw contents of the platform config file, if one was found.
    */
   rawConfig?: Record<string, unknown>;
   /**
@@ -127,15 +157,21 @@ export interface LoadPlatformConfigResult {
    */
   rawPlatformConfig?: Record<string, unknown>;
   /**
-   * Effective full config: `rawConfig` with `.kb/overlays/` applied. This is
+   * Effective full config with project settings and platform-owned overlays.
+   * This is
    * what product config (`useConfig()` → getConfig) should read so scenario
    * overlays reach plugin config sections, not just the platform slice.
    */
   effectiveConfig?: Record<string, unknown>;
+  /** Manifest settings defaults in plugin config namespace. */
+  pluginSettingsDefaults?: Array<{
+    pluginId: string;
+    configSection: string;
+    manifestPath: string;
+    data: Record<string, unknown>;
+  }>;
   /** Resolved platform root (where `node_modules/@kb-labs/*` lives). */
   platformRoot: string;
-  /** Resolved project root (where `.kb/kb.config.json` lives). */
-  projectRoot: string;
   /** `true` when both roots resolve to the same directory (dev mode). */
   sameLocation: boolean;
   /** Diagnostics about how each config layer was loaded. */
@@ -161,19 +197,18 @@ export interface LoadPlatformConfigResult {
     /**
      * Absolute paths of overlay files applied on top of the merged config, in
      * the order they were merged (lexicographic by file name). Empty/omitted
-     * when `.kb/overlays/` is absent.
+     * when the platform-owned project overlay directory is absent.
      */
     overlays?: string[];
-    /**
-     * Non-fatal diagnostics from the overlay loader: malformed JSONC files,
-     * overlays with non-object top-level (`OVERLAY_NOT_OBJECT`), read errors.
-     * Each entry corresponds to an overlay file that was found but skipped or
-     * partially parsed — present here even though the rest of the load
-     * completed. Empty/omitted when the overlay step produced no diagnostics.
-     */
+    /** Non-error diagnostics from overlay loading. Error diagnostics reject the load. */
     overlayDiagnostics?: Diagnostic[];
   };
 }
+
+export type LoadPlatformConfigResult = LoadPlatformConfigResultBase & (
+  | { projectScope: 'required'; projectRoot: string }
+  | { projectScope: 'platform'; projectRoot?: string }
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Internals
@@ -289,10 +324,34 @@ function toPlatformSection(
   return platformSection;
 }
 
+function throwConfigDiagnostic(
+  diagnostic: { code: string; message: string; detail?: unknown; path?: string },
+  fallbackPath: string,
+): never {
+  const reason = diagnostic.code.includes('PARSE')
+    ? 'parse'
+    : diagnostic.code.includes('READ')
+      ? 'read'
+      : 'invalid';
+  const detail = typeof diagnostic.detail === 'string' ? diagnostic.detail : diagnostic.message;
+  throw new PlatformConfigError(diagnostic.path ?? fallbackPath, reason, detail);
+}
+
+function throwFirstConfigError(
+  diagnostics: readonly { level?: string; code: string; message: string; detail?: unknown; path?: string }[],
+  fallbackPath: string,
+): void {
+  const diagnostic = diagnostics.find((entry) => entry.level === 'error');
+  if (diagnostic) {
+    throwConfigDiagnostic(diagnostic, fallbackPath);
+  }
+}
+
 /**
  * Read a KB Labs config file and extract its `platform` section. Returns
- * `{ platformSection, rawConfig }` where either field may be `undefined` if
- * the file is missing, malformed, or has no `platform` section.
+ * `{ platformSection, rawConfig }` where the config section may be `undefined`
+ * when a present valid file has no `platform` section. Missing files are
+ * handled by the caller; unreadable, malformed, and invalid files are errors.
  *
  * `adapterOptions` lives at the top level of the config file (not inside
  * `platform`), so we merge it into the returned platformSection so that
@@ -309,7 +368,12 @@ async function readConfigFile(configPath: string): Promise<{
   }>(configPath);
 
   if (!result.ok) {
-    return {};
+    throwFirstConfigError(result.diagnostics, configPath);
+    throw new PlatformConfigError(configPath, 'invalid', 'Config reader returned no data or diagnostic.');
+  }
+
+  if (typeof result.data !== 'object' || result.data === null || Array.isArray(result.data)) {
+    throw new PlatformConfigError(configPath, 'invalid', 'Top-level configuration value must be an object.');
   }
 
   const data = result.data as Record<string, unknown> & {
@@ -328,6 +392,47 @@ async function readConfigFile(configPath: string): Promise<{
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
+async function loadPluginSettingsDefaults(
+  roots: RootsResolution,
+  projectScope: 'required' | 'platform',
+): Promise<NonNullable<LoadPlatformConfigResult['pluginSettingsDefaults']>> {
+  const discovery = await new DiscoveryManager({
+    root: projectScope === 'platform' ? roots.platformRoot : roots.projectRoot!,
+    platformRoot: roots.platformRoot,
+  }).discover();
+  const packages = new Map(discovery.plugins.map((plugin) => [plugin.id, plugin]));
+  const defaults: NonNullable<LoadPlatformConfigResult['pluginSettingsDefaults']> = [];
+
+  for (const [pluginId, manifest] of discovery.manifests) {
+    if (!manifest.configSection || !manifest.settings) continue;
+    const plugin = packages.get(pluginId);
+    if (!plugin) {
+      throw new PluginSettingsSchemaLoadError(
+        `Plugin "${pluginId}" settings schema has no discovered package location.`,
+        undefined,
+        pluginId,
+      );
+    }
+    const validator = await resolvePluginSettingsValidator(manifest.settings.schema, plugin.packageRoot, pluginId);
+    const data = manifest.settings.defaults ?? {};
+    const validation = validator.validate(data);
+    if (!validation.valid) {
+      throw new PluginSettingsSchemaLoadError(
+        `Plugin "${pluginId}" declares invalid settings defaults: ${validation.cause}`,
+        validation.cause,
+        pluginId,
+      );
+    }
+    defaults.push({
+      pluginId,
+      configSection: manifest.configSection,
+      manifestPath: plugin.manifestPath,
+      data,
+    });
+  }
+  return defaults;
+}
+
 /**
  * Load and merge platform configuration, returning the effective config plus
  * diagnostics about how it was resolved.
@@ -336,16 +441,24 @@ async function readConfigFile(configPath: string): Promise<{
  *   1. Resolve `platformRoot` and `projectRoot` via
  *      `@kb-labs/core-workspace/resolveRoots`.
  *   2. If `loadEnvFile !== false`, load `<projectRoot>/.env`.
- *   3. Read `<platformRoot>/.kb/kb.config.json` → `platformDefaults` (if any).
- *   4. Read `<projectRoot>/.kb/kb.config.json` → `projectConfig` (if any).
- *      When both roots resolve to the same directory (dev mode), the same
- *      file is used for both layers and is read only once.
+ *   3. Read the platform config from `<platformRoot>`.
+ *   4. Read project settings and overlays from `$KB_HOME/state/<projectId>`.
+ *      The consumer repository is not a configuration source.
  *   5. `effective = mergeDefined(platformDefaults ?? {}, projectConfig ?? {})`.
  *
- * The function never throws on missing files or malformed JSON — it silently
- * degrades to an empty config so that callers can continue with NoOp
- * adapters. Callers that need strict validation should inspect `sources`.
+ * Missing config layers are valid and contribute no overrides. A present but
+ * unreadable, malformed, or invalid file throws `PlatformConfigError`; callers
+ * must render that failure instead of starting with a different config.
  */
+export function loadPlatformConfig(
+  options: LoadPlatformConfigOptions & { projectScope: 'platform' },
+): Promise<LoadPlatformConfigResultBase & { projectScope: 'platform'; projectRoot?: string }>;
+export function loadPlatformConfig(
+  options?: LoadPlatformConfigOptions & { projectScope?: 'required' },
+): Promise<LoadPlatformConfigResultBase & { projectScope: 'required'; projectRoot: string }>;
+export function loadPlatformConfig(
+  options: LoadPlatformConfigOptions,
+): Promise<LoadPlatformConfigResult>;
 export async function loadPlatformConfig(
   options: LoadPlatformConfigOptions = {},
 ): Promise<LoadPlatformConfigResult> {
@@ -354,31 +467,55 @@ export async function loadPlatformConfig(
     startDir = process.cwd(),
     env = process.env,
     loadEnvFile: shouldLoadEnv = true,
+    projectScope = 'required',
   } = options;
+
+  if (projectScope === 'required' && options.projectId) {
+    const registry = createProjectRegistry({ env });
+    const registered = await registry.get(options.projectId);
+    const requestedPath = await canonicalizeProjectPath(startDir);
+    const resolvedProjectRoot = await findRegisteredProjectRoot(startDir, env);
+    if (registered.project.path !== resolvedProjectRoot) {
+      throw new ProjectRegistryError(
+        'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH',
+        `Runtime project ${options.projectId} was started for "${requestedPath}" but the registry maps it to "${registered.project.path}".`,
+        {
+          projectId: options.projectId,
+        },
+      );
+    }
+  }
 
   let roots = await resolveRoots({
     moduleUrl,
     startDir,
     env,
+    projectScope,
   });
+  const configRoot = projectScope === 'platform'
+    ? roots.platformRoot
+    : requireProjectContext(roots.projectRoot, startDir);
+  const projectId = options.projectScope === 'platform' ? undefined : options.projectId ?? env.KB_PROJECT_ID;
 
   if (shouldLoadEnv) {
-    // Precedence is process env > project .env > platform .env. The loader
-    // never overwrites existing keys, so the higher-priority project layer
-    // must be loaded first.
-    loadEnvFromDirectory(roots.projectRoot, env);
-    if (path.resolve(roots.platformRoot) !== path.resolve(roots.projectRoot)) {
+    if (projectScope === 'required') {
+      // Precedence is process env > project .env > platform .env. The loader
+      // never overwrites existing keys, so the higher-priority project layer
+      // must be loaded first.
+      loadEnvFromDirectory(configRoot, env);
+    }
+    if (projectScope === 'platform' || path.resolve(roots.platformRoot) !== path.resolve(configRoot)) {
       loadEnvFromDirectory(roots.platformRoot, env);
     }
   }
 
   // Derived platform environment belongs to the shared config/bootstrap path,
   // not individual service launchers. It must exist before interpolation.
-  ensurePlatformEnvironment(roots.projectRoot, env);
+  ensurePlatformEnvironment(configRoot, env);
 
-  // Read project config first so we can honor `platform.dir` before picking
-  // the platform-config file.
-  const projectConfigPath = findConfigAtRoot(roots.projectRoot);
+  // Project settings are platform-owned. Only platform-root config files are
+  // read here; repository `.kb/kb.config.*` files are intentionally ignored.
+  const projectConfigPath = findConfigAtRoot(roots.platformRoot);
   let projectPlatformConfig: PlatformConfig | undefined;
   let rawProjectConfig: Record<string, unknown> | undefined;
   let projectConfigSource: string | undefined;
@@ -391,10 +528,7 @@ export async function loadPlatformConfig(
     projectConfigSource = projectConfigPath;
   }
 
-  // Honor `platform.dir` from the project config, if set. This lets a project
-  // declare its own platform workspace instead of using the bootstrap-resolved
-  // one. Guard against self-reference: if the override resolves to the same
-  // path as the project root, we keep the original resolution.
+  // Honor `platform.dir` only from platform-owned config.
   let platformDirOverride: string | undefined;
   // platform.dir may be at projectPlatformConfig.platform.dir (string-shorthand case, where
   // readConfigFile wraps it as { platform: { dir } }), OR at the top level as
@@ -406,14 +540,14 @@ export async function loadPlatformConfig(
       | string
       | undefined);
   if (declaredPlatformDir) {
-    const resolved = expandPlatformDir(declaredPlatformDir, roots.projectRoot);
-    if (path.resolve(resolved) !== path.resolve(roots.projectRoot)) {
+    const resolved = expandPlatformDir(declaredPlatformDir, roots.platformRoot);
+    if (path.resolve(resolved) !== path.resolve(roots.platformRoot)) {
       platformDirOverride = resolved;
       roots = {
         ...roots,
         platformRoot: resolved,
         sameLocation:
-          path.resolve(resolved) === path.resolve(roots.projectRoot),
+          roots.projectRoot !== undefined && path.resolve(resolved) === path.resolve(roots.projectRoot),
       };
     }
   }
@@ -429,13 +563,21 @@ export async function loadPlatformConfig(
     !!projectConfigPath &&
     path.resolve(platformConfigPath) === path.resolve(projectConfigPath);
 
+  if (!samePath && (
+      projectConfigData?.rawConfig?.adapters !== undefined ||
+      projectConfigData?.rawConfig?.adapterOptions !== undefined ||
+      projectPlatformConfig?.adapters !== undefined ||
+      projectPlatformConfig?.adapterOptions !== undefined
+  )) {
+    throw new AdapterProjectScopeError();
+  }
+
   if (samePath && projectConfigData) {
-    // Single file plays both roles (dev mode). Treat its contents as
-    // platform defaults so policy-merge doesn't strip platform-only fields
-    // like `adapters`. Project layer is left undefined — the merge is a
-    // no-op and `sources.projectConfig` is the only reported source.
+    // A development workspace's single config file is platform-owned.
     platformDefaults = projectConfigData.platformSection;
     rawPlatformConfig = projectConfigData.rawConfig;
+    platformDefaultsSource = projectConfigPath;
+    projectConfigSource = undefined;
     projectPlatformConfig = undefined;
   } else if (platformConfigPath) {
     const { platformSection, rawConfig } =
@@ -449,10 +591,8 @@ export async function loadPlatformConfig(
   // is the lowest-precedence baseline, under BOTH user layers. It is folded
   // into the platform defaults so every user value (platform or project) wins
   // over it, and it is absent (no-op) for installs that do not generate config.
-  const generatedLayer = await loadGeneratedLayer([
-    roots.platformRoot,
-    roots.projectRoot,
-  ]);
+  const generatedLayer = await loadGeneratedLayer([roots.platformRoot]);
+  throwFirstConfigError(generatedLayer.diagnostics, roots.platformRoot);
   if (generatedLayer.files.length > 0) {
     const generatedSection = toPlatformSection(generatedLayer.data);
     if (generatedSection) {
@@ -476,39 +616,64 @@ export async function loadPlatformConfig(
     ...mergeResult.value,
   };
 
-  // Apply overlay layer (`.kb/overlays/*.jsonc`) — the final, highest-priority
-  // layer. Used by e2e scenarios and ad-hoc tweaks; absent in normal projects.
+  // Apply project store overlays as the final, highest-priority layer.
   // Overlay semantics differ from the platform↔project merge: arrays replace
   // by default, with opt-in append via the `kb:merge` directive.
-  const overlayResult = await loadOverlays(roots.projectRoot);
+  const overlaysPath = projectId ? projectOverlaysPath({ projectId, env }) : undefined;
+  const overlayResult = overlaysPath
+    ? await loadOverlays(overlaysPath)
+    : { overlays: [], diagnostics: [] };
+  if (overlaysPath) {
+    throwFirstConfigError(overlayResult.diagnostics, overlaysPath);
+  }
+  let projectSettings: Record<string, unknown> = {};
+  if (projectId) {
+    const settingsPath = projectSettingsPath({ projectId, env });
+    try {
+      projectSettings = await readProjectSettings({ projectId, env });
+    } catch (error) {
+      if (error instanceof PlatformConfigError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      const reason = error instanceof JsoncSyntaxError
+        ? 'parse'
+        : error !== null && typeof error === 'object' && 'code' in error
+          ? 'read'
+          : 'invalid';
+      throw new PlatformConfigError(settingsPath, reason, detail);
+    }
+  }
+  const projectPlatformSettings = projectSettings.platform;
+  if (projectSettings.adapters !== undefined || projectSettings.adapterOptions !== undefined ||
+      (projectPlatformSettings !== null && typeof projectPlatformSettings === 'object' && !Array.isArray(projectPlatformSettings) &&
+        ((projectPlatformSettings as Record<string, unknown>).adapters !== undefined ||
+          (projectPlatformSettings as Record<string, unknown>).adapterOptions !== undefined))) {
+    throw new AdapterProjectScopeError();
+  }
+  if (overlayResult.overlays.some(overlay =>
+    overlay.data.adapters !== undefined || overlay.data.adapterOptions !== undefined)) {
+    throw new AdapterProjectScopeError();
+  }
   const appliedOverlays: string[] = [];
   for (const overlay of overlayResult.overlays) {
     merged = mergeOverlay(merged, overlay.data);
     appliedOverlays.push(overlay.path);
   }
 
-  // Effective FULL config = the raw project config with the same overlays
-  // applied. `merged`/`platformConfig` above is the platform slice; product
-  // sections (e.g. `mind`) are read via getConfig() from this full config, so
-  // overlays must reach it too — otherwise scenario overlays only affect
-  // platform fields and plugin config silently ignores them.
-  let effectiveConfig = rawProjectConfig;
-  if (generatedLayer.files.length > 0) {
-    // Generated product sections sit under the user's project config.
-    effectiveConfig = mergeDefined(
-      generatedLayer.data,
-      rawProjectConfig ?? {},
-    );
+  const pluginSettingsDefaults = await loadPluginSettingsDefaults(roots, projectScope);
+  const defaultsData: Record<string, unknown> = {
+    plugins: Object.fromEntries(pluginSettingsDefaults.map(({ configSection, data }) => [configSection, data])),
+  };
+  // Effective full config applies defaults, generated config, platform config,
+  // project settings, then the platform-owned scenario overlays.
+  let effectiveConfig: Record<string, unknown> = mergeOverlay(
+    defaultsData,
+    mergeOverlay(generatedLayer.data, rawProjectConfig ?? rawPlatformConfig ?? {}),
+  );
+  if (projectId) {
+    effectiveConfig = mergeOverlay(effectiveConfig, projectSettings);
   }
-  if (effectiveConfig && overlayResult.overlays.length > 0) {
-    let acc = effectiveConfig;
-    for (const overlay of overlayResult.overlays) {
-      acc = mergeOverlay(acc as never, overlay.data as never) as Record<
-        string,
-        unknown
-      >;
-    }
-    effectiveConfig = acc;
+  for (const overlay of overlayResult.overlays) {
+    effectiveConfig = mergeOverlay(effectiveConfig, overlay.data);
   }
 
   // Validate the post-overlay structure. Catches gross breakage (overlay sets
@@ -521,7 +686,10 @@ export async function loadPlatformConfig(
       validation.errors
         ?.map((e) => `${e.instancePath || "/"}: ${e.message ?? "invalid"}`)
         .join("; ") ?? "unknown validation error";
-    throw new Error(
+    const invalidPath = appliedOverlays.at(-1) ?? projectConfigSource ?? platformDefaultsSource ?? roots.platformRoot;
+    throw new PlatformConfigError(
+      invalidPath,
+      'invalid',
       `Platform config is invalid after applying overlays (${appliedOverlays.length} overlay(s)): ${detail}`,
     );
   }
@@ -538,14 +706,34 @@ export async function loadPlatformConfig(
     interpolateConfig(merged, strictInterpolation, env),
     env,
   );
+  const adapterManifests = await discoverAdapters(roots.platformRoot);
+  const secretValues: string[] = [];
+  for (const [slot, binding] of Object.entries(effective.adapters ?? {})) {
+    const packageNames = Array.isArray(binding) ? binding : typeof binding === 'string' ? [binding] : [];
+    for (const packageName of packageNames) {
+      const adapter = adapterManifests.get(packageName) ??
+        [...adapterManifests.values()].find(({ packageName: discoveredName }) => discoveredName === packageName);
+      if (!adapter) continue;
+      const secretFields = new Set(
+        Object.entries(adapter.module.manifest.configSchema ?? {})
+          .filter(([, schema]) => schema.secret === true)
+          .map(([field]) => field),
+      );
+      if (secretFields.size > 0) {
+        const options = effective.adapterOptions?.[slot as keyof NonNullable<PlatformConfig['adapterOptions']>];
+        secretValues.push(...collectDeclaredSecretValues(options, secretFields));
+      }
+    }
+  }
+  registerProcessSensitiveValues(secretValues);
 
-  return {
+  const result: LoadPlatformConfigResultBase = {
     platformConfig: effective,
     rawConfig: rawProjectConfig,
     rawPlatformConfig,
     effectiveConfig,
+    pluginSettingsDefaults,
     platformRoot: roots.platformRoot,
-    projectRoot: roots.projectRoot,
     sameLocation: roots.sameLocation,
     sources: {
       platformDefaults: platformDefaultsSource,
@@ -568,4 +756,8 @@ export async function loadPlatformConfig(
           : undefined,
     },
   };
+  if (projectScope === 'platform') {
+    return { ...result, projectScope, projectRoot: roots.projectRoot };
+  }
+  return { ...result, projectScope, projectRoot: configRoot };
 }

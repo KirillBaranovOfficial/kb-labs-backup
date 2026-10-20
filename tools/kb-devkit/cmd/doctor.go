@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,19 +33,18 @@ var doctorCmd = &cobra.Command{
 					break
 				}
 			}
-			_ = JSONOut(map[string]any{
+			if !ok {
+				return commandFailure("kb-devkit doctor")
+			}
+			return JSONOut(map[string]any{
 				"ok":     ok,
 				"checks": checks,
 				"hint":   hint,
 			})
-			if !ok {
-				return errSilent
-			}
-			return nil
 		}
 
 		o := newOutput()
-		fmt.Printf("\n%s\n\n", o.label.Render("Environment Diagnostics"))
+		clikitcommand.Printf("\n%s\n\n", o.label.Render("Environment Diagnostics"))
 
 		allOK := true
 		for _, c := range checks {
@@ -55,13 +55,13 @@ var doctorCmd = &cobra.Command{
 				detail = o.errStyle.Render(c.Detail)
 				allOK = false
 			}
-			fmt.Printf("  %s %-30s %s\n", icon, c.Name, detail)
+			clikitcommand.Printf("  %s %-30s %s\n", icon, c.Name, detail)
 			if !c.OK && c.Fix != "" {
-				fmt.Printf("       %s\n", o.dim.Render("fix: "+c.Fix))
+				clikitcommand.Printf("       %s\n", o.dim.Render("fix: "+c.Fix))
 			}
 		}
 
-		fmt.Println()
+		clikitcommand.Println()
 		if allOK {
 			o.OK("Environment is healthy")
 		} else {

@@ -35,6 +35,8 @@ function makeCapturingLogger(): ILogger & { warns: string[] } {
 function makeSystemCmd(name: string, aliases: string[] = []): SystemCommand {
   return {
     name,
+    scope: 'project',
+    jsonTest: { noSafeValidPath: 'Registry fixture command.' },
     describe: `System command: ${name}`,
     category: 'system',
     aliases,
@@ -205,7 +207,7 @@ describe('Collision Detection', () => {
         group: 'custom',
         describe: 'Custom plugin',
         loader: async () => ({ run: async () => 0 }),
-        manifestV2: {
+        v3Manifest: {
           schema: 'kb.plugin/3' as const,
           id: '@kb-labs/my-plugin',
           version: '1.0.0',

@@ -7,7 +7,7 @@ import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import type {
   EntityKind,
   EntitySignature,
-  MarketplaceEntry,
+  MarketplaceLockEntry,
 } from '@kb-labs/core-discovery';
 
 // ---------------------------------------------------------------------------
@@ -28,6 +28,8 @@ export interface ResolvedPackage {
   signature?: EntitySignature;
   /** How this package was sourced */
   source: 'marketplace' | 'local';
+  /** Primary KB Labs entity kind, when the source publishes it. */
+  primaryKind?: EntityKind;
   /** Download URL (for registry-based sources) */
   downloadUrl?: string;
 }
@@ -95,6 +97,10 @@ export interface PackageSource {
   /** Install a resolved package into the workspace */
   install(pkg: ResolvedPackage, root: string, opts?: { dev?: boolean }): Promise<InstalledPackage>;
 
+  /** Commit or restore the package-manager mutation after Marketplace validation and lock updates. */
+  commitInstall(packageId: string, root: string): Promise<void>;
+  rollbackInstall(packageId: string, root: string): Promise<void>;
+
   /** Remove a package from the workspace */
   remove(packageId: string, root: string): Promise<void>;
 
@@ -158,7 +164,7 @@ export interface QueryScopeContext {
  * Strategies must not depend on the full implementation.
  */
 /** Marketplace entry with its package ID (key from lock record). */
-export type MarketplaceEntryWithId = MarketplaceEntry & { id: string };
+export type MarketplaceEntryWithId = MarketplaceLockEntry & { id: string };
 
 /**
  * Marketplace entry annotated with the scope it came from. Returned by
@@ -185,7 +191,7 @@ export interface MarketplaceServiceAPI {
   /** List installed entries, optionally filtered by kind */
   list(ctx: QueryScopeContext, filter?: { kind?: EntityKind }): Promise<ScopedMarketplaceEntry[]>;
   /** Get a single entry by package ID */
-  getEntry(ctx: ScopeContext, packageId: string): Promise<MarketplaceEntry | null>;
+  getEntry(ctx: ScopeContext, packageId: string): Promise<MarketplaceLockEntry | null>;
 }
 
 /**
@@ -310,7 +316,9 @@ export interface SyncResult {
 export interface DoctorIssue {
   severity: 'error' | 'warning' | 'info';
   packageId: string;
+  diagnosticCode?: string;
   message: string;
+  path?: string;
   remediation?: string;
 }
 

@@ -78,6 +78,19 @@ done < <(cd "$REPO_ROOT" && find . \
   -name "package.json" \
   | sort)
 
+# These E2E-only registry packages are declared once and consumed by both the
+# publisher and candidate source-fidelity validator.
+while IFS= read -r extra; do
+  fixture_dir="$REPO_ROOT/$(jq -r '.directory' <<< "$extra")"
+  fixture_name="$(jq -r '.name' "$fixture_dir/package.json")"
+  if (cd "$fixture_dir" && pnpm pack --pack-destination "$OUT_DIR" --silent); then
+    PACKED=$((PACKED+1))
+  else
+    echo "ERROR: could not pack $fixture_name"
+    exit 1
+  fi
+done < <(jq -c '.[]' "$REPO_ROOT/e2e/scripts/pack-extras.json")
+
 echo ""
 echo "==> Done: $PACKED packed, $SKIPPED skipped (private/not-built), $FAILED failed"
 echo "    Output: $OUT_DIR ($(find "$OUT_DIR" -maxdepth 1 -type f -name '*.tgz' 2>/dev/null | wc -l | tr -d ' ') tarballs)"

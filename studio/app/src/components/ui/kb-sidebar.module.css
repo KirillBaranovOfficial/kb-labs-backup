@@ -172,10 +172,45 @@
 .menu :global(.ant-menu-item),
 .menu :global(.ant-menu-submenu-title) {
   border-radius: 10px !important;
-  height: 34px !important;
-  line-height: 34px !important;
+  height: 36px !important;
+  line-height: 36px !important;
   font-weight: 400 !important;
   transition: background-color 150ms ease, color 150ms ease;
+}
+
+.menu :global(.ant-menu-item-icon) {
+  color: inherit !important;
+}
+
+.menu :global(.ant-menu-sub) {
+  background: transparent !important;
+}
+
+.menu :global(.ant-menu-sub .ant-menu-item) {
+  height: 32px !important;
+  line-height: 32px !important;
+  margin-block: 2px !important;
+  border-radius: 8px !important;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.menu :global(.ant-menu-sub .ant-menu-item-selected) {
+  color: var(--text-primary) !important;
+  background-color: var(--accent-subtle) !important;
+}
+
+.menu :global(.ant-menu-sub .ant-menu-item-selected .ant-menu-item-icon) {
+  color: var(--link) !important;
+}
+
+.menu :global(.ant-menu-sub .ant-menu-item-selected)::before {
+  content: none;
+}
+
+.menu :global(.ant-menu-submenu-open > .ant-menu-submenu-title) {
+  color: var(--text-primary);
+  font-weight: 500 !important;
 }
 
 .menu :global(.ant-menu-item-selected) {

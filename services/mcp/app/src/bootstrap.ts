@@ -1,15 +1,40 @@
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { resolvePolicy } from "@kb-labs/core-policy";
 import { noopUI } from "@kb-labs/plugin-contracts";
+import { requireProjectContext } from "@kb-labs/core-runtime";
 import { runService } from "@kb-labs/shared-daemon";
-import { loadJwtConfig } from "./mcp/auth.js";
 import { callOutput } from "./mcp/output-capture.js";
 import { createBufferedUI } from "./mcp/ui.js";
 import { McpDaemonServer } from "./server.js";
+import type { ServiceContext } from "@kb-labs/shared-daemon";
+
+/** Project-runtime module setup. The runtime supplies the project root and port,
+ * so the MCP process scope follows the project URL selected by the host. */
+export async function setupProjectMcp(ctx: ServiceContext): Promise<() => Promise<void>> {
+  const logger = ctx.logger.forComponent("mcp");
+  const { policy } = await resolvePolicy({});
+  const authMode = process.env.KB_MCP_AUTH_MODE === "local" ? "local" : "secured";
+  const server = new McpDaemonServer({
+    port: ctx.port,
+    host: ctx.host,
+    logger,
+    cache: ctx.platform.cache,
+    platform: ctx.platform,
+    resolvePlatform: () => ctx.platform,
+    projectRoot: requireProjectContext(ctx.projectRoot),
+    platformRoot: ctx.platformRoot,
+    policy,
+    endpointPath: "/",
+    authMode,
+  });
+  await server.start();
+  return async () => server.stop();
+}
 
 export async function bootstrap(): Promise<void> {
   await runService({
     appId: "mcp-daemon",
+    projectScope: "required",
     defaultPort: 7779,
     portEnvVar: "KB_MCP_DAEMON_PORT",
     // 0.0.0.0 for Docker/dev compat, matching every other daemon in the
@@ -26,8 +51,11 @@ export async function bootstrap(): Promise<void> {
     hostEnvVar: "KB_MCP_DAEMON_HOST",
     platform: {
       uiProvider: (_hostType: string) => {
-        const lines = callOutput.getStore();
-        return lines ? createBufferedUI((s) => lines.push(s)).ui : noopUI;
+        const output = callOutput.getStore();
+        return output ? createBufferedUI((text, model) => {
+          output.text.push(text);
+          if (model) output.structured.push(model);
+        }).ui : noopUI;
       },
       assemblyHook: makeAssemblyHook(),
     },
@@ -54,9 +82,8 @@ export async function bootstrap(): Promise<void> {
         cache: platform.cache,
         platform,
         resolvePlatform: () => platform,
-        projectRoot,
+        projectRoot: requireProjectContext(projectRoot),
         platformRoot,
-        jwtConfig: loadJwtConfig(),
         policy,
       });
 

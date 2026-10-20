@@ -30,8 +30,8 @@ test('MKT-03: install a test package and verify it appears in listing', async ({
     timeout: 60_000,  // pnpm install can take 30-60s on first run
   })
   // 404 = package not found in registry, 500 = registry unreachable
-  test.skip(install.status() === 404, 'package not found in registry — check Verdaccio publish step')
-  test.skip(install.status() === 500, 'npm registry unreachable from container')
+  expect(install.status() === 404, 'package not found in registry — check Verdaccio publish step').toBe(false)
+  expect(install.status(), 'npm registry must be reachable from the marketplace service').not.toBe(500)
   expect([200, 201, 409]).toContain(install.status()) // 409 = already installed, fine
 
   // A successful mutation is a commit boundary: the immediately following

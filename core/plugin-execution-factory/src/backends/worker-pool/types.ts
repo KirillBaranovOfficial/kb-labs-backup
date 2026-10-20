@@ -5,8 +5,29 @@
  * These are internal types - not exposed in public API.
  */
 
-import type { ExecutionRequest, ExecutionResult } from '../../types.js';
+import type {
+  ExecutionRequest,
+  ExecutionResult,
+  HostType,
+  PlatformTransportFactory,
+  WorkerPoolOptions,
+} from '../../types.js';
+import type { WorkerFailureDiagnostic } from '../../errors.js';
+import type { ExecutionError } from '@kb-labs/core-platform';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
+import type { PlatformServices, UIFacade } from '@kb-labs/plugin-contracts';
+import type { ProcessTableSource } from './process-tree.js';
+
+export interface WorkerPoolBackendOptions extends WorkerPoolOptions {
+  platform: PlatformServices;
+  platformTransport?: PlatformTransportFactory;
+  uiProvider?: (hostType: HostType) => UIFacade;
+  workerScript?: string;
+  processTableSource?: ProcessTableSource;
+  maxQueueSize?: number;
+  acquireTimeoutMs?: number;
+  healthCheckIntervalMs?: number;
+}
 
 // ============================================================================
 // Worker Pool Configuration
@@ -169,11 +190,7 @@ export interface ResultMessage extends BaseWorkerMessage {
 export interface ErrorMessage extends BaseWorkerMessage {
   type: 'error';
   requestId: string;
-  error: {
-    message: string;
-    code?: string;
-    stack?: string;
-  };
+  error: ExecutionError;
 }
 
 /**
@@ -263,11 +280,17 @@ export interface UIPromptMessage extends BaseWorkerMessage {
 /**
  * Interactive UI prompt result (Pool -> Worker).
  */
-export interface UIPromptResultMessage extends BaseWorkerMessage {
+export type UIPromptResultMessage = BaseWorkerMessage & ({
   type: 'uiPromptResult';
   promptId: string;
   value: unknown;
-}
+  failure?: never;
+} | {
+  type: 'uiPromptResult';
+  promptId: string;
+  value: undefined;
+  failure: ExecutionError;
+});
 
 /**
  * Adapter middleware declarations (Pool -> Worker).
@@ -329,6 +352,8 @@ export interface QueuedRequest {
 
   /** UI prompt callback — passed through to worker.execute() */
   onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>;
+  /** Context-specific hint used when no UI prompt responder is available. */
+  uiPromptHint?: string;
 }
 
 // ============================================================================
@@ -341,6 +366,9 @@ export interface QueuedRequest {
 export interface WorkerPoolStats {
   /** Total workers (all states) */
   totalWorkers: number;
+
+  /** Workers whose descendant process tree could not be verified after kill. */
+  treeUnverifiedWorkers: number;
 
   /** Workers in each state */
   workersByState: Record<WorkerState, number>;
@@ -374,4 +402,6 @@ export interface WorkerPoolStats {
 
   /** P99 wait time in queue (ms) */
   p99QueueWaitMs?: number;
+  /** Most recent worker startup or replacement failure, when recovery is pending. */
+  lastStartFailure?: WorkerFailureDiagnostic;
 }

@@ -3,26 +3,20 @@
  *
  * Canonical "give me the effective raw config" entry point.
  *
- * Assembles the configuration layers any KB Labs project may have
- * and returns the deep-merged result plus diagnostics about how it was
- * resolved (ADR-0047: generated < platform user < project user < overlays):
+ * Assembles config from platform-owned inputs and returns the effective
+ * result plus diagnostics (ADR-0052): manifest defaults < generated <
+ * platform user < project store < project overlays.
  *
- *   0. `<root>/.kb/generated/*.json|jsonc`  — installer-written GENERATED
- *      config (platform root first, then project root). Lowest precedence;
- *      absent in installs that do not generate config yet.
- *   1. `<platformRoot>/.kb/kb.config.*`  — platform baseline (installed
- *      mode only; absent in solo dev where projectRoot == platformRoot)
- *   2. `<projectRoot>/.kb/kb.config.*`   — project layer
- *   3. `<projectRoot>/.kb/overlays/*.jsonc`  — scenario overlays applied
- *      by `kb-dev ensure --scenario`, lex-sorted
+ *   0. Plugin manifest settings defaults.
+ *   1. `<platformRoot>/.kb/generated/*.json|jsonc` — generated platform config.
+ *   2. `<platformRoot>/.kb/kb.config.*` — platform user config.
+ *   3. `$KB_HOME/state/<projectId>/config.jsonc` — project settings.
+ *   4. `$KB_HOME/state/<projectId>/overlays/*.jsonc` — scenario overlays.
  *
- * Each layer is deep-merged onto the previous via `mergeOverlay`. Overlays
- * are intentionally *project-only* — overlay files placed under the
- * platform root are ignored. Plugins that read their own section from the
- * raw config (gateway.*, mind.*, workflow.*, ...) should use this rather
- * than re-implementing the layering.
+ * Higher layers replace arrays and scalar values; objects deep-merge.
+ * Repository `.kb` files are never read.
  *
- * Returns `null` only when none of the three layers contributed anything.
+ * Returns `null` only when none of the supported layers contributed anything.
  *
  * This is complementary to `@kb-labs/core-runtime :: loadPlatformConfig`,
  * which produces the structured `PlatformConfig` view (adapters, core,
@@ -34,9 +28,12 @@ import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
 import { readJsonWithDiagnostics, mergeDefined } from '../runtime/runtime.js';
+import { AdapterProjectScopeError, PlatformConfigError } from '@kb-labs/core-platform';
 import type { Diagnostic } from '../types/index.js';
 import { loadOverlays } from '../overlay/loader.js';
 import { mergeOverlay } from '../overlay/merge.js';
+import { projectOverlaysPath, projectSettingsPath, readProjectSettings } from '../project-settings-store.js';
+import { JsoncSyntaxError } from '../user-config/jsonc-edit.js';
 import {
   buildProvenance,
   loadGeneratedLayer,
@@ -65,7 +62,7 @@ const CONFIG_CANDIDATES = [
 ] as const;
 
 export interface EffectiveConfigResult {
-  /** Deep-merged effective data (platform ← project ← overlays). */
+  /** Deep-merged effective data (manifest → generated → platform → project → overlays). */
   data: Record<string, unknown>;
   /**
    * Absolute paths of platform-root config files actually loaded, in merge
@@ -97,7 +94,7 @@ export interface EffectiveConfigResult {
    * (arrays are leaves; see `ValueProvenance.contributors`).
    */
   provenance: Record<string, ValueProvenance>;
-  /** Non-fatal diagnostics (malformed files, layer rejected, etc). */
+  /** Non-error diagnostics. Error diagnostics reject the load as PlatformConfigError. */
   diagnostics: Diagnostic[];
 }
 
@@ -108,6 +105,12 @@ export interface LoadEffectiveConfigOptions {
    * deep-merge baseline. Overlays are *not* read from this root.
    */
   platformRoot?: string;
+  /** Registry-selected project identity for reading platform-owned project settings. */
+  projectId?: string;
+  /** Machine state root override for isolated runtimes and tests. */
+  storeRoot?: string;
+  /** Lowest-precedence plugin defaults, each attributed to its manifest. */
+  pluginDefaults?: readonly ConfigLayerFile[];
 }
 
 async function findAllConfigsInRoot(root: string): Promise<string[]> {
@@ -117,8 +120,13 @@ async function findAllConfigsInRoot(root: string): Promise<string[]> {
     try {
       await fsp.access(full);
       found.push(full);
-    } catch {
-      // missing — skip
+    } catch (error) {
+      const code = error !== null && typeof error === 'object' && 'code' in error
+        ? error.code
+        : undefined;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new PlatformConfigError(full, 'read', detail);
     }
   }
   return found;
@@ -174,48 +182,113 @@ async function readObjectsAtRoot(
   return { paths: loaded, data: merged, files };
 }
 
+function throwConfigDiagnostic(
+  diagnostic: Diagnostic,
+  fallbackPath: string,
+): never {
+  const reason = diagnostic.code.includes('PARSE')
+    ? 'parse'
+    : diagnostic.code.includes('READ')
+      ? 'read'
+      : 'invalid';
+  const detail = 'detail' in diagnostic && typeof diagnostic.detail === 'string'
+    ? diagnostic.detail
+    : diagnostic.message;
+  throw new PlatformConfigError(diagnostic.path ?? fallbackPath, reason, detail);
+}
+
+function throwConfigErrors(diagnostics: readonly Diagnostic[], fallbackPath: string): void {
+  const diagnostic = diagnostics.find((entry) => entry.level === 'error');
+  if (diagnostic) throwConfigDiagnostic(diagnostic, fallbackPath);
+}
+
 /**
- * Load the effective project config — deep-merged across platform → project
- * → project overlays. Returns `null` when nothing contributed.
+ * Load platform config plus optional platform-owned project settings. The
+ * consumer repository is never consulted for `.kb/kb.config.*` or overlays.
  */
 export async function loadEffectiveConfig(
-  projectRoot: string,
+  _projectRoot: string,
   options: LoadEffectiveConfigOptions = {},
 ): Promise<EffectiveConfigResult | null> {
   const diagnostics: Diagnostic[] = [];
 
-  const usePlatform =
-    !!options.platformRoot && options.platformRoot !== projectRoot;
-
-  const generatedRoots = usePlatform ? [options.platformRoot!, projectRoot] : [projectRoot];
+  const platformRoot = options.platformRoot;
+  const generatedRoots = platformRoot ? [platformRoot] : [];
   const generatedLayer = await loadGeneratedLayer(generatedRoots);
   diagnostics.push(...generatedLayer.diagnostics);
+  throwConfigErrors(generatedLayer.diagnostics, platformRoot ?? '<platform generated config>');
 
-  const platformLayer = usePlatform
-    ? await readObjectsAtRoot(options.platformRoot!, diagnostics, 'platform')
+  const platformLayer = platformRoot
+    ? await readObjectsAtRoot(platformRoot, diagnostics, 'platform')
     : { paths: [] as string[], data: {} as Record<string, unknown>, files: [] as ConfigLayerFile[] };
-  const projectLayer = await readObjectsAtRoot(projectRoot, diagnostics, 'project');
-
-  const overlayResult = await loadOverlays(projectRoot);
+  const projectSettingsFile = options.projectId
+    ? projectSettingsPath({ projectId: options.projectId, root: options.storeRoot })
+    : undefined;
+  let projectSettings: Record<string, unknown> = {};
+  if (options.projectId) {
+    try {
+      projectSettings = await readProjectSettings({ projectId: options.projectId, root: options.storeRoot });
+    } catch (error) {
+      const reason = error instanceof JsoncSyntaxError
+        ? 'parse'
+        : error !== null && typeof error === 'object' && 'code' in error
+          ? 'read'
+          : 'invalid';
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new PlatformConfigError(projectSettingsFile!, reason, detail);
+    }
+  }
+  const projectPlatform = projectSettings.platform;
+  if (projectSettings.adapters !== undefined || projectSettings.adapterOptions !== undefined ||
+      (projectPlatform !== null && typeof projectPlatform === 'object' && !Array.isArray(projectPlatform) &&
+        ((projectPlatform as Record<string, unknown>).adapters !== undefined ||
+          (projectPlatform as Record<string, unknown>).adapterOptions !== undefined))) {
+    throw new AdapterProjectScopeError();
+  }
+  let projectSettingsPresent = false;
+  if (projectSettingsFile) {
+    try {
+      await fsp.access(projectSettingsFile);
+      projectSettingsPresent = true;
+    } catch {
+      projectSettingsPresent = false;
+    }
+  }
+  const projectLayer = {
+    paths: projectSettingsFile && projectSettingsPresent ? [projectSettingsFile] : [],
+    data: projectSettings,
+    files: projectSettingsFile && projectSettingsPresent
+      ? [{ layer: 'project' as const, path: projectSettingsFile, data: projectSettings }]
+      : [] as ConfigLayerFile[],
+  };
+  const overlayResult = options.projectId
+    ? await loadOverlays(projectOverlaysPath({ projectId: options.projectId, root: options.storeRoot }))
+    : { overlays: [], diagnostics: [] };
   diagnostics.push(...overlayResult.diagnostics);
-
+  throwConfigErrors(overlayResult.diagnostics, options.projectId
+    ? projectOverlaysPath({ projectId: options.projectId, root: options.storeRoot })
+    : '<project overlays>');
+  throwConfigErrors(diagnostics, platformRoot ?? '<platform config>');
   const nothingFound =
+    (options.pluginDefaults?.length ?? 0) === 0 &&
     generatedLayer.files.length === 0 &&
     platformLayer.paths.length === 0 &&
     projectLayer.paths.length === 0 &&
-    overlayResult.overlays.length === 0;
+    overlayResult.overlays.length === 0 &&
+    overlayResult.diagnostics.length === 0;
   if (nothingFound) {
     return null;
   }
 
-  // Platform ← project: SAME semantics as loadPlatformConfig — `mergeDefined`
-  // (arrays concatenate). Keeps both APIs returning the same shape for the
-  // shared two-layer step.
-  // The generated layer is the baseline under both user layers.
-  let merged: Record<string, unknown> = mergeDefined(
-    mergeDefined(generatedLayer.data, platformLayer.data),
-    projectLayer.data,
-  );
+  let merged: Record<string, unknown> = {};
+  for (const layer of [
+    ...(options.pluginDefaults ?? []),
+    ...generatedLayer.files,
+    ...platformLayer.files,
+    ...projectLayer.files,
+  ]) {
+    merged = mergeOverlay(merged, layer.data);
+  }
   // Overlays: REPLACE semantics for arrays (with opt-in `kb:merge: append`)
   // — overlays are the explicit override layer, not a deep-merge layer.
   const overlayPaths: string[] = [];
@@ -227,6 +300,7 @@ export async function loadEffectiveConfig(
   }
 
   const layers: ConfigLayerFile[] = [
+    ...(options.pluginDefaults ?? []),
     ...generatedLayer.files,
     ...platformLayer.files,
     ...projectLayer.files,

@@ -5,6 +5,8 @@
  * Makes REST API calls instead of in-process manager calls.
  */
 
+import { matchesPermissionPattern } from '@kb-labs/plugin-contracts';
+
 import type {
   JobsAPI,
   JobSubmission,
@@ -50,14 +52,7 @@ function checkJobPermission(
 
     // Check job type scope if specified
     if (jobType && jobPerms.types) {
-      const allowed = jobPerms.types.some((pattern: string) => {
-        if (pattern === '*') {return true;}
-        if (pattern.endsWith('*')) {
-          const prefix = pattern.slice(0, -1);
-          return jobType.startsWith(prefix);
-        }
-        return pattern === jobType;
-      });
+      const allowed = jobPerms.types.some((pattern: string) => matchesPermissionPattern(jobType, pattern));
 
       if (!allowed) {
         throw new Error(

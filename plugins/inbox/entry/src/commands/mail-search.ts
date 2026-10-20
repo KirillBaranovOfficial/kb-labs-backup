@@ -37,13 +37,12 @@ export default defineCommand({
         });
 
         if (input.flags.json) {
-          ctx.ui?.json?.({ ok: true, result: messages });
-          return { ok: true, result: messages };
+          return messages;
         }
 
         if (!messages.length) {
           ctx.ui?.info?.('No messages found.');
-          return { ok: true, result: messages };
+          return messages;
         }
 
         ctx.ui?.chain?.(messages.map(msg => ({
@@ -55,10 +54,9 @@ export default defineCommand({
           }],
         })));
 
-        return { ok: true, result: messages };
+        return messages;
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

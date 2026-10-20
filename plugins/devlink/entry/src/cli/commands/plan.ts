@@ -1,4 +1,4 @@
-import { defineCommand, useLoader, TimingTracker, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useLoader, TimingTracker, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { discoverMonorepos, buildPackageMapFiltered, buildPlan, groupByMonorepo, loadState } from '@kb-labs/devlink-core';
 import type { DevlinkMode, DevlinkPlan } from '@kb-labs/devlink-contracts';
 
@@ -22,7 +22,7 @@ export default defineCommand<unknown, PlanInput, DevlinkPlan>({
   description: 'Preview what would change when switching mode',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: PlanInput): Promise<CommandResult<DevlinkPlan>> {
+    async execute(ctx: PluginCommandContextV3, input: PlanInput): Promise<CommandResult<DevlinkPlan>> {
       const tracker = new TimingTracker();
       const flags = (input.flags ?? input) as PlanFlags;
       const outputJson = flags.json ?? false;
@@ -46,14 +46,13 @@ export default defineCommand<unknown, PlanInput, DevlinkPlan>({
         plan = buildPlan(targetMode, packageMap, monorepos, rootDir, { scopedRepos });
       } catch (err) {
         loader.fail('Failed to build plan');
-        handleError(ctx, err, outputJson);
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return handleError(err);
       }
       loader.succeed(`Plan ready: ${plan.items.length} change(s)`);
       tracker.checkpoint('plan');
 
       if (outputJson) {
-        ctx.ui?.json?.(plan);
+        return plan;
       } else {
         if (plan.items.length === 0) {
           ctx.ui?.info?.('No changes needed — already in the target mode.');
@@ -102,7 +101,7 @@ export default defineCommand<unknown, PlanInput, DevlinkPlan>({
         }
       }
 
-      return { ok: true, result: plan, meta: { timing: tracker.total() } };
+      return plan;
     },
   },
 });

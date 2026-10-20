@@ -7,6 +7,7 @@
     "e2e": "kb-labs-e2e-runner"
   },
   "devDependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/e2e-shared": "workspace:*",
     "@kb-labs/rest-api-app": "workspace:*",
     "@kb-labs/rest-api-core": "workspace:*",

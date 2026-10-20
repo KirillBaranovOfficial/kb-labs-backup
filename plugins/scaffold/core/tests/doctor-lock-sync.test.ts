@@ -34,19 +34,14 @@ async function writeLock(
   const kbDir = join(workspaceRoot, '.kb');
   await mkdir(kbDir, { recursive: true });
   const lock = {
-    schema: 'kb.marketplace/2',
-    installed: Object.fromEntries(
+    schema: 'kb.marketplace/3',
+    plugins: Object.fromEntries(
       Object.entries(installed).map(([id, v]) => [
         id,
         {
-          version: '0.1.0',
-          integrity: 'sha256-test',
-          resolvedPath: v.resolvedPath,
-          installedAt: new Date().toISOString(),
+          link: v.resolvedPath,
           source: 'local',
-          primaryKind: 'plugin',
-          provides: ['plugin'],
-          ...(v.enabled !== undefined ? { enabled: v.enabled } : {}),
+          enabled: v.enabled ?? true,
         },
       ]),
     ),

@@ -10,7 +10,8 @@ import {
   useConfig,
   findRepoRoot,
   handleError,
-  type PluginContextV3,
+  AdapterUnavailableError,
+  type PluginCommandContextV3,
   type CLIInput,
 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
@@ -35,7 +36,7 @@ import { resolveScopePath } from '../../rest/handlers/scope-resolver';
 
 type RunResult = CommandResult<CommitRunOutput>;
 
-async function resolveContext(ctx: PluginContextV3, flags: CommitFlags) {
+async function resolveContext(ctx: PluginCommandContextV3, flags: CommitFlags) {
   const llm = useLLM();
   const cwd = (await findRepoRoot(ctx.cwd || process.cwd())) ?? process.cwd();
   const fileConfig = await useConfig<Partial<CommitPluginConfig>>();
@@ -45,6 +46,10 @@ async function resolveContext(ctx: PluginContextV3, flags: CommitFlags) {
   const scopeCwd = resolveScopePath(cwd, effectiveScope, config.scope?.scopes);
   const rawPlatformConfig = await ctx.platform.config.getRawConfig();
   const llmConfigured = hasConfiguredLLM(rawPlatformConfig);
+
+  if (config.llm.enabled && !llmConfigured) {
+    throw new AdapterUnavailableError('llm');
+  }
 
   const llmComplete =
     llm && config.llm.enabled && llmConfigured
@@ -61,7 +66,7 @@ async function resolveContext(ctx: PluginContextV3, flags: CommitFlags) {
         }
       : undefined;
 
-  return { cwd, config, effectiveScope, scopeCwd, llmComplete, llmConfigured };
+  return { cwd, config, effectiveScope, scopeCwd, llmComplete };
 }
 
 function hasConfiguredLLM(config: unknown): boolean {
@@ -80,10 +85,44 @@ function hasConfiguredLLM(config: unknown): boolean {
   return typeof llm === 'string' ? llm.trim().length > 0 : Array.isArray(llm) && llm.length > 0;
 }
 
-function reportMissingLLM(ctx: PluginContextV3, config: CommitPluginConfig, llmConfigured: boolean): void {
-  if (config.llm.enabled && !llmConfigured) {
-    ctx.ui.write('No LLM configured — using heuristics. To enable AI messages: kb config set platform.adapters.llm @kb-labs/adapters-openai');
+function createEmptyCommitPlan(
+  repoRoot: string,
+  gitStatus: CommitRunOutput['plan']['gitStatus'],
+): CommitRunOutput['plan'] {
+  return {
+    schemaVersion: '1.0',
+    createdAt: new Date().toISOString(),
+    repoRoot,
+    gitStatus,
+    commits: [],
+    metadata: { totalFiles: 0, totalCommits: 0, llmUsed: false, escalated: false, tokensUsed: 0 },
+  };
+}
+
+function renderPreview(
+  ctx: PluginCommandContextV3,
+  plan: CommitRunOutput['plan'],
+  effectiveScope: string,
+  outputJson: boolean,
+  startTime: number,
+): RunResult {
+  const output: CommitRunOutput = { plan, applied: false, pushed: false, commits: [] };
+
+  if (outputJson) {
+    return output;
+  } else {
+    const items = plan.commits.map(c => `${c.type}${c.scope ? `(${c.scope})` : ''}: ${c.message}`);
+    ctx.ui?.success?.(plan.commits.length === 0 ? 'No changes to commit' : 'Commit plan generated (dry-run)', {
+      title: 'Git Commit',
+      sections: [
+        ...(items.length > 0 ? [{ header: 'Planned Commits', items }] : []),
+        { header: 'Result', items: [items.length === 0 ? 'No commits planned' : `Commits: ${items.length}`, 'Applied: No', `Scope: ${effectiveScope}`] },
+      ],
+      timing: Date.now() - startTime,
+    });
   }
+
+  return output;
 }
 
 export default defineCommand({
@@ -91,44 +130,10 @@ export default defineCommand({
   description: 'Generate and apply commits (default flow)',
 
   handler: {
-    async intent(ctx: PluginContextV3, input: CLIInput<CommitFlags>) {
-      const flags = input.flags;
-      const { effectiveScope, scopeCwd, llmComplete, config, llmConfigured } = await resolveContext(ctx, flags);
-
-      const status = await getGitStatus(scopeCwd);
-      if (!hasChanges(status)) {
-        return {
-          summary: 'No changes to commit',
-          operations: [],
-        };
-      }
-      reportMissingLLM(ctx, config, llmConfigured);
-
-      const plan = await generateCommitPlan({
-        cwd: scopeCwd,
-        llmComplete,
-        config,
-        allowSecrets: flags['allow-secrets'] ?? false,
-        autoConfirm: flags.yes ?? false,
-      });
-
-      return {
-        summary: `Generate and apply ${plan.commits.length} commit(s) in scope "${effectiveScope}"`,
-        operations: plan.commits.map(c => ({
-          type: 'create' as const,
-          resource: 'git-commit',
-          details: {
-            message: `${c.type}${c.scope ? `(${c.scope})` : ''}: ${c.message}`,
-            files: c.files.length,
-          },
-        })),
-      };
-    },
-
-    async execute(ctx: PluginContextV3, input: CLIInput<CommitFlags>): Promise<RunResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<CommitFlags>): Promise<RunResult> {
       const startTime = Date.now();
       const flags = input.flags;
-      const { cwd, effectiveScope, scopeCwd, llmComplete, config, llmConfigured } = await resolveContext(ctx, flags);
+      const { cwd, effectiveScope, scopeCwd, llmComplete, config } = await resolveContext(ctx, flags);
       const withPush = flags['with-push'] ?? false;
       const outputJson = flags.json ?? false;
 
@@ -140,16 +145,13 @@ export default defineCommand({
         status = await getGitStatus(scopeCwd);
       } catch (err) {
         statusLoader.fail('Failed to check git status');
-        handleError(ctx, err, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(err);
       }
 
       if (!hasChanges(status)) {
         statusLoader.stop();
-        ctx.ui?.warn?.('No changes to commit');
-        return { ok: false, error: 'Command failed' };
+        return renderPreview(ctx, createEmptyCommitPlan(scopeCwd, status), effectiveScope, outputJson, startTime);
       }
-      reportMissingLLM(ctx, config, llmConfigured);
       statusLoader.succeed('Git status analyzed');
 
       // 2. Generate plan
@@ -167,8 +169,13 @@ export default defineCommand({
         onResumeProgress: () => analyzeLoader.start(),
       });
 
-      await savePlan(cwd, plan);
       analyzeLoader.succeed(`Generated commit plan with ${plan.commits.length} commit(s)`);
+
+      if (flags['dry-run']) {
+        return renderPreview(ctx, plan, effectiveScope, outputJson, startTime);
+      }
+
+      await savePlan(cwd, plan);
 
       // 3. Apply plan
       const applyLoader = useLoader('Applying commits...');
@@ -177,15 +184,13 @@ export default defineCommand({
 
       if (!applyResult.success) {
         applyLoader.fail('Failed to apply commits');
-        if (outputJson) {
-          ctx.ui?.json?.({ ok: false, error: { code: 'APPLY_FAILED', message: applyResult.errors.join('; ') } });
-        } else {
-          ctx.ui?.error?.('Failed to apply commits', {
-            hint: 'Check git status and resolve conflicts manually',
-            cause: applyResult.errors.join('; '),
-          });
+        if (!outputJson) {
+
         }
-        return { ok: false, error: 'Command failed' };
+        return {
+          ok: false,
+          error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit plan could not be applied. Review the Git errors above, resolve them, then rerun `kb commit apply`.', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' },
+        };
       }
 
       await saveToHistory(cwd, plan, applyResult);
@@ -219,7 +224,7 @@ export default defineCommand({
       };
 
       if (outputJson) {
-        ctx.ui?.json?.(output);
+        return output;
       } else {
         const commitsItems = applyResult.appliedCommits.map((c) => {
           const shortSha = c.sha.substring(0, 7);
@@ -252,11 +257,7 @@ export default defineCommand({
         });
       }
 
-      return {
-        ok: true,
-        result: output,
-        meta: { timing: Date.now() - startTime },
-      };
+      return output;
     },
   },
 });

@@ -1,0 +1,46 @@
+{
+  "schema": "kb.create.platform-layout/v2",
+  "currentLink": "current",
+  "versionRoots": {
+    "path": "versions"
+  },
+  "sharedStateDirectory": "state",
+  "packageManagerStateDirectory": "state/package-manager",
+  "installerStateDirectory": "installer",
+  "hostStateDirectory": "installer/host",
+  "platformDataRoot": { "platformPath": ".kb/data", "statePath": "state/data" },
+  "ownershipRecord": "ownership.json",
+  "ownershipRecordStagingPrefix": ".ownership.json.pending-",
+  "ownedEntries": [
+    "current",
+    "versions",
+    "state",
+    "installer",
+    "ownership.json"
+  ],
+  "sharedRuntimePaths": [
+    { "platformPath": ".kb/v2/cache", "statePath": "state/cache", "kind": "directory", "preinstall": true },
+    { "platformPath": ".kb/v2/scenarios", "statePath": "state/scenarios", "kind": "directory", "preinstall": true },
+    { "platformPath": ".kb/kb.config.jsonc", "statePath": "state/kb.config.jsonc", "kind": "file" },
+    { "id": "secretState", "platformPath": ".kb/v2/secret-state.json", "statePath": "state/secret-state.json", "kind": "file", "preinstall": true },
+    { "platformPath": ".kb/logs", "statePath": "state/logs", "kind": "directory", "preinstall": true },
+    { "platformPath": ".kb/diagnostics", "statePath": "state/diagnostics", "kind": "directory", "preinstall": true }
+  ],
+  "versionStatePaths": [
+    ".kb/marketplace.lock"
+  ],
+  "installerRecords": {
+    "operationLogs": "installer/logs",
+    "failureDossiers": "installer/diagnostics",
+    "snapshots": "installer/snapshots",
+    "snapshotRetention": 2
+  },
+  "runtimeStatePaths": [
+    ".kb/v2/cache",
+    ".kb/v2/scenarios",
+    ".kb/kb.config.jsonc",
+    ".kb/v2/secret-state.json",
+    ".kb/logs",
+    ".kb/diagnostics"
+  ]
+}

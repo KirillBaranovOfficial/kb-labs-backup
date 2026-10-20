@@ -123,7 +123,7 @@ Plugin handler (Node.js)         ← API платформы, всегда TS
 **Отвечает за:** диспетчеризацию выполнения
 **Знает:** есть ли `environmentId` → local или remote
 **Не знает:** Docker/K8s/VM, workspace, snapshot
-**Интерфейс:** `IExecutionBackend` — `execute(request)`
+**Интерфейс:** `ExecutionBackend` из `@kb-labs/plugin-execution-factory`; его `execute(request)` возвращает результат с меткой нормализации фабрики.
 
 ### IExecutionTransport
 **Отвечает за:** канал связи между backend и runtime сервером в окружении
@@ -295,32 +295,9 @@ interface RemoteExecutionStream {
 }
 ```
 
-### Варианты адаптеров
+### Текущая реализация
 
-| Адаптер | Транспорт | Когда использовать |
-|---------|-----------|-------------------|
-| `adapters-transport-local` | fork + unix socket | LocalBackend, текущий subprocess |
-| `adapters-transport-tcp` | TCP + JSON protocol | Docker на том же хосте |
-| `adapters-transport-grpc` | gRPC | production, K8s, стриминг |
-| `adapters-transport-http` | HTTP + SSE | простые сценарии, serverless |
-
-### Конфигурация
-
-```json
-{
-  "platform": {
-    "adapters": {
-      "executionTransport": "@kb-labs/adapters-transport-tcp"
-    },
-    "adapterOptions": {
-      "executionTransport": {
-        "connectTimeoutMs": 5000,
-        "requestTimeoutMs": 300000
-      }
-    }
-  }
-}
-```
+Локальное выполнение использует `LocalBackend` и не требует транспортного адаптера. Удалённое выполнение принимает `IExecutionTransport` через параметры фабрики `core/plugin-execution-factory`; production-путь строит `GatewayDispatchTransport` в gateway. Контракт находится в `core/platform/src/error-envelope/execution-transport.ts`. Поддерживаемого `executionTransport` ключа в конфигурации платформы нет.
 
 ---
 
@@ -343,8 +320,11 @@ interface RemoteExecutionStream {
 
 ### Образ
 
+Use the Node.js major declared by the root `package.json` `engines.node` for
+the platform runtime image:
+
 ```dockerfile
-FROM node:24-alpine
+FROM node:<PLATFORM_NODE_MAJOR>-alpine
 COPY --from=monorepo /workspace /workspace  # или mount
 RUN npm install -g @kb-labs/plugin-runtime-server
 CMD ["kb-runtime-server", "--port", "9000"]

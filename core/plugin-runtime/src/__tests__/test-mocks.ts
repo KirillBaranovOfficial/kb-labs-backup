@@ -21,6 +21,7 @@ export function createMockLogger(): Mocked<PlatformServices['logger']> {
     warn: vi.fn(),
     error: vi.fn(),
     fatal: vi.fn(),
+    flush: vi.fn().mockResolvedValue(undefined),
     child: vi.fn(),
   };
   logger.child.mockReturnValue(logger);

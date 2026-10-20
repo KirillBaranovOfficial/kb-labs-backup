@@ -15,15 +15,13 @@
  */
 
 import type {
-  ExecutionBackend,
   ExecutionRequest,
   ExecutionResult,
   ExecuteOptions,
-  HealthStatus,
   ExecutionStats,
 } from '../types.js';
-import type { IExecutionTransport } from '@kb-labs/core-contracts';
-import { normalizeError } from '../utils.js';
+import type { IExecutionTransport } from '@kb-labs/core-platform';
+import { normalizeExecutionFailure } from '../utils.js';
 
 export interface RemoteBackendOptions {
   /** Transport implementation (e.g. GatewayDispatchTransport) */
@@ -37,7 +35,21 @@ export interface RemoteBackendOptions {
   workspaceRootOnHost?: string;
 }
 
-export class RemoteBackend implements ExecutionBackend {
+interface RemoteHealthStatus {
+  healthy: boolean;
+  backend: 'remote';
+  details?: Record<string, unknown>;
+}
+
+/** Internal remote transport contract; it is not part of the package API. */
+export interface RemoteExecutionBackend {
+  execute(request: ExecutionRequest, options?: ExecuteOptions): Promise<ExecutionResult>;
+  health(): Promise<RemoteHealthStatus>;
+  stats(): Promise<ExecutionStats>;
+  shutdown(): Promise<void>;
+}
+
+export class RemoteBackend implements RemoteExecutionBackend {
   private readonly transport: IExecutionTransport;
   private readonly workspaceRootOnHost?: string;
 
@@ -57,13 +69,13 @@ export class RemoteBackend implements ExecutionBackend {
 
   async execute(
     request: ExecutionRequest,
-    _options?: ExecuteOptions,
+    options?: ExecuteOptions,
   ): Promise<ExecutionResult> {
     const start = performance.now();
 
     try {
       const remappedRequest = this.remapRequest(request);
-      const { data } = await this.transport.execute(remappedRequest);
+      const { data } = await this.transport.execute(remappedRequest, { signal: options?.signal });
       const executionTimeMs = performance.now() - start;
       this.updateStats(true, executionTimeMs);
 
@@ -72,7 +84,6 @@ export class RemoteBackend implements ExecutionBackend {
         data,
         executionTimeMs,
         metadata: {
-          backend: 'remote',
           target: request.target,
         },
       };
@@ -82,10 +93,9 @@ export class RemoteBackend implements ExecutionBackend {
 
       return {
         ok: false,
-        error: normalizeError(error),
+        ...normalizeExecutionFailure(error),
         executionTimeMs,
         metadata: {
-          backend: 'remote',
           target: request.target,
         },
       };
@@ -122,7 +132,7 @@ export class RemoteBackend implements ExecutionBackend {
     this._stats.avgExecutionTimeMs = sum / this.executionTimes.length;
   }
 
-  async health(): Promise<HealthStatus> {
+  async health(): Promise<RemoteHealthStatus> {
     return {
       healthy: true,
       backend: 'remote',

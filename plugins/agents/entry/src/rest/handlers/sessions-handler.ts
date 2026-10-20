@@ -2,8 +2,8 @@
  * Session management REST handlers
  */
 
-import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { SessionManager } from '@kb-labs/agent-core';
+import { defineHandler, PluginError, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { globalAgentRegistry, SessionManager } from '@kb-labs/agent-core';
 import type {
   ListSessionsRequest,
   ListSessionsResponse,
@@ -85,6 +85,15 @@ export const createSessionHandler = defineHandler({
 
       if (!body?.agentId) {
         throw new Error('Agent ID is required');
+      }
+
+      if (!globalAgentRegistry.has(body.agentId)) {
+        throw new PluginError(
+          'KB_AGENT_NOT_FOUND',
+          `Agent ID "${body.agentId}" is not defined by the Agents plugin.`,
+          404,
+          { agentId: body.agentId },
+        );
       }
 
       const sessionManager = new SessionManager(ctx.cwd);

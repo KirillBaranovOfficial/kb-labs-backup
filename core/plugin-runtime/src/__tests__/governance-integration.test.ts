@@ -44,7 +44,7 @@ function makeDescriptor(pluginId: string, permissions: object): PluginContextDes
     pluginVersion: '1.0.0',
     requestId: `req-${pluginId}`,
     permissions,
-    hostContext: { host: 'cli', argv: [], flags: {} },
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
   };
 }
 

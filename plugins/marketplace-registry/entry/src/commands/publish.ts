@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { defineCommand, handleError, validationError, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { registryPostMultipart, registryPatch, resolveRegistryHandle } from '../registry-http.js';
 import { packPlugin } from '../pack-plugin.js';
 
@@ -21,12 +21,12 @@ interface PublishResultData {
   pageUrl?: string;
 }
 
-export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>({
+export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData | undefined>({
   id: 'marketplace:publish',
   description: 'Publish plugin to KB Labs Registry',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<PublishFlags>): Promise<CommandResult<PublishResultData>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<PublishFlags>): Promise<CommandResult<PublishResultData | undefined>> {
       const { flags = {} } = input;
       const pluginDir = path.resolve(ctx.cwd, flags.path ?? '.');
       const visibility = flags.private ? 'private' : 'public';
@@ -37,24 +37,16 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
         const content = await fs.readFile(path.join(pluginDir, 'package.json'), 'utf-8');
         pkgJson = JSON.parse(content) as Record<string, unknown>;
       } catch {
-        validationError(ctx, 'Cannot read package.json in current directory', 'Run this command from the plugin root directory', flags.json);
-        return { ok: false, error: 'Cannot read package.json' };
+        return validationError('Cannot read package.json in current directory', 'Run this command from the plugin root directory');
       }
 
       if (!pkgJson.name || !pkgJson.version) {
-        validationError(ctx, 'package.json must have name and version fields', undefined, flags.json);
-        return { ok: false, error: 'package.json must have name and version fields' };
+        return validationError('package.json must have name and version fields');
       }
 
       const kb = pkgJson['kb'] as Record<string, unknown> | undefined;
       if (!kb?.manifest && !kb?.adapter) {
-        validationError(
-          ctx,
-          'Not a KB Labs plugin or adapter',
-          'Add a kb.manifest or kb.adapter field to package.json',
-          flags.json,
-        );
-        return { ok: false, error: 'Not a KB Labs plugin or adapter' };
+        return validationError('Not a KB Labs plugin or adapter', 'Add a kb.manifest or kb.adapter field to package.json');
       }
 
       // Read README (non-fatal)
@@ -94,10 +86,9 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
             sections: [{ header: 'Package', items: [`${meta.name} @ ${handle}`] }],
             timing: Date.now() - t0,
           });
-          return { ok: true };
+          return;
         } catch (err) {
-          handleError(ctx, err, flags.json);
-          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+          return handleError(err, ctx.requestId);
         }
       }
 
@@ -110,8 +101,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
         tarball = await packPlugin(pluginDir);
         packMs = Date.now() - t1;
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return handleError(err, ctx.requestId);
       }
 
       try {
@@ -122,8 +112,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
         );
 
         if (flags.json) {
-          ctx.ui?.json?.(result);
-          return { ok: true, result };
+          return result;
         }
 
         ctx.ui?.chain?.([
@@ -144,23 +133,22 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
           },
         ]);
 
-        return { ok: true, result };
+        return result;
       } catch (err) {
-        if (flags.json) {
-          handleError(ctx, err, true);
-          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        const failure = handleError(err, ctx.requestId);
+        if (!flags.json) {
+          const message = err instanceof Error ? err.message : String(err);
+          ctx.ui?.chain?.([
+            { title: `Packed ${meta.name}@${meta.version}`, timing: packMs },
+            {
+              title: 'Publish failed',
+              status: 'error',
+              sections: [{ items: [message] }],
+              timing: Date.now() - t0,
+            },
+          ]);
         }
-        const message = err instanceof Error ? err.message : String(err);
-        ctx.ui?.chain?.([
-          { title: `Packed ${meta.name}@${meta.version}`, timing: packMs },
-          {
-            title: 'Publish failed',
-            status: 'error',
-            sections: [{ items: [message] }],
-            timing: Date.now() - t0,
-          },
-        ]);
-        return { ok: false, error: message };
+        return failure;
       }
     },
   },

@@ -43,7 +43,9 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type {
   UsersStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
+  MembershipsStore,
   ProviderRegistry,
   IPolicyDecisionPoint,
   JwtConfig,
@@ -52,19 +54,43 @@ import type {
   TenantResolver,
   OAuthStateStore,
 } from '@kb-labs/gateway-auth';
+import type { PlatformAuditStore } from '@kb-labs/core-platform';
 import { registerOAuthRoutes } from './oauth-routes.js';
+import { sendAuthError } from './error-response.js';
+import { authRejectionEnvelope, gatewayRequestUrl } from './tokens.js';
 import { AuthError, verifyCsrfToken } from '@kb-labs/gateway-auth';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import type { UserAuthContext } from './user-auth-middleware.js';
 import {
   setSessionCookies,
   clearSessionCookies,
+  COOKIE_ACCESS,
   COOKIE_REFRESH,
   COOKIE_CSRF,
   type CookieOptions,
 } from './user-cookies.js';
 
 export type { UserAuthContext };
+
+const tenantMutationTails = new Map<string, Promise<void>>();
+
+async function withTenantMutationLock<T>(tenantId: string, mutation: () => Promise<T>): Promise<T> {
+  const previous = tenantMutationTails.get(tenantId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  tenantMutationTails.set(tenantId, queued);
+  await previous;
+  try {
+    return await mutation();
+  } finally {
+    release();
+    if (tenantMutationTails.get(tenantId) === queued) {
+      tenantMutationTails.delete(tenantId);
+    }
+  }
+}
 
 // ── Service interface (matches createUserAuthService return type) ──────────────
 
@@ -95,13 +121,18 @@ export interface UserAuthServiceForRoutes {
     password: string;
     deviceCtx: { ip?: string; userAgent?: string };
   }): Promise<SessionResult>;
+  issuePasswordReset(input: { userId: string; tenantId: string; createdBy: string; ttlMs: number }): Promise<{ resetId: string; token: string; expiresAt: number }>;
+  completePasswordReset(input: { token: string; newPassword: string }): Promise<void>;
 }
 
 export interface UserAuthRouteDeps {
   userAuthService: UserAuthServiceForRoutes;
   users: UsersStore;
+  memberships: MembershipsStore;
   sessions: SessionsStore;
+  apiTokens: ApiTokensStore;
   invites: InvitesStore;
+  authAudit: PlatformAuditStore;
   providers: ProviderRegistry;
   pdp: IPolicyDecisionPoint;
   /** Resolves the tenant from the Host header — used to prevent tenantId bypass via body. */
@@ -142,7 +173,7 @@ function getCookies(request: FastifyRequest): Record<string, string | undefined>
 function requireUser(request: FastifyRequest, reply: FastifyReply): UserAuthContext | null {
   const ctx = request.userAuthContext;
   if (!ctx) {
-    void reply.code(401).send({ error: 'Unauthorized', message: 'No active user session' });
+    void sendAuthError(reply, 401, undefined, 'No active user session');
     return null;
   }
   return ctx;
@@ -153,11 +184,14 @@ function requireUser(request: FastifyRequest, reply: FastifyReply): UserAuthCont
  * Returns true if valid; sends 403 and returns false otherwise.
  */
 function checkCsrf(request: FastifyRequest, reply: FastifyReply): boolean {
+  // Bearer-authenticated CLI/API clients cannot be targeted by browser CSRF.
+  // Cookie-authenticated browser mutations still require the double-submit token.
+  if (!getCookies(request)[COOKIE_ACCESS]) {return true;}
   const cookieVal = getCookies(request)[COOKIE_CSRF];
   const headerVal = request.headers['x-csrf-token'];
   const headerStr = typeof headerVal === 'string' ? headerVal : undefined;
   if (!verifyCsrfToken(cookieVal, headerStr)) {
-    void reply.code(403).send({ error: 'Forbidden', message: 'CSRF token mismatch' });
+    void sendAuthError(reply, 403, undefined, 'CSRF token mismatch');
     return false;
   }
   return true;
@@ -211,7 +245,11 @@ export function createUserRefreshFn(
     } catch (err) {
       if (err instanceof AuthError) {
         clearSessionCookies(reply, cookieOpts);
-        void reply.code(401).send({ error: 'Unauthorized', message: 'Session expired or revoked' });
+        const reason = err.reason === 'expired' || err.reason === 'revoked' || err.reason === 'inactive' || err.reason === 'unknown-issuer'
+          ? err.reason
+          : 'invalid';
+        request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason }, 'Gateway authentication rejected');
+        void reply.code(401).send({ ok: false, error: authRejectionEnvelope(reason, gatewayRequestUrl(request), String(request.id)) });
         return true;
       }
       throw err;
@@ -277,7 +315,7 @@ async function recordLoginFailure(
 // ── Route registrar ───────────────────────────────────────────────────────────
 
 export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRouteDeps): void {
-  const { userAuthService, users, sessions, invites, providers, pdp, tenantResolver, bootstrapTenantId, cookieOpts, inviteTtlMs, rateLimiter, authRateLimit, oauthState, oauthCallbackPerIpPerMinute } = deps;
+  const { userAuthService, users, memberships, sessions, invites, apiTokens, authAudit, providers, pdp, tenantResolver, bootstrapTenantId, cookieOpts, inviteTtlMs, rateLimiter, authRateLimit, oauthState, oauthCallbackPerIpPerMinute } = deps;
   // Apply config defaults so the rest of the handler can use them without null-checks.
   const authRateLimitCfg = { loginPerIpPerMinute: 10, loginPerEmailPerMinute: 5, ...authRateLimit };
 
@@ -321,7 +359,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     // `--local` installs, where every request runs as this machine context.
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized', message: 'Not authenticated' });
+      return sendAuthError(reply, 401, undefined, 'Not authenticated');
     }
     return reply.send({
       userId: auth.userId,
@@ -405,7 +443,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
             return;
           }
         }
-        return reply.code(401).send({ error: 'invalid_credentials' });
+        return sendAuthError(reply, 401, undefined, undefined, 'KB_AUTH_INVALID_CREDENTIALS');
       }
       throw err;
     }
@@ -462,7 +500,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
             return;
           }
         }
-        return reply.code(401).send({ error: 'invalid_credentials' });
+        return sendAuthError(reply, 401, undefined, undefined, 'KB_AUTH_INVALID_CREDENTIALS');
       }
       throw err;
     }
@@ -491,7 +529,11 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       });
     } catch (err) {
       if (err instanceof AuthError) {
-        return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid or expired refresh token' });
+        const reason = err.reason === 'expired' || err.reason === 'revoked' || err.reason === 'inactive' || err.reason === 'unknown-issuer'
+          ? err.reason
+          : 'invalid';
+        request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason }, 'Gateway authentication rejected');
+        return reply.code(401).send({ ok: false, error: authRejectionEnvelope(reason, gatewayRequestUrl(request), String(request.id)) });
       }
       throw err;
     }
@@ -536,7 +578,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     // Permissions are already embedded in the machine AuthContext.
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized', message: 'No active session' });
+      return sendAuthError(reply, 401, undefined, 'No active session');
     }
     return reply.send({ permissions: auth.permissions });
   });
@@ -575,18 +617,22 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       return reply.send({ ok: true });
     } catch (err) {
       if (err instanceof AuthError) {
-        const code = (err as AuthError).code;
+        const code = err.code;
         if (code === 'unknown_invite') {
-          // 401 Unauthorized: token not found (garbage, never issued, or swept by TTL).
-          // Use error:'invalid_invite' so the activate-page shows the user-friendly
-          // "This invite link is invalid or expired" message (same as 422 path).
-          return reply.code(401).send({ error: 'invalid_invite', message: 'Invalid or expired invite' });
+          // Unknown, expired, revoked, and consumed invite tokens share the
+          // same public response so callers cannot distinguish token state.
+          return sendAuthError(reply, 422, undefined, undefined, 'KB_AUTH_INVALID_INVITE');
         }
-        if (code === 'invalid_invite') {
+        if (code === 'KB_AUTH_INVALID_INVITE') {
           // 422 Unprocessable Entity: the token was found but is expired or already consumed.
-          // The client (activate-page) maps error:'invalid_invite' to the
-          // user-friendly "This invite link is invalid or expired" message.
-          return reply.code(422).send({ error: 'invalid_invite', message: 'Invalid or expired invite' });
+          // The client maps this catalogued envelope to a user-friendly message.
+          return sendAuthError(reply, 422, undefined, undefined, 'KB_AUTH_INVALID_INVITE');
+        }
+        if (code === 'weak_password') {
+          return reply.code(400).send({ ok: false, error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+            message: err.reason ?? err.message,
+            hint: 'Choose a password that meets the configured password policy, then submit again.',
+          }) });
         }
         return reply.code(400).send({ error: 'Bad Request', message: err.message });
       }
@@ -621,9 +667,9 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       return reply.send({ ok: true });
     } catch (err) {
       if (err instanceof AuthError) {
-        const code = (err as AuthError).code;
+        const code = err.code;
         if (code === 'invalid_current_password') {
-          return reply.code(400).send({ error: 'Bad Request', message: 'Current password is incorrect' });
+          return sendAuthError(reply, 400, undefined, undefined, 'KB_AUTH_INVALID_CURRENT_PASSWORD');
         }
         if (code === 'weak_password') {
           return reply.code(400).send({ error: 'Bad Request', message: err.message });
@@ -706,23 +752,111 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     );
 
     if (!decision.allow) {
-      void reply.code(403).send({ error: 'Forbidden', message: `Permission denied: ${permission}` });
+      sendAuthError(reply, 403, permission);
       return false;
     }
     return true;
   }
 
+  app.post<{ Params: { id: string } }>('/auth/users/:id/password-reset-link', {
+    schema: { tags: ['Auth'], summary: 'Create a one-time password reset link for a tenant user (admin only)' },
+  }, async (request, reply) => {
+    if (!(await requirePermission(request, reply, PERMISSIONS.USERS_WRITE))) {return;}
+    if (!checkCsrf(request, reply)) {return;}
+    const ctx = request.userAuthContext!;
+    const target = await users.getById(request.params.id);
+    if (!target || target.tenantId !== ctx.tenantId) {
+      return reply.code(404).send({ error: 'Not found', message: 'User not found' });
+    }
+    const reset = await userAuthService.issuePasswordReset({
+      userId: target.userId, tenantId: target.tenantId, createdBy: ctx.userId, ttlMs: 24 * 60 * 60 * 1000,
+    });
+    await authAudit.record({
+      action: 'user.password_reset_link_created', actorUserId: ctx.userId,
+      targetUserId: target.userId, tenantId: ctx.tenantId,
+    });
+    const host = typeof request.headers.host === 'string' ? request.headers.host : 'localhost';
+    const protocol = cookieOpts.cookieSecure ? 'https' : 'http';
+    return reply.code(201).send({ resetUrl: `${protocol}://${host}/reset-password/${encodeURIComponent(reset.token)}`, expiresAt: reset.expiresAt });
+  });
+
+  app.post<{ Body: { token?: string; newPassword?: string } }>('/auth/password/reset', {
+    schema: { tags: ['Auth'], summary: 'Set a new password using an admin reset link' },
+  }, async (request, reply) => {
+    const { token, newPassword } = request.body ?? {};
+    if (typeof token !== 'string' || !token || typeof newPassword !== 'string' || !newPassword) {
+      return reply.code(400).send({ error: 'Bad Request', message: 'token and newPassword are required' });
+    }
+    try {
+      await userAuthService.completePasswordReset({ token, newPassword });
+      return reply.send({ ok: true });
+    } catch (err) {
+      if (err instanceof AuthError && err.code === 'KB_AUTH_INVALID_PASSWORD_RESET') {
+        return sendAuthError(reply, 400, undefined, undefined, 'KB_AUTH_INVALID_PASSWORD_RESET');
+      }
+      if (err instanceof AuthError && err.code === 'weak_password') {
+        return reply.code(400).send({ error: 'weak_password', message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  // Personal API tokens are long-lived credentials for agents and CI. They
+  // inherit the owner's current role and are only visible/revocable by owner.
+  app.get('/auth/tokens', async (request, reply) => {
+    const ctx = requireUser(request, reply);
+    if (!ctx) {return;}
+    const tokens = await apiTokens.listByUser(ctx.userId);
+    return reply.send({ tokens });
+  });
+
+  app.post<{ Body: { name?: string; expiresInDays?: number } }>('/auth/tokens', async (request, reply) => {
+    const ctx = requireUser(request, reply);
+    if (!ctx) {return;}
+    if (!checkCsrf(request, reply)) {return;}
+    const name = request.body?.name?.trim();
+    if (!name || name.length > 80) {return reply.code(400).send({ error: 'Bad Request', message: 'name is required and must be at most 80 characters' });}
+    const expiresInDays = request.body?.expiresInDays;
+    if (expiresInDays !== undefined && (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 365)) {
+      return reply.code(400).send({ error: 'Bad Request', message: 'expiresInDays must be an integer from 1 to 365' });
+    }
+    const created = await apiTokens.create({
+      userId: ctx.userId,
+      tenantId: ctx.tenantId,
+      name,
+      ...(expiresInDays === undefined ? {} : { ttlMs: expiresInDays * 24 * 60 * 60 * 1000 }),
+    });
+    return reply.code(201).send({ token: created.token, tokenRecord: created.record });
+  });
+
+  app.post<{ Params: { id: string } }>('/auth/tokens/:id/revoke', async (request, reply) => {
+    const ctx = requireUser(request, reply);
+    if (!ctx) {return;}
+    if (!checkCsrf(request, reply)) {return;}
+    const revoked = await apiTokens.revokeByUser(request.params.id, ctx.userId);
+    if (!revoked) {return reply.code(404).send({ error: 'Not found', message: 'API token not found' });}
+    return reply.send({ ok: true });
+  });
+
   // ── POST /auth/invites ──────────────────────────────────────────────────────
-  app.post<{ Body: { email?: string; groupId?: string; ttlMs?: number } }>('/auth/invites', {
+  app.post<{ Body: { email?: string; role?: string; ttlMs?: number } }>('/auth/invites', {
     schema: { tags: ['Auth'], summary: 'Create an invite for a new user (admin only)' },
   }, async (request, reply) => {
     if (!(await requirePermission(request, reply, PERMISSIONS.INVITES_WRITE))) {return;}
     if (!checkCsrf(request, reply)) {return;}
 
     const ctx = request.userAuthContext!;
-    const { email, groupId, ttlMs: bodyTtlMs } = request.body ?? {};
-    if (!email || !groupId) {
-      return reply.code(400).send({ error: 'Bad Request', message: 'email and groupId are required' });
+    const { email, role, ttlMs: bodyTtlMs } = request.body ?? {};
+    if (typeof email !== 'string' || !email || (role !== 'admin' && role !== 'member')) {
+      return reply.code(400).send({ error: 'Bad Request', message: 'email and role (admin or member) are required' });
+    }
+
+    const targetRole = role === 'admin' ? 'tenant-admin' : 'tenant-member';
+    if (targetRole === 'tenant-admin' && !(await pdp.check(
+      { userId: ctx.userId, tenantId: ctx.tenantId, type: 'user' },
+      PERMISSIONS.USERS_WRITE,
+    )).allow) {
+      return sendAuthError(reply, 403, PERMISSIONS.USERS_WRITE);
     }
 
     // Allow callers to specify a custom TTL (e.g., short-lived invites for testing
@@ -733,14 +867,14 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     const result = await invites.createInvite({
       email,
       tenantId: ctx.tenantId,
-      groupId: groupId as 'tenant-admin' | 'tenant-member',
+      groupId: targetRole,
       createdBy: ctx.userId,
       ttlMs: effectiveTtlMs,
     });
 
     const host = typeof request.headers.host === 'string' ? request.headers.host : 'localhost';
     const protocol = cookieOpts.cookieSecure ? 'https' : 'http';
-    const activationUrl = `${protocol}://${host}/activate?token=${result.activationToken}`;
+    const activationUrl = `${protocol}://${host}/activate/${encodeURIComponent(result.activationToken)}`;
 
     return reply.code(201).send({ inviteId: result.inviteId, activationUrl });
   });
@@ -784,13 +918,57 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
 
     const ctx = request.userAuthContext!;
     const all = await users.listByTenant(ctx.tenantId);
+    const tenantMemberships = await memberships.listByTenant(ctx.tenantId);
+    const groupByUser = new Map(tenantMemberships.map((membership) => [membership.userId, membership.groupId]));
     return reply.send({
       users: all.map((u) => ({
         userId: u.userId,
         email: u.email,
         tenantId: u.tenantId,
         status: u.status,
+        role: groupByUser.get(u.userId) === 'tenant-admin' ? 'admin' : 'member',
       })),
+    });
+  });
+
+  async function isLastActiveAdmin(tenantId: string, userId: string): Promise<boolean> {
+    const tenantMemberships = await memberships.listByTenant(tenantId);
+    const activeAdmins = await Promise.all(tenantMemberships
+      .filter((membership) => membership.groupId === 'tenant-admin')
+      .map(async (membership) => ({ membership, user: await users.getById(membership.userId) })));
+    return activeAdmins.filter(({ user }) => user?.status === 'active').length === 1
+      && activeAdmins.some(({ membership, user }) => membership.userId === userId && user?.status === 'active');
+  }
+
+  app.post<{ Params: { id: string }; Body: { role?: string } }>('/auth/users/:id/role', {
+    schema: { tags: ['Auth'], summary: 'Change a tenant user role (admin only)' },
+  }, async (request, reply) => {
+    if (!(await requirePermission(request, reply, PERMISSIONS.USERS_WRITE))) {return;}
+    if (!checkCsrf(request, reply)) {return;}
+
+    const ctx = request.userAuthContext!;
+    return withTenantMutationLock(ctx.tenantId, async () => {
+      const target = await users.getById(request.params.id);
+      if (!target || target.tenantId !== ctx.tenantId) {
+        return reply.code(404).send({ error: 'Not found', message: 'User not found' });
+      }
+      const { role } = request.body ?? {};
+      if (role !== 'admin' && role !== 'member') {
+        return reply.code(400).send({ error: 'Bad Request', message: 'role must be admin or member' });
+      }
+      const groupId = role === 'admin' ? 'tenant-admin' : 'tenant-member';
+      const currentMembership = (await memberships.listByUser(target.userId))
+        .find((membership) => membership.tenantId === ctx.tenantId);
+      if (!currentMembership) {
+        return reply.code(404).send({ error: 'Not found', message: 'User membership not found' });
+      }
+      if (groupId === 'tenant-member' && currentMembership.groupId === 'tenant-admin'
+        && target.status === 'active' && await isLastActiveAdmin(ctx.tenantId, target.userId)) {
+        return sendAuthError(reply, 409, undefined, undefined, 'KB_AUTH_LAST_ADMIN');
+      }
+      await memberships.setGroup(target.userId, ctx.tenantId, groupId);
+      await authAudit.record({ action: 'user.role_changed', actorUserId: ctx.userId, targetUserId: target.userId, tenantId: ctx.tenantId });
+      return reply.send({ ok: true, role });
     });
   });
 
@@ -804,20 +982,29 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     if (!checkCsrf(request, reply)) {return;}
 
     const ctx = request.userAuthContext!;
-    const { id } = request.params;
-    const target = await users.getById(id);
-    // Tenant-ownership guard: an admin may only act on users in their own
-    // tenant. requirePermission only proves "you are an admin of ctx.tenantId",
-    // not that the target belongs there. Return 404 (not 403) so we don't leak
-    // the existence of users in other tenants.
-    if (!target || target.tenantId !== ctx.tenantId) {
-      return reply.code(404).send({ error: 'Not found', message: 'User not found' });
-    }
+    return withTenantMutationLock(ctx.tenantId, async () => {
+      const { id } = request.params;
+      const target = await users.getById(id);
+      // Tenant-ownership guard: an admin may only act on users in their own
+      // tenant. requirePermission only proves "you are an admin of ctx.tenantId",
+      // not that the target belongs there. Return 404 (not 403) so we don't leak
+      // the existence of users in other tenants.
+      if (!target || target.tenantId !== ctx.tenantId) {
+        return reply.code(404).send({ error: 'Not found', message: 'User not found' });
+      }
 
-    await users.setStatus(id, 'disabled');
-    await sessions.revokeAllUserSessions(id);
+      const membership = (await memberships.listByUser(target.userId))
+        .find((entry) => entry.tenantId === ctx.tenantId);
+      if (target.status === 'active' && membership?.tenantId === ctx.tenantId
+        && membership.groupId === 'tenant-admin' && await isLastActiveAdmin(ctx.tenantId, target.userId)) {
+        return sendAuthError(reply, 409, undefined, undefined, 'KB_AUTH_LAST_ADMIN');
+      }
 
-    return reply.send({ ok: true });
+      await users.setStatus(id, 'disabled');
+      await sessions.revokeAllUserSessions(id);
+
+      return reply.send({ ok: true });
+    });
   });
 
   // ── POST /auth/users/:id/enable ─────────────────────────────────────────────
@@ -828,14 +1015,16 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     if (!checkCsrf(request, reply)) {return;}
 
     const ctx = request.userAuthContext!;
-    const { id } = request.params;
-    const target = await users.getById(id);
-    // Tenant-ownership guard (see /disable). 404 to avoid cross-tenant leakage.
-    if (!target || target.tenantId !== ctx.tenantId) {
-      return reply.code(404).send({ error: 'Not found', message: 'User not found' });
-    }
+    return withTenantMutationLock(ctx.tenantId, async () => {
+      const { id } = request.params;
+      const target = await users.getById(id);
+      // Tenant-ownership guard (see /disable). 404 to avoid cross-tenant leakage.
+      if (!target || target.tenantId !== ctx.tenantId) {
+        return reply.code(404).send({ error: 'Not found', message: 'User not found' });
+      }
 
-    await users.setStatus(id, 'active');
-    return reply.send({ ok: true });
+      await users.setStatus(id, 'active');
+      return reply.send({ ok: true });
+    });
   });
 }

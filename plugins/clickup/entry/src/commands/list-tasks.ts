@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, getListTasks } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 import { slimTask } from '../utils/slim.js';
@@ -18,11 +18,10 @@ export default defineCommand({
   description: 'List tasks in a specific list',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ListTasksFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ListTasksFlags>) {
       const [listId] = input.argv;
       if (!listId) {
-        validationError(ctx, 'List ID is required', 'Usage: kb clickup list tasks <listId>  (get IDs via `kb clickup workspace`)', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('List ID is required', 'Usage: kb clickup list tasks <listId>  (get IDs via `kb clickup workspace`)');
       }
 
       try {
@@ -35,13 +34,12 @@ export default defineCommand({
         });
 
         if (input.flags.json) {
-          ctx.ui?.json?.(input.flags.full ? tasks : tasks.map(slimTask));
-          return { ok: true, result: tasks };
+          return input.flags.full ? tasks : tasks.map(slimTask);
         }
 
         if (!tasks.length) {
           ctx.ui?.info?.('No tasks found.');
-          return { ok: true, result: tasks };
+          return tasks;
         }
 
         ctx.ui?.table?.(
@@ -61,10 +59,9 @@ export default defineCommand({
           ],
         );
 
-        return { ok: true, result: tasks };
+        return tasks;
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

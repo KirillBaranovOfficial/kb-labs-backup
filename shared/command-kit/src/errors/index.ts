@@ -6,5 +6,3 @@
 export * from './types';
 export * from './format';
 export * from './factory';
-export * from './envelope';
-

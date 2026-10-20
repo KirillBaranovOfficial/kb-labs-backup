@@ -112,7 +112,7 @@ Documented in `scripts/checks/check-cli-naming.mjs` and `cli/commands/src/regist
 | R4 | `workflow`: `runs-list`, `runs-view`, `runs-watch`, `runs-rerun`, `job-run` | `workflow runs list`, `workflow runs view`, `workflow job run` |
 | R5 | `mind`: `rag-index`, `rag-query`, `sync-add`, `sync-update`, `sync-delete`, `sync-list`, `sync-status` | `mind index`, `mind search`, `mind sync add`, `mind sync list` |
 | R6 | `clickup`: `comment-list`, `comment-add` | `clickup task comments list`, `clickup task comments add` |
-| R7 | `registry` system command | Move under `platform diag` or `info diag` |
+| R7 | `registry` system command | Keep `kb diag` top-level; assess registry command separately |
 
 ### 🟢 Nice to have
 

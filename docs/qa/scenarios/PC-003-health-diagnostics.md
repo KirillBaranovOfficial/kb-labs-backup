@@ -1,67 +1,27 @@
 ---
 id: PC-003
+title: PC-003 — Diagnose platform health
+persona: solo-developer
 area: platform-core
-title: Health & diagnostics
 priority: P0
-env: kb-env (services running)
-requires: PC-002
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
 
-Platform self-diagnostics catch real problems and give actionable output.
-A developer can quickly tell if something is wrong and why.
+A developer checks V2 installation and runtime health and gets named findings for a broken setup.
 
-## Environment
+## Prerequisites
 
-- [ ] Services running (`kb-dev status` all green)
-- [ ] Project directory active
-
----
+- [ ] V2 platform root and runtime config.
 
 ## Steps
 
-### Phase 1 — Doctor (clean state)
-
 | # | Action | Expected |
-|---|--------|----------|
-| 1 | `kb-create doctor` | All checks pass, exit 0 |
-| 2 | Output includes Node version check | Node 24+ confirmed |
-| 3 | Output includes platform package versions | No version mismatch |
-| 4 | Output includes config validation | Config valid |
-| 5 | `kb-dev doctor` | All services healthy, exit 0 |
-| 6 | `kb-dev doctor` output names each service | gateway, rest-api, workflow, marketplace, state |
-
-### Phase 2 — Gateway health details
-
-| # | Action | Expected |
-|---|--------|----------|
-| 7 | `curl -s http://localhost:4000/health \| jq .` | `status: healthy`, all adapters listed |
-| 8 | Response includes `adapters.llm.available` | Present (true or false — not missing) |
-| 9 | Response includes `adapters.cache.available` | Present |
-| 10 | Response includes `uptime` in seconds | > 0 |
-
-### Phase 3 — Doctor catches a broken state
-
-| # | Action | Expected |
-|---|--------|----------|
-| 11 | `kb-dev stop` — stop all services | — |
-| 12 | `kb-dev doctor` with services stopped | Reports services as down, does NOT crash |
-| 13 | Error message is actionable | Says which service is down, suggests `kb-dev start` |
-| 14 | Exit code is non-zero | `echo $?` → 1 |
-| 15 | `kb-dev start` — start again | Doctor passes again |
-
-### Phase 4 — Status output
-
-| # | Action | Expected |
-|---|--------|----------|
-| 16 | `kb-dev status` | Table or list with service name, status, PID, port |
-| 17 | `kb-dev status --json` | Valid JSON array/object with same fields |
-| 18 | `kb-create status` | Platform version, component list, project path |
-
----
-
-## Pass criteria
-
-Doctor passes in clean state. Doctor catches stopped services with a clear message.
-`--json` output is valid JSON. Exit codes are correct (0 = ok, non-zero = problem).
+|---|---|---|
+| PC-003.1 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` on a healthy running install | Exits 0; JSON has `ok`, `installed`, `running`, and `reachable` set to `true`, with `installation.ok` and `platform.ok` set to `true`. The retention report identifies the install root, `current` platform root, `versions/`, shared state, installer state, and host-state directory from the layout contract. |
+| PC-003.2 | Move `$PLATFORM_ROOT/current/.kb/v2/receipt.json` out of the active version root and run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | Exits 1; human and JSON output show a typed `KB_INSTALL_RECEIPT_UNAVAILABLE` failure with an actionable install hint and correlation ID; no raw receipt error is shown. |
+| PC-003.3 | Restore `$PLATFORM_ROOT/current/.kb/v2/receipt.json` and run the doctor again | The healthy result from PC-003.1 is restored; no secret value or stack trace appears in terminal output. |

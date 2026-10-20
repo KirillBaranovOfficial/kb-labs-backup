@@ -20,15 +20,25 @@ import (
 	"github.com/kb-labs/create/v2/flow"
 	"github.com/kb-labs/create/v2/scenario"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 type IO struct {
 	In  io.Reader
 	Out io.Writer
+	// PendingSecrets holds values in memory until the resolved plan accepts the
+	// requirements. The apply owner persists them after validating all sources.
+	PendingSecrets map[string]secrets.PendingSecret
 	// ReadSecret reads one line of secret input without echoing it. When nil, a
 	// real terminal is read with echo disabled and any other input (a pipe, a
 	// test) is read as a plain line.
-	ReadSecret func() (string, error)
+	ReadSecret       func() (string, error)
+	SkipRequirements []string
+}
+
+func renderPrompt(output io.Writer, format string, values ...any) error {
+	_, err := fmt.Fprintf(output, format, values...)
+	return err
 }
 
 // secretAttempts bounds how often a hidden, unverifiable answer is re-asked
@@ -41,6 +51,15 @@ func Request(source catalog.Catalog, platformRoot string, terminal IO) (contract
 	}
 	if strings.TrimSpace(platformRoot) == "" {
 		return contracts.InstallRequest{}, fmt.Errorf("platform root is required")
+	}
+	layout, err := versionroot.New(platformRoot)
+	if err != nil {
+		return contracts.InstallRequest{}, err
+	}
+	if err := layout.ValidateInitialTarget(); err != nil {
+		return contracts.InstallRequest{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
+			"The chosen install root is not an empty directory or an owned installation container.",
+			"Choose a fresh writable path, then run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"`.", err)
 	}
 	if terminal.In == nil || terminal.Out == nil {
 		return contracts.InstallRequest{}, fmt.Errorf("wizard input and output are required")
@@ -80,7 +99,7 @@ func Request(source catalog.Catalog, platformRoot string, terminal IO) (contract
 // RequestScenario is the human-facing compiler for a declarative V2 scenario.
 // It owns prompts and navigation only; scenario.Compile and the shared V2
 // resolver remain the authority for request meaning and compatibility.
-func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, terminal IO) (contracts.InstallRequest, error) {
+func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRoot string, terminal IO) (contracts.InstallRequest, error) {
 	if err := catalog.Verify(source); err != nil {
 		return contracts.InstallRequest{}, err
 	}
@@ -91,6 +110,24 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 		return contracts.InstallRequest{}, fmt.Errorf("wizard input and output are required")
 	}
 	reader := bufio.NewReader(terminal.In)
+	if strings.TrimSpace(projectRoot) == "" {
+		if err := renderPrompt(terminal.Out,
+			"Project directory (press Enter to install without a project): "); err != nil {
+			return contracts.InstallRequest{}, err
+		}
+		value, readErr := reader.ReadString('\n')
+		if readErr != nil && readErr != io.EOF {
+			return contracts.InstallRequest{}, readErr
+		}
+		projectRoot = strings.TrimSpace(value)
+	}
+	if projectRoot != "" {
+		canonical, pathErr := contracts.ValidateProjectSelection(projectRoot)
+		if pathErr != nil {
+			return contracts.InstallRequest{}, pathErr
+		}
+		projectRoot = canonical
+	}
 	if scenarioID == "" {
 		ids, err := scenario.IDs()
 		if err != nil {
@@ -104,6 +141,9 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 	definition, err := scenario.Load(scenarioID)
 	if err != nil {
 		return contracts.InstallRequest{}, err
+	}
+	if len(terminal.SkipRequirements) > 0 {
+		definition = withoutRequirements(definition, terminal.SkipRequirements)
 	}
 	channels := availableChannels(source)
 	channel, err := choose(reader, terminal.Out, "Platform channel", channels, string(contracts.ChannelStable))
@@ -124,16 +164,16 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
-	base := contracts.InstallRequest{PlatformRoot: platformRoot, Platform: contracts.VersionSelector{Channel: contracts.Channel(channel)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceRegistry}
+	base := contracts.InstallRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot, Platform: contracts.VersionSelector{Channel: contracts.Channel(channel)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceRegistry}
 	session, err := flow.New(definition, nil, nil)
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
-	// Secret values typed (or generated) during the journey. They stay in memory
-	// until the request compiled, then only those the request actually names are
-	// written to the private secret store; they never reach the answers, the
-	// request, the terminal output or the resume state.
+	// Secret values typed (or generated) during the journey stay in memory until
+	// the selected request is resolved by the shared installer boundary.
 	pending := map[string]string{}
+	generatedValues := map[string]bool{}
+	store := secrets.Store{PlatformRoot: platformRoot}
 	for !session.State.Done {
 		requests := session.Inspect()
 		for _, request := range requests {
@@ -146,12 +186,27 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 				fmt.Fprintf(terminal.Out, "%s: %s\n", label, field.Description)
 			}
 			if field.Secret {
-				value, skipped, secretErr := askSecret(reader, terminal, &session, field, label)
+				if value, present, readErr := store.Get(field.Requirement); readErr != nil {
+					return contracts.InstallRequest{}, fmt.Errorf("read stored secret %s: %w", field.Requirement, readErr)
+				} else if present {
+					raw, marshalErr := json.Marshal(value)
+					if marshalErr != nil {
+						return contracts.InstallRequest{}, marshalErr
+					}
+					if err := session.Apply(field.ID, raw, flow.SourceDefault); err != nil {
+						return contracts.InstallRequest{}, err
+					}
+					continue
+				}
+				value, skipped, generated, secretErr := askSecret(reader, terminal, &session, field, label)
 				if secretErr != nil {
 					return contracts.InstallRequest{}, secretErr
 				}
 				if !skipped {
 					pending[field.Requirement] = value
+					if generated {
+						generatedValues[field.Requirement] = true
+					}
 				}
 				continue
 			}
@@ -176,7 +231,9 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 				}
 				raw = fmt.Sprintf("%q", value)
 			} else {
-				fmt.Fprintf(terminal.Out, "%s: ", label)
+				if err := renderPrompt(terminal.Out, "%s: ", label); err != nil {
+					return contracts.InstallRequest{}, err
+				}
 				value, readErr := reader.ReadString('\n')
 				if readErr != nil && readErr != io.EOF {
 					return contracts.InstallRequest{}, readErr
@@ -195,17 +252,48 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
-	store := secrets.Store{PlatformRoot: platformRoot}
 	for _, id := range request.SecretInputs {
 		value, ok := pending[id]
 		if !ok {
 			continue // named by the request but not entered here (supplied another way)
 		}
-		if err := store.Put(id, value); err != nil {
-			return contracts.InstallRequest{}, fmt.Errorf("store secret %s: %w", id, err)
+		origin := secrets.BootstrapPasswordOrigin("")
+		if id == secrets.BootstrapPassword {
+			origin = secrets.BootstrapOriginSupplied
+			if generatedValues[id] {
+				origin = secrets.BootstrapOriginGenerated
+			}
 		}
+		if terminal.PendingSecrets == nil {
+			return contracts.InstallRequest{}, fmt.Errorf("pending secret destination is required")
+		}
+		terminal.PendingSecrets[id] = secrets.PendingSecret{Value: value, Origin: origin}
 	}
 	return request, nil
+}
+
+func withoutRequirements(definition scenario.Scenario, requirements []string) scenario.Scenario {
+	skipped := make(map[string]struct{}, len(requirements))
+	for _, requirement := range requirements {
+		skipped[requirement] = struct{}{}
+	}
+	filter := func(fields []scenario.Field) []scenario.Field {
+		result := fields[:0]
+		for _, field := range fields {
+			if _, skip := skipped[field.Requirement]; !skip {
+				result = append(result, field)
+			}
+		}
+		return result
+	}
+	definition.Fields = filter(definition.Fields)
+	for pageIndex := range definition.Pages {
+		for sectionIndex := range definition.Pages[pageIndex].Sections {
+			section := &definition.Pages[pageIndex].Sections[sectionIndex]
+			section.Fields = filter(section.Fields)
+		}
+	}
+	return definition
 }
 
 // askSecret collects one secret field. Input is hidden on a terminal. A blank
@@ -213,32 +301,38 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 // fields, and otherwise skips the field (nothing is recorded for it). A value a
 // human chose (not generated) is asked twice, since hidden input cannot be
 // proofread. Format errors and mismatches re-ask instead of aborting the journey.
-func askSecret(reader *bufio.Reader, terminal IO, session *flow.Session, field scenario.Field, label string) (string, bool, error) {
+func askSecret(reader *bufio.Reader, terminal IO, session *flow.Session, field scenario.Field, label string) (string, bool, bool, error) {
 	for attempt := 1; ; attempt++ {
-		fmt.Fprintf(terminal.Out, "%s: ", label)
+		if err := renderPrompt(terminal.Out, "%s: ", label); err != nil {
+			return "", false, false, err
+		}
 		value, err := readSecret(reader, terminal)
 		if err != nil {
-			return "", false, err
+			return "", false, false, err
 		}
 		problem := ""
+		generated := false
 		switch {
 		case value == "" && field.Generate:
-			generated, genErr := generateSecret()
+			secretValue, genErr := generateSecret()
 			if genErr != nil {
-				return "", false, genErr
+				return "", false, false, genErr
 			}
-			value = generated
-			fmt.Fprintf(terminal.Out, "%s: generated a random value (stored, not shown)\n", label)
+			value = secretValue
+			generated = true
+			fmt.Fprintf(terminal.Out, "%s: generated a random value (not shown)\n", label)
 		case value == "" && field.Required:
 			problem = "a value is required"
 		case value == "":
 			fmt.Fprintf(terminal.Out, "%s: skipped\n", label)
-			return "", true, nil
+			return "", true, false, nil
 		default:
-			fmt.Fprintf(terminal.Out, "Confirm %s: ", strings.ToLower(label))
+			if err := renderPrompt(terminal.Out, "Confirm %s: ", strings.ToLower(label)); err != nil {
+				return "", false, false, err
+			}
 			again, confirmErr := readSecret(reader, terminal)
 			if confirmErr != nil {
-				return "", false, confirmErr
+				return "", false, false, confirmErr
 			}
 			if again != value {
 				problem = "the two entries do not match"
@@ -247,17 +341,17 @@ func askSecret(reader *bufio.Reader, terminal IO, session *flow.Session, field s
 		if problem == "" {
 			raw, marshalErr := json.Marshal(value)
 			if marshalErr != nil {
-				return "", false, marshalErr
+				return "", false, false, marshalErr
 			}
 			if applyErr := session.Apply(field.ID, raw, flow.SourceHuman); applyErr != nil {
 				// The message names the field and the rule, never the value.
 				problem = strings.TrimPrefix(applyErr.Error(), fmt.Sprintf("field %q: ", field.ID))
 			} else {
-				return value, false, nil
+				return value, false, generated, nil
 			}
 		}
 		if attempt >= secretAttempts {
-			return "", false, fmt.Errorf("%s: %s", label, problem)
+			return "", false, false, fmt.Errorf("%s: %s", label, problem)
 		}
 		fmt.Fprintf(terminal.Out, "%s: %s; try again\n", label, problem)
 	}
@@ -298,7 +392,9 @@ func defaultString(raw []byte) string {
 }
 
 func choose(reader *bufio.Reader, output io.Writer, label string, options []string, fallback string) (string, error) {
-	fmt.Fprintf(output, "%s [%s] (default %s): ", label, strings.Join(options, ", "), fallback)
+	if err := renderPrompt(output, "%s [%s] (default %s): ", label, strings.Join(options, ", "), fallback); err != nil {
+		return "", err
+	}
 	value, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return "", err
@@ -316,7 +412,9 @@ func choose(reader *bufio.Reader, output io.Writer, label string, options []stri
 }
 
 func chooseMany(reader *bufio.Reader, output io.Writer, label string, options []string) ([]string, error) {
-	fmt.Fprintf(output, "%s [%s]: ", label, strings.Join(options, ", "))
+	if err := renderPrompt(output, "%s [%s]: ", label, strings.Join(options, ", ")); err != nil {
+		return nil, err
+	}
 	value, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return nil, err

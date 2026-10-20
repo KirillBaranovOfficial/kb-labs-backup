@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
@@ -18,28 +19,34 @@ const CREDS = {
   expiresAt: Date.now() + 900_000,
 };
 
-const mockLoad = vi.fn();
+const { mockLoad, mockFetch, gatewayApiFetch, resolveActiveGateway } = vi.hoisted(() => ({
+  mockLoad: vi.fn(), mockFetch: vi.fn(), gatewayApiFetch: vi.fn(), resolveActiveGateway: vi.fn(),
+}));
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
   CredentialsManager: class {
     load = mockLoad;
   },
+  readGatewaySuccessData: async (response: Response) => (await response.json() as { data: unknown }).data,
+  gatewayApiFetch,
+  resolveActiveGateway,
 }));
 
-const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 import { webhookProvision } from '../commands/system/webhook/webhook-provision.js';
 import { webhookList } from '../commands/system/webhook/webhook-list.js';
 import { webhookRevoke } from '../commands/system/webhook/webhook-revoke.js';
+import { webhookHistory } from '../commands/system/webhook/webhook-history.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function makeJsonResponse(body: unknown, status = 200): Response {
+  const result = status >= 200 && status < 300 ? { ok: true, data: body } : body;
   return {
     ok: status >= 200 && status < 300,
     status,
-    text: async () => JSON.stringify(body),
-    json: async () => body,
+    text: async () => JSON.stringify(result),
+    json: async () => result,
   } as unknown as Response;
 }
 
@@ -52,7 +59,7 @@ function makeEmptyResponse(status: number): Response {
   } as unknown as Response;
 }
 
-type Captured = { errors: string[]; output: string[]; json: unknown[] };
+type Captured = { errors: string[]; output: string[]; json: unknown[]; logs?: string[] };
 
 function makeCtx(captured: Captured): PluginContextV3 {
   return {
@@ -69,8 +76,8 @@ function makeCtx(captured: Captured): PluginContextV3 {
     },
     platform: {
       logger: {
-        trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(),
-        error: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(),
+        trace: vi.fn(), debug: vi.fn(), info: (...args: unknown[]) => { captured.logs?.push(JSON.stringify(args)); }, warn: vi.fn(),
+        error: (...args: unknown[]) => { captured.logs?.push(JSON.stringify(args)); }, fatal: vi.fn(), child: vi.fn().mockReturnThis(),
       },
       llm: {} as any, embeddings: {} as any, vectorStore: {} as any,
       cache: {} as any, storage: {} as any, analytics: {} as any,
@@ -79,7 +86,7 @@ function makeCtx(captured: Captured): PluginContextV3 {
     } as any,
     runtime: { fs: {} as any, fetch: vi.fn(), env: vi.fn() },
     api: {} as any,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
 }
@@ -87,6 +94,14 @@ function makeCtx(captured: Captured): PluginContextV3 {
 beforeEach(() => {
   vi.clearAllMocks();
   mockLoad.mockResolvedValue(CREDS);
+  resolveActiveGateway.mockResolvedValue({ gatewayUrl: CREDS.gatewayUrl });
+  gatewayApiFetch.mockImplementation(async (url: string, init: RequestInit = {}) => {
+    if (!await mockLoad()) { throw new Error('KB_AUTH_REQUIRED'); }
+    return mockFetch(url, {
+      ...init,
+      headers: { ...init.headers as Record<string, string>, Authorization: `Bearer ${CREDS.accessToken}` },
+    });
+  });
 });
 
 // ── webhook provision ─────────────────────────────────────────────────────────
@@ -99,7 +114,7 @@ describe('kb webhook provision', () => {
       rotated: false,
     }));
 
-    const captured: Captured = { errors: [], output: [], json: [] };
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
     const exitCode = await webhookProvision.run(makeCtx(captured), [], {
       plugin: '@kb-labs/rollout',
       event: 'alert',
@@ -107,7 +122,30 @@ describe('kb webhook provision', () => {
 
     expect(exitCode).toBe(0);
     expect(captured.output.join('')).toContain('abc123');
+    expect(captured.output.join('').split('abc123').length - 1).toBe(1);
     expect(captured.output.join('')).toContain('http://localhost:4000/webhooks/@kb-labs/rollout/alert');
+    expect(captured.logs?.join('')).not.toContain('abc123');
+  });
+
+  it('returns the secret once in the success envelope and never logs it in JSON mode', async () => {
+    mockFetch.mockResolvedValueOnce(makeJsonResponse({
+      url: 'http://localhost:4000/webhooks/@kb-labs/rollout/alert',
+      secret: 'json_secret_once',
+      rotated: false,
+    }));
+
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
+    const exitCode = await webhookProvision.run(makeCtx(captured), [], {
+      plugin: '@kb-labs/rollout',
+      event: 'alert',
+      json: true,
+    });
+
+    expect(exitCode).toBe(0);
+    const output = JSON.stringify(captured.json[0]);
+    expect(captured.json[0]).toMatchObject({ ok: true, data: { secret: 'json_secret_once' } });
+    expect(output.split('json_secret_once')).toHaveLength(2);
+    expect(captured.logs?.join('')).not.toContain('json_secret_once');
   });
 
   it('WP-02: rotation — prints rotation notice', async () => {
@@ -117,7 +155,7 @@ describe('kb webhook provision', () => {
       rotated: true,
     }));
 
-    const captured: Captured = { errors: [], output: [], json: [] };
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
     const exitCode = await webhookProvision.run(makeCtx(captured), [], {
       plugin: '@kb-labs/rollout',
       event: 'alert',
@@ -136,7 +174,7 @@ describe('kb webhook provision', () => {
       rotated: false,
     }));
 
-    const captured: Captured = { errors: [], output: [], json: [] };
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
     await webhookProvision.run(makeCtx(captured), [], {
       plugin: '@kb-labs/rollout',
       event: 'alert',
@@ -155,7 +193,7 @@ describe('kb webhook provision', () => {
       rotated: false,
     }));
 
-    const captured: Captured = { errors: [], output: [], json: [] };
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
     const exitCode = await webhookProvision.run(makeCtx(captured), [], {
       plugin: '@kb-labs/rollout',
       event: 'alert',
@@ -163,7 +201,11 @@ describe('kb webhook provision', () => {
     });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({ ok: true, secret: 'json_secret', rotated: false });
+    expect(captured.json[0]).toMatchObject({ ok: true, data: { secret: 'json_secret', rotated: false } });
+    expect((captured.json[0] as { data: { secret: string } }).data.secret).toBe('json_secret');
+    expect(JSON.stringify(captured.json[0]).split('json_secret').length - 1).toBe(1);
+    expect(captured.output.join('')).not.toContain('json_secret');
+    expect(captured.logs?.join('')).not.toContain('json_secret');
     expect(captured.output.length).toBe(0);
   });
 
@@ -197,7 +239,7 @@ describe('kb webhook provision', () => {
   });
 
   it('WP-08: gateway returns 404 → exitCode 1 with error', async () => {
-    mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Not Found', message: "webhook 'x/y' not found" }, 404));
+    gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND')));
 
     const captured: Captured = { errors: [], output: [], json: [] };
     const exitCode = await webhookProvision.run(makeCtx(captured), [], {
@@ -206,7 +248,8 @@ describe('kb webhook provision', () => {
     });
 
     expect(exitCode).toBe(1);
-    expect(captured.errors.join('')).toContain('404');
+    expect(captured.errors.join('')).toContain('KB_RUNTIME_RESOURCE_NOT_FOUND');
+    expect(captured.errors.join('')).toContain('The requested resource was not found.');
   });
 
   it('WP-09: network error → exitCode 1', async () => {
@@ -262,7 +305,7 @@ describe('kb webhook list', () => {
     const exitCode = await webhookList.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({ ok: true, webhooks: WEBHOOKS });
+    expect(captured.json[0]).toMatchObject({ ok: true, data: { webhooks: WEBHOOKS } });
     expect(captured.output.length).toBe(0);
   });
 
@@ -291,6 +334,37 @@ describe('kb webhook list', () => {
 
     const opts = mockFetch.mock.calls[0]![1] as RequestInit;
     expect((opts.headers as Record<string, string>).Authorization).toBe('Bearer tok_test');
+  });
+});
+
+// ── webhook history ───────────────────────────────────────────────────────────
+
+describe('kb webhook history', () => {
+  it('reads and prints the validated Gateway history record', async () => {
+    mockFetch.mockResolvedValueOnce(makeJsonResponse({ record: {
+      webhookId: 'delivery-01', project: 'local', receivedAt: '2026-10-16T08:00:00.000Z',
+      pluginId: '@org/plugin', event: 'alert', handler: './handler.js#default', instanceId: null,
+      outcome: { type: 'handler_error', code: 'KB_PLUGIN_COMMAND_FAILED' }, durationMs: 14,
+      correlationId: 'request-01',
+    } }));
+    const captured: Captured = { errors: [], output: [], json: [] };
+    const exitCode = await webhookHistory.run(makeCtx(captured), ['delivery-01'], {});
+    expect(exitCode).toBe(0);
+    expect(mockFetch.mock.calls[0]![0]).toBe('http://localhost:4000/api/v1/webhooks/history/delivery-01');
+    expect(captured.output.join('')).toContain('handler_error (KB_PLUGIN_COMMAND_FAILED)');
+    expect(captured.output.join('')).not.toContain('payload');
+  });
+
+  it('returns the record in JSON output', async () => {
+    mockFetch.mockResolvedValueOnce(makeJsonResponse({ record: {
+      webhookId: 'delivery-02', project: 'local', receivedAt: '2026-10-16T08:00:00.000Z',
+      pluginId: 'fixture', event: 'alert', handler: './handler.js#default', instanceId: null,
+      outcome: { type: 'delivered' }, durationMs: 2, correlationId: 'request-02',
+    } }));
+    const captured: Captured = { errors: [], output: [], json: [] };
+    const exitCode = await webhookHistory.run(makeCtx(captured), ['delivery-02'], { json: true });
+    expect(exitCode).toBe(0);
+    expect(captured.json[0]).toMatchObject({ ok: true, data: { record: { webhookId: 'delivery-02' } } });
   });
 });
 
@@ -327,8 +401,9 @@ describe('kb webhook revoke', () => {
     expect(captured.output.join('')).toContain('prod');
   });
 
-  it('WR-03: 404 treated as idempotent success', async () => {
-    mockFetch.mockResolvedValueOnce(makeEmptyResponse(404));
+  it('WR-03: reports a typed Gateway 404 without rendering a raw response body', async () => {
+    gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', {
+    })));
 
     const captured: Captured = { errors: [], output: [], json: [] };
     const exitCode = await webhookRevoke.run(makeCtx(captured), [], {
@@ -336,7 +411,8 @@ describe('kb webhook revoke', () => {
       event: 'alert',
     });
 
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
+    expect(captured.errors.join('')).toContain('KB_RUNTIME_RESOURCE_NOT_FOUND');
   });
 
   it('WR-04: --json outputs structured result', async () => {
@@ -375,7 +451,10 @@ describe('kb webhook revoke', () => {
   });
 
   it('WR-07: server error 500 → exitCode 1', async () => {
-    mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Internal Server Error' }, 500));
+    gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
+      details: { httpStatus: '500', requestStage: 'Webhook revoke', gatewayUrl: CREDS.gatewayUrl },
+      correlationId: 'corr-webhook-revoke',
+    })));
 
     const captured: Captured = { errors: [], output: [], json: [] };
     const exitCode = await webhookRevoke.run(makeCtx(captured), [], {
@@ -385,5 +464,6 @@ describe('kb webhook revoke', () => {
 
     expect(exitCode).toBe(1);
     expect(captured.errors.join('')).toContain('500');
+    expect(captured.errors.join('')).not.toContain('Internal Server Error');
   });
 });

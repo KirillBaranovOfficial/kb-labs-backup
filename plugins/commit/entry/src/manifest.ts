@@ -21,6 +21,7 @@ import {
   COMMIT_BASE_PATH,
   COMMIT_ROUTES,
   COMMIT_CACHE_PREFIX,
+  defaultCommitConfig,
 } from '@kb-labs/commit-contracts';
 import {
   runFlags,
@@ -63,6 +64,63 @@ export const manifest = {
   id: '@kb-labs/commit',
   version: '0.1.0',
   configSection: 'commit',
+  settings: {
+    defaults: defaultCommitConfig,
+    schema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean' },
+        llm: {
+          type: 'object',
+          properties: {
+            enabled: { type: 'boolean' },
+            temperature: { type: 'number', minimum: 0, maximum: 1 },
+            maxTokens: { type: 'integer', minimum: 1 },
+          },
+          required: ['enabled', 'temperature', 'maxTokens'],
+          additionalProperties: false,
+        },
+        storage: {
+          type: 'object',
+          properties: { directory: { type: 'string', minLength: 1 } },
+          required: ['directory'],
+          additionalProperties: false,
+        },
+        git: {
+          type: 'object',
+          properties: {
+            protectedBranches: { type: 'array', items: { type: 'string' } },
+            autoStage: { type: 'boolean' },
+          },
+          required: ['protectedBranches', 'autoStage'],
+          additionalProperties: false,
+        },
+        scope: {
+          type: 'object',
+          properties: {
+            default: { type: 'string' },
+            scopes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', minLength: 1 },
+                  label: { type: 'string', minLength: 1 },
+                  path: { type: 'string', minLength: 1 },
+                  description: { type: 'string' },
+                },
+                required: ['id', 'label', 'path'],
+                additionalProperties: false,
+              },
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      required: ['enabled', 'llm', 'storage', 'git'],
+      additionalProperties: false,
+    },
+  },
 
   display: {
     name: 'Commit Generator',
@@ -101,7 +159,7 @@ export const manifest = {
     commands: [
       // Main command: commit (default flow)
       {
-        path: 'commit',
+        path: 'commit commit',
         category: 'Pipeline',
         describe: 'Generate and apply commits (default flow).',
         operationType: 'execute' as const,
@@ -837,5 +895,3 @@ export const manifest = {
     },
   ],
 };
-
-export default manifest;

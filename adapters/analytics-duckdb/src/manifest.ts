@@ -6,6 +6,7 @@
 import type { AdapterManifest } from '@kb-labs/sdk/adapters';
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'analytics-duckdb',
   name: 'DuckDB Analytics',
@@ -15,7 +16,8 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'IAnalytics',
-  contexts: ['workspace', 'analytics'],
+  networkRequired: false,
+  contexts: ['workspace', 'analytics', 'platformData'],
   capabilities: {
     search: true,
     custom: {
@@ -30,6 +32,7 @@ export const manifest: AdapterManifest = {
     dbPath: {
       type: 'string',
       description: 'Path to the DuckDB database file (default: <KB_HOME>/state/<projectId>/analytics/analytics.duckdb)',
+      pathBase: 'platformData',
     },
   },
 };

@@ -12,7 +12,7 @@ const permissions = combinePermissions()
   .withQuotas({ timeoutMs: 30000, memoryMb: 128 })
   .build();
 
-const manifest = {
+export const manifest = {
   schema: 'kb.plugin/3',
   id: '@kb-labs/site-tools',
   version: '0.1.0',
@@ -43,14 +43,12 @@ const manifest = {
           },
         ],
         examples: [
-          { command: 'kb site page pricing', description: 'Create /pricing page' },
-          { command: 'kb site page solutions/my-solution --badge Solutions', description: 'Create a solutions sub-page' },
-          { command: 'kb site page new-feature --dry-run', description: 'Preview without writing' },
+          'kb site page pricing — create /pricing page',
+          'kb site page solutions/my-solution --badge Solutions — create a solutions sub-page',
+          'kb site page new-feature --dry-run — preview without writing',
         ],
       },
     ],
   },
   permissions,
 };
-
-export default manifest;

@@ -11,6 +11,9 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { ErrorEnvelopeError, isErrorEnvelope } from '@kb-labs/core-platform';
+import { deserialize } from '@kb-labs/core-platform/serializable';
+import type { SerializableValue } from '@kb-labs/core-platform/serializable';
 
 /** Minimal socket interface — satisfied by @fastify/websocket WebSocket */
 export interface IAgentSocket {
@@ -20,7 +23,7 @@ export interface IAgentSocket {
 interface PendingCall {
   chunks: unknown[];
   resolve: (data: unknown) => void;
-  reject: (err: Error) => void;
+  reject: (err: unknown) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -125,10 +128,12 @@ export class HostCallDispatcher {
     } else if (msg.type === 'error') {
       clearTimeout(pending.timer);
       this.pending.delete(requestId);
-      const errMsg = typeof msg.error === 'object' && msg.error !== null
-        ? String((msg.error as Record<string, unknown>)['message'] ?? msg.error)
-        : String(msg.error ?? 'Unknown error');
-      pending.reject(new Error(errMsg));
+      const error = msg.error;
+      if (isErrorEnvelope(error)) {
+        pending.reject(new ErrorEnvelopeError(error));
+      } else {
+        pending.reject(deserialize(error as SerializableValue));
+      }
     }
   }
 

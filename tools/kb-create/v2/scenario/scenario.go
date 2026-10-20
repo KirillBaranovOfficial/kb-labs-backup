@@ -18,6 +18,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/resolve"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 const Schema = "kb.create.scenario/v2"
@@ -121,7 +122,8 @@ func IDs() ([]string, error) {
 
 // ValidateCatalog resolves every built-in journey against the candidate
 // release index during sealing. This catches absent plugins/adapters and
-// ambiguous capability providers before an index is published.
+// ambiguous capability providers before an index is published, while required
+// operator inputs can remain unanswered until install or update time.
 func ValidateCatalog(source catalog.Catalog) error {
 	ids, err := IDs()
 	if err != nil {
@@ -154,7 +156,7 @@ func ValidateCatalog(source catalog.Catalog) error {
 			channel = contracts.Channel(channels[0])
 			platformVersion = source.Channels[channel]
 		}
-		request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: "/tmp/kb-create-scenario-validation", Platform: contracts.VersionSelector{Version: platformVersion}, SDK: contracts.VersionSelector{Version: sdkVersionFor(source, platformVersion)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceOffline})
+		request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: "/tmp/kb-create-scenario-validation", Platform: contracts.VersionSelector{Version: platformVersion}, SDK: contracts.VersionSelector{Version: sdkVersionFor(source, platformVersion)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceRegistry})
 		if err != nil {
 			return fmt.Errorf("scenario %q: %w", id, err)
 		}
@@ -166,7 +168,7 @@ func ValidateCatalog(source catalog.Catalog) error {
 			options.OS, options.Arch = platform.Binaries[0].OS, platform.Binaries[0].Arch
 			break
 		}
-		if _, err := resolve.PlanWith(request, source, options); err != nil {
+		if err := resolve.ValidateWith(request, source, options); err != nil {
 			return fmt.Errorf("scenario %q does not resolve against release index: %w", id, err)
 		}
 	}
@@ -174,18 +176,8 @@ func ValidateCatalog(source catalog.Catalog) error {
 }
 
 func sdkVersionFor(source catalog.Catalog, platformVersion string) string {
-	if source.Compatibility != nil {
-		platformLabel := "platform@" + platformVersion
-		for _, label := range source.Compatibility.Labels {
-			if label.ID != platformLabel {
-				continue
-			}
-			for _, relation := range label.Requires {
-				if strings.HasPrefix(relation.Label, "sdk@") {
-					return strings.TrimPrefix(relation.Label, "sdk@")
-				}
-			}
-		}
+	if sdk := catalog.PlatformSDKVersion(source, platformVersion); sdk != "" {
+		return sdk
 	}
 	return platformVersion
 }
@@ -264,7 +256,11 @@ func New(value Scenario) (State, error) {
 // LoadState resumes a prior non-secret scenario state. Missing state starts a
 // new journey with defaults; an unrelated/corrupt state is never accepted.
 func LoadState(platformRoot string, value Scenario) (State, error) {
-	data, err := os.ReadFile(statePath(platformRoot, value.ID))
+	path, err := statePath(platformRoot, value.ID)
+	if err != nil {
+		return State{}, err
+	}
+	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return New(value)
 	}
@@ -288,6 +284,13 @@ func SaveState(platformRoot string, value Scenario, state State) error {
 	if state.ScenarioID != value.ID {
 		return fmt.Errorf("state does not belong to scenario %q", value.ID)
 	}
+	layout, err := versionroot.New(platformRoot)
+	if err != nil {
+		return err
+	}
+	if err := layout.PrepareInitialTarget(); err != nil {
+		return fmt.Errorf("classify install root before saving scenario state: %w", err)
+	}
 	copy := State{ScenarioID: state.ScenarioID, Answers: map[string]json.RawMessage{}}
 	for _, field := range allFields(value) {
 		if field.Secret {
@@ -301,7 +304,10 @@ func SaveState(platformRoot string, value Scenario, state State) error {
 	if err != nil {
 		return err
 	}
-	path := statePath(platformRoot, value.ID)
+	path, err := statePath(platformRoot, value.ID)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
@@ -310,8 +316,16 @@ func SaveState(platformRoot string, value Scenario, state State) error {
 	}
 	return os.Rename(path+".tmp", path)
 }
-func statePath(platformRoot, id string) string {
-	return filepath.Join(platformRoot, ".kb", "v2", "scenarios", id+".json")
+func statePath(installRoot, id string) (string, error) {
+	layout, err := versionroot.New(installRoot)
+	if err != nil {
+		return "", err
+	}
+	directory, err := layout.SharedRuntimePath(".kb/v2/scenarios")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, id+".json"), nil
 }
 func StateDigest(value Scenario, state State) (string, error) {
 	copy := State{ScenarioID: state.ScenarioID, Answers: map[string]json.RawMessage{}}
@@ -464,6 +478,10 @@ func Compile(value Scenario, state State, base contracts.InstallRequest) (contra
 		if !exists {
 			raw = field.Default
 		}
+		if field.Secret && field.Generate && len(raw) == 0 {
+			base.SecretInputs = append(base.SecretInputs, field.Requirement)
+			continue
+		}
 		if field.Required && len(raw) == 0 {
 			return contracts.InstallRequest{}, fmt.Errorf("required scenario field %q is missing", field.ID)
 		}
@@ -490,6 +508,7 @@ func Compile(value Scenario, state State, base contracts.InstallRequest) (contra
 		}
 		if field.ProviderFor != "" {
 			base.ProviderPreferences[field.ProviderFor] = text
+			base.Adapters = append(base.Adapters, contracts.ComponentRequest{ID: text})
 		} else {
 			base.Values[field.Requirement] = string(raw)
 		}

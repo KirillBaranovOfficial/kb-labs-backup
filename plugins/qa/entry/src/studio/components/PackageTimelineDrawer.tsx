@@ -11,7 +11,7 @@ import {
   UIStatistic,
   UIRow,
   UICol,
-  UISpin,
+  UISkeleton,
   UIAlert,
   UISpace,
   UIIcon,
@@ -58,7 +58,7 @@ export function PackageTimelineDrawer({ open, packageName, onClose }: PackageTim
       onClose={onClose}
     >
       {isLoading && (
-        <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />
+        <UISkeleton active lines={5} />
       )}
 
       {!isLoading && !data && (

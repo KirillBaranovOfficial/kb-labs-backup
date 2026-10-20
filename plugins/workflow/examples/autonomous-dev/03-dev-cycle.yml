@@ -22,8 +22,6 @@ version: 1.0.0
 description: Full AI-assisted development cycle — from ClickUp task to merged PR
 on:
   manual: true
-  webhook:
-    path: /hooks/clickup-task-started
 
 inputs:
   task_id:

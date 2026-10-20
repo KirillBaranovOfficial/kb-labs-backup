@@ -1,5 +1,19 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
 import { GATEWAY } from '../../fixtures/urls.js'
+import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
+
+interface AdapterStatus {
+  slot: string
+  mode: string
+  implementation: string
+  reason?: string
+  recordedAt: string
+}
+
+async function readAdapterStatuses(request: APIRequestContext): Promise<AdapterStatus[]> {
+  const response = await request.get(`${GATEWAY}/health/adapters`)
+  return decodeUxSuccessResult<AdapterStatus[]>(await response.json())
+}
 
 // Verifies the adapter degradation status surface used by `kb-dev doctor`.
 // `kb-dev doctor` reads GET /health/adapters from the running gateway and
@@ -9,7 +23,7 @@ import { GATEWAY } from '../../fixtures/urls.js'
 test('DOC-01: gateway /health/adapters returns adapter table', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: { slot: string; mode: string; implementation: string }[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   // At minimum the platform must report something
   expect(statuses.length).toBeGreaterThan(0)
   // Each entry has the three fields doctor renders
@@ -23,7 +37,7 @@ test('DOC-01: gateway /health/adapters returns adapter table', async ({ request 
 test('DOC-02: slots with inmemory fallback report implementation name containing "InMemory"', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: { slot: string; mode: string; implementation: string; reason?: string }[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   const inmemorySlots = statuses.filter(s => s.mode === 'inmemory')
   for (const s of inmemorySlots) {
     // All in-process fallbacks are InMemory* classes
@@ -36,7 +50,7 @@ test('DOC-02: slots with inmemory fallback report implementation name containing
 test('DOC-03: slots with noop fallback report implementation name containing "NoOp"', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: { slot: string; mode: string; implementation: string; reason?: string }[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   const noopSlots = statuses.filter(s => s.mode === 'noop')
   for (const s of noopSlots) {
     expect(s.implementation).toMatch(/NoOp/)
@@ -47,7 +61,7 @@ test('DOC-03: slots with noop fallback report implementation name containing "No
 test('DOC-04: real adapters have no reason field', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: { slot: string; mode: string; reason?: string }[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   const realSlots = statuses.filter(s => s.mode === 'real')
   for (const s of realSlots) {
     // Real adapters are configured — no degradation reason
@@ -58,7 +72,7 @@ test('DOC-04: real adapters have no reason field', async ({ request }) => {
 test('DOC-05: recordedAt timestamps are valid ISO 8601 strings', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: { slot: string; recordedAt: string }[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   for (const s of statuses) {
     const d = new Date(s.recordedAt)
     expect(isNaN(d.getTime()),
@@ -69,7 +83,7 @@ test('DOC-05: recordedAt timestamps are valid ISO 8601 strings', async ({ reques
 test('DOC-06: no duplicate slot entries in the registry', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: { slot: string }[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   const slots = statuses.map(s => s.slot)
   const unique = new Set(slots)
   expect(unique.size).toBe(slots.length)

@@ -23,6 +23,8 @@ export interface ProjectPluginEntry {
 
 export interface ProjectPluginsDataSource {
   listPlugins(projectId: string): Promise<ProjectPluginEntry[]>;
+  installPlugin(projectId: string, spec: string): Promise<unknown>;
+  uninstallPlugin(projectId: string, packageId: string): Promise<{ id: string; removed: boolean }>;
   enablePlugin(projectId: string, packageId: string): Promise<{ id: string; enabled: boolean }>;
   disablePlugin(projectId: string, packageId: string): Promise<{ id: string; enabled: boolean }>;
 }

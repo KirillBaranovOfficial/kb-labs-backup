@@ -5,15 +5,36 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+const mockReadInstalledIdentity = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
 // Capture original env
 const originalEnv = { ...process.env };
 
 // Mock all heavy bootstrap deps before importing bootstrap
-vi.mock("@kb-labs/core-platform", () => ({
+vi.mock("@kb-labs/core-platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@kb-labs/core-platform")>()),
+  GATEWAY_SERVICE_NETWORK: {
+    serviceId: "gateway",
+    portEnvVar: "GATEWAY_PORT",
+    defaultPort: 4000,
+    hostEnvVar: "GATEWAY_HOST",
+    defaultHost: "0.0.0.0",
+  },
   logDiagnosticEvent: vi.fn(),
+  createErrorEnvelope: (code: string, options: { cause?: string; hint?: string } = {}) => ({ code, ...options }),
+  ErrorEnvelopeError: class ErrorEnvelopeError extends Error {
+    constructor(envelope: { code: string; cause?: string; hint?: string }) {
+      super(`${envelope.code}: ${envelope.cause} Hint: ${envelope.hint}`);
+    }
+  },
+  readInstalledPlatformIdentity: mockReadInstalledIdentity,
 }));
 
 vi.mock("@kb-labs/core-runtime", () => ({
+  requireProjectContext: (projectRoot: string | undefined) => {
+    if (!projectRoot) throw new Error('Project root required by test fixture');
+    return projectRoot;
+  },
   platform: {
     logger: {
       info: vi.fn(),
@@ -48,6 +69,11 @@ vi.mock("@kb-labs/core-runtime", () => ({
 }));
 
 vi.mock("@kb-labs/shared-daemon", () => ({
+  requireEnvironmentSecret: (variable: string) => {
+    const value = process.env[variable];
+    if (!value) { throw new Error(`KB_CONFIG_SECRET_MISSING: The configuration references ${variable}, which has no value. Hint: set ${variable} in the deployment secret configuration, then restart the service.`); }
+    return value;
+  },
   runService: vi.fn().mockImplementation(async (config) => {
     const logger = {
       info: vi.fn(),
@@ -113,9 +139,11 @@ vi.mock("@kb-labs/gateway-core", () => ({
 describe("bootstrap — JWT secret validation (H6)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockReadInstalledIdentity.mockResolvedValue(undefined);
     // Reset env to original state before each test
     process.env = { ...originalEnv };
     delete process.env.GATEWAY_JWT_SECRET;
+    process.env.GATEWAY_INTERNAL_SECRET = 'gateway-internal-secret';
   });
 
   afterEach(() => {
@@ -128,6 +156,16 @@ describe("bootstrap — JWT secret validation (H6)", () => {
 
     const { bootstrap } = await import("../bootstrap.js");
     await expect(bootstrap("/tmp/test")).rejects.toThrow("GATEWAY_JWT_SECRET");
+  });
+
+  it('fails fast with the catalog diagnostic when the shared internal secret is missing in development', async () => {
+    process.env.NODE_ENV = 'development';
+    delete process.env.GATEWAY_INTERNAL_SECRET;
+
+    const { bootstrap } = await import('../bootstrap.js');
+    await expect(bootstrap('/tmp/test')).rejects.toThrow(
+      'KB_CONFIG_SECRET_MISSING: The configuration references GATEWAY_INTERNAL_SECRET, which has no value. Hint: set GATEWAY_INTERNAL_SECRET in the deployment secret configuration, then restart the service.',
+    );
   });
 
   it("does not throw in dev mode when GATEWAY_JWT_SECRET is not set", async () => {
@@ -144,5 +182,16 @@ describe("bootstrap — JWT secret validation (H6)", () => {
 
     const { bootstrap } = await import("../bootstrap.js");
     await expect(bootstrap("/tmp/test")).resolves.not.toThrow();
+  });
+
+  // case: PC-001.15
+  it("refuses to start an installed Gateway when the launcher omitted its installation identity", async () => {
+    process.env.NODE_ENV = "development";
+    delete process.env.KB_INSTALLATION_ID;
+    mockReadInstalledIdentity.mockResolvedValue({ id: "stable-installation", gatewayUrl: "http://127.0.0.1:4000" });
+
+    const { bootstrap } = await import("../bootstrap.js");
+    await expect(bootstrap("/tmp/test")).rejects.toThrow("KB_INSTALL_RECEIPT_UNAVAILABLE");
+    expect(mockReadInstalledIdentity).toHaveBeenCalledTimes(1);
   });
 });

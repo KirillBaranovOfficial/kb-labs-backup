@@ -1,59 +1,31 @@
 ---
 id: S-014
-title: AI Commit — with real LLM
+title: Commit plugin — Generate a commit with a real LLM
 persona: solo-developer
-priority: P0
-automation: e2e-done
-e2e: domain workflow E2E; the V2 post-publish journey covers the installed
-  plugin/workflow path, while LLM credentials remain a domain concern
+area: plugins
+priority: P1
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer stages changes and generates an AI commit message using a real LLM (not heuristic fallback).
-Requires valid gateway credentials.
+
+A developer uses an explicitly configured real LLM provider to draft and apply a commit message for staged changes.
 
 ## Prerequisites
-- [ ] KB Labs installed with valid `.env` (KB_GATEWAY_CLIENT_ID + KB_GATEWAY_CLIENT_SECRET)
-- [ ] Git repo with staged changes
-- [ ] Gateway reachable at `https://api.kblabs.ru`
 
----
+- [ ] The `@kb-labs/commit` plugin is installed and enabled in the project.
+- [ ] A real LLM adapter is installed, bound at platform scope, and configured with valid platform credentials.
+- [ ] A Git repository contains staged changes.
 
 ## Steps
 
-### Phase 1 — Dry run
+| # | Action | Expected |
+|---|---|---|
+| S-014.1 | Run `kb commit commit --dry-run --json` | JSON output contains a generated plan with `plan.metadata.llmUsed: true` and `applied: false`; no commit is created and the index and working tree are unchanged. |
+| S-014.2 | Inspect the generation result/diagnostics | The selected real LLM provider is identified; the result does not claim heuristic generation. |
+| S-014.3 | Run `kb commit commit --json` | JSON output reports `applied: true`; a commit is created and `git log -1 --format=%s` prints its generated subject. |
 
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Stage changes: `git add <file>` | Changes staged | | ⬜ |
-| 2 | `kb commit commit --dry-run` | Output contains `LLM: Phase` — real LLM used | | ⬜ |
-| 3 | Proposed commit message is meaningful (not generic) | Not `chore(.): update configuration` | | ⬜ |
-| 4 | Dry run does NOT create a commit | `git log` unchanged | | ⬜ |
-
-### Phase 2 — Real commit
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 5 | `kb commit commit --yes` | Commit created with AI message | | ⬜ |
-| 6 | `git log --oneline -1` | Message follows conventional commits format | | ⬜ |
-| 7 | Message describes actual change (not generic) | Meaningful message | | ⬜ |
-
-### Phase 3 — Multi-file changes
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 8 | Stage changes across 3+ files | All files included in diff sent to LLM | | ⬜ |
-| 9 | `kb commit commit --dry-run` | Commit message covers all changed areas | | ⬜ |
-
-### Phase 4 — Edge cases
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 10 | No staged changes | Clear message: "nothing to commit" | | ⬜ |
-| 11 | LLM timeout / network error | Graceful fallback to heuristic, not crash | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+A real provider and credentials are not guaranteed in the platform release contour, so this case is not a release gate.

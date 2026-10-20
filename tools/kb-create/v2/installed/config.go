@@ -24,12 +24,12 @@ func ConfiguredPaths(platformRoot string, paths []string) (map[string]bool, erro
 	}
 	result := make(map[string]bool, len(paths))
 	for _, path := range paths {
-		result[path] = pointerExists(root, path)
+		result[path] = pointerConfigured(root, path)
 	}
 	return result, nil
 }
 
-func pointerExists(value any, pointer string) bool {
+func pointerConfigured(value any, pointer string) bool {
 	if pointer == "" || pointer == "/" || !strings.HasPrefix(pointer, "/") {
 		return false
 	}
@@ -44,6 +44,13 @@ func pointerExists(value any, pointer string) bool {
 		if !ok {
 			return false
 		}
+	}
+	if reference, ok := current.(string); ok && len(reference) > 3 && strings.HasPrefix(reference, "${") && strings.HasSuffix(reference, "}") {
+		value, exists := os.LookupEnv(reference[2 : len(reference)-1])
+		return exists && value != ""
+	}
+	if current == nil || current == "" {
+		return false
 	}
 	return true
 }

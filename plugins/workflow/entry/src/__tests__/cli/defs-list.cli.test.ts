@@ -33,7 +33,6 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.table.length).toBeGreaterThan(0);
     expect(captured.table[0]!.rows.length).toBe(2);
   });
@@ -49,11 +48,9 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: typeof sampleWorkflows };
-    expect(payload.ok).toBe(true);
-    expect(Array.isArray(payload.data)).toBe(true);
-    expect(payload.data.length).toBe(2);
+    const payload = result as typeof sampleWorkflows;
+    expect(Array.isArray(payload)).toBe(true);
+    expect(payload.length).toBe(2);
   });
 
   it('DL-03: --status active filters by status', async () => {
@@ -87,7 +84,6 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: { source: 'manifest' } }));
 
-    expect(result.ok).toBe(true);
   });
 
   it('DL-05: --tags passes tags filter to client', async () => {
@@ -116,7 +112,6 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.errors.length).toBe(0);
   });
 
@@ -131,8 +126,33 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
+  });
+
+  it('keeps the daemon error hint shape in the shared contract diagnostic', async () => {
+    const thrown = Object.assign(new Error('Workflow API failed.'), {
+      code: 'WORKFLOW_REQUEST_FAILED',
+      hint: { key: 'errors.workflow.list', params: { project: 'project-a' } },
+    });
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ listWorkflows: async () => { throw thrown; } });
+    });
+
+    const { ui } = createCapturedUI();
+    const result = await defsListCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: { json: true } }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        details: {
+          field: 'hint',
+          observedType: 'object',
+          observedValuePreview: expect.stringContaining('errors.workflow.list'),
+        },
+      },
+    });
   });
 
   it('DL-08: renders Tags column joined by comma', async () => {

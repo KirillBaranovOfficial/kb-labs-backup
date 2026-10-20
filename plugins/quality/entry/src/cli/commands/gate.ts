@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import { analyzeLayering, QualitySnapshotStore } from '@kb-labs/quality-core';
@@ -14,7 +14,7 @@ export default defineCommand<unknown, CLIInput<GateFlags>, unknown>({
   description: 'Architecture gate: fail if new layering violations introduced',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<GateFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<GateFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QualityPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -44,40 +44,29 @@ export default defineCommand<unknown, CLIInput<GateFlags>, unknown>({
         affectedPackages: report.affectedPackages,
       };
 
-      if (flags.json) {
-        ctx.ui?.json?.(result);
-        return failed
-          ? { ok: false, error: 'Quality gate failed', result: { failed } }
-          : { ok: true, result: { failed } };
-      }
-
       if (!failed) {
-        const msg =
-          baseline !== null
+        if (!flags.json) {
+          const msg = baseline !== null
             ? `Gate passed — no new violations (${current} pre-existing)`
             : 'Gate passed — no layering violations';
-        ctx.ui?.success?.(msg);
-        return { ok: true };
+          ctx.ui?.success?.(msg);
+        }
+        return flags.json ? result : {};
       }
 
-      const sections = [];
-
-      if (newViolations !== null && newViolations > 0) {
-        sections.push({
-          header: `New violations introduced: ${newViolations} (was ${baseline}, now ${current})`,
-          items: report.violations
-            .map(v => `${v.fromPackage} → ${v.toPackage}  ${v.importSpecifier}`)
-            .slice(0, 20),
-        });
-      } else {
-        sections.push({
-          header: `${current} layering violation(s) in ${report.affectedPackages.length} package(s)`,
-          items: report.affectedPackages,
-        });
-      }
-
-      ctx.ui?.error?.('Gate failed — architecture violations detected', { sections });
-      return { ok: false, error: 'Command failed' };
+      return {
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: `Architecture gate failed with ${current} layering violation(s).`,
+          hint: 'Review the reported imports, then rerun `kb quality gate`.',
+          diagnostics: report.violations.map((violation) => ({
+            code: 'KB_QUALITY_LAYERING_VIOLATION',
+            severity: 'error' as const,
+            message: `${violation.fromPackage} imports ${violation.toPackage} via ${violation.importSpecifier}`,
+          })),
+        },
+      };
     },
   },
 });

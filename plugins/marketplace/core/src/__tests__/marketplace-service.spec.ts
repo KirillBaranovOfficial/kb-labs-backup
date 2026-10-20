@@ -9,13 +9,20 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
-import type { PackageSource, InstalledPackage, ResolvedPackage } from '@kb-labs/marketplace-contracts';
+import type { PackageSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
+import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
+import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
-import { MarketplaceService, mergeScopedEntries } from '../marketplace-service.js';
+import { NoOpLogger } from '@kb-labs/core-platform/noop';
+import { MarketplaceService, mergeScopedEntries, type MarketplaceServiceOptions } from '../marketplace-service.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger'>): MarketplaceService {
+  return new MarketplaceService({ ...options, logger: new NoOpLogger() });
+}
 
 function computeIntegrity(content: string): string {
   return `sha256-${crypto.createHash('sha256').update(Buffer.from(content)).digest('base64')}`;
@@ -28,7 +35,8 @@ async function createPluginDir(
   version = '1.0.0',
 ): Promise<{ dir: string; integrity: string }> {
   const dir = path.join(tmpDir, 'packages', name);
-  await fs.mkdir(dir, { recursive: true });
+  await fs.mkdir(path.join(dir, 'dist'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'dist', 'h.js'), 'export default async () => 0;');
 
   const pkgJson = JSON.stringify({ name: id, version });
   await fs.writeFile(path.join(dir, 'package.json'), pkgJson);
@@ -38,11 +46,25 @@ async function createPluginDir(
       schema: 'kb.plugin/3',
       id,
       version,
-      cli: { commands: [{ id: 'hello', describe: 'hi', handler: './h.js' }] },
+      cli: { commands: [{ id: 'hello', path: 'hello', describe: 'hi', handler: './h.js' }] },
     }),
   );
 
   return { dir, integrity: computeIntegrity(pkgJson) };
+}
+
+async function createAdapterDir(tmpDir: string, name: string, id: string): Promise<string> {
+  const dir = path.join(tmpDir, 'packages', name);
+  await fs.mkdir(path.join(dir, 'dist'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
+    name: id,
+    version: '1.0.0',
+    kb: { adapter: { manifest: './dist/adapter-manifest.js' } },
+  }));
+  await fs.writeFile(path.join(dir, 'dist', 'adapter-manifest.js'), `export const manifest = ${JSON.stringify({
+    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id, name: id, version: '1.0.0', type: 'core', implements: 'ITestAdapter', networkRequired: false,
+  })};`);
+  return dir;
 }
 
 /**
@@ -75,6 +97,7 @@ function createMockSource(pluginDirs: Map<string, { dir: string; version: string
         version: info.version,
         integrity: info.integrity,
         source: 'marketplace',
+        primaryKind: 'plugin',
       };
     },
     async install(pkg: ResolvedPackage, _root: string): Promise<InstalledPackage> {
@@ -90,6 +113,8 @@ function createMockSource(pluginDirs: Map<string, { dir: string; version: string
     async remove(_packageId: string, _root: string): Promise<void> {
       // noop in tests
     },
+    async commitInstall() {},
+    async rollbackInstall() {},
   };
 }
 
@@ -111,13 +136,73 @@ describe('MarketplaceService', () => {
   // ── install ──────────────────────────────────────────────────────────
 
   describe('install', () => {
+    it('rejects packages without source metadata before installing', async () => {
+      const install = vi.fn(async (): Promise<InstalledPackage> => {
+        throw new Error('must not install an unclassified package');
+      });
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: '@kb-labs/unknown-entry', version: '1.0.0', integrity: '', source: 'marketplace' };
+        },
+        install,
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      const { PackageClassificationError } = await import('../marketplace-service.js');
+
+      await expect(service.install({ scope: 'platform' }, ['@kb-labs/unknown-entry']))
+        .rejects.toBeInstanceOf(PackageClassificationError);
+      expect(install).not.toHaveBeenCalled();
+    });
+
+    it('installs project pins into the shared store and changes only marketplace.lock', async () => {
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+      const { dir, integrity } = await createPluginDir(tmpDir, 'store-plugin', '@kb-labs/store-plugin');
+      const source = createMockSource(new Map([
+        ['@kb-labs/store-plugin', { dir, version: '1.0.0', integrity }],
+      ]));
+      const resolved = await source.resolve('@kb-labs/store-plugin');
+      const storeEntry = {
+        schema: 'kb.store-entry/1' as const,
+        name: resolved.id,
+        version: resolved.version,
+        kind: 'plugin' as const,
+        integrity,
+        installedAt: new Date().toISOString(),
+      };
+      const stored: ResolvedStoreEntry = { entry: storeEntry, packageRoot: dir, entryDir: tmpDir };
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        async resolve() { return stored; },
+        async listEntries() { return [storeEntry]; },
+      };
+      const sourceInstall = vi.spyOn(source, 'install');
+      const sourceRemove = vi.spyOn(source, 'remove');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+
+      await service.install({ scope: 'project', projectRoot }, ['@kb-labs/store-plugin']);
+      await service.uninstall({ scope: 'project', projectRoot }, ['@kb-labs/store-plugin']);
+
+      expect(sourceInstall).not.toHaveBeenCalled();
+      expect(sourceRemove).not.toHaveBeenCalled();
+      expect(await fs.readdir(projectRoot)).toEqual(['.kb']);
+      expect(await fs.readdir(path.join(projectRoot, '.kb'))).toEqual(['kb.config.json', 'marketplace.lock']);
+    });
+
     it('installs a plugin and writes to marketplace.lock', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'test-plugin', '@kb-labs/test-plugin');
       const source = createMockSource(
         new Map([['@kb-labs/test-plugin', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.install({ scope: "platform" }, ['@kb-labs/test-plugin']);
 
       expect(result.installed).toHaveLength(1);
@@ -131,9 +216,161 @@ describe('MarketplaceService', () => {
       // Verify lock file
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
       expect(lock).not.toBeNull();
-      expect(lock!.installed['@kb-labs/test-plugin']).toBeDefined();
-      expect(lock!.installed['@kb-labs/test-plugin']!.version).toBe('1.0.0');
-      expect(lock!.installed['@kb-labs/test-plugin']!.source).toBe('marketplace');
+      expect(lock!.plugins['@kb-labs/test-plugin']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/test-plugin']!.version).toBe('1.0.0');
+      expect(lock!.plugins['@kb-labs/test-plugin']!.source).toBe('platform');
+    });
+
+    // case: S-220.6
+    it('refuses a republished installed version whose integrity changed', async () => {
+      const packageId = '@kb-labs/pinned-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'pinned-plugin', packageId, '1.0.0');
+      const info = { dir, version: '1.0.0', integrity };
+      const source = createMockSource(new Map([[packageId, info]]));
+      const install = vi.spyOn(source, 'install');
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'project', projectRoot }, [packageId]);
+      const before = await readMarketplaceLock(projectRoot, new DiagnosticCollector());
+      info.integrity = `${integrity}-republished`;
+
+      await expect(service.install({ scope: 'project', projectRoot }, [packageId]))
+        .rejects.toMatchObject({ code: 'INTEGRITY_MISMATCH', installedVersion: '1.0.0' });
+
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(await readMarketplaceLock(projectRoot, new DiagnosticCollector())).toEqual(before);
+    });
+
+    // case: S-220.7
+    it('refuses update when registry latest equals the installed version', async () => {
+      await expectUpdateVersionError('1.4.0', '1.4.0');
+    });
+
+    // case: S-220.8
+    it('refuses update when registry latest is lower than the installed version', async () => {
+      await expectUpdateVersionError('2.0.0', '1.9.0');
+    });
+
+    // case: S-220.9
+    it('updates the pin when registry latest is higher than the installed version', async () => {
+      const packageId = '@kb-labs/update-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'update-plugin', packageId, '1.4.0');
+      const info = { dir, version: '1.4.0', integrity };
+      const source = createMockSource(new Map([[packageId, info]]));
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'project', projectRoot }, [packageId]);
+      info.version = '1.5.0';
+
+      const result = await service.update({ scope: 'project', projectRoot }, [packageId]);
+
+      expect(result.installed[0]).toMatchObject({ id: packageId, version: '1.5.0' });
+      expect((await readMarketplaceLock(projectRoot, new DiagnosticCollector()))?.plugins[packageId])
+        .toMatchObject({ version: '1.5.0', integrity });
+    });
+
+    async function expectUpdateVersionError(installedVersion: string, requestedVersion: string): Promise<void> {
+      const packageId = '@kb-labs/update-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'update-plugin', packageId, installedVersion);
+      const info = { dir, version: installedVersion, integrity };
+      const source = createMockSource(new Map([[packageId, info]]));
+      const install = vi.spyOn(source, 'install');
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'project', projectRoot }, [packageId]);
+      const before = await readMarketplaceLock(projectRoot, new DiagnosticCollector());
+      info.version = requestedVersion;
+
+      await expect(service.update({ scope: 'project', projectRoot }, [packageId]))
+        .rejects.toMatchObject({ code: 'VERSION_NOT_HIGHER', installedVersion, requestedVersion });
+
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(await readMarketplaceLock(projectRoot, new DiagnosticCollector())).toEqual(before);
+    }
+
+    it('installs platform-scope plugin entry packages in the shared store', async () => {
+      const packageId = '@kb-labs/custom-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'platform-plugin', packageId);
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: packageId, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
+        },
+        async install(): Promise<InstalledPackage> { throw new Error('platform plugin must use the extension store'); },
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      };
+      const sourceInstall = vi.spyOn(source, 'install');
+      const storeResolve = vi.fn(async () => {
+        return {
+          entry: {
+            schema: 'kb.store-entry/1' as const,
+            name: packageId,
+            version: '1.0.0',
+            kind: 'plugin' as const,
+            integrity,
+            installedAt: new Date().toISOString(),
+          },
+          packageRoot: dir,
+          entryDir: path.join(tmpDir, 'store', 'entries', 'platform-plugin'),
+        };
+      });
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        resolve: storeResolve,
+        async listEntries() { return []; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+
+      const result = await service.install({ scope: 'platform' }, [packageId]);
+
+      expect(sourceInstall).not.toHaveBeenCalled();
+      expect(storeResolve).toHaveBeenCalledOnce();
+      expect(result.installed[0]?.primaryKind).toBe('plugin');
+    });
+
+    it('keeps platform adapters in the platform package graph', async () => {
+      const packageId = '@kb-labs/adapters-test';
+      const packageRoot = await createAdapterDir(tmpDir, 'platform-adapter', packageId);
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: packageId, version: '1.0.0', integrity: 'sha256-fixture', source: 'marketplace', primaryKind: 'adapter' };
+        },
+        async install(): Promise<InstalledPackage> {
+          return { id: packageId, version: '1.0.0', packageRoot, integrity: 'sha256-fixture' };
+        },
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      };
+      const sourceInstall = vi.spyOn(source, 'install');
+      const storeResolve = vi.fn(async () => { throw new Error('Platform adapters must not use the plugin store'); });
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        resolve: storeResolve,
+        async listEntries() { return []; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+
+      const result = await service.install({ scope: 'platform' }, [packageId]);
+
+      expect(sourceInstall).toHaveBeenCalledOnce();
+      expect(storeResolve).not.toHaveBeenCalled();
+      expect(result.installed[0]?.primaryKind).toBe('adapter');
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.adapters?.[packageId]?.resolvedPath).toBe('./packages/platform-adapter');
     });
 
     it('installs multiple plugins in one call', async () => {
@@ -144,14 +381,14 @@ describe('MarketplaceService', () => {
         ['@kb-labs/b', { dir: dir2, version: '2.0.0', integrity: int2 }],
       ]));
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.install({ scope: "platform" }, ['@kb-labs/a', '@kb-labs/b']);
 
       expect(result.installed).toHaveLength(2);
       expect(result.installed.map(e => e.id).sort()).toEqual(['@kb-labs/a', '@kb-labs/b']);
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(Object.keys(lock!.installed)).toHaveLength(2);
+      expect(Object.keys(lock!.plugins)).toHaveLength(2);
     });
 
     it('serializes concurrent mutations for the same marketplace scope', async () => {
@@ -178,7 +415,7 @@ describe('MarketplaceService', () => {
         }
       };
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await Promise.all([
         service.install({ scope: 'platform' }, ['@kb-labs/serial-a']),
         service.install({ scope: 'platform' }, ['@kb-labs/serial-b']),
@@ -186,7 +423,7 @@ describe('MarketplaceService', () => {
 
       expect(maxActive).toBe(1);
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(Object.keys(lock!.installed).sort()).toEqual(['@kb-labs/serial-a', '@kb-labs/serial-b']);
+      expect(Object.keys(lock!.plugins).sort()).toEqual(['@kb-labs/serial-a', '@kb-labs/serial-b']);
     });
 
     it('catches afterInstall hook errors as warnings', async () => {
@@ -195,7 +432,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/hook-fail', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       // Register a strategy with a failing afterInstall hook
       service.registerStrategy({
@@ -221,7 +458,7 @@ describe('MarketplaceService', () => {
         new Map([['mind', { dir, version: '0.0.2', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       const { InvalidEntityError } = await import('../marketplace-service.js');
       await expect(
@@ -230,7 +467,68 @@ describe('MarketplaceService', () => {
 
       // Lock must NOT contain the bogus entry.
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock?.installed['mind']).toBeUndefined();
+      expect(lock?.plugins['mind']).toBeUndefined();
+    });
+
+    // case: S-220.11
+    it('rolls back package-manager state when adapter validation fails after installation', async () => {
+      const packageRoot = path.join(tmpDir, 'packages', 'broken-adapter');
+      await fs.mkdir(packageRoot, { recursive: true });
+      await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+        name: '@kb-labs/broken-adapter', version: '1.0.0', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
+      }));
+      await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = { schema: "kb.adapter/1", implements: "ICache" };');
+      const state = { installed: false, committed: false };
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: '@kb-labs/broken-adapter', version: '1.0.0', integrity: 'sha256-fixture', source: 'marketplace', primaryKind: 'adapter' };
+        },
+        async install(pkg): Promise<InstalledPackage> {
+          state.installed = true;
+          return { id: pkg.id, version: pkg.version, packageRoot, integrity: pkg.integrity };
+        },
+        async remove() {},
+        async commitInstall() { state.committed = true; },
+        async rollbackInstall() { state.installed = false; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+
+      await expect(service.install({ scope: 'platform' }, ['@kb-labs/broken-adapter']))
+        .rejects.toMatchObject({ code: 'KB_ADAPTER_MANIFEST_LOAD' });
+
+      expect(state).toEqual({ installed: false, committed: false });
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.adapters?.['@kb-labs/broken-adapter']).toBeUndefined();
+    });
+
+    // case: S-220.11
+    it('restores the exact prior lock and manifest cache when install commit fails', async () => {
+      const packageId = '@kb-labs/commit-failure-adapter';
+      const packageRoot = await createAdapterDir(tmpDir, 'commit-failure-adapter', packageId);
+      await fs.writeFile(path.join(packageRoot, 'dist', 'index.js'), `export const manifest = ${JSON.stringify({
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: packageId, name: packageId,
+        version: '1.0.0', type: 'core', implements: 'ITestAdapter', networkRequired: false,
+      })};`);
+      const source = createMockSource(new Map([[packageId, {
+        dir: packageRoot,
+        version: '1.0.0',
+        integrity: 'sha256-fixture',
+      }]]));
+      vi.spyOn(source, 'commitInstall').mockRejectedValueOnce(new Error('candidate activation failed'));
+
+      const lockPath = path.join(tmpDir, '.kb', 'marketplace.lock');
+      const cachePath = path.join(tmpDir, '.kb', 'marketplace.manifests.json');
+      await fs.mkdir(path.dirname(lockPath), { recursive: true });
+      const lockBefore = '{\n  "schema": "kb.marketplace/3",\n  "plugins": {},\n  "adapters": {}\n}\n';
+      const cacheBefore = '{\n  "schema": "kb.marketplace.manifests/1",\n  "entries": {"preserved": {"id": "preserved"}}\n}\n';
+      await fs.writeFile(lockPath, lockBefore);
+      await fs.writeFile(cachePath, cacheBefore);
+
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await expect(service.install({ scope: 'platform' }, [packageId])).rejects.toThrow('candidate activation failed');
+
+      expect(await fs.readFile(lockPath, 'utf8')).toBe(lockBefore);
+      expect(await fs.readFile(cachePath, 'utf8')).toBe(cacheBefore);
     });
   });
 
@@ -245,18 +543,18 @@ describe('MarketplaceService', () => {
         remove: removeSpy,
       };
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/to-remove']);
 
       // Verify installed
       let lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/to-remove']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/to-remove']).toBeDefined();
 
       // Uninstall
       await service.uninstall({ scope: "platform" }, ['@kb-labs/to-remove']);
 
       lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/to-remove']).toBeUndefined();
+      expect(lock!.plugins['@kb-labs/to-remove']).toBeUndefined();
       expect(removeSpy).toHaveBeenCalledWith('@kb-labs/to-remove', tmpDir);
     });
 
@@ -268,12 +566,12 @@ describe('MarketplaceService', () => {
         ['@kb-labs/y', { dir: d2, version: '1.0.0', integrity: i2 }],
       ]));
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/x', '@kb-labs/y']);
       await service.uninstall({ scope: "platform" }, ['@kb-labs/x', '@kb-labs/y']);
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(Object.keys(lock!.installed)).toHaveLength(0);
+      expect(Object.keys(lock!.plugins)).toHaveLength(0);
     });
   });
 
@@ -284,7 +582,7 @@ describe('MarketplaceService', () => {
       const { dir } = await createPluginDir(tmpDir, 'local-plugin', '@kb-labs/local-plugin');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.link({ scope: "platform" }, path.relative(tmpDir, dir));
 
       expect(result.id).toBe('@kb-labs/local-plugin');
@@ -293,8 +591,8 @@ describe('MarketplaceService', () => {
       expect(result.provides).toContain('cli-command');
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/local-plugin']).toBeDefined();
-      expect(lock!.installed['@kb-labs/local-plugin']!.source).toBe('local');
+      expect(lock!.plugins['@kb-labs/local-plugin']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/local-plugin']!.source).toBe('local');
     });
 
     it('links an unbuilt scaffold package from its validated source manifest', async () => {
@@ -305,7 +603,7 @@ describe('MarketplaceService', () => {
         JSON.stringify({
           name: '@kb-labs/local-plugin-entry',
           version: '0.1.0',
-          kb: { manifest: './dist/manifest.js' },
+          kb: { adapter: { manifest: './dist/manifest.js' } },
         }),
       );
       const source = createMockSource(new Map());
@@ -317,7 +615,7 @@ describe('MarketplaceService', () => {
         cli: { commands: [{ path: 'local-plugin ping', handler: './ping.js' }] },
       };
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.link(
         { scope: 'platform' },
         path.relative(tmpDir, dir),
@@ -327,13 +625,13 @@ describe('MarketplaceService', () => {
       expect(result.id).toBe('@kb-labs/local-plugin');
       expect(result.primaryKind).toBe('plugin');
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/local-plugin']).toBeDefined();
-      expect(lock!.installed['@kb-labs/local-plugin-entry']).toBeUndefined();
+      expect(lock!.plugins['@kb-labs/local-plugin']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/local-plugin-entry']).toBeUndefined();
     });
 
     it('rejects path outside workspace root (path traversal)', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       await expect(service.link({ scope: "platform" }, '../../etc/passwd')).rejects.toThrow('outside platform root');
     });
@@ -344,12 +642,12 @@ describe('MarketplaceService', () => {
       const { dir } = await createPluginDir(tmpDir, 'to-unlink', '@kb-labs/to-unlink');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.link({ scope: "platform" }, path.relative(tmpDir, dir));
       await service.unlink({ scope: "platform" }, '@kb-labs/to-unlink');
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/to-unlink']).toBeUndefined();
+      expect(lock!.plugins['@kb-labs/to-unlink']).toBeUndefined();
     });
   });
 
@@ -362,28 +660,28 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/toggle', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/toggle']);
 
       await service.disable({ scope: "platform" }, '@kb-labs/toggle');
       let lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/toggle']!.enabled).toBe(false);
+      expect(lock!.plugins['@kb-labs/toggle']!.enabled).toBe(false);
 
       await service.enable({ scope: "platform" }, '@kb-labs/toggle');
       lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/toggle']!.enabled).toBe(true);
+      expect(lock!.plugins['@kb-labs/toggle']!.enabled).toBe(true);
     });
 
     it('throws when enabling a non-existent package', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       await expect(service.enable({ scope: "platform" }, '@kb-labs/ghost')).rejects.toThrow('not found');
     });
 
     it('throws when disabling a non-existent package', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       await expect(service.disable({ scope: "platform" }, '@kb-labs/ghost')).rejects.toThrow('not found');
     });
@@ -398,7 +696,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/listed', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/listed']);
 
       const list = await service.list({ scope: "platform" });
@@ -412,7 +710,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/filter-me', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/filter-me']);
 
       const plugins = await service.list({ scope: "platform" }, { kind: 'plugin' });
@@ -424,7 +722,7 @@ describe('MarketplaceService', () => {
 
     it('returns empty list when no lock file', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       const list = await service.list({ scope: "platform" });
       expect(list).toEqual([]);
@@ -436,7 +734,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/entry-get', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/entry-get']);
 
       const entry = await service.getEntry({ scope: "platform" }, '@kb-labs/entry-get');
@@ -451,13 +749,98 @@ describe('MarketplaceService', () => {
   // ── doctor ───────────────────────────────────────────────────────────
 
   describe('doctor', () => {
+    // case: S-203.25
+    it('does not compare marketplace pins to a local directory hash', async () => {
+      const { dir } = await createPluginDir(tmpDir, 'marketplace-pinned', '@kb-labs/marketplace-pinned');
+      const pin = `sha512-${Buffer.from('expected tarball').toString('base64')}`;
+      const entry = {
+        schema: 'kb.store-entry/1' as const,
+        name: '@kb-labs/marketplace-pinned',
+        version: '1.0.0',
+        kind: 'plugin' as const,
+        integrity: pin,
+        installedAt: new Date().toISOString(),
+      };
+      const stored: ResolvedStoreEntry = { entry, packageRoot: dir, entryDir: path.join(tmpDir, 'store') };
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return stored; },
+        async resolve() { return stored; },
+        async listEntries() { return [entry]; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()), extensionStore: store });
+      const lockRoot = path.join(tmpDir, '.kb');
+      await fs.mkdir(lockRoot, { recursive: true });
+      await fs.writeFile(path.join(lockRoot, 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3',
+        plugins: {
+          '@kb-labs/marketplace-pinned': {
+            source: 'marketplace', package: '@kb-labs/marketplace-pinned', version: '1.0.0', integrity: pin,
+            enabled: true,
+          },
+        },
+      }));
+
+      const report = await service.doctor({ scope: 'platform' });
+
+      expect(report.issues.some(issue => issue.message.startsWith('Integrity mismatch:'))).toBe(false);
+    });
+
+    // case: S-225.1
+    it('reports a store pin mismatch with the reinstall remediation', async () => {
+      const { dir } = await createPluginDir(tmpDir, 'marketplace-tampered', '@kb-labs/marketplace-tampered');
+      const expected = `sha512-${Buffer.from('expected tarball').toString('base64')}`;
+      const actual = `sha512-${Buffer.from('actual tarball').toString('base64')}`;
+      const stored: ResolvedStoreEntry = {
+        entry: {
+          schema: 'kb.store-entry/1', name: '@kb-labs/marketplace-tampered', version: '1.0.0',
+          kind: 'plugin', integrity: actual, installedAt: new Date().toISOString(),
+        },
+        packageRoot: dir,
+        entryDir: path.join(tmpDir, 'store'),
+      };
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { throw new IntegrityMismatchError({ plugin: stored.entry.name, expected, actual }); },
+        async resolve() { return stored; },
+        async listEntries() { return [stored.entry]; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()), extensionStore: store });
+      const lockRoot = path.join(tmpDir, '.kb');
+      await fs.mkdir(lockRoot, { recursive: true });
+      await fs.writeFile(path.join(lockRoot, 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3',
+        plugins: {
+          '@kb-labs/marketplace-tampered': {
+            source: 'marketplace', package: '@kb-labs/marketplace-tampered', version: '1.0.0', integrity: expected,
+            enabled: true,
+          },
+        },
+      }));
+
+      const report = await service.doctor({ scope: 'platform' });
+
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        severity: 'error',
+        packageId: '@kb-labs/marketplace-tampered',
+        diagnosticCode: 'INTEGRITY_MISMATCH',
+        message: expect.stringContaining(actual),
+        remediation: 'Run "kb marketplace install @kb-labs/marketplace-tampered@1.0.0" to restore the pinned version',
+      }));
+    });
+
     it('returns ok: true when all packages are healthy', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'healthy', '@kb-labs/healthy');
       const source = createMockSource(
         new Map([['@kb-labs/healthy', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/healthy']);
 
       const report = await service.doctor({ scope: "platform" });
@@ -474,7 +857,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/will-vanish', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/will-vanish']);
 
       // Delete the package directory
@@ -485,26 +868,107 @@ describe('MarketplaceService', () => {
       const error = report.issues.find(i => i.severity === 'error');
       expect(error).toBeDefined();
       expect(error!.message).toContain('not found');
+      expect(error!.diagnosticCode).toBe('PACKAGE_NOT_FOUND');
     });
 
-    it('warns about integrity mismatch', async () => {
-      const { dir, integrity } = await createPluginDir(tmpDir, 'tampered', '@kb-labs/tampered');
-      const source = createMockSource(
-        new Map([['@kb-labs/tampered', { dir, version: '1.0.0', integrity }]]),
-      );
+    // case: S-203.25
+    it('preserves the policy diagnostic code, config path, and scoped repair command', async () => {
+      const { dir, integrity } = await createPluginDir(tmpDir, 'policy-blocked', '@vendor/policy-blocked');
+      const source = createMockSource(new Map([['@vendor/policy-blocked', { dir, version: '1.0.0', integrity }]]));
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(projectRoot, { recursive: true });
+      const resolved = await source.resolve('@vendor/policy-blocked');
+      const storeEntry = {
+        schema: 'kb.store-entry/1' as const,
+        name: resolved.id,
+        version: resolved.version,
+        kind: 'plugin' as const,
+        integrity,
+        installedAt: new Date().toISOString(),
+      };
+      const stored: ResolvedStoreEntry = { entry: storeEntry, packageRoot: dir, entryDir: path.join(tmpDir, 'store', 'entries', 'policy-blocked') };
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return stored; },
+        async resolve() { return stored; },
+        async listEntries() { return [storeEntry]; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source, extensionStore: store });
+      await service.install({ scope: 'project', projectRoot }, ['@vendor/policy-blocked']);
+      const configPath = path.join(projectRoot, '.kb', 'kb.config.json');
+      await fs.writeFile(configPath, JSON.stringify({ plugins: { block: 7 } }));
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
-      await service.install({ scope: "platform" }, ['@kb-labs/tampered']);
+      const report = await service.doctor({ scope: 'project', projectRoot });
 
-      // Tamper with package.json
-      await fs.writeFile(
-        path.join(dir, 'package.json'),
-        JSON.stringify({ name: '@kb-labs/tampered', version: '1.0.0', tampered: true }),
-      );
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        packageId: '@vendor/policy-blocked',
+        diagnosticCode: 'PLUGIN_POLICY_TYPE_INVALID',
+        path: configPath,
+        message: expect.stringContaining('plugins.block must be an array'),
+        remediation: expect.stringContaining('kb marketplace plugins doctor --scope project'),
+      }));
+    });
 
-      const report = await service.doctor({ scope: "platform" });
-      const warning = report.issues.find(i => i.severity === 'warning' && i.message.includes('Integrity'));
-      expect(warning).toBeDefined();
+    // case: S-203.21
+    it('reports discovery failures for enabled plugin entries with their diagnostic code', async () => {
+      const { dir, integrity } = await createPluginDir(tmpDir, 'id-mismatch', '@kb-labs/id-mismatch');
+      const source = createMockSource(new Map([['@kb-labs/id-mismatch', { dir, version: '1.0.0', integrity }]]));
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'platform' }, ['@kb-labs/id-mismatch']);
+      await fs.writeFile(path.join(dir, 'kb.plugin.json'), JSON.stringify({
+        schema: 'kb.plugin/3', id: '@kb-labs/other-id', version: '1.0.0',
+      }));
+
+      const report = await service.doctor({ scope: 'platform' });
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        packageId: '@kb-labs/id-mismatch',
+        severity: 'error',
+        diagnosticCode: 'PLUGIN_ID_MISMATCH',
+      }));
+    });
+
+    // case: S-203.21
+    it('lists enabled plugins with missing command handlers and their discovery code', async () => {
+      const { dir, integrity } = await createPluginDir(tmpDir, 'missing-handler', '@kb-labs/missing-handler');
+      const source = createMockSource(new Map([['@kb-labs/missing-handler', { dir, version: '1.0.0', integrity }]]));
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'platform' }, ['@kb-labs/missing-handler']);
+      await fs.rm(path.join(dir, 'dist', 'h.js'));
+
+      const report = await service.doctor({ scope: 'platform' });
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        packageId: '@kb-labs/missing-handler',
+        severity: 'error',
+        diagnosticCode: 'COMMAND_HANDLER_MISSING',
+        remediation: expect.stringContaining('kb marketplace plugins doctor'),
+      }));
+    });
+
+    // case: S-203.21
+    it('lists enabled plugins with invalid command schemas and their discovery code', async () => {
+      const { dir, integrity } = await createPluginDir(tmpDir, 'invalid-command-schema', '@kb-labs/invalid-command-schema');
+      const source = createMockSource(new Map([['@kb-labs/invalid-command-schema', { dir, version: '1.0.0', integrity }]]));
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'platform' }, ['@kb-labs/invalid-command-schema']);
+      await fs.writeFile(path.join(dir, 'kb.plugin.json'), JSON.stringify({
+        schema: 'kb.plugin/3',
+        id: '@kb-labs/invalid-command-schema',
+        version: '1.0.0',
+        cli: { commands: [{ path: 'invalid run', describe: 'Invalid flags', handler: './h.js', flags: [{ name: 'runId', type: 'string' }] }] },
+      }));
+
+      const report = await service.doctor({ scope: 'platform' });
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        packageId: '@kb-labs/invalid-command-schema',
+        severity: 'error',
+        diagnosticCode: 'COMMAND_SCHEMA_INVALID',
+      }));
     });
 
     it('reports info about unsigned packages', async () => {
@@ -513,7 +977,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/unsigned', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/unsigned']);
 
       const report = await service.doctor({ scope: "platform" });
@@ -523,7 +987,7 @@ describe('MarketplaceService', () => {
 
     it('returns ok: true with empty lock', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       const report = await service.doctor({ scope: "platform" });
       expect(report.ok).toBe(true);
@@ -537,7 +1001,7 @@ describe('MarketplaceService', () => {
       await createPluginDir(tmpDir, 'found-plugin', '@kb-labs/found-plugin');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.sync({ scope: "platform" }, {
         include: ['packages/*'],
       });
@@ -548,7 +1012,80 @@ describe('MarketplaceService', () => {
 
       // Verify lock file updated
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/found-plugin']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/found-plugin']).toBeDefined();
+    });
+
+    // case: S-179.4
+    it('records workspace adapters in the platform adapters lock section', async () => {
+      const adapterDir = await createAdapterDir(tmpDir, 'found-adapter', '@kb-labs/found-adapter');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()) });
+
+      const result = await service.sync({ scope: 'platform' }, { include: ['packages/*'] });
+
+      expect(result.added).toContainEqual({ id: '@kb-labs/found-adapter', primaryKind: 'adapter', version: '1.0.0' });
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.adapters?.['@kb-labs/found-adapter']).toMatchObject({
+        source: 'platform',
+        resolvedPath: `./${path.relative(tmpDir, adapterDir)}`,
+      });
+      expect(lock?.plugins['@kb-labs/found-adapter']).toBeUndefined();
+      expect((await service.list({ scope: 'platform' }, { kind: 'adapter' })).map(entry => entry.id))
+        .toContain('@kb-labs/found-adapter');
+    });
+
+    // case: S-179.31
+    it('removes adapter entries from a project lock during sync while retaining plugins', async () => {
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await createPluginDir(projectRoot, 'found-plugin', '@kb-labs/found-plugin');
+      await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3', plugins: {}, adapters: { '@kb-labs/platform-adapter': {
+          source: 'platform', version: '1.0.0', integrity: 'sha256-platform', resolvedPath: './adapters/platform', enabled: true,
+        } },
+      }));
+      await fs.writeFile(path.join(projectRoot, '.kb', 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3', plugins: { '@kb-labs/found-plugin': {
+          link: './packages/found-plugin', source: 'local', enabled: true,
+        } }, adapters: { '@kb-labs/found-adapter': {
+          source: 'platform', version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: './adapters/found', enabled: true,
+        } },
+      }));
+      const service = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source: createMockSource(new Map()) });
+
+      const result = await service.sync({ scope: 'project', projectRoot }, { include: ['packages/*'] });
+
+      expect(result.total).toBe(1);
+      const lock = await readMarketplaceLock(projectRoot, new DiagnosticCollector(), 'project');
+      expect(lock?.plugins['@kb-labs/found-plugin']).toBeDefined();
+      expect(lock?.adapters).toBeUndefined();
+      const platformLock = await readMarketplaceLock(tmpDir, new DiagnosticCollector(), 'platform');
+      expect(platformLock?.adapters?.['@kb-labs/platform-adapter']).toBeDefined();
+    });
+
+    // case: S-179.36
+    it('preserves platform adapter entries when project sync targets the shared platform root', async () => {
+      const root = tmpDir;
+      await fs.mkdir(path.join(root, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(root, '.kb', 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3',
+        plugins: { '@kb-labs/shared-plugin': { link: './plugins/shared-plugin', enabled: true, source: 'local' } },
+        adapters: { '@kb-labs/shared-adapter': {
+          source: 'platform', version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: './adapters/shared', enabled: true,
+        } },
+      }));
+      const service = makeMarketplaceService({
+        platformRoot: root,
+        projectRoot: root,
+        source: createMockSource(new Map()),
+      });
+
+      const result = await service.sync({ scope: 'project', projectRoot: root }, { include: [] });
+
+      expect(result.total).toBe(2);
+      const lock = await readMarketplaceLock(root, new DiagnosticCollector(), 'platform');
+      expect(lock?.plugins['@kb-labs/shared-plugin']).toBeDefined();
+      expect(lock?.adapters?.['@kb-labs/shared-adapter']).toBeDefined();
     });
 
     it('skips packages already in lock', async () => {
@@ -557,7 +1094,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/existing', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/existing']);
 
       const result = await service.sync({ scope: "platform" }, { include: ['packages/*'] });
@@ -570,22 +1107,22 @@ describe('MarketplaceService', () => {
       await createPluginDir(tmpDir, 'auto-disabled', '@kb-labs/auto-disabled');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.sync({ scope: "platform" }, { include: ['packages/*'], autoEnable: false });
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/auto-disabled']!.enabled).toBe(false);
+      expect(lock!.plugins['@kb-labs/auto-disabled']!.enabled).toBe(false);
     });
 
     it('auto-enables entries when autoEnable is true', async () => {
       await createPluginDir(tmpDir, 'auto-enabled', '@kb-labs/auto-enabled');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.sync({ scope: "platform" }, { include: ['packages/*'], autoEnable: true });
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/auto-enabled']!.enabled).toBe(true);
+      expect(lock!.plugins['@kb-labs/auto-enabled']!.enabled).toBe(true);
     });
   });
 });
@@ -594,13 +1131,13 @@ describe('MarketplaceService', () => {
 // mergeScopedEntries — project wins over platform
 // ---------------------------------------------------------------------------
 
-function makeEntry(id: string, version: string): { id: string; version: string; resolvedPath: string; installedAt: string; source: 'marketplace'; primaryKind: 'plugin'; provides: string[]; integrity: string } {
+function makeEntry(id: string, version: string): MarketplaceEntryWithId {
   return {
     id,
     version,
     resolvedPath: `./node_modules/${id}`,
-    installedAt: new Date().toISOString(),
     source: 'marketplace',
+    package: id,
     primaryKind: 'plugin',
     provides: ['plugin'],
     integrity: 'sha256-test',

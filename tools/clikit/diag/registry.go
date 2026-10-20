@@ -1,84 +1,72 @@
 package diag
 
-import "sync"
+import "os/exec"
 
-// Each tool registers its ERR_-prefixed codes once at startup (init), mirroring
-// the platform's ERROR_HINTS map (core/config/src/errors/kb-error.ts). The
-// registry maps a code to its default hint and exit code.
-
-var (
-	mu        sync.RWMutex
-	hints     = map[string]string{}
-	exitCodes = map[string]int{}
-)
-
-// Conventional process exit codes (mirrors the platform's getExitCode).
+// Numeric category codes stay private; explicit process results are validated
+// through ProcessExitStatus.
 const (
-	ExitOK        = 0
-	ExitError     = 1 // generic failure
-	ExitConfig    = 2 // configuration / validation failure
-	ExitForbidden = 3 // permission / policy / rolled-back
+	exitOK    = 0
+	exitError = 1
+	exitInput = 2
 )
 
-// RegisterHints adds code→hint defaults. Safe to call from multiple inits.
-func RegisterHints(m map[string]string) {
-	mu.Lock()
-	defer mu.Unlock()
-	for k, v := range m {
-		hints[k] = v
+// ExitStatus is a process status selected by the diagnostic contract. Its
+// value can only be constructed in this package from a catalogue class or an
+// explicit process outcome validated against the portable OS exit range.
+type ExitStatus struct {
+	code     int
+	selected bool
+}
+
+// Code returns the OS status for the single launcher boundary.
+func (s ExitStatus) Code() int {
+	if !s.selected {
+		return exitError
 	}
+	return s.code
 }
 
-// RegisterExitCodes adds code→exit-code overrides (default is ExitError).
-func RegisterExitCodes(m map[string]int) {
-	mu.Lock()
-	defer mu.Unlock()
-	for k, v := range m {
-		exitCodes[k] = v
+// IsSelected reports whether diag explicitly constructed this process outcome.
+func (s ExitStatus) IsSelected() bool { return s.selected }
+
+func SuccessStatus() ExitStatus          { return ExitStatus{code: exitOK, selected: true} }
+func operationFailureStatus() ExitStatus { return ExitStatus{code: exitError, selected: true} }
+func inputRefusalStatus() ExitStatus     { return ExitStatus{code: exitInput, selected: true} }
+
+// PlanChangesStatus and PlanDriftStatus are the non-error outcomes declared
+// by the kb-deploy plan command's documented result contract.
+func PlanChangesStatus() ExitStatus          { return ExitStatus{code: 2, selected: true} }
+func PlanDriftStatus() ExitStatus            { return ExitStatus{code: 4, selected: true} }
+func DeployChangesAppliedStatus() ExitStatus { return ExitStatus{code: 1, selected: true} }
+
+// ProcessExitStatus preserves an explicit operating-system process outcome,
+// including command fixtures whose exit values are part of their contract.
+// Values outside the portable process exit range become an operation failure.
+func ProcessExitStatus(code int) ExitStatus {
+	if code < 0 || code > 255 {
+		return operationFailureStatus()
 	}
+	return ExitStatus{code: code, selected: true}
 }
 
-// HintFor returns the registered default hint for a code, or "".
-func HintFor(code string) string {
-	mu.RLock()
-	defer mu.RUnlock()
-	return hints[code]
+// ChildProcessStatus preserves the explicit child-process pass-through
+// contract and normalizes values outside the portable process exit range.
+func ChildProcessStatus(child *exec.ExitError) ExitStatus {
+	if child == nil || child.ExitCode() < 0 {
+		return operationFailureStatus()
+	}
+	return ProcessExitStatus(child.ExitCode())
 }
 
-// ExitCode resolves a Diag to a process exit code. Precedence:
-//  1. an explicit Meta["exitCode"] int on the Diag,
-//  2. the registered exit code for Diag.Code,
-//  3. ExitError (1).
-//
-// A nil Diag is ExitOK.
-func ExitCode(d *Diag) int {
+// ExitCode maps the shared CLI error categories to the shared process table.
+func ExitCode(d *Diag) ExitStatus {
 	if d == nil {
-		return ExitOK
+		return SuccessStatus()
 	}
-	if d.Meta != nil {
-		if ec, ok := d.Meta["exitCode"]; ok {
-			if n, ok := toInt(ec); ok {
-				return n
-			}
+	if entry, ok := LookupCatalog(d.Code); ok {
+		if entry.ProcessExitClass == ExitClassInputRefusal {
+			return inputRefusalStatus()
 		}
 	}
-	mu.RLock()
-	defer mu.RUnlock()
-	if n, ok := exitCodes[d.Code]; ok {
-		return n
-	}
-	return ExitError
-}
-
-func toInt(v any) (int, bool) {
-	switch n := v.(type) {
-	case int:
-		return n, true
-	case int64:
-		return int(n), true
-	case float64:
-		return int(n), true
-	default:
-		return 0, false
-	}
+	return operationFailureStatus()
 }

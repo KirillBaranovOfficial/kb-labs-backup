@@ -77,7 +77,7 @@ export default async function InstallPage({ params }: Props) {
   const checksumCmd = `curl -fsSL https://github.com/kb-labs-team/kb-labs/releases/download/${latestTag}/checksums.txt | grep kb-create-linux-amd64`; // i18n-ignore
 
   const PREREQS = [
-    { icon: Package,  label: 'Node.js 20+',                    note: 'nodejs.org/en/download' }, // i18n-ignore
+    { icon: Package,  label: 'Node.js (supported major)',       note: 'nodejs.org/en/download' }, // i18n-ignore
     { icon: Terminal, label: 'pnpm',                            note: 'npm install -g pnpm' }, // i18n-ignore
     { icon: Monitor,  label: t('install.prereqs.os'),           note: t('install.prereqs.osNote') },
   ];

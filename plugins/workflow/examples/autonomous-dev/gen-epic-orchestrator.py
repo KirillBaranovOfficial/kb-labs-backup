@@ -52,7 +52,7 @@ for t in tickets:
           echo "{tid} -> child run $RID"
           ST=""
           for i in $(seq 1 120); do
-            ST=$(curl -s --max-time 4 localhost:7778/api/v1/runs/$RID | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['run']['status'])" 2>/dev/null)
+            ST=$(kb workflow runs status "$RID" --json 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['status'])" 2>/dev/null)
             [ "$ST" = "success" ] && break
             [ "$ST" = "failed" ] && {{ echo "{tid} child FAILED"; exit 1; }}
             sleep 3

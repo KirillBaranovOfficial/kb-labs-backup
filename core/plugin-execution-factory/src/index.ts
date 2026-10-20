@@ -9,44 +9,16 @@
  * Now the dependency chain is clean:
  * plugin-runtime → plugin-execution-factory → core-runtime
  *
- * @example
- * ```typescript
- * import { createExecutionBackend } from '@kb-labs/plugin-execution-factory';
- *
- * const backend = createExecutionBackend({ platform });
- * ```
+ * Backend construction is intentionally available only to core runtime through
+ * `@kb-labs/plugin-execution-factory/construct`.
  */
 
-// Factory
-export { createExecutionBackend, ensureHostProcessExecutor } from './factory.js';
 export { PROTOCOL_VERSION } from './types.js';
-
-// Isolated execution (unified factory for all hosts)
-export {
-  createIsolatedExecutionBackend,
-  type StrictIsolationOptions,
-  type IsolatedBackendOptions,
-  type RemoteJobContext,
+export type {
+  StrictIsolationOptions,
+  IsolatedBackendOptions,
+  RemoteJobContext,
 } from './isolated-backend.js';
-
-// Backends
-export {
-  InProcessBackend,
-  type InProcessBackendOptions,
-} from './backends/in-process.js';
-
-export {
-  SubprocessBackend,
-  type SubprocessBackendOptions,
-} from './backends/subprocess.js';
-
-export {
-  WorkerPoolBackend,
-  type WorkerPoolBackendOptions,
-} from './backends/worker-pool/backend.js';
-
-// Adapters
-export { SubprocessRunnerAdapter } from './adapters/index.js';
 
 // Worker-pool internals (re-exported for facade package compatibility)
 export {
@@ -91,6 +63,7 @@ export {
   AcquireTimeoutError,
   WorkerCrashedError,
   WorkerUnhealthyError,
+  WorkerUnavailableError,
   isExecutionLayerError,
   isKnownErrorCode,
 } from './errors.js';
@@ -105,9 +78,9 @@ export {
 export type {
   ExecutionBackend,
   BackendOptions,
+  ResolvedExecutionMode,
   WorkerPoolOptions,
   WarmupPolicy,
-  RemoteOptions,
   ExecutionRequest,
   ExecutionResponse,
   ExecutionResult,
@@ -132,6 +105,7 @@ export type {
   PlatformTransportFactory,
   PlatformTransportServer,
 } from './types.js';
+export type { NormalizedExecutionResult } from './normalized-result.js';
 
 // Platform transport factories
 export { IPCPlatformTransportFactory } from './platform-transport/index.js';

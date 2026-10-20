@@ -50,6 +50,7 @@ export type ProjectRegistryErrorCode =
   | 'KB_PROJECT_REGISTRY_CORRUPT'
   | 'KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED'
   | 'KB_PROJECT_REGISTRY_LOCKED'
+  | 'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH'
   | 'KB_RUNTIME_INPUT_INVALID';
 
 export interface AddProjectOptions {
@@ -62,6 +63,7 @@ export interface AddProjectOptions {
 export interface AddProjectResult {
   project: ProjectRecord;
   declaration: ProjectDeclarationState;
+  alreadyExisted: boolean;
 }
 
 /** A registered project together with facts read from disk at query time. */
@@ -118,6 +120,8 @@ export interface ProjectRuntimeInfo {
   /** ISO-8601 timestamp of the last request the runtime served; absent while `stopped`. */
   lastUsedAt?: string;
   restarts: number;
+  /** Number of enabled workflow cron triggers keeping this runtime warm. */
+  keptRunningSchedules: number;
 }
 
 /** One entry of the host's project list: registry facts plus runtime state. */

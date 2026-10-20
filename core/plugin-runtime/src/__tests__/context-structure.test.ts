@@ -159,7 +159,7 @@ describe("Context Structure (Runtime Verification)", () => {
     pluginVersion: "1.0.0",
     requestId: "test-req-123",
     permissions: {},
-    hostContext: { host: "cli", argv: [], flags: {} },
+    hostContext: { host: "cli", binaryName: 'kb', argv: [], flags: {} },
   };
 
   it("should provide complete context structure to handlers", () => {
@@ -212,6 +212,7 @@ describe("Context Structure (Runtime Verification)", () => {
         (_message: string, _error?: Error, meta?: Record<string, unknown>) =>
           records.push(meta ?? {}),
       ),
+      flush: vi.fn().mockResolvedValue(undefined),
       child: vi.fn(function (this: typeof logger) {
         return this;
       }),

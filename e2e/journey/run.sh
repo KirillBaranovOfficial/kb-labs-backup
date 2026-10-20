@@ -3,81 +3,250 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
-docker() {
-  if [[ "${1:-}" == "compose" ]]; then
-    shift
-    if command docker compose version >/dev/null 2>&1; then
-      command docker compose "$@"
-    else
-      command docker-compose "$@"
-    fi
-  else
-    command docker "$@"
-  fi
-}
-if [[ "${KB_JOURNEY_CI:-0}" == "1" ]]; then
-  COMPOSE=(docker compose -f e2e/docker-compose.yml -f e2e/docker-compose.ci.yml -f e2e/journey/docker-compose.yml)
-else
-  COMPOSE=(docker compose -f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
-fi
-cleanup() { "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true; }
-trap cleanup EXIT INT TERM
+export KB_JOURNEY_WORKSPACE_SOURCE="$ROOT"
+export KB_JOURNEY_GIT_REVISION="$(git rev-parse HEAD)"
+export KB_JOURNEY_RUNNER_UID="$(id -u)"
+export KB_JOURNEY_RUNNER_GID="$(id -g)"
 
-if [[ "${1:-}" == "--prepare-only" ]]; then
+no_build=0
+resolve_only=0
+prepare_only=0
+compose_action=""
+for option in "$@"; do
+  case "$option" in
+    --no-build) no_build=1 ;;
+    --resolve-only) resolve_only=1 ;;
+    --prepare-only) prepare_only=1 ;;
+    --down|--render-compose-config)
+      if [[ -n "$compose_action" ]]; then
+        echo "Journey compose actions --down and --render-compose-config cannot be combined." >&2
+        exit 2
+      fi
+      compose_action="$option"
+      ;;
+    *) echo "Unknown journey option: $option" >&2; exit 2 ;;
+  esac
+done
+if (( resolve_only && prepare_only )); then
+  echo "Journey options --resolve-only and --prepare-only cannot be combined." >&2
+  exit 2
+fi
+if [[ -n "$compose_action" ]] && (( resolve_only || prepare_only )); then
+  echo "Journey compose actions cannot be combined with --resolve-only or --prepare-only." >&2
+  exit 2
+fi
+
+if (( resolve_only )); then
+  if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
+    python3 e2e/journey/select_from_cases.py
+  elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
+    python3 e2e/journey/dispatch_registry.py --dispatch "$KB_JOURNEY_ONLY"
+  else
+    python3 e2e/journey/select_from_cases.py
+  fi
+  exit
+fi
+
+COMPOSE=()
+COMPOSE_AVAILABLE=0
+ACTIVE_MONITORS=()
+MONITORED_CONTAINER_IDS=()
+if command docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose)
+  COMPOSE_AVAILABLE=1
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE=(docker-compose)
+  COMPOSE_AVAILABLE=1
+fi
+COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
+if (( COMPOSE_AVAILABLE )); then
+  COMPOSE+=("${COMPOSE_FILES[@]}")
+fi
+source "$ROOT/e2e/journey/candidate-services.sh"
+
+if [[ -n "$compose_action" ]]; then
+  if (( ! COMPOSE_AVAILABLE )); then
+    echo "Docker Compose is required for journey stack operations; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
+    exit 127
+  fi
+  if [[ "$compose_action" == "--down" ]]; then
+    "${COMPOSE[@]}" down --volumes --remove-orphans
+  else
+    "${COMPOSE[@]}" config --format json
+  fi
+  exit $?
+fi
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  local monitor_pid monitor_status
+  # bash 3.2 (macOS /bin/bash) treats an empty array as unbound under set -u.
+  for monitor_pid in ${ACTIVE_MONITORS[@]+"${ACTIVE_MONITORS[@]}"}; do
+    if kill -0 "$monitor_pid" 2>/dev/null; then
+      if kill "$monitor_pid" 2>/dev/null; then
+        monitor_status=143
+      else
+        monitor_status=0
+      fi
+      if wait "$monitor_pid"; then
+        :
+      else
+        local wait_status=$?
+        if (( wait_status != 143 || monitor_status == 0 )); then
+          echo "Journey container metrics monitor $monitor_pid failed with exit $wait_status. Next: cat .journey/reports/container-metrics.jsonl" >&2
+          (( status != 0 )) || status=1
+        fi
+      fi
+    elif ! wait "$monitor_pid"; then
+      echo "Journey container metrics monitor $monitor_pid failed. Next: cat .journey/reports/container-metrics.jsonl" >&2
+      (( status != 0 )) || status=1
+    fi
+  done
+  if (( COMPOSE_AVAILABLE )); then
+    if ! journey_stop_container_services "${COMPOSE[@]}"; then
+      echo "Journey candidate services cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
+      (( status != 0 )) || status=1
+    fi
+    if [[ -n "${RUN_STARTED_AT:-}" ]]; then
+      if ! bash e2e/journey/teardown-compose.sh "$status" .journey/reports "$RUN_STARTED_AT" "${COMPOSE[@]}"; then
+        status=1
+      fi
+    elif ! "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null; then
+      echo "Journey Compose cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
+      (( status != 0 )) || status=1
+    fi
+  fi
+  exit "$status"
+}
+
+mkdir -p .journey/reports
+export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
+
+if (( prepare_only )); then
   e2e/journey/prepare-candidate.sh
   exit
 fi
 
-if [[ "${1:-}" != "--no-build" ]]; then
+if (( ! COMPOSE_AVAILABLE )); then
+  echo "Docker Compose is required for journey runs; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
+  exit 127
+fi
+
+if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
+  python3 e2e/journey/hermetic_cli.py -- node ./cli/bin/dist/bin.js qa cases validate
+fi
+
+if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
+  selection_json="$(python3 e2e/journey/select_from_cases.py)"
+  export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
+  export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
+  export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
+  export KB_JOURNEY_SELECTED_OWNING_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["selectedOwningSteps"], separators=(",",":")))' <<< "$selection_json")"
+  export KB_JOURNEY_SELECTED_CAPABILITIES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<< "$selection_json")"
+  selected_selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["runners"]))' <<< "$selection_json")"
+else
+  unset KB_JOURNEY_SELECTED_STEPS
+  unset KB_JOURNEY_PREREQUISITE_STEPS
+  unset KB_JOURNEY_PREREQUISITE_FLOWS
+  unset KB_JOURNEY_SELECTED_OWNING_STEPS
+  unset KB_JOURNEY_SELECTED_CAPABILITIES
+  unset KB_JOURNEY_NEEDED_STATES
+fi
+
+dispatch_selector() {
+  local selector="$1"
+  python3 e2e/journey/dispatch_registry.py --dispatch "$selector"
+}
+
+run_selector() {
+  local selectors="$1" selector runner_json had_profile=0 saved_profile="${KB_JOURNEY_SERVICE_PROFILE:-}"
+  [[ "${KB_JOURNEY_SERVICE_PROFILE+x}" == "x" ]] && had_profile=1
+  while IFS= read -r selector; do
+    [[ -z "$selector" ]] && continue
+    runner_json="$(dispatch_selector "$selector")"
+    while IFS=$'\t' read -r runner_selector front scenario variant profile; do
+      unset KB_JOURNEY_SERVICE_PROFILE
+      if [[ -n "$profile" ]]; then export KB_JOURNEY_SERVICE_PROFILE="$profile"; fi
+      run_journey "$runner_selector" "$front" "$scenario" "$variant"
+    done < <(python3 -c 'import json,sys; print("\n".join("\t".join((d["selector"],d["front_door"],d["scenario"],d["variant"],d["service_profile"])) for d in json.load(sys.stdin)))' <<< "$runner_json")
+  done <<< "$(printf '%s' "$selectors" | tr ',' '\n')"
+  if (( had_profile )); then export KB_JOURNEY_SERVICE_PROFILE="$saved_profile"; else unset KB_JOURNEY_SERVICE_PROFILE; fi
+}
+
+trap cleanup EXIT INT TERM
+
+RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+if (( ! no_build )); then
   pnpm install --frozen-lockfile
   kb-devkit run build --affected
   e2e/journey/prepare-candidate.sh
 fi
 
+start_container_monitor() {
+  python3 e2e/journey/container_outcomes.py --monitor "$1" --report-dir .journey/reports &
+  ACTIVE_MONITORS+=("$!")
+  MONITORED_CONTAINER_IDS+=("$1")
+}
+
+start_project_container_monitors() {
+  local container_id container_listing
+  container_listing=$("${COMPOSE[@]}" ps -aq --all)
+  while IFS= read -r container_id; do
+    [[ -z "$container_id" ]] && continue
+    case " ${MONITORED_CONTAINER_IDS[*]-} " in
+      *" $container_id "*) ;;
+      *) start_container_monitor "$container_id" ;;
+    esac
+  done <<< "$container_listing"
+}
+
 mkdir -p .journey/reports
 rm -f .journey/reports/journey-summary.md
-"${COMPOSE[@]}" build publisher runner
-"${COMPOSE[@]}" up -d --wait verdaccio
-"${COMPOSE[@]}" run --rm publisher
+find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
+"${COMPOSE[@]}" build publisher runner idp-stub
+journey_start_container_services "${COMPOSE[@]}"
+start_project_container_monitors
+journey_wait_container_publisher
 
 run_journey() {
-  local front_door="$1" scenario="$2" variant="$3"
+  local runner_selector="$1" front_door="$2" scenario="$3" variant="$4"
+  local container_name="journey-runner-$$-${RUN_INDEX}" container_id container_exit
+  RUN_INDEX=$((RUN_INDEX + 1))
   echo "==> $front_door / $scenario / $variant"
-  if ! KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
-    "${COMPOSE[@]}" run --rm -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT runner < /dev/null; then
+  if ! container_id=$(KB_JOURNEY_RUNNER_SELECTOR="$runner_selector" KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
+    "${COMPOSE[@]}" run -d --name "$container_name" -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
+    -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_SELECTED_STEPS \
+    -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS \
+    -e KB_JOURNEY_SELECTED_OWNING_STEPS -e KB_JOURNEY_SELECTED_CAPABILITIES runner < /dev/null); then
+    status=1
+    return
+  fi
+  start_container_monitor "$container_id"
+  start_project_container_monitors
+  if ! container_exit=$(docker wait "$container_id"); then
+    echo "Could not wait for journey runner container $container_id. Next: cat .journey/reports/container-outcomes.json" >&2
+    status=1
+  elif [[ "$container_exit" != "0" ]]; then
+    echo "Journey runner container $container_id exited $container_exit. Next: cat .journey/reports/container-outcomes.json" >&2
     status=1
   fi
 }
 
+RUN_INDEX=0
 status=0
-if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
-  case "$KB_JOURNEY_ONLY" in
-    agent:*) run_journey agent "${KB_JOURNEY_ONLY#agent:}" default ;;
-    agent-input:*) run_journey agent "${KB_JOURNEY_ONLY#agent-input:}" input ;;
-    human:default) run_journey human explore human-default ;;
-    human:nondefault) run_journey human commit human-nondefault ;;
-    negative:*) run_journey agent commit "${KB_JOURNEY_ONLY#negative:}" ;;
-    *) echo "Unknown KB_JOURNEY_ONLY value: $KB_JOURNEY_ONLY" >&2; exit 2 ;;
-  esac
+if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
+  run_selector "$selected_selectors"
+elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
+  run_selector "$KB_JOURNEY_ONLY"
 else
-  # Exercise repeat/install and PTY paths before the remaining scenarios use
-  # the 2 GiB VM's memory budget. Every runner still starts with a clean HOME.
-  run_journey agent commit default
-  run_journey agent commit input
-  run_journey human explore human-default
-  run_journey human commit human-nondefault
-  while IFS= read -r scenario_file; do
-    scenario=$(basename "$scenario_file" .json)
-    [[ "$scenario" == custom || "$scenario" == commit ]] && continue
-    run_journey agent "$scenario" default
-  done < <(find tools/kb-create/v2/scenario/scenarios -maxdepth 1 -name '*.json' -print | sort)
-  for variant in wrong-node occupied-port relative-path; do
-    run_journey agent commit "$variant"
-  done
+  selectors_json="$(python3 e2e/journey/select_from_cases.py)"
+  selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))' <<< "$selectors_json")"
+  if [[ -n "$selectors" ]]; then while IFS= read -r selector; do
+    if ! run_selector "$selector"; then status=1; fi
+  done <<< "$selectors"; fi
 fi
 
 echo "Journey matrix complete (exit $status)"
-if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -f .journey/reports/journey-summary.md ]]; then
-  cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"
-fi
 exit "$status"

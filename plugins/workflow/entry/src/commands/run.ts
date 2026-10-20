@@ -2,8 +2,9 @@
  * workflow:job-run command - Submit a raw job for execution
  */
 
-import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3, useLoader , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3, useLoader , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
+import { workflowCommandError } from './errors.js';
 
 interface RunFlagsInput {
   json?: boolean;
@@ -19,7 +20,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
 
   handler: {
     // eslint-disable-next-line sonarjs/cognitive-complexity -- Workflow execution with input parsing, validation, wait mode (polling + websocket logs), JSON/human output, and error handling
-    async execute(ctx: PluginContextV3, input: CLIInput<RunFlagsInput>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunFlagsInput>): Promise<CommandResult> {
       const outputJson = input.flags.json ?? false;
       const handler = input.flags.handler;
       const inputStr = input.flags.input;
@@ -27,8 +28,12 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
       const wait = input.flags.wait ?? false;
 
       if (!handler) {
-        validationError(ctx, 'Missing required flag: --handler', 'Usage: kb workflow job-run --handler=<handler> [--input=<json>]', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return workflowCommandError(
+          'KB_RUNTIME_INPUT_INVALID',
+          'Missing required flag: --handler.',
+          'Run `kb workflow job run --help` to see the required flags.',
+          { details: { field: 'handler' } },
+        );
       }
 
       // Parse input JSON if provided
@@ -37,8 +42,12 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
         try {
           parsedInput = JSON.parse(inputStr);
         } catch {
-          validationError(ctx, 'Invalid JSON in --input flag', undefined, outputJson);
-          return { ok: false, error: 'Command failed' };
+          return workflowCommandError(
+            'KB_RUNTIME_INPUT_INVALID',
+            'The --input value is not valid JSON.',
+            'Pass valid JSON with `--input`, then retry `kb workflow job run`.',
+            { details: { field: 'input' } },
+          );
         }
       }
 
@@ -68,20 +77,18 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
 
             const status = await client.getJobStatus(result.id);
 
-            if (status.status === 'completed') {
+            if (status.status === 'success') {
+              result.status = status.status;
               waitLoader.succeed('Job completed');
               break;
-            } else if (status.status === 'failed') {
+            } else if (['failed', 'cancelled', 'skipped', 'dlq'].includes(status.status)) {
               waitLoader.fail('Job failed');
-              if (outputJson) {
-                ctx.ui?.json?.({ ok: false, error: 'Job execution failed', jobId: result.id });
-              } else {
-                ctx.ui?.error?.('Job execution failed', {
-                  hint: 'Start workflow daemon with: kb-dev start workflow',
-                  cause: `Job ID: ${result.id}`,
-                });
-              }
-              return { ok: false, error: 'Command failed' };
+              return workflowCommandError(
+                'KB_RUNTIME_COMMAND_FAILED',
+                `Job ${result.id} ended with status ${status.status}.`,
+                `Inspect the result with: kb workflow job status ${result.id}`,
+                { cause: status.error },
+              );
             }
 
             maxAttempts--;
@@ -89,11 +96,17 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
 
           if (maxAttempts === 0) {
             waitLoader.fail('Timeout waiting for job completion');
+            return workflowCommandError(
+              'KB_RUNTIME_COMMAND_FAILED',
+              `Timed out waiting for job ${result.id} to finish.`,
+              `Inspect the job with: kb workflow job status ${result.id}`,
+              {},
+            );
           }
         }
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: result });
+          return result;
         } else {
           const resultItems = [
             `Job ID: ${result.id}`,
@@ -112,15 +125,9 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
-        if (outputJson) {
-          handleError(ctx, error, true);
-        } else {
-          const message = error instanceof Error ? error.message : String(error);
-          ctx.ui?.error?.(message, { hint: 'Start with: kb-dev start workflow' });
-        }
-        return { ok: false, error: 'Command failed' };
+        return handleError(error);
       }
     },
   },

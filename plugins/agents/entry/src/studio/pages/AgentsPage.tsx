@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
   useData, useMutateData, useWebSocket,
   UIInputTextArea, UIButton, UIMessage,
-  UISegmented, UISwitch, UIPopover, UITypographyText, UIIcon, useUITheme,
+  UISegmented, UISwitch, UIPopover, UITypographyText, UIIcon, UISpinIndicator, useUITheme,
 } from '@kb-labs/sdk/studio';
 import type { WebSocketStatus } from '@kb-labs/sdk/studio';
 import { SessionSelector } from '../components/SessionSelector';
@@ -584,7 +584,9 @@ function AgentsPage() {
                       cursor: stopMutation.isLoading ? 'default' : 'pointer',
                     }}
                   >
-                    <UIIcon name={stopMutation.isLoading ? 'LoadingOutlined' : 'StopOutlined'} style={{ fontSize: 13, color: 'inherit' }} />
+                    {stopMutation.isLoading
+                      ? <UISpinIndicator size="small" tone="inherit" />
+                      : <UIIcon name="StopOutlined" style={{ fontSize: 13, color: 'inherit' }} />}
                   </button>
                 ) : (
                   <button
@@ -605,7 +607,9 @@ function AgentsPage() {
                       transition: 'background 0.15s',
                     }}
                   >
-                    <UIIcon name={startRunMutation.isLoading ? 'LoadingOutlined' : 'ArrowUpOutlined'} style={{ fontSize: 13, color: 'inherit' }} />
+                    {startRunMutation.isLoading
+                      ? <UISpinIndicator size="small" tone="inherit" />
+                      : <UIIcon name="ArrowUpOutlined" style={{ fontSize: 13, color: 'inherit' }} />}
                   </button>
                 )}
               </div>

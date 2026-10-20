@@ -2,10 +2,10 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/spf13/cobra"
 
 	"github.com/kb-labs/clikit/diag"
@@ -57,19 +57,26 @@ Examples:
 // Execute is the main entry point called from main.go. Any error returned by a
 // command is rendered as a structured diagnostic (message + reason + hint for
 // humans; {ok:false,error:{…}} for machines) and the process exits with the
-// diagnostic's exit code. Bare errors are wrapped as ERR_UNKNOWN so nothing is
-// ever uncoded.
-func Execute() {
+// shared diagnostic and exit code. Unknown errors are normalized by clikit.
+func Execute() diag.ExitStatus {
+	args := os.Args[1:]
+	if clikitcommand.HandleCobraHelp(rootCmd, args, os.Stdout) {
+		return diag.SuccessStatus()
+	}
+	_, _, findErr := rootCmd.Find(args)
+	if status, handled := clikitcommand.HandleUnknownCommand(rootCmd, args, os.Stdout, os.Stderr, outputMode(), findErr == nil); handled {
+		return status
+	}
 	_, err := rootCmd.ExecuteC()
 	if err == nil {
-		return
+		return diag.SuccessStatus()
 	}
-	var d *diag.Diag
-	if !errors.As(err, &d) {
-		d = diag.Wrap(err, "ERR_UNKNOWN", err.Error())
+	if status, ok := result.StreamExitCode(err); ok {
+		return status
 	}
-	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
-	os.Exit(code)
+	d := diag.FromError(err)
+	d.Binary = rootCmd.Name()
+	return result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
 }
 
 func init() {

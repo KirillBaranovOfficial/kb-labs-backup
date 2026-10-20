@@ -66,14 +66,6 @@ export interface ConfirmationRequired {
   message: string;
 }
 
-interface ConfirmContext {
-  ui?: {
-    json?: (data: unknown) => void;
-    warn?: (message: string, opts?: Record<string, unknown>) => void;
-    error?: (message: string, opts?: Record<string, unknown>) => void;
-  };
-}
-
 /**
  * Build the machine-readable signal an agent receives when confirmation is
  * missing in json mode. Exported so a non-CLI surface (REST 409, MCP) can reuse
@@ -118,33 +110,41 @@ export function renderDestructiveMessage(a: DestructiveAction): string {
  * when NOT confirmed (in every mode — agents get the structured signal, not a
  * silent execution), or `null` when confirmed so the caller proceeds.
  *
- *   const blocked = confirmDestructive(ctx, { confirmed: flags.yes, isJson, action });
+ *   const blocked = confirmDestructive({ confirmed: flags.yes, action });
  *   if (blocked) return blocked;
  */
 export function confirmDestructive(
-  ctx: ConfirmContext,
-  opts: { confirmed: boolean; isJson?: boolean; action: DestructiveAction },
+  opts: { confirmed: boolean; action: DestructiveAction },
 ): CommandFailure | null {
   if (opts.confirmed) {
     return null;
   }
   const a = opts.action;
   const signal = buildConfirmationSignal(a);
-  if (opts.isJson) {
-    // Machine-readable signal — `ctx.ui.json` emits one parseable line by
-    // default (the agent extracts it with `grep "^{"`).
-    ctx.ui?.json?.(signal);
-  } else {
-    (ctx.ui?.warn ?? ctx.ui?.error)?.(renderDestructiveMessage(a));
-  }
   return {
     ok: false,
     error: {
-      code: 'CONFIRMATION_REQUIRED',
+      code: 'KB_RUNTIME_CONFIRMATION_REQUIRED',
       kind: 'validation',
       message: signal.message,
-      details: { ...signal },
+      hint: 'Verify the target and effect, then rerun the command with --yes.',
+      details: {
+        action: signal.action,
+        resource: signal.resource,
+        effect: signal.effect,
+        reversible: String(signal.reversible),
+        irreversible: String(signal.irreversible),
+        severity: signal.severity,
+        confirmWith: signal.confirmWith,
+        confirmationRequired: String(signal.confirmationRequired),
+        destructive: String(signal.destructive),
+        ...(signal.blastRadius ? {
+          blastRadiusCount: String(signal.blastRadius.count ?? ''),
+          blastRadiusUnit: signal.blastRadius.unit ?? '',
+          blastRadiusScope: signal.blastRadius.scope ?? '',
+        } : {}),
+        ...(signal.recovery === undefined ? {} : { recovery: signal.recovery }),
+      },
     },
-    result: signal,
   };
 }

@@ -7,7 +7,7 @@
  *   - auto            → detect from workspace layout
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { platformSync, type PlatformSyncMode, type PlatformSyncResult } from '@kb-labs/core-runtime';
 import { generateExamples } from '../../../utils/generate-examples';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
@@ -19,9 +19,7 @@ type PlatformSyncFlags = {
   root: { type: 'string'; description?: string };
 };
 
-type PlatformSyncCommandResult = CommandResult & {
-  sync?: PlatformSyncResult;
-};
+type PlatformSyncCommandResult = CommandResult & PlatformSyncResult;
 
 function isMode(value: string | undefined): value is PlatformSyncMode {
   return value === 'validate' || value === 'reconcile' || value === 'auto';
@@ -29,6 +27,8 @@ function isMode(value: string | undefined): value is PlatformSyncMode {
 
 export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, PlatformSyncCommandResult>({
   name: 'provision',
+  scope: 'platform',
+  jsonTest: { safeArgs: ["--mode", "validate"] },
   description: 'Reconcile .kb/marketplace.lock with installed adapters & plugins',
   longDescription:
     'Reads .kb/marketplace.lock as the declarative source of truth for which adapters ' +
@@ -90,25 +90,19 @@ export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, Platfo
     });
 
     if (result.ok) {
-      return { ok: true, status: 'success' as const, sync: result };
+      return result;
     }
 
-    return { ok: false, error: result.errors.join('; ') || 'Platform sync failed', status: 'error' as const, sync: result };
+    throwSystemCommandError(
+      result.errors.map(({ message }) => message).join('; ') || 'Platform sync failed',
+      'Run `kb platform sync --help` to review recovery steps, then retry.',
+      undefined,
+      result.errors.map(({ message }) => ({ code: 'KB_RUNTIME_COMMAND_FAILED', message, severity: 'error' as const })),
+    );
   },
   // eslint-disable-next-line sonarjs/cognitive-complexity
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui?.json?.(result.sync ?? result);
-      return;
-    }
-
-    const sync = result.sync;
-    if (!sync) {
-      ctx.ui.error('Platform Sync', {
-        sections: [{ header: 'Error', items: ['Unknown error'] }],
-      });
-      return;
-    }
+    const sync = result;
 
     const summary: string[] = [
       `Mode: ${sync.mode}${sync.mode !== (flags.mode as string | undefined) && flags.mode !== 'auto' ? ' (auto-detected)' : ''}`,
@@ -175,7 +169,7 @@ export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, Platfo
     if (sync.ok) {
       ctx.ui.success('Platform Sync', { sections });
     } else {
-      ctx.ui.error('Platform Sync', { sections });
+
     }
   },
 });

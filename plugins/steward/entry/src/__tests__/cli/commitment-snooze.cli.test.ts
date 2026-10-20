@@ -33,7 +33,7 @@ describe('steward:commitment.snooze', () => {
       mockCLIInput({ argv: ['cmt_1'], flags: { until: '2026-09-15', reason: 'Waiting on client' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedCommitmentSnooze).toHaveBeenCalledWith({
       id: 'cmt_1',
       until: Date.parse('2026-09-15'),
@@ -52,11 +52,11 @@ describe('steward:commitment.snooze', () => {
       mockCLIInput({ argv: ['missing'], flags: { until: '2026-09-15' } }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe('NOT_FOUND');
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
+      expect(result.error.code).toBe('KB_RUNTIME_RESOURCE_NOT_FOUND');
     }
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('missing --until is a validation error', async () => {
@@ -64,11 +64,11 @@ describe('steward:commitment.snooze', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: ['cmt_1'] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe('INVALID_ARGS');
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
+      expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedCommitmentSnooze).not.toHaveBeenCalled();
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

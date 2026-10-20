@@ -10,7 +10,7 @@
  *   pnpm kb agent trace context --task-id=<id> --json
  */
 
-import { defineCommand, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import type { TraceCommandResponse, TraceErrorCode } from '@kb-labs/agent-contracts';
 import { loadTrace, formatTraceLoadError } from '@kb-labs/agent-tracing';
 
@@ -71,7 +71,7 @@ export default defineCommand({
   description: 'View what the LLM sees at each iteration — context window, truncations, and responses',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: TraceContextInput): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: TraceContextInput): Promise<CommandResult> {
       const flags: TraceContextFlags = input.flags ?? input;
       const taskId = (flags['task-id'] ?? flags.taskId) as string | undefined;
       const filterIteration = typeof flags.iteration === 'string'
@@ -81,8 +81,7 @@ export default defineCommand({
       try {
         const loaded = await loadTrace(taskId);
         if (!loaded.ok) {
-          ctx.ui?.json?.(error('INVALID_TASK_ID', formatTraceLoadError(loaded.error)));
-          return { ok: false, error: 'Command failed' };
+          return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: formatTraceLoadError(loaded.error), hint: 'Check the task ID, then rerun `kb agents trace context --task-id <id>`.' } };
         }
         const events = loaded.events;
 
@@ -124,25 +123,24 @@ export default defineCommand({
 
         if (filtered.length === 0) {
           ctx.ui.write('No context:snapshot events found. Make sure agent was run with latest build.\n');
-          return { ok: false, error: 'Command failed' };
+          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No context:snapshot events were found for the selected trace.', hint: 'Run the agent with a build that records context snapshots, then rerun `kb agents trace context --task-id <id>`.' } };
         }
 
         if (flags.json) {
-          ctx.ui?.json?.({ success: true, iterations: filtered });
+          return { success: true, iterations: filtered };
         } else {
           printTimeline(ctx, filtered);
         }
 
-        return { ok: true };
+        return {  };
       } catch (err) {
-        ctx.ui?.json?.(error('TRACE_NOT_FOUND', `Trace not found: ${taskId}`));
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Trace not found: ${taskId ?? '(missing task ID)'}`, hint: 'Check the task ID, then rerun `kb agents trace context --task-id <id>`.' } };
       }
     },
   },
 });
 
-function printTimeline(ctx: PluginContextV3, iterations: IterationContext[]): void {
+function printTimeline(ctx: PluginCommandContextV3, iterations: IterationContext[]): void {
   ctx.ui.write('\n📋 Context Timeline\n');
   ctx.ui.write('═'.repeat(60) + '\n');
 

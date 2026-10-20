@@ -1,9 +1,12 @@
 package marketplace
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,10 +15,12 @@ import (
 
 func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	root := t.TempDir()
+	writePackageJSON(t, root, "@kb-labs/commit-entry", `{"name":"@kb-labs/commit-entry"}`)
+	writePackageJSON(t, root, "@kb-labs/adapters-sqlite", `{"name":"@kb-labs/adapters-sqlite"}`)
 	artifacts := []contracts.Artifact{
 		{ID: "@kb-labs/platform-core", Kind: "platform", Package: "@kb-labs/platform-core", Version: "1.0.0"},
 		{ID: "@kb-labs/binary-kbdev", Kind: "binary", Version: "1.0.0"},
-		{ID: "@kb-labs/plugin-commit", Kind: "plugin", Package: "@kb-labs/plugin-commit", Version: "1.2.3"},
+		{ID: "@kb-labs/commit", Kind: "plugin", Package: "@kb-labs/commit-entry", Version: "1.2.3", SHA256: strings.Repeat("a", 64)},
 		{ID: "@kb-labs/adapters-sqlite", Kind: "adapter", Package: "@kb-labs/adapters-sqlite", Version: "4.5.6"},
 	}
 
@@ -27,26 +32,48 @@ func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	if lock.Schema != Schema {
 		t.Fatalf("schema = %q, want %q", lock.Schema, Schema)
 	}
-	if len(lock.Installed) != 2 {
-		t.Fatalf("installed = %d entries, want 2 (platform/binary kinds must be excluded): %+v", len(lock.Installed), lock.Installed)
+	if len(lock.Plugins) != 1 || len(lock.Adapters) != 1 {
+		t.Fatalf("plugins/adapters = %d/%d, want 1/1 (non-discoverable kinds must be excluded): %+v", len(lock.Plugins), len(lock.Adapters), lock)
 	}
-	plugin, ok := lock.Installed["@kb-labs/plugin-commit"]
+	plugin, ok := lock.Plugins["@kb-labs/commit"]
 	if !ok {
 		t.Fatal("plugin entry missing")
 	}
-	if plugin.ResolvedPath != "node_modules/@kb-labs/plugin-commit" {
+	if plugin.ResolvedPath != "node_modules/@kb-labs/commit-entry" {
 		t.Errorf("resolvedPath = %q", plugin.ResolvedPath)
+	}
+	if plugin.Package != "@kb-labs/commit-entry" {
+		t.Errorf("package = %q", plugin.Package)
 	}
 	if !plugin.Enabled {
 		t.Error("fresh entry should default to enabled")
 	}
-	if plugin.Integrity != "" {
-		t.Errorf("integrity should be empty (skips core-discovery's check), got %q", plugin.Integrity)
+	if plugin.Integrity == "" {
+		t.Error("integrity should be carried from installed package metadata")
+	}
+	if adapter, ok := lock.Adapters["@kb-labs/adapters-sqlite"]; !ok || adapter.Source != "platform" {
+		t.Errorf("adapter missing from machine adapters map: %+v", lock.Adapters)
+	}
+}
+
+func TestReadLockRejectsPluginWithoutPackage(t *testing.T) {
+	root := t.TempDir()
+	lockPath := filepath.Join(root, ".kb", "marketplace.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"schema":"kb.marketplace/3","plugins":{"@kb-labs/commit":{"version":"1.0.0","integrity":"sha256-abc","resolvedPath":"node_modules/@kb-labs/commit-entry","source":"platform","enabled":true}}}`)
+	if err := os.WriteFile(lockPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readLock(root); err == nil || !strings.Contains(err.Error(), "require a package") {
+		t.Fatalf("readLock error = %v, want required package validation", err)
 	}
 }
 
 func TestWriteLock_PreservesDisabledAcrossReapply(t *testing.T) {
 	root := t.TempDir()
+	writePackageJSON(t, root, "@kb-labs/plugin-commit", `{"name":"@kb-labs/plugin-commit"}`)
 	artifacts := []contracts.Artifact{
 		{ID: "@kb-labs/plugin-commit", Kind: "plugin", Package: "@kb-labs/plugin-commit", Version: "1.0.0"},
 	}
@@ -58,9 +85,9 @@ func TestWriteLock_PreservesDisabledAcrossReapply(t *testing.T) {
 	// Simulate a user disabling the plugin out of band (as `kb marketplace
 	// disable` would).
 	lock := readBack(t, root)
-	entry := lock.Installed["@kb-labs/plugin-commit"]
+	entry := lock.Plugins["@kb-labs/plugin-commit"]
 	entry.Enabled = false
-	lock.Installed["@kb-labs/plugin-commit"] = entry
+	lock.Plugins["@kb-labs/plugin-commit"] = entry
 	writeRaw(t, root, lock)
 
 	// A re-apply with the same artifact must not silently re-enable it.
@@ -68,7 +95,7 @@ func TestWriteLock_PreservesDisabledAcrossReapply(t *testing.T) {
 		t.Fatalf("second WriteLock: %v", err)
 	}
 	after := readBack(t, root)
-	if after.Installed["@kb-labs/plugin-commit"].Enabled {
+	if after.Plugins["@kb-labs/plugin-commit"].Enabled {
 		t.Error("re-apply must preserve a previously disabled entry")
 	}
 }
@@ -110,8 +137,20 @@ func writeRaw(t *testing.T, root string, lock Lock) {
 	}
 }
 
+func writePackageJSON(t *testing.T, root, packageName, contents string) {
+	t.Helper()
+	packageDir := filepath.Join(root, "node_modules", filepath.FromSlash(packageName))
+	if err := os.MkdirAll(packageDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageDir, "package.json"), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWriteLockRegistersPlatformMembersThatArePlugins(t *testing.T) {
 	root := t.TempDir()
+	writePackageJSON(t, root, "@kb/workflow-entry", `{"name":"@kb/workflow-entry"}`)
 	err := WriteLock(root, []contracts.Artifact{
 		{ID: "workflow", Kind: "platform-member", Registry: "plugin", Package: "@kb/workflow-entry", Version: "2.0.0"},
 		{ID: "gateway", Kind: "platform-member", Package: "@kb/gateway", Version: "2.0.0"},
@@ -120,7 +159,26 @@ func TestWriteLockRegistersPlatformMembersThatArePlugins(t *testing.T) {
 		t.Fatal(err)
 	}
 	lock, err := readLock(root)
-	if err != nil || len(lock.Installed) != 1 || lock.Installed["workflow"].PrimaryKind != "plugin" {
+	if err != nil || len(lock.Plugins) != 1 || lock.Plugins["workflow"].Source != "platform" {
 		t.Fatalf("lock = %+v / %v", lock, err)
+	}
+}
+
+// case: S-006.3
+func TestWriteLockUsesInstalledPackageJSONIntegrity(t *testing.T) {
+	root := t.TempDir()
+	packageJSON := `{"name":"@kb-labs/workflow-entry","version":"2.0.0"}`
+	writePackageJSON(t, root, "@kb-labs/workflow-entry", packageJSON)
+	if err := WriteLock(root, []contracts.Artifact{{
+		ID: "workflow", Kind: "platform-member", Registry: "plugin",
+		Package: "@kb-labs/workflow-entry", Version: "2.0.0", SHA256: strings.Repeat("a", 64),
+	}}, time.Now()); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+
+	digest := sha256.Sum256([]byte(packageJSON))
+	want := "sha256-" + base64.StdEncoding.EncodeToString(digest[:])
+	if got := readBack(t, root).Plugins["workflow"].Integrity; got != want {
+		t.Fatalf("integrity = %q, want installed package.json integrity %q", got, want)
 	}
 }

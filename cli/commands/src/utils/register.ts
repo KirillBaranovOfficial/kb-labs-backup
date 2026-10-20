@@ -10,16 +10,27 @@ import {
   webhookGroup,
   configGroup,
   projectGroup,
+  mcpGroup,
+  adapterGroup,
 } from "../commands/system/groups";
+import { hello } from "../commands/system/hello";
 import { createCompletionCommand, autoUpdateCompletion } from "../commands/system/completion";
 import { diag } from "../commands/system/diag";
 import { registerManifests, preflightManifests } from "../registry/register";
+import { setRegisteredDiscovery } from '../registry/discovery-state.js';
+import type { DiagnosticEvent } from '@kb-labs/core-discovery';
 import { getContextCwd } from "@kb-labs/shared-cli-ui";
 import type { ILogger } from "@kb-labs/core-platform";
 import { platform } from "@kb-labs/core-runtime";
 
 let _registered = false;
+let _systemCommandsRegistered = false;
 const registeredCommands: unknown[] = [];
+let discoveryDiagnostics: DiagnosticEvent[] = [];
+
+export function getDiscoveryDiagnostics(): readonly DiagnosticEvent[] {
+  return [...discoveryDiagnostics];
+}
 
 export interface RegisterBuiltinCommandsInput {
   cwd?: string;
@@ -46,6 +57,7 @@ export async function registerBuiltinCommands(
 ) {
   const log = input.logger ?? platform.logger;
 
+  registerBuiltinSystemCommands();
   if (_registered) {
     return;
   }
@@ -53,29 +65,18 @@ export async function registerBuiltinCommands(
   registry.setLogger(log);
   registry.markPartial(true);
   registeredCommands.length = 0;
-
-  // Register system command groups (migrated commands)
-  registry.registerGroup(infoGroup);
-  registry.registerGroup(registryGroup);
-  registry.registerGroup(docsGroup);
-  registry.registerGroup(logsGroup);
-  registry.registerGroup(authGroup);
-  registry.registerGroup(platformGroup);
-  registry.registerGroup(webhookGroup);
-  registry.registerGroup(configGroup);
-  registry.registerGroup(projectGroup);
-
-  // Standalone system commands
-  registry.register(createCompletionCommand(registry));
-  registry.register(diag);
+  setRegisteredDiscovery(undefined);
 
   try {
     const cwd = getContextCwd({ cwd: input.cwd });
-    const { discoverManifests } = await import('../registry/discover');
-    const discovered = await discoverManifests(cwd, {
+    const { discoverManifestsDetailed } = await import('../registry/discover');
+    const discovery = await discoverManifestsDetailed(cwd, {
       platformRoot: input.platformRoot,
       projectRoot: input.projectRoot,
     });
+    const discovered = discovery.results;
+    discoveryDiagnostics = discovery.diagnostics;
+    setRegisteredDiscovery(discovery);
 
     if (discovered.length > 0) {
       log.info(`Discovered ${discovered.length} packages with CLI manifests`);
@@ -116,17 +117,40 @@ export async function registerBuiltinCommands(
     } else {
       registry.markPartial(false);
     }
-
   } catch (err: unknown) {
     log.warn(`Discovery failed: ${err instanceof Error ? err.message : String(err)}`);
+    setRegisteredDiscovery(undefined);
     registry.markPartial(true);
     _registered = false;
     return;
   }
 
-  // Regenerate static shell completions if command set changed — cheap check (<1ms typical)
   await autoUpdateCompletion(registry).catch(() => { /* best-effort, never fail startup */ });
+}
 
+export function registerBuiltinSystemCommands(): void {
+  if (_systemCommandsRegistered) { return; }
+  _systemCommandsRegistered = true;
+
+  // Register system command groups (migrated commands)
+  registry.registerGroup(infoGroup);
+  registry.registerGroup(registryGroup);
+  registry.registerGroup(docsGroup);
+  registry.registerGroup(logsGroup);
+  registry.registerGroup(authGroup);
+  registry.registerGroup(platformGroup);
+  registry.registerGroup(webhookGroup);
+  registry.registerGroup(configGroup);
+  registry.registerGroup(projectGroup);
+  registry.registerGroup(mcpGroup);
+  registry.registerGroup(adapterGroup);
+  // The documented `kb hello` route is also available at the root. Keeping it
+  // registered statically lets bootstrap read its declared scope before init.
+  registry.register(hello);
+
+  // Standalone system commands
+  registry.register(createCompletionCommand(registry));
+  registry.register(diag);
 }
 
 export function checkSelfUpdateNotices(registered: RegisteredCommand[]): void {

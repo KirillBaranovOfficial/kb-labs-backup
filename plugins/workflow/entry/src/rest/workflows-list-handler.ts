@@ -5,7 +5,7 @@
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import type { WorkflowListResponse } from '@kb-labs/workflow-contracts';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
 
 interface WorkflowsListQuery {
   source?: string;
@@ -27,12 +27,12 @@ export default defineHandler({
     if (tags) {params.append('tags', tags);}
 
     const queryString = params.toString();
-    const url = `${daemonUrl}/api/v1/workflows${queryString ? `?${queryString}` : ''}`;
+    const url = `${daemonUrl}/workflows${queryString ? `?${queryString}` : ''}`;
 
     ctx.platform.logger.info(`[workflows-list-handler] Fetching workflows from ${url}`);
 
     try {
-      const response = await fetch(url);
+      const response = await fetchWorkflowApi(url);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);

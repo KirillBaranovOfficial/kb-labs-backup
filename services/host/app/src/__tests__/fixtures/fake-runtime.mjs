@@ -43,7 +43,7 @@ const server = createServer((req, res) => {
   if (url.pathname === "/__runtime/health") {
     if (behavior.unhealthyAfterMs !== undefined && Date.now() - startedAt > behavior.unhealthyAfterMs) {
       res.writeHead(503, { "content-type": "application/json" });
-      res.end(JSON.stringify({ status: "degraded" }));
+      res.end(JSON.stringify({ status: "degraded", modules: behavior.healthModules ?? {} }));
       return;
     }
     res.writeHead(200, { "content-type": "application/json" });
@@ -52,17 +52,36 @@ const server = createServer((req, res) => {
   }
   const chunks = [];
   req.on("data", (chunk) => chunks.push(chunk));
-  req.on("end", () => {
+  req.on("end", async () => {
     const body = Buffer.concat(chunks).toString("utf8");
-    if (url.pathname === "/rest/__crash") {
+    if (url.pathname === "/rest/api/v1/__host-services") {
+      const stateDaemonUrl = process.env.KB_STATE_DAEMON_URL;
+      const gatewayUrl = process.env.KB_GATEWAY_URL;
+      const firstLeaseStatus = stateDaemonUrl
+        ? (await fetch(`${stateDaemonUrl}/state/${encodeURIComponent("kb:integration-lease-probe")}`)).status
+        : null;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ stateDaemonUrl: stateDaemonUrl ?? null, gatewayUrl: gatewayUrl ?? null, firstLeaseStatus }));
+      return;
+    }
+    if (url.pathname === "/rest/api/v1/__crash") {
       process.exit(1);
     }
-    if (url.pathname === "/rest/__spawn-child") {
-      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-        stdio: "ignore",
+    if (url.pathname === "/rest/api/v1/__spawn-child") {
+      const stoppedMarker = join(projectRoot, "runtime-child-stopped");
+      const child = spawn(process.execPath, ["-e", [
+        "const { writeFileSync } = require('node:fs');",
+        "const marker = process.argv[1];",
+        "process.on('SIGTERM', () => { writeFileSync(marker, 'stopped'); process.exit(0); });",
+        "process.stdout.write('ready');",
+        "setInterval(() => {}, 1000);",
+      ].join(" "), stoppedMarker], {
+        stdio: ["ignore", "pipe", "ignore"],
       });
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ childPid: child.pid }));
+      child.stdout.once("data", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ childPid: child.pid }));
+      });
       return;
     }
     const delayMs = Number(url.searchParams.get("delay") ?? 0);

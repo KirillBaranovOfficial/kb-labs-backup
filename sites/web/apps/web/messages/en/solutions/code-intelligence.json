@@ -21,7 +21,7 @@
         },
         {
           "label": "Re-index trigger",
-          "value": "Automatic on kb-dev start or manual via pnpm kb mind reindex"
+          "value": "Developer workspace: kb-dev start or pnpm kb mind reindex"
         },
         {
           "label": "Search mode",

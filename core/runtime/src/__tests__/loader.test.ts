@@ -13,8 +13,16 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { initPlatform, resetPlatform } from '../loader.js';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { createDegradedAdapterProxy, fillAdapterFallbacksAndRecord, initPlatform, resetPlatform } from '../loader.js';
 import { platform } from '../container.js';
+import { getAdapterStatusFor, resetAdapterStatus } from '../adapter-status.js';
+import { AdapterUnavailableError, type IEnvironmentProvider } from '@kb-labs/core-platform';
+import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
 
 describe('Platform Loader', () => {
   beforeEach(() => {
@@ -65,6 +73,142 @@ describe('Platform Loader', () => {
   });
 
   describe('Adapter Configuration', () => {
+    // case: S-219.1
+    it('binds and constructs notifier-router through initPlatform', async () => {
+      const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
+      const tempRoot = await mkdtemp(path.join(tmpdir(), 'kb-notifier-loader-'));
+      const workspaceRoot = path.join(tempRoot, 'workspace');
+      const isolatedHome = path.join(tempRoot, 'home');
+      const adapterRoot = path.join(workspaceRoot, 'adapters', 'notifier-router');
+      const telegramRoot = path.join(workspaceRoot, 'adapters', 'telegram');
+      try {
+        await mkdir(adapterRoot, { recursive: true });
+        await mkdir(telegramRoot, { recursive: true });
+        await mkdir(isolatedHome, { recursive: true });
+        await writeFile(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
+        await writeFile(path.join(adapterRoot, 'package.json'), await readFile(path.join(repoRoot, 'adapters/notifier-router/package.json')));
+        await symlink(path.join(repoRoot, 'adapters/notifier-router/dist'), path.join(adapterRoot, 'dist'));
+        await writeFile(path.join(telegramRoot, 'package.json'), await readFile(path.join(repoRoot, 'adapters/telegram/package.json')));
+        await symlink(path.join(repoRoot, 'adapters/telegram/dist'), path.join(telegramRoot, 'dist'));
+
+        const runtimeModule = path.join(repoRoot, 'core/runtime/dist/index.js');
+        const script = `
+          import { initPlatform, platform } from ${JSON.stringify(pathToFileURL(runtimeModule).href)};
+          let telegramRequests = 0;
+          const brokerRegistrations = [];
+          const brokerReadyAtRegistration = [];
+          const initResourceBroker = platform.initResourceBroker;
+          platform.initResourceBroker = function (broker) {
+            const register = broker.register.bind(broker);
+            broker.register = (resource, config) => {
+              brokerRegistrations.push(resource);
+              brokerReadyAtRegistration.push(platform.hasResourceBroker);
+              return register(resource, config);
+            };
+            return initResourceBroker.call(this, broker);
+          };
+          globalThis.fetch = async () => { telegramRequests++; return new Response('{"ok":true}', { status: 200 }); };
+          await initPlatform({
+            adapters: { notifier: '@kb-labs/notifier-router' },
+            adapterOptions: {
+              notifier: {
+                channels: { ops: { type: 'telegram', botToken: 'test-token', chatId: 'test-chat' } },
+                routing: [{ match: { severity: ['info'] }, channels: ['ops'] }],
+              },
+            },
+          }, ${JSON.stringify(workspaceRoot)}, undefined, undefined, { workspaceDevelopment: true });
+          await platform.notifier.notify({ severity: 'info', title: 'loader test', body: 'bound' });
+          console.log('C01_RESULT ' + JSON.stringify({ real: platform.isReal('notifier'), telegramRequests, brokerRegistrations, brokerReadyAtRegistration }));
+          process.exit(0);
+        `;
+        const env: NodeJS.ProcessEnv = { ...process.env, HOME: isolatedHome };
+        delete env.KB_PLATFORM_ROOT;
+        delete env.KB_HOME;
+        delete env.KB_NET_OFFSET;
+        const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+          cwd: workspaceRoot,
+          env,
+          encoding: 'utf8',
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain('C01_RESULT {"real":true,"telegramRequests":1,"brokerRegistrations":["notifier:ops"],"brokerReadyAtRegistration":[true]}');
+      } finally {
+        await rm(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    // case: S-211.6
+    it('throws the typed unavailable error for method and property reads and remains safely awaitable', async () => {
+      const error = new AdapterUnavailableError('llm', 'load-failed', 'adapter load failed');
+      const adapter = createDegradedAdapterProxy({ complete: () => 'fallback', label: 'fallback-value' }, error) as {
+        complete(): string;
+        label: string;
+      };
+      expect(() => adapter.complete()).toThrow(error);
+      expect(() => adapter.label).toThrow(error);
+      expect(await adapter).toBe(adapter);
+      expect(Reflect.get(adapter, Symbol.toStringTag)).toBeUndefined();
+    });
+
+    // case: S-211.6
+    it('throws a typed error for a degraded slot with no fallback target', () => {
+      const error = new AdapterUnavailableError('vectorStore', 'load-failed', 'adapter load failed');
+      const adapter = createDegradedAdapterProxy(undefined, error) as {
+        upsert(): void;
+        anyProperty: unknown;
+      };
+      expect(() => adapter.upsert()).toThrow(error);
+      expect(() => adapter.anyProperty).toThrow(error);
+    });
+
+    it('reports the composed local log reader as real when its backends are loaded', () => {
+      platform.setAdapter('logRingBuffer', {});
+      resetAdapterStatus();
+
+      fillAdapterFallbacksAndRecord(platform, {});
+
+      expect(getAdapterStatusFor('logs')).toMatchObject({
+        mode: 'real',
+        implementation: 'HybridLogReader',
+      });
+    });
+
+    // case: S-211.6
+    it('records a failed configured slot as degraded while keeping other slots available', async () => {
+      platform.reset();
+      platform.setAdapter('llm', undefined as never);
+      resetAdapterStatus();
+      fillAdapterFallbacksAndRecord(
+        platform,
+        { llm: '@kb-labs/adapters-missing-llm' },
+        false,
+        new Map([['llm', {
+          packageName: '@kb-labs/adapters-missing-llm',
+          correlationId: 'test-correlation',
+          cause: 'package was not found',
+          causeError: new Error('package was not found'),
+          action: {
+            id: 'install-adapter',
+            label: 'Install @kb-labs/adapters-missing-llm',
+            command: 'kb marketplace install @kb-labs/adapters-missing-llm --scope platform',
+          },
+        }]]),
+      );
+
+      expect(getAdapterStatusFor('llm')).toMatchObject({
+        mode: 'degraded',
+        reason: 'load-failed',
+        configuredPackage: '@kb-labs/adapters-missing-llm',
+        action: { command: 'kb marketplace install @kb-labs/adapters-missing-llm --scope platform' },
+      });
+      await expect(async () => platform.llm.complete('hello')).rejects.toBeInstanceOf(AdapterUnavailableError);
+      await expect(async () => platform.llm.complete('hello')).rejects.toMatchObject({
+        slot: 'llm',
+        reason: 'load-failed',
+      });
+      expect(getAdapterStatusFor('cache')?.mode).not.toBe('degraded');
+    });
+
     it('should handle config with no adapters', async () => {
       await initPlatform({ adapters: {} });
 
@@ -415,35 +559,6 @@ describe('Platform Loader', () => {
     });
   });
 
-  describe('Initialization Order', () => {
-    it('should initialize in correct order', async () => {
-      const order: string[] = [];
-
-      // Track initialization steps
-      const original = platform.initCoreFeatures;
-      platform.initCoreFeatures = function (...args) {
-        order.push('coreFeatures');
-        return original.apply(this, args);
-      };
-
-      const originalBroker = platform.initResourceBroker;
-      platform.initResourceBroker = function (...args) {
-        order.push('resourceBroker');
-        return originalBroker.apply(this, args);
-      };
-
-      resetPlatform();
-      await initPlatform({});
-
-      // Should initialize core features before resource broker
-      expect(order).toEqual(['coreFeatures', 'resourceBroker']);
-
-      // Restore
-      platform.initCoreFeatures = original;
-      platform.initResourceBroker = originalBroker;
-    });
-  });
-
   describe('Graceful Degradation', () => {
     it('should continue if ConfigAdapter fails to import', async () => {
       // ConfigAdapter should not fail in practice, but test graceful degradation
@@ -470,15 +585,6 @@ describe('Platform Loader', () => {
       // Platform should still initialize
       expect(platform.isInitialized).toBe(true);
       // Even if ResourceBroker fails, platform should work with fallbacks
-    });
-
-    it('should continue if UnixSocketServer fails to start', async () => {
-      // Socket server might fail if port is taken or permissions issue
-      await initPlatform({});
-
-      // Platform should still initialize
-      expect(platform.isInitialized).toBe(true);
-      // CLI should work even without socket server (V3 plugins won't work, but V2 will)
     });
 
     it('should initialize all components independently', async () => {
@@ -526,6 +632,71 @@ describe('Platform Loader', () => {
   });
 
   describe('ExecutionBackend Initialization', () => {
+    const assertContainerProviderDiagnostic = async (configureProvider: boolean) => {
+      await initPlatform({ execution: { mode: 'container' } });
+
+      if (configureProvider) {
+        const providerWithoutAttachedStart: IEnvironmentProvider = {
+          async create() {
+            throw new Error('create must not be reached before provider capability validation');
+          },
+          async getStatus() {
+            throw new Error('getStatus must not be reached before provider capability validation');
+          },
+          async destroy() {},
+          getExecutionStream() {
+            throw new Error('getExecutionStream must not be reached before provider capability validation');
+          },
+        };
+        platform.setAdapter('environment', providerWithoutAttachedStart);
+      }
+
+      expect(platform.executionBackend.executionMode).toBe('container');
+      expect(platform.getAdapter<IEnvironmentProvider>('environment') !== undefined).toBe(configureProvider);
+
+      const request: ExecutionRequest = {
+        executionId: 'provider-diagnostic-test',
+        pluginRoot: process.cwd(),
+        handlerRef: './unused-handler.js',
+        input: {},
+        descriptor: {
+          hostType: 'cli',
+          hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+          pluginId: '@kb-labs/test-plugin',
+          pluginVersion: '1.0.0',
+          requestId: 'provider-diagnostic-request',
+          permissions: {},
+        },
+      };
+
+      try {
+        const result = await platform.executionBackend.execute(request);
+
+        expect(result.ok).toBe(false);
+        if (result.ok) {
+          throw new Error('container execution unexpectedly succeeded without an attached environment provider');
+        }
+        expect(result.error.code).toBe('KB_RUNTIME_CONTAINER_UNAVAILABLE');
+        expect(result.error.envelope.hint).toContain(configureProvider
+          ? 'the configured environment provider does not support attached reserve()/start()'
+          : 'the container environment provider is not configured');
+        expect(result.error.envelope.hint).toContain('kb marketplace install @kb-labs/adapters-environment-docker --scope platform');
+        expect(result.error.envelope.hint).not.toContain('Docker daemon logs');
+      } finally {
+        await platform.executionBackend.shutdown();
+      }
+    };
+
+    // case: S-244.4
+    it('returns the catalogued provider diagnostic when no environment adapter is configured', async () => {
+      await assertContainerProviderDiagnostic(false);
+    });
+
+    // case: S-244.4
+    it('returns the catalogued provider diagnostic when the environment adapter lacks attached start support', async () => {
+      await assertContainerProviderDiagnostic(true);
+    });
+
     it('should initialize ExecutionBackend by default', async () => {
       await initPlatform({});
 

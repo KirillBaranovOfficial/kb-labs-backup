@@ -4,6 +4,7 @@ import {
   UIProgress,
   UIAlert,
   UITag,
+  UISkeleton,
 } from '@kb-labs/studio-ui-kit';
 import { useStateBrokerStats } from '@kb-labs/studio-data-client';
 import { useDataSources } from '../../../providers/data-sources-provider';
@@ -56,7 +57,7 @@ export function StateBrokerPage() {
         />
         <UIAlert
           message="Failed to load State Broker stats"
-          description={error instanceof Error ? error.message : 'Unknown error. Make sure State Daemon is running on localhost:7777'}
+          description={error instanceof Error ? error.message : 'Unknown error. Make sure the host StateBroker service is running.'}
           variant="error"
           showIcon
           style={{ marginBottom: 24 }}
@@ -72,9 +73,7 @@ export function StateBrokerPage() {
           title="State Broker"
           description="In-memory cache statistics"
         />
-        <div style={{ padding: '24px 0', textAlign: 'center' }}>
-          Loading...
-        </div>
+        <UISkeleton active lines={7} />
       </UIPage>
     );
   }

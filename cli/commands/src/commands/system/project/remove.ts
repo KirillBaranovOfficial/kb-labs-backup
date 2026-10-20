@@ -6,7 +6,8 @@
  * protocol (ADR-0025): without --yes nothing happens, in human and --json mode.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 import { confirmDestructive, getContextCwd } from '@kb-labs/shared-cli-ui';
 import type { ProjectRecord } from '@kb-labs/core-contracts';
 import { projectErrorEnvelope } from '@kb-labs/core-project-registry';
@@ -26,6 +27,8 @@ export type ProjectRemoveResult = CommandResult & {
 
 export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResult>({
   name: 'remove',
+  scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command changes the machine project registry." },
   description: 'Unregister a project (files are not deleted)',
   longDescription:
     'Removes a project from the registry by id, name or path. The folder, its .kb/ and its runtime ' +
@@ -54,17 +57,14 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
       const { project } = await registry.get(ref);
 
       if (flags['dry-run']) {
-        if (json) {
-          ctx.ui?.json({ ok: true, dryRun: true, project });
-        } else {
+        if (!json) {
           ctx.ui?.info(`Dry run: would unregister ${project.name} (${project.id}); no files are deleted.`);
         }
-        return { ok: true, dryRun: true, project };
+        return {  dryRun: true, project };
       }
 
-      const blocked = confirmDestructive(ctx, {
+      const blocked = confirmDestructive({
         confirmed: Boolean(flags.yes),
-        isJson: json,
         action: {
           action: 'project remove',
           resource: `project "${project.name}" (${project.path})`,
@@ -76,18 +76,19 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
         },
       });
       if (blocked) {
-        return blocked;
+        throwSystemCataloguedError(toErrorEnvelope(blocked.error));
       }
 
       const removed = await registry.remove(project.id);
-      if (json) {
-        ctx.ui?.json({ ok: true, project: removed });
-      } else {
+      if (!json) {
         ctx.ui?.success(`Unregistered ${removed.name} (${removed.id}); files were not touched.`);
       }
-      return { ok: true, project: removed };
+      return {  project: removed };
     } catch (error) {
-      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
+      if (error instanceof Error && 'code' in error && 'hint' in error) {
+        throw error;
+      }
+      return failWithEnvelope(projectErrorEnvelope(error));
     }
   },
 });

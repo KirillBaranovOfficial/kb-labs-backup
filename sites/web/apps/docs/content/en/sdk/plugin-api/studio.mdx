@@ -1,0 +1,22 @@
+---
+title: "Studio UI kit"
+description: "Browse the public Studio component catalog and practical plugin UI recipes."
+updatedAt: "2026-10-04"
+order: 6
+---
+
+Plugin pages can use the Studio UI kit through `@kb-labs/sdk/studio`. The same components power Studio itself, so plugin interfaces follow the host theme and shared interaction patterns.
+
+<Callout type="info">
+Import UI components from `@kb-labs/sdk/studio` in plugin pages. This is the supported plugin boundary; do not import Studio application internals.
+</Callout>
+
+## Component categories
+
+The component inventory and category links are generated from the UI kit's public exports during the normal build. Choose a category to browse its components and interactive examples.
+
+<UiKitCategories />
+
+## Cookbook
+
+Recipes stay hand-curated and task-oriented. See the [Studio UI cookbook](/sdk/plugin-api/studio-cookbook) for copyable patterns. The docs renderer also supports source-backed CLI examples; the [first workflow guide](/guides/first-workflow) shows commands and expected output from the maintained docs source snapshot.

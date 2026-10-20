@@ -1,47 +1,29 @@
 ---
 id: S-007
-title: Workflow — Run with inputs
+title: S-007 — Run a workflow with inputs
 persona: solo-developer
+area: workflow
 priority: P0
-automation: e2e-todo
-e2e: e2e/workflows/scenarios/default/cases/basic.spec.ts
+status: active
+release: true
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer runs a workflow passing custom input values, verifies inputs are received by jobs.
+
+A project user starts a workflow with a JSON input and verifies the job received the supplied value.
 
 ## Prerequisites
-- [ ] Platform installed, services running
-- [ ] At least one workflow with defined `inputs` exists in `.kb/workflows/`
 
----
+- [ ] Valid project workflow with a declared `message` input and a step that outputs it.
+- [ ] In secured mode, the CLI can log in as a project user with `workflows:write` permission.
 
 ## Steps
 
-### Phase 1 — Run with inputs via CLI
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | `kb workflow run <name> --input key=value` | Run starts, runId returned | | ⬜ |
-| 2 | `kb workflow status <runId>` | Shows `queued` → `running` → `completed` | | ⬜ |
-| 3 | Input value reflected in job output/logs | Job received correct input | | ⬜ |
-
-### Phase 2 — Run with inputs via HTTP
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 4 | `POST /api/v1/workflows/:id/runs` with `{"input": {"key": "value"}}` | `{ok: true, data: {runId, status: "queued"}}` | | ⬜ |
-| 5 | `GET /api/v1/runs/:runId` shows inputs | `inputs` field matches what was sent | | ⬜ |
-
-### Phase 3 — Input validation
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 6 | Run with missing required input | Clear error — not silent fail | | ⬜ |
-| 7 | Run with extra/unknown inputs | Warning or ignored — not crash | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-007.1 | Run `kb workflow run --workflow-id=journey-hello --input='{"message":"hello"}'` | CLI returns the created run ID for the installed `journey-hello` workflow fixture. |
+| S-007.2 | Run `kb workflow runs view <runId>` | Run reaches a terminal status and reports the submitted input. |
+| S-007.3 | Run `kb workflow runs logs <runId>` | Step output contains `hello`, confirming the job received the input. |
+| S-007.4 | In secured mode, with no CLI session or saved Gateway credentials, run `kb workflow defs list --json` and `kb workflow defs list` | Both invocations exit non-zero with `KB_AUTH_REQUIRED` and the message `Authentication is required.`. JSON output contains one error envelope; human output includes the code, message, and catalogued login hint rendered with the configured Gateway URL. |

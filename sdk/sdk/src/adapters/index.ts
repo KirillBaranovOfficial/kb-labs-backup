@@ -23,10 +23,11 @@ export {
 
 // Per-project runtime state location (ADR-0044): adapter default paths for
 // caches, databases and buffers resolve here, not into the project's `.kb/`.
-export { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+export { resolvePlatformDataRoot, resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 
 // Adapter manifest metadata
 export type {
+  PlatformDataContext,
   AdapterManifest,
   AdapterType,
   AdapterDependency,
@@ -34,7 +35,6 @@ export type {
   AdapterCapabilities,
   AdapterFactory,
 } from '@kb-labs/core-platform/adapters';
-
 // Capability interfaces (what adapters implement)
 export type {
   ILLM,
@@ -197,9 +197,16 @@ export type {
   ReserveEnvironmentRequest,
   ReservedEnvironment,
   StartEnvironmentRequest,
+  EnvironmentExecutionPolicy,
+  EnvironmentExecutionStream,
   EnvironmentDescriptor,
   EnvironmentStatusResult,
   EnvironmentProviderCapabilities,
+} from '@kb-labs/core-platform/adapters';
+export {
+  EnvironmentProvisioningError,
+  EnvironmentTeardownError,
+  type EnvironmentProvisioningFailureCause,
 } from '@kb-labs/core-platform/adapters';
 
 // Snapshot provider
@@ -234,6 +241,7 @@ import type { AdapterManifest } from '@kb-labs/core-platform/adapters';
  * import { defineAdapterManifest } from '@kb-labs/sdk/adapters';
  *
  * export const manifest = defineAdapterManifest({
+ *   schema: 'kb.adapter/1',
  *   manifestVersion: '1.0.0',
  *   id: 'my-llm',
  *   name: 'My LLM',

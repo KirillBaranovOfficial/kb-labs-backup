@@ -1,92 +1,52 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const sessionLoad = vi.fn();
-const sessionRefresh = vi.fn();
-const sessionIsExpired = vi.fn();
-const credentialsLoad = vi.fn();
-const credentialsRefresh = vi.fn();
-const credentialsIsExpired = vi.fn();
-
+const gatewayApiFetch = vi.hoisted(() => vi.fn());
 vi.mock('@kb-labs/sdk', () => ({
-  useEnv: vi.fn((name: string) => name === 'KB_GATEWAY_URL' ? 'http://gateway.test' : undefined),
+  useEnv: (name: string) => name === 'KB_GATEWAY_URL' ? 'http://gateway.test' : undefined,
+  getHostServiceAddress: (_service: string, environment: Record<string, string | undefined>) => {
+    if (!environment.KB_GATEWAY_URL) { throw new Error('gateway address missing'); }
+    return environment.KB_GATEWAY_URL.replace(/\/+$/, '');
+  },
 }));
-
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  SessionManager: vi.fn().mockImplementation(() => ({
-    load: sessionLoad,
-    refresh: sessionRefresh,
-    isExpired: sessionIsExpired,
-  })),
-  CredentialsManager: vi.fn().mockImplementation(() => ({
-    load: credentialsLoad,
-    refresh: credentialsRefresh,
-    isExpired: credentialsIsExpired,
-  })),
-}));
+vi.mock('@kb-labs/cli-runtime/gateway', () => ({ gatewayApiFetch }));
 
 import { get } from '../http.js';
 
-describe('marketplace HTTP authentication', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    sessionLoad.mockResolvedValue(null);
-    credentialsLoad.mockResolvedValue(null);
-    sessionIsExpired.mockReturnValue(false);
-    credentialsIsExpired.mockReturnValue(false);
+describe('marketplace shared gateway client', () => {
+  afterEach(() => { gatewayApiFetch.mockReset(); });
+
+  // case: S-041.7
+  it('delegates marketplace REST calls to the shared authenticated client', async () => {
+    gatewayApiFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await get('/packages');
+    expect(gatewayApiFetch).toHaveBeenCalledWith(
+      new URL('http://gateway.test/api/v1/marketplace/packages'),
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
-  it('forwards the logged-in session token', async () => {
-    sessionLoad.mockResolvedValue({
-      gatewayUrl: 'http://session-gateway.test',
-      accessToken: 'session-token',
-      refreshToken: 'session-refresh',
-      expiresAt: Date.now() + 60_000,
+  it('preserves the catalog envelope from marketplace failures', async () => {
+    gatewayApiFetch.mockResolvedValue(new Response(JSON.stringify({
+      ok: false,
+      error: { code: 'KB_PLUGIN_NOT_FOUND', message: 'Plugin was not found', hint: 'Install it with kb marketplace install <package>.' },
+      internal: 'secret detail',
+    }), { status: 404 }));
+    await expect(get('/packages')).rejects.toMatchObject({
+      message: 'Plugin was not found',
+      envelope: {
+        code: 'KB_PLUGIN_NOT_FOUND',
+        message: 'Plugin was not found',
+        hint: 'Install it with kb marketplace install <package>.',
+      },
     });
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    await get('/packages');
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://session-gateway.test/api/v1/marketplace/packages',
-      expect.objectContaining({ headers: { Authorization: 'Bearer session-token' } }),
-    );
   });
 
-  it('refreshes an expired session and retries the request once', async () => {
-    const expired = {
-      gatewayUrl: 'http://gateway.test',
-      accessToken: 'expired-token',
-      refreshToken: 'refresh-token',
-      expiresAt: Date.now() - 1,
-    };
-    const refreshed = { ...expired, accessToken: 'fresh-token', expiresAt: Date.now() + 60_000 };
-    sessionLoad.mockResolvedValue(expired);
-    sessionIsExpired.mockReturnValue(true);
-    sessionRefresh.mockResolvedValue(refreshed);
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    await get('/packages');
-
-    expect(sessionRefresh).toHaveBeenCalledTimes(2);
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      'http://gateway.test/api/v1/marketplace/packages',
-      expect.objectContaining({ headers: { Authorization: 'Bearer fresh-token' } }),
-    );
-  });
-
-  it('gives a first-run instruction when no auth exists', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('refreshToken is required', { status: 401 }));
-    vi.stubGlobal('fetch', fetchMock);
-
+  it('points timeout recovery at the installed platform commands', async () => {
+    const abort = new Error('aborted');
+    abort.name = 'AbortError';
+    gatewayApiFetch.mockRejectedValue(abort);
     await expect(get('/packages')).rejects.toThrow(
-      'Marketplace authentication is required. Run `kb auth login` or choose local no-auth mode during installation.',
+      'Marketplace /packages timed out. Check the installed platform with `kb-create status`; start it with `kb-create start` if it is stopped.',
     );
-    expect(sessionRefresh).not.toHaveBeenCalled();
-    expect(credentialsRefresh).not.toHaveBeenCalled();
   });
 });

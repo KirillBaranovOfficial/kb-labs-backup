@@ -14,7 +14,7 @@ function createWorkflowServer() {
         total: 4,
         queued: 1,
         running: 1,
-        completed: 1,
+        success: 1,
         failed: 1,
         cancelled: 0,
         dlq: 0,
@@ -23,14 +23,18 @@ function createWorkflowServer() {
         total: 7,
         queued: 1,
         running: 2,
-        completed: 3,
+        success: 3,
         failed: 1,
       },
     })),
   };
 
   const jobBroker = {};
-  const workflowService = { listAll: vi.fn(), get: vi.fn() };
+  const workflowService = {
+    listAll: vi.fn(async () => []),
+    get: vi.fn(),
+    refreshManifests: vi.fn(async () => undefined),
+  };
   const cronScheduler = {};
   return createServer({
     engine: engine as any,

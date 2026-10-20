@@ -2,7 +2,7 @@
  * workflow:metrics command - Get workflow metrics
  */
 
-import { defineCommand, handleError, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { type MetricsFlags } from '@kb-labs/workflow-contracts';
 import { WorkflowDaemonClient } from '../http-client.js';
 
@@ -13,7 +13,7 @@ export default defineCommand<unknown, MetricsInput, unknown>({
   description: 'Get workflow daemon metrics',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: MetricsInput): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: MetricsInput): Promise<CommandResult> {
       const flags = input.flags ?? input;
       const outputJson = flags.json ?? false;
 
@@ -22,13 +22,13 @@ export default defineCommand<unknown, MetricsInput, unknown>({
         const metrics = await client.getMetrics();
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: metrics });
+          return metrics;
         } else {
           const runsItems = [
             `Total: ${metrics.runs.total}`,
             `Queued: ${metrics.runs.queued}`,
             `Running: ${metrics.runs.running}`,
-            `Completed: ${metrics.runs.completed}`,
+            `Success: ${metrics.runs.success}`,
             `Failed: ${metrics.runs.failed}`,
             `Cancelled: ${metrics.runs.cancelled}`,
           ];
@@ -37,7 +37,7 @@ export default defineCommand<unknown, MetricsInput, unknown>({
             `Total: ${metrics.jobs.total}`,
             `Queued: ${metrics.jobs.queued}`,
             `Running: ${metrics.jobs.running}`,
-            `Completed: ${metrics.jobs.completed}`,
+            `Success: ${metrics.jobs.success}`,
             `Failed: ${metrics.jobs.failed}`,
           ];
 
@@ -50,15 +50,9 @@ export default defineCommand<unknown, MetricsInput, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
-        if (outputJson) {
-          handleError(ctx, error, true);
-        } else {
-          const message = error instanceof Error ? error.message : String(error);
-          ctx.ui?.error?.(message, { hint: 'Start with: kb-dev start workflow' });
-        }
-        return { ok: false, error: 'Command failed' };
+        return handleError(error);
       }
     },
   },

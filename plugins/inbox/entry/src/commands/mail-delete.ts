@@ -16,14 +16,12 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<DeleteFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        validationError(ctx, 'uid is required', 'Usage: kb inbox delete <uid>', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('uid is required', 'Usage: kb inbox delete <uid>');
       }
 
       const uid = parseInt(rawUid, 10);
       if (isNaN(uid)) {
-        validationError(ctx, `Invalid uid: "${rawUid}" — must be a number`, undefined, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(`Invalid uid: "${rawUid}" — must be a number`);
       }
 
       try {
@@ -31,15 +29,13 @@ export default defineCommand({
         await deleteMessage(account, uid, input.flags.folder ?? 'INBOX');
 
         if (input.flags.json) {
-          ctx.ui?.json?.({ ok: true, result: { uid, deleted: true } });
-          return { ok: true, result: { uid, deleted: true } };
+          return { uid, deleted: true };
         }
 
         ctx.ui?.success?.(`Deleted uid=${uid}`);
-        return { ok: true, result: null };
+        return null;
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

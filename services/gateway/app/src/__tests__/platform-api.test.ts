@@ -127,6 +127,21 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('denies members direct access to machine storage adapters', async () => {
+    const memberApp = Fastify({ logger: false });
+    await memberApp.register(async (scope) => {
+      scope.addHook('onRequest', async (request) => {
+        request.authContext = { type: 'user', userId: 'member-1', namespaceId: 'tenant-1', tier: 'free', permissions: ['projects:read'] };
+      });
+      registerPlatformRoutes(scope, noopLogger);
+    });
+    await memberApp.ready();
+    const response = await memberApp.inject({ method: 'POST', url: '/platform/v1/documentDatabase/find', payload: { args: ['users', {}] } });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe('KB_AUTH_FORBIDDEN');
+    await memberApp.close();
+  });
+
   // ── Validation ────────────────────────────────────────────────────────
 
   it('returns 404 for unknown adapter', async () => {
@@ -137,7 +152,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
       payload: { args: [] },
     });
     expect(res.statusCode).toBe(404);
-    expect(res.json().error.code).toBe('ADAPTER_NOT_FOUND');
+    expect(res.json().error.code).toBe('KB_RUNTIME_RESOURCE_NOT_FOUND');
   });
 
   it('returns 403 for disallowed method', async () => {
@@ -148,7 +163,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
       payload: { args: [] },
     });
     expect(res.statusCode).toBe(403);
-    expect(res.json().error.code).toBe('METHOD_NOT_ALLOWED');
+    expect(res.json().error.code).toBe('KB_AUTH_FORBIDDEN');
   });
 
   it('returns 503 when adapter not configured', async () => {
@@ -159,7 +174,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
       payload: { args: [{ query: 'test' }] },
     });
     expect(res.statusCode).toBe(503);
-    expect(res.json().error.code).toBe('ADAPTER_UNAVAILABLE');
+    expect(res.json().error.code).toBe('KB_ADAPTER_NOT_CONFIGURED');
   });
 
   // ── Cache adapter ─────────────────────────────────────────────────────
@@ -177,8 +192,8 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.ok).toBe(true);
-    expect(body.result).toBe('hello-world');
-    expect(typeof body.durationMs).toBe('number');
+    expect(body.data).toBe('hello-world');
+    expect(typeof body.meta.durationMs).toBe('number');
     expect(mockCacheAdapter.get).toHaveBeenCalledWith('my-key');
   });
 
@@ -216,13 +231,14 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.ok).toBe(true);
-    expect(body.result.content).toBe('Hello!');
+    expect(body.data.content).toBe('Hello!');
     expect(mockLLM.complete).toHaveBeenCalledWith('Say hello', { temperature: 0.5 });
   });
 
   // ── Analytics adapter ─────────────────────────────────────────────────
 
-  it('analytics/track proxies to analytics', async () => {
+  // case: S-189.2
+  it('analytics/track proxies to analytics with the shared UX envelope', async () => {
     (mockAnalytics.track as any).mockResolvedValueOnce(undefined);
 
     const res = await app.inject({
@@ -233,13 +249,13 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().ok).toBe(true);
+    expect(res.json()).toMatchObject({ ok: true, data: null, meta: { durationMs: expect.any(Number) } });
     expect(mockAnalytics.track).toHaveBeenCalledWith('user.signup', { plan: 'pro' });
   });
 
   // ── Error handling ────────────────────────────────────────────────────
 
-  it('returns 502 when adapter method throws', async () => {
+  it('returns a shared failure envelope when an adapter method throws', async () => {
     mockLLM.complete = vi.fn().mockRejectedValueOnce(new Error('Provider timeout'));
 
     const res = await app.inject({
@@ -252,14 +268,14 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(res.statusCode).toBe(502);
     const body = res.json();
     expect(body.ok).toBe(false);
-    expect(body.error.message).toBe('Provider timeout');
-    expect(body.error.code).toBe('ADAPTER_ERROR');
-    expect(typeof body.durationMs).toBe('number');
+    expect(body.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(body.error.message).toBeTruthy();
+    expect(body.error.hint).toBeTruthy();
   });
 
-  // ── durationMs ────────────────────────────────────────────────────────
+  // ── UX result metadata ────────────────────────────────────────────────
 
-  it('includes durationMs in response', async () => {
+  it('includes durationMs in UX result metadata', async () => {
     mockCacheAdapter.get.mockResolvedValueOnce(null);
 
     const res = await app.inject({
@@ -270,8 +286,8 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(typeof res.json().durationMs).toBe('number');
-    expect(res.json().durationMs).toBeGreaterThanOrEqual(0);
+    expect(typeof res.json().meta.durationMs).toBe('number');
+    expect(res.json().meta.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   // ── Args passing ──────────────────────────────────────────────────────
@@ -313,5 +329,100 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(lines[0]).toBe('data: Hello');
     expect(lines[1]).toBe('data:  world');
     expect(lines[lines.length - 1]).toBe('data: [DONE]');
+  });
+
+  it('returns a typed HTTP error when an LLM stream fails before its first chunk and keeps serving', async () => {
+    async function* failedBeforeFirstChunk(): AsyncIterable<string> {
+      throw Object.assign(new Error('provider rejected credentials'), {
+        name: 'AuthenticationError',
+        status: 401,
+      });
+    }
+    mockLLM.stream = vi.fn().mockReturnValueOnce(failedBeforeFirstChunk());
+
+    const failed = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/llm/stream',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: ['test prompt'] },
+    });
+
+    expect(failed.statusCode).toBe(502);
+    expect(failed.headers['content-type']).toContain('application/json');
+    expect(failed.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_CONFIG_LLM_KEY_INVALID',
+        area: 'config',
+        stage: 'run',
+        severity: 'error',
+        retryable: false,
+        message: expect.any(String),
+        hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'"),
+        correlationId: expect.any(String),
+      },
+    });
+    expect(failed.body).not.toContain('provider rejected credentials');
+
+    const healthy = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/cache/get',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: ['after-stream-failure'] },
+    });
+    expect(healthy.statusCode).toBe(200);
+    expect(healthy.json().ok).toBe(true);
+  });
+
+  it('writes a typed terminal SSE error when an LLM stream fails after a chunk and keeps serving', async () => {
+    async function* failedAfterFirstChunk(): AsyncIterable<string> {
+      yield 'partial';
+      throw Object.assign(new Error('provider disconnected'), {
+        name: 'APIConnectionError',
+      });
+    }
+    mockLLM.stream = vi.fn().mockReturnValueOnce(failedAfterFirstChunk());
+
+    const failed = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/llm/stream',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: ['test prompt'] },
+    });
+
+    expect(failed.statusCode).toBe(200);
+    expect(failed.headers['content-type']).toContain('text/event-stream');
+    expect(failed.body).toContain('data: partial\n\n');
+    expect(failed.body).toContain('event: error\n');
+    expect(failed.body).toContain('"code":"KB_CONFIG_LLM_PROVIDER_UNAVAILABLE"');
+    expect(failed.body).toContain('kb config get platform.adapterOptions.llm.baseURL --scope platform --json');
+    expect(failed.body).toContain('"correlationId":"req-1"');
+    expect(failed.body).not.toContain('[DONE]');
+    expect(failed.body).not.toContain('provider disconnected');
+
+    const healthy = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/cache/get',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: ['after-stream-failure'] },
+    });
+    expect(healthy.statusCode).toBe(200);
+    expect(healthy.json().ok).toBe(true);
+  });
+
+  it('rejects a stream call without a prompt as typed invalid input before invoking the adapter', async () => {
+    const failed = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/llm/stream',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: [] },
+    });
+
+    expect(failed.statusCode).toBe(400);
+    expect(failed.json()).toMatchObject({
+      ok: false,
+      error: { code: 'KB_RUNTIME_INPUT_INVALID', message: expect.any(String), hint: expect.any(String) },
+    });
+    expect(mockLLM.stream).not.toHaveBeenCalled();
   });
 });

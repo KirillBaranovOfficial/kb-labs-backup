@@ -2,7 +2,7 @@
  * workflow:health command - Check daemon health
  */
 
-import { defineCommand, handleError, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { type HealthFlags } from '@kb-labs/workflow-contracts';
 import { WorkflowDaemonClient } from '../http-client.js';
 
@@ -13,7 +13,7 @@ export default defineCommand<unknown, HealthInput, unknown>({
   description: 'Check workflow daemon health status',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: HealthInput): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: HealthInput): Promise<CommandResult> {
       const flags = input.flags ?? input;
       const outputJson = flags.json ?? false;
 
@@ -22,7 +22,7 @@ export default defineCommand<unknown, HealthInput, unknown>({
         const health = await client.health();
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: health });
+          return health;
         } else {
           ctx.ui?.success?.('Daemon is healthy', {
             title: 'Workflow Daemon',
@@ -35,15 +35,9 @@ export default defineCommand<unknown, HealthInput, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
-        if (outputJson) {
-          handleError(ctx, error, true);
-        } else {
-          const message = error instanceof Error ? error.message : String(error);
-          ctx.ui?.error?.(message, { hint: 'Start with: kb-dev start workflow' });
-        }
-        return { ok: false, error: 'Command failed' };
+        return handleError(error);
       }
     },
   },

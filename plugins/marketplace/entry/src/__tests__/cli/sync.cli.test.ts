@@ -68,7 +68,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Synced');
   });
@@ -81,7 +81,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.infos.length).toBeGreaterThan(0);
     expect(captured.infos[0]?.message).toContain('up to date');
   });
@@ -99,9 +99,40 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect(captured.json[0]).toMatchObject({ added: expect.any(Array), total: 1 });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toBeDefined();
+    expect(result).toMatchObject({ added: expect.any(Array), total: 1 });
+  });
+
+  it('S-179.33: parses slash-star workspace globs in JSONC sync config', async () => {
+    mockedReadFile.mockResolvedValueOnce(
+      '{ "marketplace": { "sync": { "include": ["plugins/*/entry",], }, }, }',
+    );
+    mockedPost.mockResolvedValue({ added: [], skipped: [], total: 0 });
+
+    const ctx = createMockContext();
+    const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+
+    expect(result).not.toHaveProperty('ok');
+    expect(mockedPost).toHaveBeenCalledWith('/workspace/sync', expect.objectContaining({ include: ['plugins/*/entry'] }));
+  });
+
+  it('S-179.34: reports invalid JSONC at its config path', async () => {
+    mockedReadFile.mockResolvedValueOnce('{ "marketplace": /* broken */ }');
+
+    const ctx = createMockContext();
+    const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        message: expect.stringContaining('/workspace/.kb/kb.config.jsonc'),
+        hint: expect.stringContaining('kb marketplace sync --scope project'),
+      },
+    });
+    expect(result).not.toMatchObject({ error: { message: expect.stringContaining('No marketplace.sync.include') } });
+    expect(mockedPost).not.toHaveBeenCalled();
   });
 
   it('CS-04: HTTP error — returns exitCode 1 with error captured', async () => {
@@ -112,8 +143,8 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CS-05: no sync.include configured — returns exitCode 1 with validation error', async () => {
@@ -126,7 +157,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -140,7 +171,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -149,7 +180,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedPost).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

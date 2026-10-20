@@ -80,6 +80,10 @@ export const createEmailPasswordProvider = (
     id: 'email-password',
     kind: 'password',
 
+    async getOperationalState() {
+      return { state: 'operational', checkedAt: Date.now() };
+    },
+
     async authenticate(input: unknown): Promise<IdentityResult> {
       if (!isPasswordInput(input)) {
         // Even on shape-invalid input, do a dummy bcrypt so timing

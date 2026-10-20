@@ -1,10 +1,13 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
+import { createProjectRegistry } from '@kb-labs/core-project-registry'
 
 import {
+  findRegisteredProjectRoot,
   resolvePlatformRoot,
   resolveProjectRoot,
   resolveRoots,
@@ -29,117 +32,180 @@ describe('resolveProjectRoot', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('returns explicit cwd when provided', async () => {
-    const explicit = path.join(tmpDir, 'explicit-root')
-    const result = await resolveProjectRoot({ cwd: explicit })
-
-    expect(result).toEqual({
-      rootDir: path.resolve(explicit),
-      source: 'explicit',
+  // case: S-204.7
+  it('reports an unknown project outside the platform registry', async () => {
+    const unregistered = path.join(tmpDir, 'unregistered-project')
+    const registryHome = path.join(tmpDir, 'registry-home')
+    mkdirSync(unregistered, { recursive: true })
+    await expect(resolveProjectRoot({
+      startDir: unregistered,
+      env: { KB_HOME: registryHome },
+    })).rejects.toMatchObject({
+      name: 'ErrorEnvelopeError',
+      envelope: {
+        code: 'KB_PROJECT_UNKNOWN',
+        message: `The project ${path.resolve(unregistered)} is not in the registry (the folder may have moved).`,
+        hint: `Register it with "kb project add ${path.resolve(unregistered)}".`,
+      },
     })
   })
 
-  it('prefers KB_PROJECT_ROOT when set', async () => {
-    const envRoot = path.join(tmpDir, 'env-root-primary')
-    const result = await resolveProjectRoot({
-      env: { KB_PROJECT_ROOT: envRoot },
-    })
-
-    expect(result).toEqual({
-      rootDir: path.resolve(envRoot),
-      source: 'env',
-    })
-  })
-
-  it('accepts legacy KB_LABS_WORKSPACE_ROOT for backwards compatibility', async () => {
-    const envRoot = path.join(tmpDir, 'env-root-legacy-ws')
-    const result = await resolveProjectRoot({
-      env: { KB_LABS_WORKSPACE_ROOT: envRoot },
-    })
-
-    expect(result).toEqual({
-      rootDir: path.resolve(envRoot),
-      source: 'env',
-    })
-  })
-
-  it('accepts legacy KB_LABS_REPO_ROOT for backwards compatibility', async () => {
-    const envRoot = path.join(tmpDir, 'env-root-legacy-repo')
-    const result = await resolveProjectRoot({
-      env: { KB_LABS_REPO_ROOT: envRoot },
-    })
-
-    expect(result).toEqual({
-      rootDir: path.resolve(envRoot),
-      source: 'env',
-    })
-  })
-
-  it('finds nearest kb-labs config ancestor', async () => {
-    const umbrella = path.join(tmpDir, 'umbrella')
-    const child = path.join(umbrella, 'packages', 'foo')
-    const configDir = path.join(umbrella, '.kb')
-
-    mkdirSync(child, { recursive: true })
-    mkdirSync(configDir, { recursive: true })
-    writeFileSync(
-      path.join(configDir, 'kb.config.json'),
-      JSON.stringify({ name: 'umbrella' }),
-    )
-
-    process.chdir(child)
-
-    const result = await resolveProjectRoot({
-      startDir: child,
-      env: {},
-    })
-
-    expect(result.rootDir).toEqual(path.resolve(umbrella))
-    expect(result.source).toBe('config')
-  })
-
-  it('falls back to repo root when config missing', async () => {
-    const repoRoot = path.join(tmpDir, 'repo-fallback')
-    const nested = path.join(repoRoot, 'nested', 'dir')
-
+  it('resolves the registered project containing cwd without reading repository config', async () => {
+    const project = path.join(tmpDir, 'registered-project')
+    const nested = path.join(project, 'packages', 'foo')
+    const home = path.join(tmpDir, 'registered-home')
     mkdirSync(nested, { recursive: true })
-    writeFileSync(path.join(repoRoot, 'package.json'), '{"name":"workspace"}')
+    await createProjectRegistry({ root: home }).add(project)
 
-    process.chdir(nested)
-
-    const result = await resolveProjectRoot({
-      startDir: nested,
-      env: {},
-    })
-
-    expect(result.rootDir).toEqual(path.resolve(repoRoot))
-    expect(result.source).toBe('repo')
+    const result = await resolveProjectRoot({ startDir: nested, env: { KB_HOME: home } })
+    expect(result).toEqual({ rootDir: realpathSync(project), source: 'registry', cwdDir: path.resolve(nested) })
   })
 
-  it('returns fallback when no markers found', async () => {
-    const lonely = path.join(tmpDir, 'lonely')
-    mkdirSync(lonely, { recursive: true })
-    process.chdir(lonely)
+  // case: S-198.7
+  it('resolves a git worktree outside the registered project to its owning project', async () => {
+    const project = path.join(tmpDir, 'registered-git-project')
+    const worktreeParent = path.join(tmpDir, 'external-worktrees')
+    const worktree = path.join(worktreeParent, 'feature')
+    const home = path.join(tmpDir, 'registered-git-home')
+    mkdirSync(project, { recursive: true })
+    mkdirSync(worktreeParent, { recursive: true })
+    execFileSync('git', ['init', '-b', 'main'], { cwd: project })
+    execFileSync('git', ['config', 'user.email', 'test@example.test'], { cwd: project })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: project })
+    writeFileSync(path.join(project, 'README.md'), 'fixture\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: project })
+    execFileSync('git', ['commit', '-m', 'fixture'], { cwd: project })
+    execFileSync('git', ['worktree', 'add', '--detach', worktree, 'main'], { cwd: project })
+    await createProjectRegistry({ root: home }).add(realpathSync(project))
 
-    const result = await resolveProjectRoot({
-      startDir: lonely,
-      env: {},
+    const result = await resolveProjectRoot({ startDir: worktree, env: { KB_HOME: home } })
+    expect(result).toEqual({ rootDir: realpathSync(project), source: 'worktree', cwdDir: path.resolve(worktree) })
+    const gitCalls: string[][] = []
+    const injectedExec = async (file: string, args: string[], options: { cwd: string; timeout: number }) => {
+      gitCalls.push([file, ...args])
+      return { stdout: execFileSync(file, args, { cwd: options.cwd, encoding: 'utf8' }) }
+    }
+    expect(await findRegisteredProjectRoot(worktree, { KB_HOME: home }, injectedExec)).toBe(realpathSync(project))
+    expect(gitCalls).toEqual([['git', 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir']])
+    const roots = await resolveRoots({
+      startDir: worktree,
+      env: { KB_HOME: home, KB_PLATFORM_ROOT: path.join(tmpDir, 'worktree-platform') },
     })
+    expect(roots.projectRoot).toBe(realpathSync(project))
+    expect(roots.projectStartDir).toBe(path.resolve(worktree))
+    expect(roots.sources).toMatchObject({ project: 'worktree', projectStartDir: path.resolve(worktree) })
+  })
 
-    // On most systems findRepoRoot will walk up to a real repo root; we accept
-    // either 'repo' or 'fallback' here since it depends on whether there is
-    // anything above tmpDir.
-    expect([lonely, path.resolve(lonely)]).toContainEqual(result.rootDir)
-    expect(['fallback', 'repo']).toContain(result.source)
+  it('maps worktree paths to the main checkout before matching a registered subdirectory', async () => {
+    const repo = path.join(tmpDir, 'subdirectory-project-repo')
+    const project = path.join(repo, 'packages', 'registered')
+    const worktree = path.join(tmpDir, 'subdirectory-project-worktree')
+    const inside = path.join(worktree, 'packages', 'registered', 'src')
+    const outside = path.join(worktree, 'packages', 'other')
+    const home = path.join(tmpDir, 'subdirectory-project-home')
+    mkdirSync(project, { recursive: true })
+    mkdirSync(path.join(repo, 'packages', 'other'), { recursive: true })
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.test'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
+    writeFileSync(path.join(repo, 'README.md'), 'fixture\n')
+    writeFileSync(path.join(project, 'package.json'), '{"name":"registered"}\n')
+    writeFileSync(path.join(repo, 'packages', 'other', 'README.md'), 'outside\n')
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-m', 'fixture'], { cwd: repo })
+    execFileSync('git', ['worktree', 'add', '--detach', worktree, 'main'], { cwd: repo })
+    mkdirSync(inside, { recursive: true })
+    await createProjectRegistry({ root: home }).add(realpathSync(project))
+
+    const calls: string[][] = []
+    const injectedExec = async (file: string, args: string[], options: { cwd: string; timeout: number }) => {
+      calls.push([file, ...args])
+      return { stdout: execFileSync(file, args, { cwd: options.cwd, encoding: 'utf8' }) }
+    }
+    expect(await findRegisteredProjectRoot(inside, { KB_HOME: home }, injectedExec)).toBe(realpathSync(project))
+    expect(calls).toHaveLength(1)
+    calls.length = 0
+    expect(await findRegisteredProjectRoot(outside, { KB_HOME: home }, injectedExec)).toBeUndefined()
+    expect(calls).toHaveLength(1)
+  })
+
+  // case: S-198.7
+  it('does not resolve an unregistered repository worktree by common dir', async () => {
+    const repo = path.join(tmpDir, 'unregistered-git-project')
+    const worktree = path.join(tmpDir, 'unregistered-git-worktree')
+    const home = path.join(tmpDir, 'empty-git-home')
+    mkdirSync(repo, { recursive: true })
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.test'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
+    writeFileSync(path.join(repo, 'README.md'), 'fixture\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: repo })
+    execFileSync('git', ['commit', '-m', 'fixture'], { cwd: repo })
+    execFileSync('git', ['worktree', 'add', '--detach', worktree, 'main'], { cwd: repo })
+
+    const calls: string[][] = []
+    const injectedExec = async (file: string, args: string[], options: { cwd: string; timeout: number }) => {
+      calls.push([file, ...args])
+      return { stdout: execFileSync(file, args, { cwd: options.cwd, encoding: 'utf8' }) }
+    }
+    await expect(findRegisteredProjectRoot(worktree, { KB_HOME: home }, injectedExec)).resolves.toBeUndefined()
+    expect(calls).toHaveLength(1)
+    await expect(resolveProjectRoot({ startDir: worktree, env: { KB_HOME: home } }))
+      .rejects.toMatchObject({ envelope: { code: 'KB_PROJECT_UNKNOWN' } })
+  })
+
+  it('does not resolve bare repositories or repositories with a nonstandard common directory', async () => {
+    const bare = path.join(tmpDir, 'bare-project.git')
+    const home = path.join(tmpDir, 'bare-project-home')
+    mkdirSync(bare, { recursive: true })
+    execFileSync('git', ['init', '--bare'], { cwd: bare })
+    const bareCalls: string[][] = []
+    const realExec = async (file: string, args: string[], options: { cwd: string; timeout: number }) => {
+      bareCalls.push([file, ...args])
+      return { stdout: execFileSync(file, args, { cwd: options.cwd, encoding: 'utf8' }) }
+    }
+    await expect(findRegisteredProjectRoot(bare, { KB_HOME: home }, realExec)).resolves.toBeUndefined()
+    expect(bareCalls).toHaveLength(1)
+
+    const repo = path.join(tmpDir, 'custom-common-dir-repo')
+    mkdirSync(repo, { recursive: true })
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
+    const registered = path.join(tmpDir, 'other-registered-project')
+    const customCommonDir = path.join(tmpDir, 'custom-common-dir')
+    mkdirSync(registered, { recursive: true })
+    mkdirSync(customCommonDir, { recursive: true })
+    await createProjectRegistry({ root: home }).add(realpathSync(registered))
+    const customCalls: string[][] = []
+    const nonstandardExec = async (_file: string, args: string[], options: { cwd: string; timeout: number }) => {
+      customCalls.push(['git', ...args])
+      return { stdout: `${repo}\n${customCommonDir}\n` }
+    }
+    await expect(findRegisteredProjectRoot(repo, { KB_HOME: home }, nonstandardExec)).resolves.toBeUndefined()
+    expect(customCalls).toHaveLength(1)
+  })
+
+  it('ignores .kb and repository markers for project identity', async () => {
+    const project = path.join(tmpDir, 'unregistered-marked-project')
+    mkdirSync(path.join(project, '.kb'), { recursive: true })
+    writeFileSync(path.join(project, '.kb', 'kb.config.json'), '{}')
+    writeFileSync(path.join(project, 'package.json'), '{"name":"unregistered"}')
+
+    await expect(resolveProjectRoot({ startDir: project, env: { KB_HOME: path.join(tmpDir, 'empty-home') } }))
+      .rejects.toMatchObject({ envelope: { code: 'KB_PROJECT_UNKNOWN' } })
   })
 })
 
 describe('resolveWorkspaceRoot (deprecated alias)', () => {
   it('behaves identically to resolveProjectRoot', async () => {
-    const explicit = path.join(os.tmpdir(), 'alias-test')
-    const legacy = await resolveWorkspaceRoot({ cwd: explicit })
-    const current = await resolveProjectRoot({ cwd: explicit })
+    const home = mkdtempSync(path.join(os.tmpdir(), 'kb-alias-home-'))
+    const project = mkdtempSync(path.join(os.tmpdir(), 'kb-alias-project-'))
+    await createProjectRegistry({ root: home }).add(project)
+    const options = { cwd: project, env: { KB_HOME: home } }
+    const legacy = await resolveWorkspaceRoot(options)
+    const current = await resolveProjectRoot(options)
     expect(legacy).toEqual(current)
+    rmSync(home, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
   })
 })
 
@@ -401,6 +467,47 @@ describe('resolveRoots', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
+  it('resolves platform roots without requiring a registered project', async () => {
+    const platformRoot = path.join(tmpDir, 'platform-only-root')
+    const cwd = path.join(tmpDir, 'unregistered-cwd')
+    mkdirSync(cwd, { recursive: true })
+    mkdirSync(path.join(platformRoot, 'node_modules', '@kb-labs', 'core-runtime'), { recursive: true })
+
+    const result = await resolveRoots({
+      startDir: cwd,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_HOME: path.join(tmpDir, 'empty-home') },
+      projectScope: 'platform',
+    })
+
+    expect(result).toEqual({
+      platformRoot: path.resolve(platformRoot),
+      projectRoot: undefined,
+      sameLocation: false,
+      projectStartDir: path.resolve(cwd),
+      sources: { platform: 'env', projectStartDir: path.resolve(cwd) },
+    })
+  })
+
+  it('resolves the registered project while keeping platform scope rooted at the platform', async () => {
+    const platformRoot = path.join(tmpDir, 'platform-with-project')
+    const projectRoot = path.join(tmpDir, 'registered-project')
+    const home = path.join(tmpDir, 'platform-scope-home')
+    mkdirSync(projectRoot, { recursive: true })
+    mkdirSync(path.join(platformRoot, 'node_modules', '@kb-labs', 'core-runtime'), { recursive: true })
+    await createProjectRegistry({ root: home }).add(projectRoot)
+
+    const result = await resolveRoots({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_HOME: home },
+      projectScope: 'platform',
+    })
+
+    expect(result.platformRoot).toBe(path.resolve(platformRoot))
+    expect(result.projectRoot).toBe(realpathSync(projectRoot))
+    expect(result.sameLocation).toBe(false)
+    expect(result.sources.project).toBe('registry')
+  })
+
   it('returns sameLocation: true in dev-mode workspace (both resolve to same root)', async () => {
     const workspaceRoot = path.join(tmpDir, 'dev-mode-workspace')
     const nested = path.join(workspaceRoot, 'packages', 'foo')
@@ -417,16 +524,18 @@ describe('resolveRoots', () => {
       'packages:\n  - packages/*\n',
     )
 
+    const home = path.join(tmpDir, 'dev-registry-home')
+    await createProjectRegistry({ root: home }).add(workspaceRoot)
     const result = await resolveRoots({
       startDir: nested,
-      env: {},
+      env: { KB_HOME: home },
     })
 
     expect(result.platformRoot).toEqual(path.resolve(workspaceRoot))
-    expect(result.projectRoot).toEqual(path.resolve(workspaceRoot))
+    expect(result.projectRoot).toEqual(realpathSync(workspaceRoot))
     expect(result.sameLocation).toBe(true)
     expect(result.sources.platform).toBe('marker')
-    expect(result.sources.project).toBe('config')
+    expect(result.sources.project).toBe('registry')
   })
 
   it('returns sameLocation: false in installed mode', async () => {
@@ -445,41 +554,42 @@ describe('resolveRoots', () => {
 
     // User project
     const projectRoot = path.join(tmpDir, 'user-project')
-    const configDir = path.join(projectRoot, '.kb')
-    mkdirSync(configDir, { recursive: true })
-    writeFileSync(
-      path.join(configDir, 'kb.config.json'),
-      JSON.stringify({ platform: {} }),
-    )
+    mkdirSync(projectRoot, { recursive: true })
+    const home = path.join(tmpDir, 'installed-registry-home')
+    await createProjectRegistry({ root: home }).add(projectRoot)
 
     const result = await resolveRoots({
       moduleUrl: pathToFileURL(fakeBin).href,
       startDir: projectRoot,
-      env: {},
+      env: { KB_HOME: home },
     })
 
     expect(result.platformRoot).toEqual(path.resolve(platformRoot))
-    expect(result.projectRoot).toEqual(path.resolve(projectRoot))
+    expect(result.projectRoot).toEqual(realpathSync(projectRoot))
     expect(result.sameLocation).toBe(false)
     expect(result.sources.platform).toBe('module')
-    expect(result.sources.project).toBe('config')
+    expect(result.sources.project).toBe('registry')
   })
 
-  it('env vars override discovery for both roots independently', async () => {
+  it('platform env override does not replace registry project identity', async () => {
     const platformRoot = path.join(tmpDir, 'env-platform-root')
     const projectRoot = path.join(tmpDir, 'env-project-root')
+    mkdirSync(projectRoot, { recursive: true })
 
+    const home = path.join(tmpDir, 'roots-registry-home')
+    await createProjectRegistry({ root: home }).add(projectRoot)
     const result = await resolveRoots({
+      startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
+        KB_HOME: home,
       },
     })
 
     expect(result.platformRoot).toEqual(path.resolve(platformRoot))
-    expect(result.projectRoot).toEqual(path.resolve(projectRoot))
+    expect(result.projectRoot).toEqual(realpathSync(projectRoot))
     expect(result.sameLocation).toBe(false)
     expect(result.sources.platform).toBe('env')
-    expect(result.sources.project).toBe('env')
+    expect(result.sources.project).toBe('registry')
   })
 })

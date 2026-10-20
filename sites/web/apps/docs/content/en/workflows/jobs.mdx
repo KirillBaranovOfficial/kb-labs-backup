@@ -259,7 +259,7 @@ Three jobs: build, test in parallel with lint, deploy after both. Production dep
 {
   "name": "ci-cd",
   "version": "1",
-  "on": { "push": true, "manual": true },
+  "on": { "manual": true },
   "env": { "CI": "true" },
   "jobs": {
     "build": {

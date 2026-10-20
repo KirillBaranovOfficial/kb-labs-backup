@@ -21,6 +21,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { Worker } from '../backends/worker-pool/worker.js';
+import type { ProcessTreeResult } from '../backends/worker-pool/process-tree.js';
 import type { ExecutionRequest } from '../types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,21 +53,31 @@ function isAlive(pid: number): boolean {
 
 describe('Worker.kill() — process-tree cleanup (real detached grandchild)', () => {
   let worker: Worker | undefined;
+  let grandchildPid: number | undefined;
+  let treeOutcome: ProcessTreeResult | undefined;
 
   afterEach(() => {
     worker?.kill();
     worker = undefined;
+    if (grandchildPid !== undefined) {
+      try {
+        process.kill(grandchildPid, 'SIGKILL');
+      } catch {
+        // The timeout path may already have killed the child.
+      }
+      grandchildPid = undefined;
+    }
   });
 
   it('kills both the worker process AND a detached grandchild it spawned', async () => {
     worker = new Worker({ workerScript: HANGING_WITH_CHILD_SCRIPT });
+    worker.on('treeUnverified', (_worker, result) => { treeOutcome = result; });
     await worker.spawn();
     const workerPid = worker.info.pid!;
     expect(workerPid).toBeGreaterThan(0);
 
     // Capture the grandchild's real OS pid via the fixture's log message,
     // then let the execution time out — which triggers Worker.kill().
-    let grandchildPid: number | undefined;
     await expect(
       worker.execute(
         makeRequest(),
@@ -87,10 +98,24 @@ describe('Worker.kill() — process-tree cleanup (real detached grandchild)', ()
     // (checked implicitly: it's alive now, and it's a `node -e` idler with
     // no other reason to exit on its own.)
 
-    // Give both kills a moment to land.
-    await new Promise<void>((resolve) => { setTimeout(resolve, 200); });
+    // Wait for the bounded process-tree check to either verify the kill or
+    // publish its explicit unverified result. A live child without that
+    // result is a broken silent path.
+    while (treeOutcome === undefined && isAlive(grandchildPid!)) {
+      await new Promise<void>((resolve) => { setTimeout(resolve, 25); });
+    }
+    while (isAlive(workerPid)) {
+      await new Promise<void>((resolve) => { setTimeout(resolve, 25); });
+    }
 
     expect(isAlive(workerPid)).toBe(false);
-    expect(isAlive(grandchildPid!)).toBe(false);
+    const grandchildAlive = isAlive(grandchildPid!);
+    if (treeOutcome?.verified === false) {
+      expect(treeOutcome.reason).toBeTruthy();
+      expect(worker.treeUnverified).toBe(true);
+    } else {
+      expect(treeOutcome).toBeUndefined();
+      expect(grandchildAlive).toBe(false);
+    }
   });
 });

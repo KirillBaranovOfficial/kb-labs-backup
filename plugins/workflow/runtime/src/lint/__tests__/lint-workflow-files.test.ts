@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -30,6 +30,17 @@ afterEach(async () => {
 })
 
 describe('lintWorkflowFiles invocation graph', () => {
+  it('reports project-relative file paths for default workflow-directory linting', async () => {
+    const cwd = await workflowDirectory({});
+    const workflows = join(cwd, '.kb', 'workflows');
+    await mkdir(workflows, { recursive: true });
+    await writeFile(join(workflows, 'hello.yml'), workflow('hello'));
+
+    const [result] = await lintWorkflowFiles({ cwd });
+
+    expect(result?.relativePath).toBe('.kb/workflows/hello.yml');
+  });
+
   it('rejects a missing workspace child workflow', async () => {
     const path = await workflowDirectory({
       'parent.yaml': workflow('parent', 'workflow:workspace:missing'),

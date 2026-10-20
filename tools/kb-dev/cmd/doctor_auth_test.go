@@ -24,10 +24,10 @@ func serve(t *testing.T, status int, body string) string {
 	return srv.URL
 }
 
-const lockedOut = `{"ok":false,"authEnabled":true,"tenantId":"kblabs-cloud","activeAdmins":0,"bootstrap":"not-configured","issues":[
-  {"code":"no_active_admin","severity":"error","message":"no admin","hint":"kb auth reset-admin --email a@b.c --tenant kblabs-cloud --generate --yes"}]}`
+const lockedOut = `{"ok":true,"data":{"ok":false,"authEnabled":true,"tenantId":"kblabs-cloud","activeAdmins":0,"bootstrap":"not-configured","issues":[
+  {"code":"no_active_admin","severity":"error","message":"no admin","hint":"kb auth reset-admin --email a@b.c --tenant kblabs-cloud --generate --yes"}]}}`
 
-const healthy = `{"ok":true,"authEnabled":true,"tenantId":"kblabs-cloud","activeAdmins":2,"bootstrap":"exists-active","issues":[]}`
+const healthy = `{"ok":true,"data":{"ok":true,"authEnabled":true,"tenantId":"kblabs-cloud","activeAdmins":2,"bootstrap":"exists-active","issues":[]}}`
 
 func find(checks []manager.DoctorCheck, id string) *manager.DoctorCheck {
 	for i := range checks {
@@ -59,6 +59,7 @@ func TestFetchAuthReadiness_SkipsRatherThanFailsWhenUnavailable(t *testing.T) {
 		{"server error", 500, `oops`, "HTTP 500"},
 		{"not JSON", 200, `<html>bad gateway</html>`, "unexpected /health/auth response"},
 		{"JSON but not a readiness document", 200, `{"status":"ok"}`, "unexpected /health/auth response"},
+		{"raw readiness document", 200, `{"ok":true,"authEnabled":true,"issues":[]}`, "unexpected /health/auth response"},
 		{"empty object", 200, `{}`, "unexpected /health/auth response"},
 		{"JSON array (e.g. the adapters route)", 200, `[]`, "unexpected /health/auth response"},
 	}
@@ -111,7 +112,7 @@ func TestAuthChecks_HealthyIsASingleGreenCheck(t *testing.T) {
 }
 
 func TestAuthChecks_DisabledModeIsOKAndSaysSo(t *testing.T) {
-	r, _ := fetchAuthReadiness(serve(t, 200, `{"ok":true,"authEnabled":false,"tenantId":"t","activeAdmins":0,"bootstrap":"not-configured","issues":[]}`))
+	r, _ := fetchAuthReadiness(serve(t, 200, `{"ok":true,"data":{"ok":true,"authEnabled":false,"tenantId":"t","activeAdmins":0,"bootstrap":"not-configured","issues":[]}}`))
 	checks, _, ok := authChecks(r)
 	if !ok || !strings.Contains(checks[0].Detail, "disabled") {
 		t.Fatalf("disabled mode should pass and be labelled: %+v", checks)
@@ -119,8 +120,8 @@ func TestAuthChecks_DisabledModeIsOKAndSaysSo(t *testing.T) {
 }
 
 func TestAuthChecks_WarningDoesNotFailTheDoctor(t *testing.T) {
-	r, _ := fetchAuthReadiness(serve(t, 200, `{"ok":true,"authEnabled":true,"tenantId":"t","activeAdmins":1,"bootstrap":"exists-active","issues":[
-	  {"code":"jwt_secret_default","severity":"warning","message":"dev secret","hint":"set GATEWAY_JWT_SECRET"}]}`))
+	r, _ := fetchAuthReadiness(serve(t, 200, `{"ok":true,"data":{"ok":true,"authEnabled":true,"tenantId":"t","activeAdmins":1,"bootstrap":"exists-active","issues":[
+	  {"code":"jwt_secret_default","severity":"warning","message":"dev secret","hint":"set GATEWAY_JWT_SECRET"}]}}`))
 	checks, hint, ok := authChecks(r)
 
 	if !ok || hint != "" {
@@ -133,8 +134,8 @@ func TestAuthChecks_WarningDoesNotFailTheDoctor(t *testing.T) {
 }
 
 func TestAuthChecks_UnknownSeverityIsTreatedAsAnError(t *testing.T) {
-	r, _ := fetchAuthReadiness(serve(t, 200, `{"ok":false,"authEnabled":true,"tenantId":"t","activeAdmins":1,"bootstrap":"x","issues":[
-	  {"code":"future_thing","severity":"critical","message":"m","hint":"h"}]}`))
+	r, _ := fetchAuthReadiness(serve(t, 200, `{"ok":true,"data":{"ok":false,"authEnabled":true,"tenantId":"t","activeAdmins":1,"bootstrap":"x","issues":[
+	  {"code":"future_thing","severity":"critical","message":"m","hint":"h"}]}}`))
 	checks, hint, _ := authChecks(r)
 	if c := find(checks, "auth:future_thing"); c == nil || c.OK {
 		t.Fatalf("unknown severity must fail closed: %+v", c)
@@ -176,6 +177,18 @@ func TestAddAuthChecks_FailsTheDoctorAndKeepsAnExistingHint(t *testing.T) {
 			t.Fatalf("skip=%q result=%+v", skip, result)
 		}
 	})
+}
+
+// case: S-203.1
+func TestAddAuthChecksFailsWhenReadinessDoesNotUseUxEnvelope(t *testing.T) {
+	result := &manager.DoctorResult{OK: true}
+	skip := addAuthChecks(result, portOf(t, serve(t, 200, `{"ok":true,"authEnabled":true,"issues":[]}`)))
+	if !strings.Contains(skip, "unexpected /health/auth response") || result.OK {
+		t.Fatalf("raw readiness should be reported as a doctor failure, skip=%q result=%+v", skip, result)
+	}
+	if check := find(result.Checks, "auth"); check == nil || check.OK || !strings.Contains(result.Hint, "kb-create restart") {
+		t.Fatalf("invalid envelope should have a visible actionable check: %+v", check)
+	}
 }
 
 func portOf(t *testing.T, url string) int {

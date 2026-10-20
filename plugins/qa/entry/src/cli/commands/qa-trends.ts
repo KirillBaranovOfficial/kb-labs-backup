@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -18,7 +18,7 @@ export default defineCommand<unknown, CLIInput<QaTrendsFlags>, unknown>({
   description: 'Show QA quality trends over time',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaTrendsFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaTrendsFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -29,14 +29,14 @@ export default defineCommand<unknown, CLIInput<QaTrendsFlags>, unknown>({
       const analysis = analyzeTrends(history, window);
 
       if (flags.json) {
-        ctx.ui?.json?.(analysis);
+        return analysis;
       } else {
         for (const section of buildTrendsReport(analysis)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return { ok: true };
+      return {  };
     },
   },
 });

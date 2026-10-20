@@ -20,7 +20,6 @@ import type { IEntityRegistry } from '@kb-labs/core-registry';
 import type {
   WorkflowHandlerDecl,
   JobHandlerDecl,
-  CronDecl,
   PlatformServices,
   ManifestV3,
 } from '@kb-labs/plugin-contracts';
@@ -32,7 +31,7 @@ const CACHE_KEY_WORKFLOWS = 'manifest-scanner:v1:workflows' as const;
 /**
  * Workflow trigger type
  */
-export type WorkflowTriggerType = 'manual' | 'webhook' | 'push' | 'schedule' | 'event';
+export type WorkflowTriggerType = 'manual' | 'event';
 
 /**
  * Workflow trigger configuration
@@ -40,20 +39,6 @@ export type WorkflowTriggerType = 'manual' | 'webhook' | 'push' | 'schedule' | '
 export interface WorkflowTrigger {
   type: WorkflowTriggerType;
   config?: Record<string, unknown>;
-}
-
-/**
- * Schedule configuration for workflows
- */
-export interface WorkflowSchedule {
-  /** Cron expression (e.g., "0 2 * * *") */
-  cron: string;
-  /** Whether schedule is enabled */
-  enabled: boolean;
-  /** Next run time (calculated) */
-  nextRun?: Date;
-  /** Last run time */
-  lastRun?: Date;
 }
 
 /**
@@ -92,9 +77,6 @@ export interface WorkflowRuntime {
   // Execution configuration
   triggers: WorkflowTrigger[];
   handler?: string; // For manifest-based workflows
-
-  // Schedule (if applicable)
-  schedule?: WorkflowSchedule;
 
   // Status
   status: 'active' | 'paused' | 'disabled';
@@ -168,10 +150,9 @@ export class ManifestScanner {
     this.platform.logger?.debug('ManifestScanner: Querying entity registry');
     const workflows: WorkflowRuntime[] = [];
 
-    // Query workflow, job, and cron entities from registry (extracted from ManifestV3 by catalog)
+    // Query workflow and job entities from registry (extracted from ManifestV3 by catalog)
     const workflowEntities = this.cliApi.queryEntities({ kind: 'workflow' });
     const jobEntities = this.cliApi.queryEntities({ kind: 'job' });
-    const cronEntities = this.cliApi.queryEntities({ kind: 'cron' });
 
     // Get plugin roots for handler path resolution
     const pluginRoots = new Map<string, string>();
@@ -182,7 +163,6 @@ export class ManifestScanner {
     const allEntities = [
       ...workflowEntities.map(e => ({ entity: e, converter: 'workflow' as const })),
       ...jobEntities.map(e => ({ entity: e, converter: 'job' as const })),
-      ...cronEntities.map(e => ({ entity: e, converter: 'cron' as const })),
     ];
 
     for (const { entity, converter } of allEntities) {
@@ -202,8 +182,6 @@ export class ManifestScanner {
           workflows.push(this.converter.convertWorkflowHandler(entity.ref.pluginId, entity.declaration as unknown as WorkflowHandlerDecl, root));
         } else if (converter === 'job') {
           workflows.push(this.converter.convertJobHandler(entity.ref.pluginId, entity.declaration as unknown as JobHandlerDecl, root));
-        } else {
-          workflows.push(this.converter.convertCronSchedule(entity.ref.pluginId, entity.declaration as unknown as CronDecl, root));
         }
       } catch (err) {
         this.platform.logger?.warn('ManifestScanner: Failed to convert entity', {
@@ -242,7 +220,6 @@ export class ManifestScanner {
       count: workflows.length,
       workflows: workflowEntities.length,
       jobs: jobEntities.length,
-      crons: cronEntities.length,
       templates: templatesCount,
     });
 
@@ -252,44 +229,6 @@ export class ManifestScanner {
     }
 
     return workflows;
-  }
-
-  /**
-   * Scan all installed plugins for job handlers only.
-   *
-   * Returns information needed to register handlers in JobManager.
-   */
-  async scanJobHandlers(): Promise<Array<{
-    pluginId: string;
-    pluginVersion: string;
-    pluginRoot: string;
-    handler: JobHandlerDecl;
-  }>> {
-    const snapshot = this.cliApi.snapshot();
-    const jobHandlers: Array<{
-      pluginId: string;
-      pluginVersion: string;
-      pluginRoot: string;
-      handler: JobHandlerDecl;
-    }> = [];
-
-    for (const entry of snapshot.manifests ?? []) {
-      const handlers = entry.manifest.jobs?.handlers ?? [];
-      for (const handler of handlers) {
-        jobHandlers.push({
-          pluginId: entry.pluginId,
-          pluginVersion: entry.manifest.version,
-          pluginRoot: entry.pluginRoot,
-          handler,
-        });
-      }
-    }
-
-    this.platform.logger?.debug('ManifestScanner: Discovered job handlers', {
-      count: jobHandlers.length,
-    });
-
-    return jobHandlers;
   }
 
   /**

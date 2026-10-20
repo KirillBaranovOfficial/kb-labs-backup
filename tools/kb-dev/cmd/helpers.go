@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,10 +11,6 @@ import (
 	"github.com/kb-labs/dev/internal/netoffset"
 	"github.com/kb-labs/dev/internal/process"
 )
-
-// errSilent is returned when the command has already printed an error message.
-// It causes a non-zero exit code without cobra printing the error again.
-var errSilent = errors.New("")
 
 // loadManager creates a Manager from the config with full initialization.
 //

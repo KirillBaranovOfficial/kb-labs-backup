@@ -525,6 +525,41 @@ export function setJsoncValue(text: string, path: readonly string[], value: unkn
   throw new JsoncPathError('Path could not be applied', [...path]);
 }
 
+/** Delete an existing object property at `path`, preserving the rest of the JSONC text. */
+export function deleteJsoncValue(text: string, path: readonly string[]): string {
+  if (path.length === 0) {
+    throw new JsoncPathError('Cannot delete the whole document; provide a key path', []);
+  }
+  const base = text.trim() === '' ? '{}\n' : text;
+  let node = parseJsoncTree(base);
+  for (const segment of path.slice(0, -1)) {
+    if (node.kind !== 'object') {
+      throw new JsoncPathError(`Cannot descend through a ${node.kind} value`, [...path.slice(0, -1)]);
+    }
+    const property = node.properties.find((item) => item.key === segment);
+    if (!property) {return base;}
+    node = property.value;
+  }
+  if (node.kind !== 'object') {
+    throw new JsoncPathError(`Cannot delete a property from a ${node.kind} value`, [...path.slice(0, -1)]);
+  }
+  const index = node.properties.findIndex((property) => property.key === path[path.length - 1]);
+  if (index < 0) {return base;}
+  const property = node.properties[index]!;
+  const propertyTail = afterValueTail(base, property.value.end);
+  let start = property.keyStart;
+  const end = propertyTail.insertAt;
+  if (!propertyTail.hadComma && index > 0) {
+    const previous = node.properties[index - 1]!;
+    const previousTail = afterValueTail(base, previous.value.end);
+    if (!previousTail.hadComma) {
+      throw new JsoncSyntaxError('Expected a comma before the property', base, property.keyStart);
+    }
+    start = previousTail.commaAt;
+  }
+  return applyEdits(base, [{ offset: start, length: end - start, insert: '' }]);
+}
+
 function describeScalar(node: JsoncScalarNode): string {
   if (node.value === null) {
     return 'null';

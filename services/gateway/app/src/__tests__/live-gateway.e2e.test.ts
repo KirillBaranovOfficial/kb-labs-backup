@@ -411,7 +411,7 @@ describe.sequential('Live Gateway — POST /api/v1/execute (ndjson streaming)', 
         hostWs.send(JSON.stringify({
           type: 'error',
           requestId: msg.requestId,
-          error: { code: 'HANDLER_ERROR', message: 'something went wrong', retryable: false },
+          error: { code: 'KB_RUNTIME_UNEXPECTED', message: 'something went wrong', hint: 'Inspect the correlated error record.', retryable: false },
         }));
       }
     });
@@ -427,9 +427,10 @@ describe.sequential('Live Gateway — POST /api/v1/execute (ndjson streaming)', 
     const body = await res.text();
     const events = parseNdjson(body);
 
-    const errEvent = events.find((e) => (e as { type: string }).type === 'execution:error') as { type: string; code: string; message: string } | undefined;
+    const errEvent = events.find((e) => (e as { type: string }).type === 'execution:error') as { type: string; error: { code: string; correlationId: string } } | undefined;
     expect(errEvent).toBeDefined();
-    expect(errEvent?.code).toBe('EXECUTION_FAILED');
+    expect(errEvent?.error.code).toBe('KB_PLUGIN_COMMAND_FAILED');
+    expect(errEvent?.error.correlationId).toEqual(expect.any(String));
 
     const doneEvent = events.find((e) => (e as { type: string }).type === 'execution:done') as { exitCode: number } | undefined;
     expect(doneEvent?.exitCode).toBe(1);

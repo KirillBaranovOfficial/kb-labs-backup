@@ -45,10 +45,8 @@ ${[...importSet].join('\n')}
 
 const permissions = ${permExpr};
 
-const manifest = ${body} as const;
+const baseManifest = ${body} as const;
 
-const withPermissions: typeof manifest & { permissions: unknown } = { ...manifest, permissions };
-
-export default withPermissions;
+export const manifest: typeof baseManifest & { permissions: unknown } = { ...baseManifest, permissions };
 `;
 }

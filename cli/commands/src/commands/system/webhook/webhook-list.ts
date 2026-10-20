@@ -5,8 +5,10 @@
  * with provisioned status for each.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
-import { CredentialsManager } from '@kb-labs/cli-runtime/gateway';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { gatewayApiFetch, readGatewaySuccessData, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { getContextCwd } from '@kb-labs/shared-cli-ui';
+import { ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 type ListFlags = {
   plugin: { type: 'string'; description: string };
@@ -26,6 +28,8 @@ type ListResult = CommandResult & {
 
 export const webhookList = defineSystemCommand<ListFlags, ListResult>({
   name: 'list',
+  scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description: 'List declared webhook endpoints',
   longDescription:
     'Lists all webhook endpoints declared in installed plugin manifests. ' +
@@ -41,42 +45,25 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
     json: { type: 'boolean', description: 'Output in JSON format' },
   },
   async handler(ctx, _argv, flags) {
-    const credentialsManager = new CredentialsManager();
-    const credentials = await credentialsManager.load();
-
-    if (!credentials) {
-      const msg = 'Not authenticated. Run "kb auth login" first.';
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
-    }
-
     const qs = flags.plugin ? `?pluginId=${encodeURIComponent(flags.plugin)}` : '';
-    const url = `${credentials.gatewayUrl}/api/v1/webhooks${qs}`;
+    const target = await resolveActiveGateway({ cwd: getContextCwd(ctx), env: process.env });
+    const url = `${target.gatewayUrl}/api/v1/webhooks${qs}`;
 
     let response: Response;
     try {
-      response = await fetch(url, {
-        headers: { Authorization: `Bearer ${credentials.accessToken}` },
-      });
+      response = await gatewayApiFetch(url, {}, target, 'machine');
     } catch (err) {
-      const msg = `Cannot reach Gateway at ${credentials.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
+      if (err instanceof ErrorEnvelopeError) { throwSystemCataloguedError(err.envelope); }
+      const msg = `Cannot reach Gateway at ${target.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
+      throwSystemCommandError(msg, "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry.");
     }
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      const msg = `List failed (HTTP ${response.status}): ${body}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
-    }
-
-    const data = await response.json() as { webhooks: WebhookEntry[] };
+    const data = await readGatewaySuccessData<{ webhooks: WebhookEntry[] }>(response, {
+      operation: 'Webhook listing', gatewayUrl: target.gatewayUrl,
+    });
     const webhooks = data.webhooks ?? [];
 
-    if (flags.json) {
-      ctx.ui?.json({ ok: true, webhooks });
-    } else {
+    if (!flags.json) {
       if (webhooks.length === 0) {
         ctx.ui?.write?.('No webhook endpoints found.\n');
       } else {
@@ -99,6 +86,6 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
       }
     }
 
-    return { ok: true, webhooks };
+    return {  webhooks };
   },
 });

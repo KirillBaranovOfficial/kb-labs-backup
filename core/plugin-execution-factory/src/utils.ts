@@ -5,8 +5,10 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import type { ExecutionError, ExecutionErrorCode } from './types.js';
-import { TimeoutError, AbortError, isExecutionLayerError, isKnownErrorCode } from './errors.js';
+import { createErrorEnvelope, createValidatedErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope, isErrorCode } from '@kb-labs/core-platform';
+import type { ErrorEnvelope } from '@kb-labs/core-platform';
+import type { ExecutionDiagnostics, ExecutionError, ExecutionRequest } from './types.js';
+import { TimeoutError, AbortError, WorkerCrashedError, isExecutionLayerError } from './errors.js';
 
 /**
  * Create unique execution ID.
@@ -77,42 +79,96 @@ export function createTimeoutPromise(
 /**
  * Normalize any error to ExecutionError interface.
  *
- * - For ExecutionLayerError: uses toJSON()
- * - For other errors: extracts message/stack, validates code
- * - For non-errors: converts to string
+ * - Execution-layer control errors become safe catalogued failures.
+ * - Typed platform and product errors retain their complete envelope.
+ * - Unhandled values become a safe platform unexpected error.
  *
  * Returns strictly typed ExecutionError (interface).
  */
 export function normalizeError(error: unknown): ExecutionError {
-  // ExecutionLayerError: use toJSON()
-  if (isExecutionLayerError(error)) {
-    return error.toJSON();
+  return { ...normalizeErrorEnvelope(error), error: serializeError(error) };
+}
+
+function normalizeErrorEnvelope(error: unknown, correlationId?: string): ErrorEnvelope {
+  if (error instanceof ErrorEnvelopeError) {
+    return toErrorEnvelope(error);
   }
-
-  // Standard Error: extract fields
+  if (isExecutionLayerError(error)) {
+    if (error instanceof AbortError) {
+      return createErrorEnvelope('KB_PLUGIN_ABORTED', { cause: error.message });
+    }
+    if (error instanceof TimeoutError) {
+      const details = Object.fromEntries(
+        Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
+      );
+      return createValidatedErrorEnvelope('KB_RUNTIME_TIMEOUT', {
+        details,
+        ...(correlationId ? { correlationId } : {}),
+      });
+    }
+    if (isErrorCode(error.code)) {
+      const details = Object.fromEntries(
+        Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
+      );
+      return createValidatedErrorEnvelope(error.code, { details });
+    }
+    return createErrorEnvelope('KB_RUNTIME_UNEXPECTED');
+  }
   if (error instanceof Error) {
-    const anyError = error as Error & { code?: unknown; details?: unknown };
-
-    // Validate and clamp error code
-    const rawCode = anyError.code;
-    const code: ExecutionErrorCode = isKnownErrorCode(rawCode)
-      ? rawCode
-      : 'HANDLER_ERROR';
-
-    return {
-      message: error.message,
-      code,
-      stack: error.stack,
-      details: typeof anyError.details === 'object' && anyError.details !== null
-        ? anyError.details as Record<string, unknown>
-        : undefined,
-    };
+    return toErrorEnvelope(error);
+  }
+  if (typeof error === 'object' && error !== null) {
+    const envelope = toErrorEnvelope(error);
+    return envelope;
   }
 
   // Non-error: convert to string
+  return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+    message: 'The operation did not complete because the handler threw a non-error value.',
+  });
+}
+
+/** Keeps private stack diagnostics beside, never inside, the serialized failure envelope. */
+export function executionDiagnostics(failure: ExecutionError): ExecutionDiagnostics | undefined {
+  const stack = failure.error.stack;
+  return stack ? { errorStack: stack } : undefined;
+}
+
+export function normalizeExecutionFailure(error: unknown, request?: ExecutionRequest): {
+  error: ExecutionError;
+  diagnostics?: ExecutionDiagnostics;
+} {
+  const serializedError = serializeError(error);
+  const correlationId = request?.descriptor.requestId || request?.executionId;
+  const failureReason = error instanceof TimeoutError
+    ? 'timed out'
+    : error instanceof WorkerCrashedError
+      ? 'execution process crashed'
+      : undefined;
+  const canonicalEnvelope = normalizeErrorEnvelope(error, correlationId);
+  const isUncataloguedHandlerFailure = canonicalEnvelope.code === 'KB_RUNTIME_UNEXPECTED' && (
+    (error instanceof Error && !(error instanceof ErrorEnvelopeError)) ||
+    error instanceof SerializedErrorEnvelopeError
+  );
+  const pluginFailure = request && isUncataloguedHandlerFailure;
+  const normalizedError: ExecutionError = pluginFailure
+    ? {
+        ...createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+          ...(correlationId ? { correlationId } : {}),
+          details: {
+            plugin: request.descriptor.pluginId,
+            command: request.context?.commandPath ?? request.handlerRef,
+            ...(correlationId ? { correlationId } : {}),
+            failureReason: failureReason ?? 'failed unexpectedly',
+          },
+        }),
+        error: serializedError,
+      }
+    : { ...canonicalEnvelope, error: serializedError };
+  const diagnostics = executionDiagnostics(normalizedError);
   return {
-    message: String(error),
-    code: 'UNKNOWN_ERROR',
+    error: normalizedError,
+    ...(diagnostics ? { diagnostics } : {}),
   };
 }
 

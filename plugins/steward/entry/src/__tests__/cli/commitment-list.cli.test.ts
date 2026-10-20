@@ -24,7 +24,7 @@ describe('steward:commitment.list', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: { 'stale-only': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedListCommitments).toHaveBeenCalledWith({ status: undefined, projectId: undefined, staleOnly: true });
     expect(captured.chain[0]).toHaveLength(1);
   });

@@ -27,11 +27,7 @@ describe('Plugin API', () => {
   let processExecutor: ReturnType<typeof createDefaultProcessExecutor>;
 
   beforeEach(async () => {
-    // Create temporary test directory
-    const homeDir = os.homedir();
-    const testRoot = path.join(homeDir, '.kb-plugin-api-test');
-    await fs.mkdir(testRoot, { recursive: true });
-    testDir = await fs.mkdtemp(path.join(testRoot, 'test-'));
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-plugin-api-test-'));
 
     // Mock cache adapter
     const storage = new Map<string, unknown>();
@@ -58,11 +54,7 @@ describe('Plugin API', () => {
   });
 
   afterEach(async () => {
-    try {
-      await fs.rm(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    await fs.rm(testDir, { recursive: true, force: true });
   });
 
   describe('lifecycle API', () => {
@@ -104,6 +96,7 @@ describe('Plugin API', () => {
         warn: vi.fn(),
         error: vi.fn(),
         fatal: vi.fn(),
+        flush: vi.fn().mockResolvedValue(undefined),
         child: vi.fn(() => mockLogger),
       };
 
@@ -127,6 +120,7 @@ describe('Plugin API', () => {
         warn: vi.fn(),
         error: vi.fn(),
         fatal: vi.fn(),
+        flush: vi.fn().mockResolvedValue(undefined),
         child: vi.fn(() => mockLogger),
       };
 

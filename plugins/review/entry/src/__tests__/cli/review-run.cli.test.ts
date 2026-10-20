@@ -20,7 +20,8 @@ vi.mock('@kb-labs/review-core', () => ({
 
 import { useLoader, useConfig } from '@kb-labs/sdk';
 import { runReview, resolveGitScope, getReposWithChanges } from '@kb-labs/review-core';
-import type { ReviewResult, ScopedFiles } from '@kb-labs/review-core';
+import type { ScopedFiles } from '@kb-labs/review-core';
+import type { ReviewResult } from '@kb-labs/review-contracts';
 import reviewRunCommand from '../../commands/run.js';
 
 const mockedUseLoader = vi.mocked(useLoader);
@@ -76,7 +77,7 @@ describe('review:run', () => {
     const ctx = createMockContext({ ui });
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(noopLoader.fail).toHaveBeenCalled();
   });
 
@@ -91,7 +92,7 @@ describe('review:run', () => {
     const ctx = createMockContext({ ui });
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedRunReview).toHaveBeenCalledOnce();
     expect(captured.success.length + captured.warnings.length).toBeGreaterThan(0);
   });
@@ -109,11 +110,17 @@ describe('review:run', () => {
     const ctx = createMockContext({ ui });
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    expect(result.result?.passed).toBe(false);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        diagnostics: [{ code: 'KB_REVIEW_FINDING', path: 'src/index.ts', message: 'eval is dangerous' }],
+      },
+    });
   });
 
-  it('RR-04: --json flag — outputs ReviewResult via ctx.ui.json', async () => {
+  // case: S-203.1
+  it('returns the same agent report in JSON mode as the human command result', async () => {
     mockedGetReposWithChanges.mockResolvedValue(['packages/core']);
     mockedResolveGitScope.mockResolvedValue({
       files: [{ path: 'src/a.ts', content: '' }],
@@ -123,10 +130,35 @@ describe('review:run', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await reviewRunCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+    const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect(captured.json[0]).toMatchObject({ findings: [], metadata: { analyzedFiles: 3 } });
+    expect(captured.json).toHaveLength(0);
+    expect(result).toEqual({ passed: true, issues: [], summary: 'Review passed. No issues found.' });
+  });
+
+  // case: S-203.1
+  it('keeps blocker failures in JSON mode instead of returning the success report', async () => {
+    mockedGetReposWithChanges.mockResolvedValue(['packages/core']);
+    mockedResolveGitScope.mockResolvedValue({
+      files: [{ path: 'src/a.ts', content: 'eval("x")' }],
+    } as unknown as ScopedFiles);
+    mockedRunReview.mockResolvedValue(makeReviewResult([
+      { severity: 'blocker', file: 'src/a.ts', line: 1, message: 'eval is dangerous' },
+    ]) as unknown as ReviewResult);
+
+    const { ui } = createCapturedUI();
+    const result = await reviewRunCommand.execute(
+      createMockContext({ ui }),
+      mockCLIInput({ flags: { json: true } }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        diagnostics: [{ code: 'KB_REVIEW_FINDING', path: 'src/a.ts', message: 'eval is dangerous' }],
+      },
+    });
   });
 
   it('RR-05: --scope=staged uses includeStaged filter', async () => {
@@ -166,8 +198,32 @@ describe('review:run', () => {
     const ctx = createMockContext({ ui });
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(noopLoader.fail).toHaveBeenCalled();
+  });
+
+  it('keeps a malformed analysis hint attributable through review run error handling', async () => {
+    mockedGetReposWithChanges.mockResolvedValue(['packages/core']);
+    mockedResolveGitScope.mockResolvedValue({ files: [{ path: 'c.ts', content: '' }] } as unknown as ScopedFiles);
+    mockedRunReview.mockRejectedValue(Object.assign(new Error('Review failed.'), {
+      code: 'REVIEW_FAILED',
+      hint: { message: 'Review failed', interpolation: { file: 'src/a.ts' } },
+    }));
+
+    const { ui } = createCapturedUI();
+    const result = await reviewRunCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: { json: true } }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        details: {
+          field: 'hint',
+          observedType: 'object',
+          observedValuePreview: expect.stringContaining('Review failed'),
+        },
+      },
+    });
   });
 
   it('RR-08: --files flag reads specific files via ctx.runtime.fs.glob', async () => {

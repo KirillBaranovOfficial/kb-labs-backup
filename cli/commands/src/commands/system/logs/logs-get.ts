@@ -2,8 +2,7 @@
  * logs get — Get single log by ID with optional related logs
  */
 
-import {
-  defineSystemCommand,
+import { defineSystemCommand, throwSystemCommandError,
   type CommandResult,
 } from "@kb-labs/shared-command-kit";
 import { generateExamples } from "../../../utils/generate-examples";
@@ -30,15 +29,16 @@ interface RelatedLogEntry {
 }
 
 type LogGetResult = CommandResult & {
-  _rawLog?: LogRecord;
-  _rawRelated?: RelatedLogEntry[];
-  log?: Record<string, unknown>;
-  correlationKeys?: CorrelationKeys;
+  log: Record<string, unknown>;
+  correlationKeys: CorrelationKeys;
   related?: RelatedLogEntry[];
+  _rawLog?: LogRecord;
 };
 
 export const logsGet = defineSystemCommand<Flags, LogGetResult>({
   name: "get",
+  scope: 'platform',
+  jsonTest: { safeArgs: ["__fixture_log_id__"] },
   description: "Get single log by ID (with optional related logs)",
   category: "logs",
   examples: generateExamples("logs get", "kb", [
@@ -55,20 +55,17 @@ export const logsGet = defineSystemCommand<Flags, LogGetResult>({
   async handler(_ctx, argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return {
-        ok: false,
-        error: "Log reader not available. Ensure platform is initialized.",
-      };
+      throwSystemCommandError("Log reader not available. Ensure platform is initialized.", "Run `kb logs get --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const id = argv[0];
     if (!id) {
-      return { ok: false, error: "Log ID required. Usage: kb logs get <id>" };
+      throwSystemCommandError("Log ID required. Usage: kb logs get <id>", "Run `kb logs get --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const log = await reader.getById(id);
     if (!log) {
-      return { ok: false, error: `Log not found: ${id}` };
+      throwSystemCommandError(`Log not found: ${id}`, "Run `kb logs get --help` to review valid inputs and recovery steps, then retry.");
     }
 
     let related: RelatedLogEntry[] | undefined;
@@ -77,35 +74,19 @@ export const logsGet = defineSystemCommand<Flags, LogGetResult>({
       related = relatedLogs.map(formatLogJson) as RelatedLogEntry[];
     }
 
-    return {
-      ok: true,
+    const result = {
       log: formatLogJson(log) as Record<string, unknown>,
       correlationKeys: extractCorrelationKeys(log),
       related,
-      _rawLog: log,
-      _rawRelated: flags.related ? related : undefined,
     };
+    return flags.json ? result : { ...result, _rawLog: log };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      const { _rawLog, _rawRelated, ...jsonResult } = result;
-      ctx.ui.json(jsonResult);
-      return;
-    }
-
-    if (!result.ok) {
-      const error = typeof result.error === "string" ? result.error : "Unknown";
-      ctx.ui.error("Log Get", {
-        sections: [{ header: "Error", items: [error] }],
-      });
-      return;
-    }
-
-    const rawLog = result._rawLog;
     const logJson = result.log;
     const keys = result.correlationKeys;
+    const rawLog = result._rawLog;
 
-    if (!rawLog || !logJson || !keys) {
+    if (!logJson || !keys || !rawLog) {
       return;
     }
 

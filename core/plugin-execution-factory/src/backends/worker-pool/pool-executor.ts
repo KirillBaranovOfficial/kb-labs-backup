@@ -8,7 +8,7 @@ import type { WorkerPoolConfig, UIPromptMessage } from './types.js';
 import type { Worker } from './worker.js';
 import type { ExecutionRequest, ExecutionResult } from '../../types.js';
 import { WorkerCrashedError } from '../../errors.js';
-import { normalizeError } from '../../utils.js';
+import { normalizeExecutionFailure } from '../../utils.js';
 
 /**
  * Execution manager for WorkerPool.
@@ -25,7 +25,7 @@ export class PoolExecutor {
   private onQueueFullRejection: () => void;
 
   // Other callbacks
-  private onRecycleWorker: (worker: Worker) => Promise<void>;
+  private onRecycleWorker: (worker: Worker) => void;
 
   constructor(
     workers: Map<string, Worker>,
@@ -36,7 +36,7 @@ export class PoolExecutor {
       onErrorCount: () => void;
       onWorkerCrash: () => void;
       onQueueFullRejection: () => void;
-      onRecycleWorker: (worker: Worker) => Promise<void>;
+      onRecycleWorker: (worker: Worker) => void;
     }
   ) {
     this.workers = workers;
@@ -82,11 +82,13 @@ export class PoolExecutor {
     onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
+    uiPromptHint?: string,
+    signal?: AbortSignal,
   ): Promise<ExecutionResult> {
     this.onTotalRequests();
 
     try {
-      const result = await worker.execute(request, timeoutMs, onLog, onUIPrompt, onLoggerLog);
+      const result = await worker.execute(request, timeoutMs, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal);
 
       if (result.ok) {
         this.onSuccessCount();
@@ -111,7 +113,7 @@ export class PoolExecutor {
 
       return {
         ok: false,
-        error: normalizeError(error),
+        ...normalizeExecutionFailure(error, request),
         executionTimeMs: performance.now() - startTime,
         metadata: {
           workerId: worker.id,

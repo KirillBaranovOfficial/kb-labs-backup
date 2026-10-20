@@ -1,7 +1,7 @@
 ---
 title: "Your First Plugin"
 description: "Scaffold, build, and run a KB Labs plugin in under 10 minutes."
-updatedAt: "2026-04-15"
+updatedAt: "2026-09-30"
 order: 1
 ---
 
@@ -10,7 +10,7 @@ Create a working plugin with two CLI commands using the scaffold tool, then cust
 ## Prerequisites
 
 - A running KB Labs workspace (`kb --help` works).
-- Node 24+ and pnpm installed.
+- Node.js <NodePolicy />.x and pnpm installed.
 
 ## 1. Scaffold the plugin
 
@@ -28,7 +28,7 @@ This generates a ready-to-build plugin at `.kb/plugins/my-plugin` with three pac
 
 Two commands come out of the box: `hello` (greeting with a `--who` flag) and `ping` (health check).
 
-The scaffold also auto-registers the plugin in your project's `marketplace.lock` — no manual linking needed.
+The scaffold creates the source files. Build them, then explicitly link the entry package into the project's marketplace lock.
 
 Use `--dry-run` to preview the file tree without writing anything:
 
@@ -54,15 +54,16 @@ pnpm build
 
 You should see `dist/` folders in each sub-package. If the build fails, run `kb scaffold doctor --path .kb/plugins` to diagnose.
 
-## 3. Clear the CLI cache and run
+## 3. Link and run the plugin
 
-The CLI discovery cache auto-invalidates when you rebuild a plugin. If commands
-are still missing after a build, force-reset:
+Return to the project root and link the built entry package. The relative path is recorded in `.kb/marketplace.lock`:
 
 ```bash
+cd ../../..
+kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry
 ```
 
-Now run your commands:
+Now run the generated commands:
 
 ```bash
 kb my-plugin hello
@@ -220,7 +221,7 @@ This requires an LLM adapter configured in `kb.config.json`. See [Adapters → O
 
 - **Code change?** `pnpm build` — cache updates automatically, then re-run.
 - **Something broken?** `kb scaffold doctor --path .kb/plugins` scans for common issues.
-- **Want to unlink?** `kb marketplace plugins unlink my-plugin-entry`.
+- **Want to remove it?** `kb marketplace plugins remove @kb-labs/my-plugin`.
 
 ## What to read next
 

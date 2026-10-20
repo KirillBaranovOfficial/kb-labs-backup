@@ -36,7 +36,7 @@ describe('clickup:task.search', () => {
       mockCLIInput({ argv: ['bug'] }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
   });
 
   it('TS-02: --json outputs slim tasks array', async () => {
@@ -49,9 +49,9 @@ describe('clickup:task.search', () => {
       mockCLIInput({ argv: ['bug'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(Array.isArray(captured.json[0])).toBe(true);
-    const slim = (captured.json[0] as Array<Record<string, unknown>>)[0]!;
+    expect(result).not.toHaveProperty('ok');
+    expect(Array.isArray(result)).toBe(true);
+    const slim = (result as Array<Record<string, unknown>>)[0]!;
     expect(slim.id).toBe('task-001');
     expect(typeof slim.status).toBe('string');
     expect(slim).toHaveProperty('due_date');
@@ -70,8 +70,8 @@ describe('clickup:task.search', () => {
       mockCLIInput({ argv: ['bug'], flags: { json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const raw = (captured.json[0] as typeof mockTasks)[0]!;
+    expect(result).not.toHaveProperty('ok');
+    const raw = (result as typeof mockTasks)[0]!;
     expect(typeof raw.status).toBe('object');
     expect(raw.date_created).toBeDefined();
   });
@@ -86,7 +86,7 @@ describe('clickup:task.search', () => {
       mockCLIInput({ argv: ['nothing'] }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.infos.length).toBeGreaterThan(0);
   });
 
@@ -100,7 +100,7 @@ describe('clickup:task.search', () => {
       mockCLIInput({ argv: [] }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

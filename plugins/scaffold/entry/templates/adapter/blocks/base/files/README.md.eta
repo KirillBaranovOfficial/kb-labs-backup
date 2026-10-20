@@ -17,7 +17,7 @@ on `@kb-labs/sdk` rather than working around it.
 
 ## Using it
 
-Register the adapter in your project's `.kb/kb.config.jsonc` (the host
+Register the adapter in the platform's `.kb/kb.config.jsonc` (the host
 plugin will resolve this package via npm or `workspace:*`). Then the
 runtime wires it up to whichever capability it `implements`.
 

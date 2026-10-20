@@ -22,7 +22,7 @@ function makeRequest(overrides: Partial<ExecutionRequest> = {}): ExecutionReques
       pluginVersion: '1.0.0',
       requestId: 'req-1',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     },
     input: {},
     ...overrides,

@@ -13,36 +13,37 @@
  * Design notes:
  *  - The entity registry is initialized ONCE at start() and reused for every
  *    request; only the cheap, pure filterTools() runs per request.
- *  - This endpoint sits in front of the gateway's auth scope (the gateway proxies
- *    it as a dumb upstream), so the daemon validates the Bearer token itself via
- *    the shared GATEWAY_JWT_SECRET — exactly mirroring the gateway's AuthService.
- *  - Anonymous callers (no/invalid token) get an empty tool list and can never
- *    reach callTool/executeCommandV3.
+ *  - The gateway resolves the bearer token, current user/session state, tenant,
+ *    and permissions before proxying. It forwards AuthContext over the internal
+ *    secret channel; the runtime verifies that channel and consumes that context.
+ *  - Anonymous callers are rejected in secured mode before tool dispatch.
  *  - tenantId flows end-to-end from AuthContext.namespaceId into executeCommandV3
  *    via the resolvePlatform seam — ready for per-tenant isolation without code
  *    changes here.
  */
 
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { can, type Policy, type Identity } from '@kb-labs/core-policy';
-import type { ICache, ILogger } from '@kb-labs/core-platform';
-import type { JwtConfig } from '@kb-labs/gateway-auth';
+import { PlatformAuditStore, isErrorCode, type ICache, type ILogger } from '@kb-labs/core-platform';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { createDaemonServer, getListenOptions, type ObservabilityCollectorLike } from '@kb-labs/shared-http';
-import { resolveAuthContext } from './mcp/auth.js';
+import { readForwardedIdentity } from '@kb-labs/gateway-contracts';
 import { toIdentity, actionForOperation, type Permits } from './mcp/authz.js';
 import { createToolRegistry, validateManifests } from './mcp/tool-builder.js';
 import { type PlatformResolver } from './mcp/tool-router.js';
-import { resolveVisibleTools, executeToolCall } from './mcp/request-handler.js';
+import { resolveVisibleTools, executeToolCall, invalidMcpToolArguments, mcpToolError, mcpToolSuccess, unexpectedMcpResult, validateToolArguments } from './mcp/request-handler.js';
 import { McpObservabilityCollector } from './observability/collector.js';
 import type { ToolBuildDiagnostic } from './mcp/tool-builder.js';
+import { isMcpCorsPreflight, mcpCorsPreflightResponse, mcpUnauthenticatedResponse, rejectsUnauthenticatedRequest, type McpAuthMode } from './mcp/auth-mode.js';
 
 /** Built-in diagnostic tool: always visible to authenticated callers, never
  * derived from a plugin manifest — reports which plugin commands failed to
@@ -51,7 +52,7 @@ const DIAGNOSTICS_TOOL = {
   name: 'kb-labs__mcp_diagnostics',
   description:
     'List plugin commands that failed to load as MCP tools (malformed manifests), with the reason for each.',
-  inputSchema: { type: 'object' as const, properties: {} },
+  inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
 };
 
 function renderManifestDiagnostics(diagnostics: ToolBuildDiagnostic[]): string {
@@ -74,15 +75,21 @@ export interface McpDaemonServerOptions {
   projectRoot: string;
   /** Platform installation root (installed mode); merges platform-level plugins. */
   platformRoot?: string;
-  jwtConfig: JwtConfig;
   /** Authorization policy. Permit-all default until the platform supplies a real one. */
   policy: Policy;
+  /** Project runtime exposes MCP at its project-scoped root path. */
+  endpointPath?: string;
+  /** Local gateway mode has no login; secured mode requires a valid gateway token. */
+  authMode?: McpAuthMode;
+  /** Public Gateway URL included in catalogued authentication hints when known. */
+  gatewayUrl?: string;
 }
 
 export class McpDaemonServer {
   private readonly opts: McpDaemonServerOptions;
   private readonly resolvePlatform: PlatformResolver;
   private readonly collector: McpObservabilityCollector;
+  private readonly audit: PlatformAuditStore;
   private app: FastifyInstance | undefined;
   private registry: IEntityRegistry | undefined;
 
@@ -90,6 +97,7 @@ export class McpDaemonServer {
     this.opts = opts;
     this.resolvePlatform = opts.resolvePlatform ?? (() => opts.platform);
     this.collector = new McpObservabilityCollector();
+    this.audit = new PlatformAuditStore(opts.platform.documentDatabase);
   }
 
   /** Build a per-request permits predicate bound to the identity (PDP seam). */
@@ -159,7 +167,7 @@ export class McpDaemonServer {
   }
 
   private async registerMcpRoutes(server: FastifyInstance): Promise<void> {
-    const { cache, logger, jwtConfig } = this.opts;
+    const { cache, logger } = this.opts;
 
     // ── Diagnostics ──────────────────────────────────────────────────────
     // Same visibility as /health — no per-tenant data, just which manifest
@@ -173,35 +181,53 @@ export class McpDaemonServer {
     // CORS headers for all MCP responses (including preflight OPTIONS).
     // fastify.all() covers every method including OPTIONS, so no separate
     // fastify.options() is needed — that would cause a duplicate-route error.
-    server.all('/api/v1/mcp', async (request, reply) => {
-      reply
-        .header('Access-Control-Allow-Origin', '*')
-        .header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        .header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Mcp-Session-Id');
+    server.all(this.opts.endpointPath ?? '/api/v1/mcp', async (request, reply) => {
+      const corsHeaders = mcpCorsPreflightResponse().headers;
+      reply.headers(corsHeaders);
 
-      // Short-circuit preflight immediately — no auth or MCP processing needed.
-      if (request.method === 'OPTIONS') {
-        return reply.code(204).send();
+      if (isMcpCorsPreflight(request.method, request.headers)) {
+        const preflight = mcpCorsPreflightResponse();
+        return reply.code(preflight.statusCode).send();
       }
 
       const reqLogger = request.kbLogger ?? logger;
 
-      // 1. Authenticate. Invalid/absent token → anonymous (no throw, no 401).
+      // 1. Accept only the gateway-resolved identity on the authenticated
+      // internal channel. Local mode permits tokenless requests; secured mode
+      // rejects absent or invalid internal identity with HTTP 401.
       const authHeader = request.headers.authorization;
-      const authCtx = await resolveAuthContext(authHeader, cache, jwtConfig).catch(
-        () => null,
-      );
+      const forwardedIdentity = readForwardedIdentity(request.headers, process.env.GATEWAY_INTERNAL_SECRET);
+      const authCtx = forwardedIdentity.kind === 'identity' ? forwardedIdentity.auth : null;
+      const securedTokenIdentity = (this.opts.authMode ?? 'secured') === 'local' || Boolean(authCtx?.tokenId);
+      if (rejectsUnauthenticatedRequest(this.opts.authMode ?? 'secured', securedTokenIdentity)) {
+        const unauthenticated = mcpUnauthenticatedResponse(
+          this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL ?? '<url>',
+          authCtx ? 'unsupported-credential' : 'missing-identity',
+        );
+        return reply.code(unauthenticated.statusCode).send(unauthenticated.body);
+      }
+
+      // Non-preflight OPTIONS requests still pass through the secured gate.
+      if (request.method === 'OPTIONS') {
+        return reply.code(204).send();
+      }
       const tenantId = authCtx?.namespaceId ?? 'anonymous';
 
       // Bind the authorization predicate to the identity once per request.
-      // Anonymous callers get no predicate → they can neither list nor call tools.
-      const permits = authCtx ? this.permitsFor(toIdentity(authCtx)) : null;
+      // Local mode uses the local operator identity; secured requests use the
+      // identity from the gateway token.
+      const permits = authCtx
+        ? this.permitsFor(toIdentity(authCtx))
+        : this.opts.authMode === 'local'
+          ? () => true
+          : null;
 
       // 2. Resolve the visible tool list (cached per identity). The cache is a
       //    listing optimization ONLY — executeToolCall re-checks the live policy.
       const visibleTools = await resolveVisibleTools({
         permits,
         authHeader,
+        cacheScope: this.opts.projectRoot,
         registry: this.registry!,
         cache,
         analytics: this.opts.platform.analytics,
@@ -228,22 +254,65 @@ export class McpDaemonServer {
       }));
 
       mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
-        if (params.name === DIAGNOSTICS_TOOL.name) {
-          if (!permits) {
-            return { content: [{ type: 'text' as const, text: `Not authorized: ${params.name}` }], isError: true };
+        let result: CallToolResult;
+        try {
+          if (params.name === DIAGNOSTICS_TOOL.name) {
+            if (!permits) {
+              result = mcpToolError('KB_AUTH_REQUIRED', {
+                gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL ?? '<url>',
+              });
+            } else {
+              const validationError = validateToolArguments(
+                DIAGNOSTICS_TOOL.inputSchema,
+                (params.arguments ?? {}) as Record<string, unknown>,
+              );
+              result = validationError
+                ? invalidMcpToolArguments(validationError)
+                : mcpToolSuccess(renderManifestDiagnostics(this.collector.getManifestDiagnostics()));
+            }
+          } else {
+            result = await executeToolCall({
+              name: params.name,
+              args: (params.arguments ?? {}) as Record<string, unknown>,
+              visibleTools,
+              permits,
+              tenantId,
+              resolvePlatform: this.resolvePlatform,
+              analytics: this.opts.platform.analytics,
+              collector: this.collector,
+              logger: reqLogger,
+              gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL,
+            });
           }
-          return { content: [{ type: 'text' as const, text: renderManifestDiagnostics(this.collector.getManifestDiagnostics()) }], isError: false };
+        } catch (error) {
+          result = unexpectedMcpResult(error, reqLogger);
         }
-        return executeToolCall({
-          name: params.name,
-          args: (params.arguments ?? {}) as Record<string, unknown>,
-          visibleTools,
-          permits,
-          tenantId,
-          resolvePlatform: this.resolvePlatform,
-          analytics: this.opts.platform.analytics,
-          collector: this.collector,
-        });
+
+        const errorContent = result.structuredContent?.error;
+        const errorCode = typeof errorContent === 'object' && errorContent !== null
+          && 'code' in errorContent && typeof errorContent.code === 'string' && isErrorCode(errorContent.code)
+          ? errorContent.code
+          : undefined;
+        const correlationId = typeof errorContent === 'object' && errorContent !== null
+          && 'correlationId' in errorContent && typeof errorContent.correlationId === 'string'
+          ? errorContent.correlationId
+          : randomUUID();
+
+        try {
+          await this.audit.record({
+            kind: 'mcp.tool.call',
+            actorUserId: authCtx?.userId ?? null,
+            tokenId: authCtx?.tokenId ?? null,
+            tenantId,
+            project: this.opts.projectRoot,
+            tool: params.name,
+            outcome: result.isError ? errorCode ?? 'KB_RUNTIME_UNEXPECTED' : 'success',
+            correlationId,
+          });
+        } catch (error) {
+          return unexpectedMcpResult(error, reqLogger);
+        }
+        return result;
       });
 
       // 4. Streamable HTTP transport (stateless). Pass Fastify's parsed body —
@@ -253,9 +322,9 @@ export class McpDaemonServer {
         await mcp.connect(transport);
         await transport.handleRequest(request.raw, reply.raw, request.body);
       } catch (error) {
-        reqLogger.error('MCP request handling failed', error as Error);
+        const failure = unexpectedMcpResult(error, reqLogger);
         if (!reply.raw.headersSent) {
-          reply.code(500).send({ error: 'internal_error' });
+          reply.code(500).send(failure.structuredContent);
         }
       } finally {
         // Closing may reject if the transport is already torn down — swallow it

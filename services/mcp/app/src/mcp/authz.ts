@@ -13,11 +13,12 @@ import { can, type Policy, type Identity } from '@kb-labs/core-policy';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
 
 /**
- * Map a verified AuthContext to a policy Identity. Roles are derived from the
- * token's type and tier — the only identity signals the platform issues today.
+ * Map the gateway-resolved AuthContext to the policy seam. Forwarded gateway
+ * permissions are roles here because core-policy matches allow/deny labels
+ * against Identity.roles.
  */
 export function toIdentity(auth: AuthContext): Identity {
-  return { user: auth.userId, roles: [auth.type, auth.tier] };
+  return { user: auth.userId, roles: [auth.type, auth.tier, ...auth.permissions] };
 }
 
 /**

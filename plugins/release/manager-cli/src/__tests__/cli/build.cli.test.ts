@@ -57,7 +57,7 @@ describe('release:build', () => {
 
     const result = await buildCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'platform' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     expect(shellExec).toHaveBeenCalledWith(
       'pnpm',
       ['run', 'build:affected'],
@@ -72,7 +72,25 @@ describe('release:build', () => {
 
     const result = await buildCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'platform' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     expect(vi.mocked(buildPackages)).toHaveBeenCalledOnce();
+  });
+
+  it('BB-03: returns the same typed build failure in human and JSON modes', async () => {
+    vi.mocked(buildPackages).mockResolvedValue([
+      { name: '@kb-labs/sdk', success: false, durationMs: 10 },
+    ] as never);
+
+    const jsonResult = await buildCommand.execute(
+      createMockContext({ ui: createCapturedUI().ui, cwd: '/project' }) as never,
+      mockCLIInput({ flags: { flow: 'platform', json: true } }),
+    );
+    const textResult = await buildCommand.execute(
+      createMockContext({ ui: createCapturedUI().ui, cwd: '/project' }) as never,
+      mockCLIInput({ flags: { flow: 'platform' } }),
+    );
+
+    expect(jsonResult).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
+    expect(jsonResult).toEqual(textResult);
   });
 });

@@ -37,3 +37,6 @@ export * from './content';
 
 // Data contracts (REST response shapes for UIKit components)
 export * from './data-contracts';
+
+// Generated inventory used by the documentation component catalog.
+export { uiKitCatalog } from './catalog.generated';

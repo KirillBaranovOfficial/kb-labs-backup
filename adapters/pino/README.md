@@ -136,16 +136,15 @@ KB_LOG_PRETTY=true pnpm dev
 <details>
 <summary><strong>Q: How do I send logs to remote service?</strong></summary>
 
-Use `@kb-labs/adapters-pino-http` as a transport to stream logs to REST API.
+There is no REST log-ingestion endpoint in the platform. Use `@kb-labs/adapters-log-ringbuffer` for in-process live streaming, or `@kb-labs/adapters-log-document` for persistence through the configured document database.
 </details>
 
 ## Related Adapters
 
 | Adapter | Use Case |
 |---------|----------|
-| `@kb-labs/adapters-pino-http` | HTTP transport for remote logging |
 | `@kb-labs/adapters-log-ringbuffer` | In-memory log streaming |
-| `@kb-labs/adapters-log-sqlite` | Persistent log storage |
+| `@kb-labs/adapters-log-document` | Persistent log storage |
 
 ## License
 

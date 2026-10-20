@@ -12,11 +12,8 @@
  * shows a dialog).
  */
 
-import { promises as fs } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
-import { initWorkspaceConfig } from '@kb-labs/core-config';
+import { resolve } from 'node:path';
 import type { IProjectRegistry, ProjectRecord, ProjectSummary, ProjectView } from '@kb-labs/core-contracts';
-import { ProjectRegistryError } from './errors.js';
 import { canonicalizeProjectPath } from './project-id.js';
 
 /** Flattens a registry view into the summary shown by `kb project` and the host API. */
@@ -51,66 +48,25 @@ export interface AddProjectRequest {
   cwd?: string;
   /** Alias; defaults to the folder name. */
   name?: string;
-  /** Create the minimal `.kb/` when the folder has none. */
-  init?: boolean;
   /** Validate and report what would happen; write nothing. */
   dryRun?: boolean;
 }
 
 export type AddProjectOutcome =
-  /** The folder has no `.kb/` and `init` was not requested; nothing was registered. */
-  | { status: 'initialization-required'; path: string }
-  | { status: 'planned'; project: ProjectRecord; wouldInitialize: boolean }
-  | { status: 'added'; project: ProjectRecord; initialized: boolean; created: string[] };
-
-async function hasKbDir(projectPath: string): Promise<boolean> {
-  try {
-    return (await fs.stat(join(projectPath, '.kb'))).isDirectory();
-  } catch {
-    return false;
-  }
-}
+  | { status: 'planned'; project: ProjectRecord; alreadyExisted: boolean }
+  | { status: 'added'; project: ProjectRecord; alreadyExisted: boolean };
 
 /**
- * Registers a project folder. A folder that already has `.kb/` is picked up
- * as-is; a folder without one is never modified silently: the outcome is
- * `initialization-required` unless `init` is set.
+ * Registers a project folder by canonical path. Registration never inspects
+ * or modifies files in the project repository.
  */
 export async function addProject(registry: IProjectRegistry, request: AddProjectRequest): Promise<AddProjectOutcome> {
   const canonical = await canonicalizeProjectPath(resolve(request.cwd ?? process.cwd(), request.path));
-  const declared = await hasKbDir(canonical);
-
-  if (!declared && !request.init) {
-    return { status: 'initialization-required', path: canonical };
-  }
-
-  // Validate the registration (duplicate, name) before touching the folder.
   const planned = await registry.add(canonical, { name: request.name, dryRun: true });
-  const needsInit = !declared;
-
-  let created: string[] = [];
-  if (needsInit) {
-    // initWorkspaceConfig looks upward for an existing config; never let it edit a parent's.
-    const probe = await initWorkspaceConfig({ cwd: canonical, dryRun: true });
-    const escapes = probe.actions.some((action) => {
-      const rel = relative(join(canonical, '.kb'), resolve(action.path));
-      return rel.startsWith('..') || isAbsolute(rel);
-    });
-    if (escapes) {
-      throw new ProjectRegistryError(
-        'KB_RUNTIME_INPUT_INVALID',
-        'An enclosing folder already owns a .kb/ configuration; initializing here would modify it.',
-      );
-    }
-    if (!request.dryRun) {
-      created = (await initWorkspaceConfig({ cwd: canonical })).created;
-    }
-  }
-
   if (request.dryRun) {
-    return { status: 'planned', project: planned.project, wouldInitialize: needsInit };
+    return { status: 'planned', project: planned.project, alreadyExisted: planned.alreadyExisted };
   }
 
-  const { project } = await registry.add(canonical, { name: request.name });
-  return { status: 'added', project, initialized: needsInit, created };
+  const committed = await registry.add(canonical, { name: request.name });
+  return { status: 'added', project: committed.project, alreadyExisted: committed.alreadyExisted };
 }

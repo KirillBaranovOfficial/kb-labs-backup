@@ -12,6 +12,7 @@
 import type { AdapterManifest } from '@kb-labs/sdk/adapters';
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'sqlite-stores',
   name: 'SQLite Document + KV',
@@ -24,8 +25,9 @@ export const manifest: AdapterManifest = {
   // Multi-role driver: one package fills both the documentDatabase and the
   // kvStore platform slots on a shared better-sqlite3 connection.
   implements: ['IDocumentDatabase', 'IKVStore'],
-  defaultFor: ['documentDatabase', 'kvStore'],
-  contexts: ['workspace'],
+  networkRequired: false,
+  defaultFor: { documentDatabase: [], kvStore: ['kv'] },
+  contexts: ['workspace', 'platformData'],
   capabilities: {
     transactions: true,
     batch: true,
@@ -39,6 +41,9 @@ export const manifest: AdapterManifest = {
     filename: {
       type: 'string',
       description: 'Database file path (use :memory: for in-memory database)',
+      pathBase: 'platformData',
+      defaultPath: { root: 'projectState', segments: ['database', 'kb.sqlite'] },
+      specialValues: [':memory:'],
     },
     readonly: {
       type: 'boolean',

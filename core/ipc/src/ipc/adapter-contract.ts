@@ -16,6 +16,7 @@ import type {
   IInvoke,
   IKVStore,
   IVectorStore,
+  IWebSocketHostOperations,
 } from '@kb-labs/core-platform/adapters';
 import type { ITransport } from '../transport/transport.js';
 import { createDocumentDatabaseProxy } from '../proxy/document-database-proxy.js';
@@ -24,6 +25,7 @@ import { createCacheProxy } from '../proxy/cache-proxy.js';
 import { createConfigProxy } from '../proxy/config-proxy.js';
 import { createVectorStoreProxy } from '../proxy/vector-store-proxy.js';
 import { createInvokeProxy } from '../proxy/invoke-proxy.js';
+import { WebSocketProxy } from '../proxy/websocket-proxy.js';
 
 export type IPCOperationMode = 'unary' | 'stream' | 'interactive' | 'local';
 
@@ -125,6 +127,17 @@ export const invokeIPCOperations = defineIPCOperations<IInvoke>()({
 });
 
 export type InvokeIPCOperation = keyof typeof invokeIPCOperations;
+
+/** Complete wire inventory for host WebSocket operations. */
+export const websocketIPCOperations = defineIPCOperations<IWebSocketHostOperations>()({
+  send: 'unary',
+  broadcast: 'unary',
+  sendTo: 'unary',
+  close: 'unary',
+  getConnectionId: 'unary',
+});
+
+export type WebSocketIPCOperation = keyof typeof websocketIPCOperations;
 
 type LegacyAdapterSlot =
   | 'logger'
@@ -259,6 +272,12 @@ export const platformAdapterTransportPolicy = {
     mode: 'migration',
     adapter: 'processExecutor',
     reason: 'Existing proxy must be moved to a checked operation inventory.',
+  },
+  websocket: {
+    mode: 'ipc',
+    adapter: 'websocket',
+    operations: websocketIPCOperations,
+    proxy: (transport) => new WebSocketProxy(transport),
   },
   serviceTransport: {
     mode: 'local-only',

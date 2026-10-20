@@ -19,14 +19,14 @@
         {
           "title": "Prepare a commit",
           "description": "Turn the changes already in your repository into a reviewable commit plan.",
-          "command": "kb commit generate",
+          "command": "kb commit commit --dry-run",
           "result": "A plan to inspect before Git history changes."
         },
         {
-          "title": "Prepare a release",
-          "description": "Calculate what the next release contains without publishing a package.",
-          "command": "kb release plan",
-          "result": "A release plan to review before publishing."
+          "title": "Install Commit",
+          "description": "Install the Commit plugin from the marketplace after setting up the platform.",
+          "command": "kb marketplace install @kb-labs/commit",
+          "result": "Commit is installed; other plugins are separate marketplace installs."
         },
         {
           "title": "Create your own command",
@@ -50,8 +50,8 @@
       "stat1Label": "self-hosted",
       "stat3Value": "<1h",
       "stat2Label": "license",
-      "subtitle": "Releases, code review, commit policy, QA gates, dependency management — all running as plugins on the same engine you'll install.",
-      "quote": "I build on KB Labs every day. Every release, every review gate, every QA check. It's the same engine you install.",
+      "subtitle": "The platform core and the Commit plugin run on the same engine. Install Commit from the marketplace; other plugins are separate installs.",
+      "quote": "We use the platform core and Commit plugin on the same engine you can install.",
       "stat2Desc": "Full source on GitHub, forever",
       "stat1Desc": "No cloud dependency in the core path",
       "stat3Desc": "From install to a working workflow",
@@ -101,7 +101,7 @@
         {
           "id": "faq-4",
           "question": "How does KB Labs treat humans, agents, and bots?",
-          "answer": "The same way. KB Labs is a runtime with one permissions model, one observability surface, and one extension contract — applied equally to any kind of runner. A human running a workflow, an internal plugin-agent, an external agent, a CI bot — they all declare what they're allowed to do and the runtime enforces it. No one gets privileges. No one escapes the rails. MCP is on the roadmap as the next protocol-level extension of this."
+          "answer": "Project MCP tools let compatible agents call commands from installed plugins. Plugin commands run under the platform's declared capabilities. Agent sessions and workflow runs have observability where enabled."
         },
         {
           "id": "faq-5",

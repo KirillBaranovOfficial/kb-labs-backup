@@ -1,6 +1,7 @@
 package checks
 
 import "github.com/kb-labs/devkit/internal/config"
+import "github.com/kb-labs/devkit/internal/workspace"
 
 var defaultRules []Rule
 
@@ -48,6 +49,8 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 			fix:           c.Fix,
 			phase:         phase,
 			language:      c.Language,
+			categories:    c.Categories,
+			scope:         c.Scope,
 			workspaceRoot: workspaceRoot,
 			checkConfig:   packCfg,
 		})
@@ -65,6 +68,10 @@ func (r *Registry) RulesFor(preset config.Preset) []Rule {
 	var result []Rule
 	for _, rule := range r.rules {
 		if external, ok := rule.(*externalRule); ok {
+			if external.scope == "workspace" {
+				result = append(result, rule)
+				continue
+			}
 			if matchesLanguage(config.CustomCheck{Language: external.language}, preset.Language) {
 				result = append(result, rule)
 			}
@@ -79,6 +86,69 @@ func (r *Registry) RulesFor(preset config.Preset) []Rule {
 		result = append(result, rule)
 	}
 	return result
+}
+
+// ApplicableRulesFor is the single package/check applicability owner. Package
+// execution, selection validation, and check counts all consume this result.
+func (r *Registry) ApplicableRulesFor(pkg workspace.Package, preset config.Preset, only []string) []Rule {
+	var result []Rule
+	for _, rule := range r.RulesFor(preset) {
+		if scoped, ok := rule.(interface{ Scope() string }); ok && scoped.Scope() == "workspace" {
+			continue
+		}
+		if !selectedRule(rule, only) {
+			continue
+		}
+		if applicable, ok := rule.(interface{ AppliesToPackage(workspace.Package) bool }); ok && !applicable.AppliesToPackage(pkg) {
+			continue
+		}
+		result = append(result, rule)
+	}
+	return result
+}
+
+// WorkspaceRules returns selected workspace-scoped checks, each of which runs
+// once for the workspace rather than once per package.
+func (r *Registry) WorkspaceRules(only []string) []Rule {
+	var result []Rule
+	for _, rule := range r.rules {
+		if scoped, ok := rule.(interface{ Scope() string }); !ok || scoped.Scope() != "workspace" || !selectedRule(rule, only) {
+			continue
+		}
+		result = append(result, rule)
+	}
+	return result
+}
+
+// PackageApplicabilityMismatch explains a category-filtered selected check
+// that is known and language-compatible but does not apply to this package.
+func (r *Registry) PackageApplicabilityMismatch(pkg workspace.Package, preset config.Preset, only []string) (string, []string) {
+	for _, rule := range r.RulesFor(preset) {
+		if !selectedRule(rule, only) {
+			continue
+		}
+		applicable, ok := rule.(interface{ AppliesToPackage(workspace.Package) bool })
+		if !ok || applicable.AppliesToPackage(pkg) {
+			continue
+		}
+		categories, ok := rule.(interface{ ApplicableCategories() []string })
+		if ok {
+			return rule.Name(), categories.ApplicableCategories()
+		}
+	}
+	return "", nil
+}
+
+func selectedRule(rule Rule, only []string) bool {
+	if len(only) == 0 {
+		return true
+	}
+	for _, selected := range only {
+		if rule.Name() == selected {
+			return true
+		}
+	}
+	return false
 }
 
 // All returns all registered rules.

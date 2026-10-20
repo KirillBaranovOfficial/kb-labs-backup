@@ -22,6 +22,7 @@ class FakeSocket extends EventEmitter {
 const logger = {
   trace: vi.fn(), debug: vi.fn(), info: vi.fn(),
   warn: vi.fn(), error: vi.fn(), fatal: vi.fn(),
+  flush: vi.fn().mockResolvedValue(undefined),
   child: vi.fn(),
 };
 

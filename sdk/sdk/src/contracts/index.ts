@@ -7,11 +7,13 @@
 // Core contract types
 export type {
   PluginContextV3,
+  PluginCommandContextV3,
   PluginContextDescriptor,
   HostContext,
   HostType,
   PermissionSpec,
   UIFacade,
+  PluginHandlerUIFacade,
   Colors,
   ColorFunction,
   SideBoxOptions,
@@ -19,10 +21,6 @@ export type {
   PlatformServices,
   RuntimeAPI,
   PluginAPI,
-  CommandResult,
-  CommandSuccess,
-  CommandFailure,
-  CommandError,
   ClassifiedFailure,
   FailureClassificationContext,
   FailureInfo,
@@ -42,6 +40,12 @@ export type {
   WSSender,
   WSLifecycleEvent,
   WSInput,
+} from '@kb-labs/plugin-contracts';
+
+export type {
+  CommandResult,
+  CommandFailure,
+  CommandError,
 } from '@kb-labs/plugin-contracts';
 
 // Runtime contract helpers

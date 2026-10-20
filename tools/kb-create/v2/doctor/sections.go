@@ -2,8 +2,6 @@ package doctor
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Doctor answers two different questions and keeps them apart, because they
@@ -35,10 +35,14 @@ import (
 
 // Check is one named observation.
 type Check struct {
-	ID     string `json:"id"`
-	OK     bool   `json:"ok"`
-	Detail string `json:"detail,omitempty"`
-	Hint   string `json:"hint,omitempty"`
+	ID             string `json:"id"`
+	Code           string `json:"code,omitempty"`
+	OK             bool   `json:"ok"`
+	Detail         string `json:"detail,omitempty"`
+	Hint           string `json:"hint,omitempty"`
+	Slot           string `json:"slot,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	Implementation string `json:"implementation,omitempty"`
 }
 
 // Section groups the checks of one question.
@@ -65,7 +69,16 @@ func InspectInstallation(platformRoot string, state host.State) Section {
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		checks = append(checks, Check{ID: "receipt", Detail: "The active installation receipt cannot be read: " + err.Error(), Hint: "Run \"kb-create apply\" to install, or restore a snapshot with \"kb-create rollback\"."})
-		return NewSection(append(checks, stateCheck(state)))
+		return NewSection(append(checks, stateCheck(platformRoot, state)))
+	}
+	if active.Plan.ServiceGraph.Profile == "client" {
+		if active.Plan.Host != nil || len(active.Plan.ServiceGraph.Services) != 0 {
+			return NewSection([]Check{{ID: "client-profile", Code: contracts.CodeHostSpecInvalid, Detail: "The client profile unexpectedly declares host services."}})
+		}
+		if _, err := os.Stat(filepath.Join(platformRoot, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
+			return NewSection([]Check{{ID: "client-runtime-config", Detail: "The client profile must not contain host runtime configuration."}})
+		}
+		return NewSection([]Check{{ID: "receipt", OK: true, Detail: "client installation " + active.ID}, stateCheck(platformRoot, state)})
 	}
 	checks = append(checks, Check{ID: "receipt", OK: true, Detail: "platform " + active.Plan.ServiceGraph.PlatformVersion + ", receipt " + active.ID})
 	if _, err := os.Stat(filepath.Join(platformRoot, ".kb", "kb.config.jsonc")); err != nil {
@@ -74,7 +87,7 @@ func InspectInstallation(platformRoot string, state host.State) Section {
 		checks = append(checks, Check{ID: "config", OK: true})
 	}
 	checks = append(checks, hostSpecCheck(platformRoot, active))
-	checks = append(checks, stateCheck(state))
+	checks = append(checks, stateCheck(platformRoot, state))
 	return NewSection(checks)
 }
 
@@ -84,42 +97,122 @@ func hostSpecCheck(platformRoot string, active contracts.InstallReceipt) Check {
 	}
 	spec, err := host.NewSpec(platformRoot, *active.Plan.Host)
 	if err != nil {
-		return Check{ID: "host-spec", Detail: "The host specification is invalid: " + err.Error() + ".", Hint: "Reinstall the platform with \"kb-create apply\"."}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host specification is invalid: " + err.Error() + ".", Hint: "Run `" + contracts.ShellCommand("kb-create", "apply", "--platform-root", platformRoot) + "` to regenerate the installed host specification."}
 	}
 	if _, err := exec.LookPath(spec.Command); err != nil {
-		return Check{ID: "host-spec", Detail: "The host command " + spec.Command + " is not installed.", Hint: "Run \"kb-create apply\" or \"kb-create rollback\" to restore the platform files."}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host command " + spec.Command + " is not installed.", Hint: "Run `" + contracts.ShellCommand("kb-create", "apply", "--platform-root", platformRoot) + "` or `" + contracts.ShellCommand("kb-create", "rollback", "--platform-root", platformRoot) + "` to restore the platform files."}
 	}
 	return Check{ID: "host-spec", OK: true, Detail: spec.Command}
 }
 
-func stateCheck(state host.State) Check {
+func stateCheck(platformRoot string, state host.State) Check {
 	if err := state.Ensure(); err != nil {
-		return Check{ID: "launcher-state", Detail: "Cannot write to " + state.Dir + ": " + err.Error(), Hint: "Fix the directory permissions or set KB_HOME to a writable directory."}
+		layout, layoutErr := versionroot.ForPlatformPath(platformRoot)
+		if layoutErr != nil {
+			return Check{ID: "host-state", Detail: "Cannot write to " + state.Dir + ": " + err.Error(), Hint: "Fix the permissions on the path shown, then rerun `kb-create doctor`."}
+		}
+		return Check{ID: "host-state", Detail: "Cannot write to " + state.Dir + ": " + err.Error(), Hint: "Fix permissions on the install-root state directory, then rerun `" + contracts.ShellCommand("kb-create", "doctor", "--platform-root", layout.InstallRoot()) + "`."}
 	}
-	return Check{ID: "launcher-state", OK: true, Detail: state.Dir}
+	return Check{ID: "host-state", OK: true, Detail: state.Dir}
 }
 
 // InspectPlatform checks the running host: its process, the gateway health
 // document (upstreams and adapters) and sign-in readiness. A stopped host is a
 // finding with its own fix, not a crash of the check.
-func InspectPlatform(ctx context.Context, status host.Status, client *http.Client) Section {
+func InspectPlatform(ctx context.Context, status host.Status, client *http.Client, bindings []contracts.ProviderBinding) Section {
 	if client == nil {
 		client = &http.Client{Timeout: 3 * time.Second}
 	}
 	switch status.State {
 	case host.StateStopped:
-		return NewSection([]Check{{ID: "host-process", Detail: "The host is not running.", Hint: "Run \"kb-create start\"."}})
+		return NewSection([]Check{
+			{ID: "host-process", Detail: "The host is not running.", Hint: "Run \"kb-create start\"."},
+			{ID: "adapters", Detail: "Adapter status cannot be checked while the host is stopped.", Hint: "Run \"kb-create start\"."},
+		})
 	case host.StateUnhealthy:
 		return NewSection([]Check{{ID: "host-process", Detail: fmt.Sprintf("The host process %d is running but does not answer its health check.", status.PID), Hint: "Run \"kb-create restart\"; read the host log if it persists."}})
 	}
 	checks := []Check{{ID: "host-process", OK: true, Detail: fmt.Sprintf("pid %d", status.PID)}}
 	checks = append(checks, healthChecks(ctx, client, status.HealthURL)...)
+	checks = append(checks, adapterChecks(ctx, client, status.HealthURL, bindings)...)
 	checks = append(checks, authChecks(ctx, client, status.HealthURL)...)
 	return NewSection(checks)
 }
 
-// errNotJSON marks a 2xx answer whose body is not the JSON document asked for.
-var errNotJSON = errors.New("the answer is not JSON")
+// adapterChecks reads the gateway's runtime registry rather than inferring
+// providers from the install manifest. This reports what the host loaded.
+func adapterChecks(ctx context.Context, client *http.Client, healthURL string, bindings []contracts.ProviderBinding) []Check {
+	parsed, err := url.Parse(healthURL)
+	if err != nil {
+		return []Check{{ID: "adapters", Detail: "Adapter status cannot be checked because the host health URL is invalid."}}
+	}
+	parsed.Path = "/health/adapters"
+	var statuses []struct {
+		Slot           string `json:"slot"`
+		Mode           string `json:"mode"`
+		Implementation string `json:"implementation"`
+		Reason         string `json:"reason"`
+		CorrelationID  string `json:"correlationId"`
+		Action         struct {
+			Command string `json:"command"`
+		} `json:"action"`
+	}
+	status, err := getJSON(ctx, client, parsed.String(), &statuses)
+	if status == 0 {
+		return []Check{{ID: "adapters", Detail: "Adapter status cannot be checked because the running host is unreachable.", Hint: "Run \"kb-create restart\"; read the host log if it persists."}}
+	}
+	if err != nil || status != http.StatusOK {
+		return []Check{{ID: "adapters", Detail: "The running host returned an unreadable adapter status response."}}
+	}
+	if len(statuses) == 0 {
+		return []Check{{ID: "adapters", Detail: "The running host has not reported any adapter slots."}}
+	}
+	expected := make(map[string]string, len(bindings))
+	for _, binding := range bindings {
+		if healthReportedSlot(binding.Capability) {
+			expected[binding.Capability] = binding.Package
+		}
+	}
+	checks := make([]Check, 0, len(statuses)+len(bindings))
+	seen := make(map[string]bool, len(statuses))
+	for _, adapter := range statuses {
+		seen[adapter.Slot] = true
+		provider, hasPersistentProvider := expected[adapter.Slot]
+		fallback := adapter.Mode == "degraded" || hasPersistentProvider && (adapter.Mode == "inmemory" || adapter.Mode == "noop")
+		detail := fmt.Sprintf("%s is loaded in %s mode using %s.", adapter.Slot, adapter.Mode, adapter.Implementation)
+		hint := ""
+		if adapter.Mode == "degraded" {
+			detail = fmt.Sprintf("%s is degraded because %s failed to load (reason: %s, correlationId: %s).", adapter.Slot, adapter.Implementation, adapter.Reason, adapter.CorrelationID)
+			hint = adapter.Action.Command
+		} else if fallback {
+			detail = fmt.Sprintf("%s has a configured persistent provider (%s) but loaded the %s fallback.", adapter.Slot, provider, adapter.Mode)
+			hint = fmt.Sprintf("From a project using this platform, run `kb adapter bind %s %s`.", adapter.Slot, provider)
+		}
+		checks = append(checks, Check{
+			ID: "adapter:" + adapter.Slot, OK: !fallback,
+			Slot: adapter.Slot, Mode: adapter.Mode, Implementation: adapter.Implementation,
+			Detail: detail, Hint: hint,
+		})
+	}
+	for slot, provider := range expected {
+		if !seen[slot] {
+			checks = append(checks, Check{ID: "adapter:" + slot, Slot: slot,
+				Detail: fmt.Sprintf("%s has a configured persistent provider (%s) but was not reported by the host.", slot, provider),
+				Hint:   fmt.Sprintf("From a project using this platform, run `kb adapter bind %s %s`.", slot, provider)})
+		}
+	}
+	return checks
+}
+
+func healthReportedSlot(slot string) bool {
+	switch slot {
+	case "logger", "analytics", "vectorStore", "llm", "embeddings", "cache", "config", "storage",
+		"eventBus", "invoke", "documentDatabase", "kvStore", "logs", "artifacts", "snapshotManager", "notifier":
+		return true
+	default:
+		return false
+	}
+}
 
 func getJSON(ctx context.Context, client *http.Client, target string, out any) (int, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
@@ -135,11 +228,12 @@ func getJSON(ctx context.Context, client *http.Client, target string, out any) (
 	if err != nil {
 		return response.StatusCode, err
 	}
-	if response.StatusCode != http.StatusOK {
-		return response.StatusCode, nil
+	failure, err := result.DecodeResult(data, out)
+	if err != nil {
+		return response.StatusCode, err
 	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return response.StatusCode, errNotJSON
+	if failure != nil {
+		return response.StatusCode, failure
 	}
 	return response.StatusCode, nil
 }
@@ -160,9 +254,6 @@ func healthChecks(ctx context.Context, client *http.Client, healthURL string) []
 		} `json:"projectRuntimes"`
 	}
 	status, err := getJSON(ctx, client, healthURL, &document)
-	if errors.Is(err, errNotJSON) {
-		return []Check{{ID: "health", OK: true, Detail: "The host answers its health check; it reports no upstream detail."}}
-	}
 	if err != nil || status != http.StatusOK {
 		return []Check{{ID: "health", Detail: "The health document cannot be read.", Hint: "Run \"kb-create restart\"; read the host log if it persists."}}
 	}
@@ -215,8 +306,11 @@ func authChecks(ctx context.Context, client *http.Client, healthURL string) []Ch
 		} `json:"issues"`
 	}
 	status, err := getJSON(ctx, client, parsed.String(), &readiness)
-	if err != nil || status != http.StatusOK {
+	if status != http.StatusOK {
 		return nil
+	}
+	if err != nil {
+		return []Check{{ID: "auth", Detail: "Auth readiness returned an invalid result envelope.", Hint: "Run \"kb-create restart\"; read the host log if it persists."}}
 	}
 	checks := make([]Check, 0, len(readiness.Issues)+1)
 	for _, issue := range readiness.Issues {

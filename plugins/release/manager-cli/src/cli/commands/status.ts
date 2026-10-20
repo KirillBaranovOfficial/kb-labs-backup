@@ -11,7 +11,7 @@ import {
   defineCommand,
   type CLIInput,
   type CommandResult,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   useLoader,
   useConfig,
 } from '@kb-labs/sdk';
@@ -136,14 +136,14 @@ export default defineCommand({
   description: 'Show what is actually stable vs. candidate for a release flow (git tag, npm dist-tags, recent candidate CI)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<StatusFlags>): Promise<ReleaseStatusResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<StatusFlags>): Promise<ReleaseStatusResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
 
       if (!flags.flow) {
-        ctx.ui?.error?.('--flow is required', { hint: 'Run: kb release status --flow platform' });
-        return { ok: false, error: '--flow is required' };
+
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: '--flow is required', hint: "Run `kb release status --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const loader = useLoader(`Checking release status for "${flags.flow}"...`);
@@ -158,8 +158,8 @@ export default defineCommand({
       } catch (err) {
         loader.fail('Failed to compute release status');
         const message = err instanceof Error ? err.message : String(err);
-        ctx.ui?.error?.(message);
-        return { ok: false, error: message };
+
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: message, hint: "Run `kb release status --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const ci = flags.ci === false ? undefined : await fetchRecentCandidateRuns(shell, repoRoot, 5);
@@ -177,7 +177,7 @@ export default defineCommand({
       });
 
       if (flags.json) {
-        ctx.ui?.json?.({ ...status, ci });
+        return { ...status, ci };
       } else {
         ctx.ui?.sideBox?.({
           title: `Release status — ${flags.flow}`,
@@ -186,7 +186,7 @@ export default defineCommand({
         });
       }
 
-      return { ok: true, result: { ...status, ci } };
+      return { ...status, ci };
     },
   },
 });

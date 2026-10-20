@@ -1,11 +1,13 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"sync"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
+	clikitstream "github.com/kb-labs/clikit/stream"
 	"github.com/kb-labs/dev/internal/manager"
 	"github.com/spf13/cobra"
 )
@@ -26,11 +28,27 @@ func init() {
 }
 
 func runWatch(cmd *cobra.Command, _ []string) error {
+	var events *clikitstream.Writer
+	if jsonMode {
+		events = clikitstream.New(clikitcommand.StreamWriter(cmd))
+	}
+	failStream := func(err error) error {
+		d := diag.FromError(err)
+		_ = events.Fail(d)
+		_ = events.Finish(events.ExitStatus())
+		return result.StreamComplete(events.ExitStatus())
+	}
 	if allProjects {
-		return runFleetWatch(cmd)
+		if events != nil {
+			return runFleetWatch(cmd, events)
+		}
+		return runFleetWatch(cmd, nil)
 	}
 	mgr, err := loadManager()
 	if err != nil {
+		if events != nil {
+			return failStream(err)
+		}
 		return err
 	}
 
@@ -44,14 +62,26 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	go mgr.Watch(ctx)
 
 	// Read events.
-	enc := json.NewEncoder(os.Stdout)
 	for {
 		select {
 		case <-ctx.Done():
+			if events != nil {
+				_ = events.Finish(events.ExitStatus())
+				return result.StreamComplete(events.ExitStatus())
+			}
 			return nil
 		case event := <-mgr.Events():
 			if jsonMode {
-				_ = enc.Encode(event)
+				if event.Error != "" {
+					d := diag.FromError(diag.New("KB_SERVICE_UNAVAILABLE", "A watched service failed."))
+					if err := events.Fail(d); err != nil {
+						return failStream(err)
+					}
+				} else {
+					if err := events.Event(event); err != nil {
+						return failStream(err)
+					}
+				}
 			} else {
 				icon := out.StatusIcon(event.Event)
 				msg := fmt.Sprintf("%s %s", event.Service, event.Event)
@@ -61,7 +91,7 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 				if event.Error != "" {
 					msg += " — " + event.Error
 				}
-				fmt.Printf("  %s %s\n", icon, msg)
+				clikitcommand.Printf("  %s %s\n", icon, msg)
 			}
 		}
 	}
@@ -72,9 +102,21 @@ type fleetWatchEvent struct {
 	Event   manager.Event `json:"event"`
 }
 
-func runFleetWatch(cmd *cobra.Command) error {
+func runFleetWatch(cmd *cobra.Command, stream *clikitstream.Writer) error {
+	failStream := func(err error) error {
+		d := diag.FromError(err)
+		_ = stream.Fail(d)
+		_ = stream.Finish(stream.ExitStatus())
+		return result.StreamComplete(stream.ExitStatus())
+	}
 	items, err := loadFleetManagers()
 	if err != nil {
+		if stream != nil {
+			d := diag.FromError(err)
+			_ = stream.Fail(d)
+			_ = stream.Finish(stream.ExitStatus())
+			return result.StreamComplete(stream.ExitStatus())
+		}
 		return err
 	}
 	out := newOutput()
@@ -112,10 +154,19 @@ func runFleetWatch(cmd *cobra.Command) error {
 		close(events)
 	}()
 
-	enc := json.NewEncoder(os.Stdout)
 	for tagged := range events {
 		if jsonMode {
-			_ = enc.Encode(fleetWatchEvent{Project: tagged.project, Event: tagged.event})
+			value := fleetWatchEvent{Project: tagged.project, Event: tagged.event}
+			if tagged.event.Error != "" {
+				d := diag.FromError(diag.New("KB_SERVICE_UNAVAILABLE", "A watched service failed."))
+				if err := stream.Fail(d); err != nil {
+					return failStream(err)
+				}
+			} else {
+				if err := stream.Event(value); err != nil {
+					return failStream(err)
+				}
+			}
 			continue
 		}
 		icon := out.StatusIcon(tagged.event.Event)
@@ -127,7 +178,11 @@ func runFleetWatch(cmd *cobra.Command) error {
 		if tagged.event.Error != "" {
 			msg += " — " + tagged.event.Error
 		}
-		fmt.Printf("  %s %s\n", icon, msg)
+		clikitcommand.Printf("  %s %s\n", icon, msg)
+	}
+	if stream != nil {
+		_ = stream.Finish(stream.ExitStatus())
+		return result.StreamComplete(stream.ExitStatus())
 	}
 	return nil
 }

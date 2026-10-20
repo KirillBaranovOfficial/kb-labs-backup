@@ -14,7 +14,7 @@ import {
   defineCommand,
   type CLIInput,
   type CommandResult,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   useLLM,
   useLoader,
   useConfig,
@@ -75,7 +75,7 @@ function buildPlanRows(packages: Array<{ bump?: string; name: string; currentVer
 function createPublisher(
   config: ReleaseConfig,
   token: string | undefined,
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
 ): { publish(packages: PublishablePackage[], opts: { dryRun?: boolean; access?: string; tag?: string; registry?: string }): Promise<PublishResult> } {
   const packageManager = config.workspace?.type ?? config.publish?.packageManager ?? 'pnpm';
   return {
@@ -144,7 +144,7 @@ function buildReleaseSections(
   report: ReleaseReport,
   dryRun: boolean,
   skipPublish: boolean,
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
 ): Array<{ header?: string; items: string[] }> {
   const sections: Array<{ header?: string; items: string[] }> = [];
 
@@ -243,7 +243,7 @@ async function confirmRelease(): Promise<boolean> {
 }
 
 function showPlanBox(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   flags: RunFlags,
   plan: { packages: Array<{ bump?: string; name: string; currentVersion: string; nextVersion: string }> },
   config: ReleaseConfig,
@@ -266,16 +266,13 @@ function showPlanBox(
 }
 
 function reportPipelineResult(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   flags: RunFlags,
   result: { success: boolean; report: ReleaseReport },
   dryRun: boolean,
   skipPublish: boolean,
 ): void {
-  if (flags.json) {
-    ctx.ui?.json?.(result.report);
-    return;
-  }
+  if (flags.json) return;
   ctx.ui?.sideBox?.({
     title: 'Release',
     sections: buildReleaseSections(result.report, dryRun, skipPublish, ctx),
@@ -289,7 +286,7 @@ export default defineCommand({
   description: 'Execute release process (plan, check, publish)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<RunFlags>): Promise<ReleaseRunResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunFlags>): Promise<ReleaseRunResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -350,7 +347,7 @@ export default defineCommand({
             sections: [{ items: preErrors.map(e => `${ctx.ui.symbols.error} ${e}`) }],
             status: 'error',
           });
-          return { ok: false, error: 'Command failed' };
+          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release run --help` to review its inputs and recovery steps, then retry." } };
         }
       }
 
@@ -376,7 +373,7 @@ export default defineCommand({
           sections: [{ items: [`${ctx.ui.symbols.warning} No packages to release`] }],
           status: 'info',
         });
-        return { ok: true };
+        return {};
       }
 
       // 3. Show plan table
@@ -391,7 +388,7 @@ export default defineCommand({
             sections: [{ items: [`${ctx.ui.symbols.info} Cancelled`] }],
             status: 'info',
           });
-          return { ok: true };
+          return {};
         }
       }
 
@@ -433,7 +430,7 @@ export default defineCommand({
 
       reportPipelineResult(ctx, flags, result, dryRun, skipPublish);
 
-      return result.success ? { ok: true, result: { report: result.report } } : { ok: false, error: 'Command failed', result: { report: result.report } };
+      return result.success ? { report: result.report } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release run --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

@@ -1,7 +1,7 @@
 ---
 title: "Adapter System"
 description: "What adapters are and why the platform uses them."
-updatedAt: "2026-05-16"
+updatedAt: "2026-10-11"
 order: 4
 ---
 
@@ -23,55 +23,53 @@ Every platform capability has a TypeScript interface that defines the contract:
 
 These interfaces live in `@kb-labs/core-platform`. Adapters live in separate packages and implement one or more interfaces. The platform runtime holds references to the interface type, not the adapter class — which is how you can swap OpenAI for Anthropic without touching any plugin code.
 
-## Shipped adapters
+## Defaults and shipped adapters
 
-The platform ships adapters for common backends out of the box:
+A fresh install ships the local adapter pack. `storage` uses
+`@kb-labs/adapters-fs` at `<KB_HOME>/state/<projectId>/storage`; cache uses the platform-local
+StateBroker; logger, analytics, document database, key-value store, and log
+reader use local Pino, SQLite, and ring-buffer components. Event bus, invoke,
+artifacts, config, and notifications use in-process implementations. These
+defaults need no external service. Project configuration inherits them, and
+`kb adapter list --json` reports each effective slot.
 
-| Interface | Adapter | Package |
-|-----------|---------|---------|
-| `ILLM` | OpenAI (GPT-4o, o1, ...) | `@kb-labs/adapter-llm-openai` |
-| `ILLM` | Anthropic (Claude 3.x, 4.x) | `@kb-labs/adapter-llm-anthropic` |
-| `ICache` | In-memory | `@kb-labs/adapter-cache-memory` |
-| `ICache` | Redis | `@kb-labs/adapter-cache-redis` |
-| `IVectorStore` | Qdrant | `@kb-labs/adapter-vector-qdrant` |
-| `IVectorStore` | In-memory | `@kb-labs/adapter-vector-memory` |
-| `IStorage` | Local filesystem | `@kb-labs/adapter-storage-fs` |
-| `ILogger` | Console (structured JSON) | `@kb-labs/adapter-logger-console` |
-| `IEnvironmentAdapter` | Docker | `@kb-labs/adapter-environment-docker` |
-
-In-memory adapters (`adapter-cache-memory`, `adapter-vector-memory`) are the default in dev — no external services required. For production you swap to Redis and Qdrant by changing two lines in `kb.config.json`.
+`llm` and `vectorStore` remain unconfigured because the platform cannot provide
+an adequate local default for either. `embeddings` also needs an explicitly
+chosen model provider, and `snapshotManager` is unconfigured because the
+available filesystem snapshot provider does not implement the runtime manager
+contract.
+Calling a feature that needs a missing provider returns a typed error with a
+`kb adapter bind <slot> ...` action. See [Built-in Adapters](/adapters/built-in)
+for package details and [Installation](/installation) for the install flow.
 
 ## How adapters are loaded
 
-The platform reads `.kb/kb.config.json` at startup. The `adapters` section maps each interface to a package reference and optional configuration:
+The platform merges installer defaults with platform and project config. The
+effective `platform.adapters` section maps each capability to a package, and
+`platform.adapterOptions` holds its settings:
 
 ```json
 {
-  "adapters": {
-    "llm": {
-      "package": "@kb-labs/adapter-llm-openai",
-      "options": {
-        "model": "gpt-4o",
-        "temperature": 0.2
-      }
+  "platform": {
+    "adapters": {
+      "storage": "@kb-labs/adapters-fs"
     },
-    "cache": {
-      "package": "@kb-labs/adapter-cache-redis",
-      "options": {
-        "url": "redis://localhost:6379"
-      }
-    },
-    "vectorStore": {
-      "package": "@kb-labs/adapter-vector-qdrant",
-      "options": {
-        "url": "http://localhost:6333"
+    "adapterOptions": {
+      "storage": {
+        "baseDir": "storage"
       }
     }
   }
 }
 ```
 
-At startup `loadPlatformConfig()` reads this, dynamically imports each adapter package, instantiates the adapter with its options, and registers it in the platform singleton. From that point on, `useLLM()` returns the OpenAI adapter, `useCache()` returns Redis, and so on — regardless of which plugin or service is calling.
+At startup `loadPlatformConfig()` merges the platform layer with the project
+layer; an unset project slot therefore keeps the installed default. The
+runtime's `ADAPTER_DEFAULTS` table supplies honest in-process implementations
+for slots without an installed package, and throws a typed unavailable error
+for slots that need an external provider. The runtime imports configured
+packages with their effective options. Run `kb adapter list --json` to inspect
+the effective package, fallback, and storage directory.
 
 ## Adapters vs plugins
 

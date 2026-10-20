@@ -1,7 +1,7 @@
 ---
 title: "Self-Hosted Cloud"
 description: "Deploy KB Labs to your own VPS — full platform in the cloud with automated SSL, tenant routing, and CI-driven updates."
-updatedAt: "2026-06-05"
+updatedAt: "2026-10-01"
 order: 2
 ---
 
@@ -21,7 +21,7 @@ This guide walks through deploying the full KB Labs platform — gateway, REST A
 |---|---|
 | **VPS** | Ubuntu 22.04+, 2 GB RAM minimum, 20 GB disk |
 | **Domain** | A record `@` + wildcard `*` pointing at the VPS IP |
-| **Tools** | Node.js 24+, Docker, nginx, certbot — installed manually once |
+| **Tools** | Node.js <NodePolicy />.x, Docker, nginx, certbot — installed manually once |
 | **GitHub** | Two repos: `kb-labs` (monorepo) and `kb-labs-infra` (nginx/firewall) |
 
 ## Step 1 — Prepare the VPS
@@ -72,7 +72,7 @@ In the **monorepo** (`kb-labs`) → Settings → Secrets → Environments → `p
 | `OPENAI_API_KEY` | Your OpenAI key |
 | `OPENAI_PROXY_URL` | OpenAI-compatible proxy URL (if using one) |
 | `GATEWAY_JWT_SECRET` | `openssl rand -hex 64` |
-| `GATEWAY_INTERNAL_SECRET` | `openssl rand -hex 32` |
+| `GATEWAY_INTERNAL_SECRET` | `openssl rand -hex 32` for team deployments — required by the gateway, REST API, and marketplace-registry; kb-create installs generate and preserve it |
 | `GATEWAY_BOOTSTRAP_ADMIN_EMAIL` | Admin email for first login |
 | `GATEWAY_BOOTSTRAP_ADMIN_PASSWORD` | Admin password |
 

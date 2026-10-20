@@ -14,20 +14,29 @@ import type {
 } from "@kb-labs/plugin-contracts";
 import {
   getHandlerPermissions,
+  matchesPermissionPattern,
   noopTraceContext,
   noopUI,
 } from "@kb-labs/plugin-contracts";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import { setJsonMode } from "@kb-labs/shared-cli-ui";
-import path from "node:path";
+import { resolveActiveGateway } from "@kb-labs/cli-runtime/gateway";
 import { randomUUID } from "node:crypto";
-import { AdapterUnavailableError, createContextLogger } from "@kb-labs/core-platform";
+import {
+  AdapterUnavailableError,
+  createContextLogger,
+} from "@kb-labs/core-platform";
+import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
+import { resolveCliHandlerPath } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
+import { cliBinaryName } from './cli-binary.js';
 import { createCLIUIFacade } from "./ui-facade";
 
 export interface PluginExecutionOptions {
   context: SystemContext;
+  netOffset?: number;
+  platformRoot?: string;
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
@@ -51,9 +60,7 @@ export async function executePlugin(
     return undefined;
   }
 
-  // Get plugin manifest (with fallback to legacy manifestV2 field)
-  const pluginManifest =
-    manifestCmd.v3Manifest ?? manifestCmd.manifest.manifestV2;
+  const pluginManifest = manifestCmd.manifest.v3Manifest;
   if (!pluginManifest) {
     return undefined;
   }
@@ -63,9 +70,12 @@ export async function executePlugin(
   const cliCommand = pluginManifest.cli?.commands?.find(
     (c) => c.path === commandPath,
   );
+  if (!cliCommand) {
+    return undefined;
+  }
 
   // Resolve handler path from handler field
-  const handlerRelativePath = cliCommand?.handler?.split("#")[0];
+  const handlerRelativePath = cliCommand.handler.split("#")[0];
   if (!handlerRelativePath) {
     return undefined;
   }
@@ -76,9 +86,28 @@ export async function executePlugin(
   }
 
   // Handler path should point to dist/ (compiled output)
-  const handlerPath = handlerRelativePath.startsWith("dist/")
-    ? path.resolve(pluginRoot, handlerRelativePath)
-    : path.resolve(pluginRoot, "dist", handlerRelativePath);
+  const handlerPath = resolveCliHandlerPath(pluginRoot, cliCommand.handler);
+  const permissions = getHandlerPermissions(
+    pluginManifest,
+    "cli",
+    commandPath,
+  );
+
+  // Gateway-aware plugins declare the address in their environment
+  // permissions. Resolve it from the same transport and module defaults used
+  // by the daemon to bind the gateway listener.
+  const gatewayUrl = permissionAllowsEnvironmentVariable(
+    permissions.env?.read,
+    "KB_GATEWAY_URL",
+  )
+    ? (await resolveActiveGateway({
+        cwd: context.cwd,
+        env: process.env,
+        platformRoot: options.platformRoot,
+        configuredNetOffset: options.netOffset,
+        transport: platform.getAdapter<IServiceTransport>("serviceTransport"),
+      })).gatewayUrl
+    : undefined;
 
   try {
     const pluginId = pluginManifest.id || manifestCmd.manifest.id;
@@ -99,12 +128,6 @@ export async function executePlugin(
     }
 
     const platformServices = createPlatformServices(platform);
-    const socketPath = platform.getSocketPath();
-    const permissions = getHandlerPermissions(
-      pluginManifest,
-      "cli",
-      commandPath,
-    );
     const quotas = permissions?.quotas;
 
     // Execute plugin. Pass the discovered `pkgRoot` explicitly so project-
@@ -113,22 +136,24 @@ export async function executePlugin(
     // resolved correctly by the execution backend.
     try {
       const exitCode = await executeCommandV3({
-        pluginId,
-        pluginVersion,
-        pluginRoot,
-        handlerPath,
-        argv,
-        flags,
-        ui,
-        platform: platformServices,
-        platformContainer: platform,
-        socketPath,
-        cwd: context.cwd || process.cwd(),
-        devMode: process.env.NODE_ENV === "development",
-        permissions,
-        quotas,
-        configSection: pluginManifest.configSection,
-      });
+          binaryName: cliBinaryName,
+          pluginId,
+          pluginVersion,
+          commandPath,
+          pluginRoot,
+          handlerPath,
+          argv,
+          flags,
+          ui,
+          platform: platformServices,
+          platformContainer: platform,
+          cwd: context.cwd || process.cwd(),
+          devMode: process.env.NODE_ENV === "development",
+          permissions,
+          quotas,
+          configSection: pluginManifest.configSection,
+          ...(gatewayUrl ? { env: { KB_GATEWAY_URL: gatewayUrl } } : {}),
+        });
 
       context.logger?.debug(
         "[plugin-executor] Command executed via platform.executionBackend",
@@ -164,6 +189,13 @@ export async function executePlugin(
   }
 }
 
+function permissionAllowsEnvironmentVariable(
+  patterns: string[] | undefined,
+  variable: string,
+): boolean {
+  return patterns?.some((pattern) => matchesPermissionPattern(variable, pattern)) ?? false;
+}
+
 export function renderUnavailableAdapterError(
   error: unknown,
   presenter?: Parameters<typeof createCLIUIFacade>[0],
@@ -176,14 +208,24 @@ export function renderUnavailableAdapterError(
 }
 
 /**
- * Return a UIFacade that suppresses all output except json().
- * Used when --json flag is active to keep stdout clean for machine parsing.
+ * Route human progress through the JSON-aware facade, which sends it to stderr.
+ * The command result itself is emitted once by the shared CLI executor.
  */
 function createJsonModeUI(base: UIFacade): UIFacade {
   return {
     ...noopUI,
     colors: base.colors,
     symbols: base.symbols,
+    write: base.write,
+    info: base.info,
+    success: base.success,
+    warn: base.warn,
+    debug: base.debug,
+    spinner: base.spinner,
+    table: base.table,
+    newline: base.newline,
+    divider: base.divider,
+    box: base.box,
     json: base.json,
   };
 }
@@ -220,7 +262,7 @@ function createPlatformServices(
 export function createSystemCommandContext(
   context: SystemContext,
   platform: PlatformContainer,
-): PluginContextV3 {
+): PluginContextV3 & { executionBackend?: PlatformContainer['executionBackend'] } {
   const ui = createCLIUIFacade(
     context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
   );
@@ -256,6 +298,7 @@ export function createSystemCommandContext(
     cwd: context.cwd || process.cwd(),
     ui,
     platform: scopedPlatformServices,
+    ...(platform.hasExecutionBackend ? { executionBackend: platform.executionBackend } : {}),
     runtime: {
       // Stub: system commands do not use sandboxed runtime. Real runtime is
       // only wired for plugin handlers executed via executeCommandV3.
@@ -266,6 +309,7 @@ export function createSystemCommandContext(
     api: {} as unknown as PluginAPI,
     hostContext: {
       host: "cli" as const,
+      binaryName: cliBinaryName,
       argv: process.argv.slice(2),
       flags: {},
       // CLI_VERSION is injected from package.json in bin.ts at startup.

@@ -1,266 +1,373 @@
 package v2cli
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
-	"github.com/kb-labs/create/v2/receipt"
-	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/supervisor"
+	"github.com/kb-labs/create/v2/versionroot"
 )
-
-// hostOperations are the host lifecycle commands. `status` is shared with the
-// receipt-owned installation report and is routed by runStatus.
-func isHostOperation(operation string) bool {
-	switch operation {
-	case "start", "stop", "restart", "supervise":
-		return true
-	}
-	return false
-}
 
 // hostCommand carries everything a host lifecycle command needs; nothing is
 // read from package state.
 type hostCommand struct {
-	PlatformRoot string
-	Foreground   bool
-	JSON         bool
-	Executable   string // launcher binary re-executed by `start` to run `supervise`
-	Version      string
-	Out          io.Writer
-	Err          io.Writer
+	PlatformRoot          string
+	Foreground            bool
+	Executable            string // launcher binary re-executed by `start` to run `supervise`
+	Version               string
+	Err                   io.Writer
+	identityReader        func(int) (string, error)
+	testSupervisorHealthy func(context.Context, host.State) bool
+	testBackstopGrace     time.Duration
 }
 
-// setup resolves the per-user state home and the runner of the installation.
-func (c hostCommand) setup() (*host.ProcessRunner, host.State, *contracts.LauncherError) {
+type hostCommandResult map[string]any
+
+func executeHostStart(ctx context.Context, command hostCommand) (hostCommandResult, *diag.Diag) {
+	return command.run(ctx, "start", command.start)
+}
+
+func executeHostStop(ctx context.Context, command hostCommand) (hostCommandResult, *diag.Diag) {
+	return command.run(ctx, "stop", command.stop)
+}
+
+func executeHostRestart(ctx context.Context, command hostCommand) (hostCommandResult, *diag.Diag) {
+	return command.run(ctx, "restart", command.restart)
+}
+
+func executeHostSupervise(ctx context.Context, command hostCommand) (hostCommandResult, *diag.Diag) {
+	return command.run(ctx, "start", command.supervise)
+}
+
+// setup resolves the installation state and the runner of the installation.
+func (c hostCommand) setup(runnerOperation string) (*host.ProcessRunner, host.State, *diag.Diag) {
 	if c.PlatformRoot == "" {
-		return nil, host.State{}, contracts.NewLauncherError(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
+		return nil, host.State{}, contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
 	}
-	state, err := host.StateHome()
+	layout, layoutErr := versionroot.ForPlatformPath(c.PlatformRoot)
+	if runnerOperation == "stop" {
+		runner, runnerErr := host.NewRecordedRunner(c.PlatformRoot)
+		if runnerErr != nil {
+			return nil, host.State{}, asDiag(runnerErr)
+		}
+		return runner, runner.State, nil
+	}
+	if layoutErr == nil {
+		if runnerOperation == "restart" {
+			layoutErr = layout.ValidateStructure()
+		} else {
+			layoutErr = layout.Validate()
+		}
+	}
+	if layoutErr != nil {
+		return nil, host.State{}, unsupportedPlatformLayout(c.PlatformRoot, layoutErr)
+	}
+	runner, err := host.NewRunner(c.PlatformRoot)
 	if err != nil {
-		return nil, host.State{}, asLauncherError(err)
+		return nil, host.State{}, asDiag(err)
 	}
-	runner, err := host.NewRunner(c.PlatformRoot, state)
-	if err != nil {
-		return nil, host.State{}, asLauncherError(err)
+	if _, err := (secrets.Store{PlatformRoot: c.PlatformRoot}).BootstrapCompleted(); err != nil {
+		return nil, host.State{}, asDiag(err)
 	}
-	return runner, state, nil
+	return runner, runner.State, nil
 }
 
-func (c hostCommand) run(operation string) int {
-	runner, state, failure := c.setup()
+func (c hostCommand) run(ctx context.Context, runnerOperation string, action func(context.Context, *host.ProcessRunner, host.State) (hostCommandResult, *diag.Diag)) (hostCommandResult, *diag.Diag) {
+	runner, state, failure := c.setup(runnerOperation)
 	if failure != nil {
-		return c.fail(2, failure)
+		return nil, failure
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	runner.Operation = runnerOperation
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	switch operation {
-	case "start":
-		return c.start(ctx, runner, state)
-	case "stop":
-		return c.stop(ctx, runner, state)
-	case "restart":
-		return c.restart(ctx, runner, state)
-	case "supervise":
-		return c.supervise(ctx, runner, state)
-	}
-	return c.fail(2, contracts.NewLauncherError(contracts.CodeOperationInvalid, "operation is not supported", "use start, stop, status, restart or supervise", nil))
+	return action(ctx, runner, state)
 }
 
-// hostStatus implements `status`: the host, its supervisor and the installed
-// platform version.
-func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state host.State) int {
-	status, err := runner.Status(ctx)
-	if err != nil {
-		return c.fail(1, asLauncherError(err))
-	}
-	payload := map[string]any{"ok": true, "operation": "status", "host": status, "installed": true, "running": status.State == host.StateRunning, "reachable": status.Healthy}
-	next := "kb-create start"
-	if status.State == host.StateRunning && status.Healthy {
-		next = "cd ~/any-project && kb commit"
-	}
-	if c.Executable != "" && !shim.Correct(c.Executable, c.PlatformRoot) {
-		next = "kb-create install"
-	}
-	payload["next"] = next
-	if c.Executable != "" {
-		payload["kbShimCorrect"] = shim.Correct(c.Executable, c.PlatformRoot)
-	}
-	if active, readErr := receipt.Read(c.PlatformRoot); readErr == nil {
-		payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion}
-	}
-	if pid, ok := supervisor.LivePID(state); ok {
-		info := map[string]any{"pid": pid}
-		if client, connectErr := control.Connect(state); connectErr == nil {
-			info["address"] = client.File.Address
-			info["version"] = client.File.Version
-		}
-		payload["supervisor"] = info
-	}
-	if status.State == host.StateUnhealthy {
-		return c.failWith(1, contracts.NewLauncherError("KB_HOST_UNHEALTHY", "The host responds but is unhealthy.", "Run \"kb-create restart\" or \"kb-create doctor\".", nil), payload)
-	}
-	if !c.JSON {
-		running := "no"
-		if status.State == host.StateRunning {
-			running = "yes"
-		}
-		reachable := "no"
-		if status.Healthy {
-			reachable = "yes"
-		}
-		humanNext := "run `kb-create start`"
-		if next == "cd ~/any-project && kb commit" {
-			humanNext = "run `cd ~/any-project && kb commit`"
-		}
-		if next == "kb-create install" {
-			humanNext = "rerun `kb-create install` to repair the kb command shim"
-		}
-		return c.succeed(payload, fmt.Sprintf("Installed: yes\nRunning: %s\nReachable: %s\nNext: %s", running, reachable, humanNext))
-	}
-	return c.succeed(payload, fmt.Sprintf("host %s (pid %d)", status.State, status.PID))
-}
-
-func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, state host.State) int {
+func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {
 	if c.Foreground {
 		// Direct host: no control channel, the host is a child of this process
 		// and stops when the launcher is interrupted.
 		if err := host.RunForeground(ctx, process); err != nil {
-			return c.fail(1, asLauncherError(err))
+			return nil, asDiag(err)
 		}
-		return 0
+		return nil, nil
 	}
-	status, _ := process.Status(ctx)
+	status, statusErr := process.Status(ctx)
+	if statusErr != nil {
+		return nil, startStatusDiagnostic(statusErr)
+	}
 	if status.State != host.StateStopped {
-		return c.fail(1, contracts.NewLauncherError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil))
+		command := contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot)
+		failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
+		failure.Meta = map[string]any{"nextCommand": command}
+		return nil, failure
 	}
-	if pid, alive := supervisor.LivePID(state); alive {
-		e := contracts.NewLauncherError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil)
-		e.Details = map[string]string{"supervisorPid": fmt.Sprint(pid)}
-		return c.fail(1, e)
+	if record, alive := activeLauncher(state); alive {
+		return nil, supervisor.Refusal(record, process.InstallRoot)
 	}
-	info, err := c.spawnSupervisor(ctx, process, state)
+	if pid, alive := supervisor.LivePID(state, process.InstallRoot); alive {
+		command := contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot)
+		e := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
+		e.Meta = map[string]any{"supervisorPid": fmt.Sprint(pid), "nextCommand": command}
+		return nil, e
+	}
+	startupDeadline := time.Now().Add(process.Spec.ReadyTimeout)
+	info, err := c.spawnSupervisorUntil(ctx, process, state, startupDeadline)
 	if err != nil {
-		return c.fail(1, asLauncherError(err))
+		return nil, asDiag(err)
 	}
-	return c.succeed(map[string]any{"ok": true, "operation": "start", "host": info}, fmt.Sprintf("host started (pid %d)", info.PID))
+	return hostCommandResult(map[string]any{"ok": true, "operation": "start", "host": info}), nil
+}
+
+func startStatusDiagnostic(err error) *diag.Diag {
+	return asDiag(err)
 }
 
 // spawnSupervisor re-executes this binary as `supervise`, detached, and waits
 // until the host is healthy or the supervisor gave up. The supervisor reports
 // its startup failure as a JSON envelope on stdout, captured in supervisor.log.
 func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessRunner, state host.State) (host.Info, error) {
+	return c.spawnSupervisorUntil(ctx, process, state, time.Now().Add(process.Spec.ReadyTimeout))
+}
+
+func (c hostCommand) spawnSupervisorUntil(ctx context.Context, process *host.ProcessRunner, state host.State, startupDeadline time.Time) (host.Info, error) {
 	if err := state.Ensure(); err != nil {
-		return host.Info{}, contracts.NewLauncherError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+state.Dir+".", "Fix the directory permissions or free disk space.", err)
+		return host.Info{}, contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+state.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	executable := c.Executable
 	if executable == "" {
 		var err error
 		if executable, err = os.Executable(); err != nil {
-			return host.Info{}, contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", err)
+			return host.Info{}, host.StartFailure(state, err, map[string]string{"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 		}
 	}
 	logFile, err := os.OpenFile(state.SupervisorLog(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return host.Info{}, contracts.NewLauncherError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+state.Dir+".", "Fix the directory permissions or free disk space.", err)
+		return host.Info{}, contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+state.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	defer logFile.Close()
 	cmd := exec.Command(executable, "supervise", "--json", "--platform-root", c.PlatformRoot)
+	started := time.Now()
+	backstopGrace := stopBudget(process)
+	if c.testBackstopGrace > 0 {
+		backstopGrace = c.testBackstopGrace
+	}
+	backstopDeadline := startupDeadline.Add(backstopGrace)
+	identityToken, err := host.NewProcessIdentityToken()
+	if err != nil {
+		return host.Info{}, contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "The supervisor process identity could not be created.", "Check that system randomness is available, then run `"+contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)+"`.", err)
+	}
+	cmd.Env = host.ProcessEnvironmentWithStartupDeadline(host.ProcessEnvironmentWithIdentity(os.Environ(), identityToken), startupDeadline)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	host.ConfigureDetached(cmd)
 	if err := cmd.Start(); err != nil {
-		return host.Info{}, contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", err)
+		return host.Info{}, host.StartFailure(state, err, map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 	}
 	exited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(exited) }()
-	deadline := time.After(process.Spec.ReadyTimeout + 10*time.Second)
+	waitErr := make(chan error, 1)
+	go func() { waitErr <- cmd.Wait(); close(exited) }()
+	identityStatus := host.WaitForProcessIdentityWithReader(cmd.Process.Pid, identityToken, exited, backstopDeadline, c.identityReader)
+	switch identityStatus {
+	case host.ProcessIdentityMatch:
+	case host.ProcessIdentityMismatch:
+		select {
+		case <-exited:
+			return host.Info{}, c.supervisorExited(state, process, <-waitErr, time.Since(started))
+		default:
+		}
+		killErr := host.TerminateAndReapLaunchedProcess(cmd.Process, exited)
+		if errors.Is(killErr, os.ErrProcessDone) {
+			<-exited
+			return host.Info{}, c.supervisorExited(state, process, <-waitErr, time.Since(started))
+		}
+		if killErr != nil {
+			if _, cleanupErr := halt(ctx, process, state); cleanupErr != nil {
+				return host.Info{}, cleanupErr
+			}
+			if cleanupErr := removeSupervisorControl(state); cleanupErr != nil {
+				return host.Info{}, cleanupErr
+			}
+			return host.Info{}, host.StartFailure(state, fmt.Errorf("started supervisor identity did not match and the direct child could not be terminated: %w", killErr), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
+		}
+		if _, cleanupErr := halt(ctx, process, state); cleanupErr != nil {
+			return host.Info{}, cleanupErr
+		}
+		if cleanupErr := removeSupervisorControl(state); cleanupErr != nil {
+			return host.Info{}, cleanupErr
+		}
+		return host.Info{}, host.StartFailure(state, errors.New("started supervisor process identity does not match its launch token"), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
+	case host.ProcessIdentityUndetermined:
+		select {
+		case <-exited:
+			return host.Info{}, c.supervisorExited(state, process, <-waitErr, time.Since(started))
+		default:
+			return host.Info{}, c.supervisorHung(state, process, cmd.Process, exited, waitErr, started)
+		}
+	default:
+		return host.Info{}, host.StartFailure(state, errors.New("started supervisor process identity result is invalid"), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
+	}
+	deadline := time.NewTimer(time.Until(backstopDeadline))
+	defer deadline.Stop()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if client, connectErr := control.Connect(state); connectErr == nil {
-			if status, statusErr := client.Status(ctx); statusErr == nil && status.Host.State == host.StateRunning {
-				return host.Info{Runner: process.Name(), PID: status.Host.PID, HealthURL: status.Host.HealthURL}, nil
+		if c.supervisorHealthyNow(ctx, state) {
+			status, statusErr := process.Status(ctx)
+			if statusErr == nil && status.State == host.StateRunning {
+				return host.Info{Runner: process.Name(), PID: status.PID, HealthURL: process.Spec.HealthURL}, nil
 			}
 		}
 		select {
 		case <-exited:
-			return host.Info{}, supervisorFailure(state)
-		case <-deadline:
-			host.KillProcess(cmd.Process.Pid)
-			return host.Info{}, contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", errors.New("supervisor did not report a healthy host in time"))
+			return host.Info{}, c.supervisorExited(state, process, <-waitErr, time.Since(started))
+		case <-deadline.C:
+			return host.Info{}, c.supervisorHung(state, process, cmd.Process, exited, waitErr, started)
 		case <-ctx.Done():
-			host.KillProcess(cmd.Process.Pid)
-			return host.Info{}, contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", ctx.Err())
+			return host.Info{}, c.supervisorHung(state, process, cmd.Process, exited, waitErr, started)
 		case <-ticker.C:
 		}
 	}
 }
 
+func (c hostCommand) supervisorHealthyNow(ctx context.Context, state host.State) bool {
+	if c.testSupervisorHealthy != nil {
+		return c.testSupervisorHealthy(ctx, state)
+	}
+	client, err := control.Connect(state)
+	if err != nil {
+		return false
+	}
+	status, err := client.Status(ctx)
+	return err == nil && status.Host.State == host.StateRunning
+}
+
+func (c hostCommand) supervisorExited(state host.State, process *host.ProcessRunner, exit error, waited time.Duration) error {
+	failure := supervisorFailure(state, exit, process.Spec.HealthURL, waited, c.PlatformRoot)
+	if _, cleanupErr := halt(context.Background(), process, state); cleanupErr != nil {
+		return cleanupErr
+	}
+	if cleanupErr := removeSupervisorControl(state); cleanupErr != nil {
+		return host.StartFailure(state, fmt.Errorf("%v; supervisor control cleanup failed: %w", failure, cleanupErr), map[string]string{
+			"controlRecord": state.Control(), "nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot),
+		})
+	}
+	return failure
+}
+
+func (c hostCommand) supervisorHung(state host.State, process *host.ProcessRunner, child *os.Process, exited <-chan struct{}, waitErr <-chan error, started time.Time) error {
+	killErr := host.TerminateAndReapLaunchedProcess(child, exited)
+	if errors.Is(killErr, os.ErrProcessDone) {
+		return c.supervisorExited(state, process, <-waitErr, time.Since(started))
+	}
+	_, cleanupErr := halt(context.Background(), process, state)
+	if cleanupErr != nil {
+		return cleanupErr
+	}
+	if cleanupErr := removeSupervisorControl(state); cleanupErr != nil {
+		return host.StartFailure(state, fmt.Errorf("supervisor cleanup failed: %w", cleanupErr), map[string]string{
+			"controlRecord": state.Control(), "nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot),
+		})
+	}
+	cause := errors.New("supervisor did not report or exit before the startup cleanup backstop")
+	if killErr != nil {
+		cause = fmt.Errorf("supervisor did not report or exit before the startup cleanup backstop, and its direct child could not be terminated: %w", killErr)
+	}
+	return host.StartFailure(state, cause, map[string]string{
+		"failureKind": "supervisorHung", "supervisorLog": state.SupervisorLog(),
+		"supervisorStderrTail": host.StartupStderrTail(state.SupervisorLog()), "waited": time.Since(started).Round(time.Millisecond).String(),
+		"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot),
+	})
+}
+
+func removeSupervisorControl(state host.State) error {
+	err := os.Remove(state.Control())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("could not remove supervisor control record %s: %w", state.Control(), err)
+	}
+	return nil
+}
+
 // supervisorFailure recovers the envelope the supervisor printed before exiting.
-func supervisorFailure(state host.State) error {
+func supervisorFailure(state host.State, exit error, readinessURL string, waited time.Duration, platformRoot string) error {
 	file, err := os.Open(state.SupervisorLog())
 	if err == nil {
 		defer file.Close()
-		scanner := bufio.NewScanner(file)
-		var last string
-		for scanner.Scan() {
-			if line := strings.TrimSpace(scanner.Text()); line != "" {
-				last = line
+		data, _ := io.ReadAll(file)
+		var parsed struct {
+			Error *diag.Diag `json:"error"`
+		}
+		for offset := 0; offset < len(data); offset++ {
+			if data[offset] != '{' {
+				continue
+			}
+			if json.Unmarshal(bytes.TrimSpace(data[offset:]), &parsed) == nil && parsed.Error != nil {
+				return parsed.Error
 			}
 		}
-		var parsed struct {
-			Error *contracts.LauncherError `json:"error"`
-		}
-		if json.Unmarshal([]byte(last), &parsed) == nil && parsed.Error != nil {
-			return parsed.Error
-		}
 	}
-	e := contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", errors.New("supervisor exited before the host became healthy"))
-	e.Details = map[string]string{"log": state.SupervisorLog()}
-	return e
+	return host.StartFailure(state, fmt.Errorf("supervisor exited before host readiness: %v", exit), map[string]string{
+		"supervisorLog": state.SupervisorLog(), "supervisorExit": fmt.Sprint(exit),
+		"readinessURL": readinessURL, "waited": waited.Round(time.Millisecond).String(),
+		"failureKind": "supervisorExitedWithoutVerdict", "supervisorStderrTail": host.StartupStderrTail(state.SupervisorLog()),
+		"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", platformRoot),
+	})
 }
 
-func (c hostCommand) supervise(ctx context.Context, runner host.Runner, state host.State) int {
-	if err := (&supervisor.Supervisor{Runner: runner, State: state, Version: c.Version}).Run(ctx); err != nil {
-		return c.fail(1, asLauncherError(err))
+func (c hostCommand) supervise(ctx context.Context, runner *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {
+	startupDeadline, handedDown, deadlineErr := host.ConsumeStartupDeadlineEnvironment()
+	if deadlineErr != nil {
+		return nil, asDiag(host.StartFailure(state, deadlineErr, map[string]string{"supervisorLog": state.SupervisorLog()}))
 	}
-	return 0
+	if handedDown {
+		runner.SetStartupDeadline(startupDeadline)
+	}
+	if err := (&supervisor.Supervisor{Runner: runner, State: state, PlatformRoot: runner.InstallRoot, Version: c.Version}).Run(ctx); err != nil {
+		return nil, asDiag(err)
+	}
+	return nil, nil
 }
 
-func (c hostCommand) stop(ctx context.Context, runner host.Runner, state host.State) int {
+func (c hostCommand) stop(ctx context.Context, runner *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {
 	result, err := halt(ctx, runner, state)
 	if err != nil {
-		return c.fail(1, asLauncherError(err))
+		return nil, asDiag(err)
 	}
-	message := "host stopped"
-	if !result.WasRunning {
-		message = "host was not running"
-	}
-	return c.succeed(map[string]any{"ok": true, "operation": "stop", "stopped": result}, message)
+	return hostCommandResult(map[string]any{"ok": true, "operation": "stop", "stopped": result}), nil
 }
 
 // halt stops the supervisor (which stops the host gracefully and removes the
 // control channel) and then whatever it left behind, or a foreground host.
 func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopResult, error) {
 	before, _ := runner.Status(ctx)
-	if pid, alive := supervisor.LivePID(state); alive {
-		host.TerminateProcess(pid)
-		if !waitExit(pid, stopBudget(runner)) {
-			host.KillProcess(pid)
-			waitExit(pid, 5*time.Second)
+	platformRoot := ""
+	if process, ok := runner.(*host.ProcessRunner); ok {
+		platformRoot = process.InstallRoot
+	}
+	if record, identityStatus, stale := supervisor.StaleRecord(state); stale {
+		if identityStatus == host.ProcessIdentityUndetermined && record.InstallationID != "" {
+			return host.StopResult{Runner: runner.Name()}, host.UndeterminedProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
+		}
+		return host.StopResult{Runner: runner.Name()}, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
+	}
+	installationID, identityErr := versionroot.InstallationIDForPath(platformRoot)
+	if record, alive := supervisor.ReadRecord(state); alive && identityErr == nil && record.InstallationID == installationID {
+		if host.TerminateProcessIfIdentity(record.PID, record.ProcessIdentity) && !waitExit(record.PID, record.ProcessIdentity, stopBudget(runner)) {
+			host.KillProcessIfIdentity(record.PID, record.ProcessIdentity)
+			waitExit(record.PID, record.ProcessIdentity, 5*time.Second)
 		}
 	}
 	result, err := runner.Stop(ctx)
@@ -281,36 +388,60 @@ func stopBudget(runner host.Runner) time.Duration {
 	return 15 * time.Second
 }
 
-func waitExit(pid int, timeout time.Duration) bool {
+func waitExit(pid int, processIdentity string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !host.ProcessAlive(pid) {
+		switch host.ProcessIdentityOf(pid, processIdentity) {
+		case host.ProcessIdentityMatch:
+		case host.ProcessIdentityMismatch:
 			return true
+		case host.ProcessIdentityUndetermined:
+			if !host.ProcessAlive(pid) {
+				return true
+			}
+		default:
+			if !host.ProcessAlive(pid) {
+				return true
+			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return !host.ProcessAlive(pid)
+	switch host.ProcessIdentityOf(pid, processIdentity) {
+	case host.ProcessIdentityMatch:
+		return false
+	case host.ProcessIdentityMismatch:
+		return true
+	case host.ProcessIdentityUndetermined:
+		return !host.ProcessAlive(pid)
+	default:
+		return !host.ProcessAlive(pid)
+	}
 }
 
-func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, state host.State) int {
+func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {
+	if record, identityStatus, stale := supervisor.StaleRecord(state); stale {
+		if identityStatus == host.ProcessIdentityUndetermined && record.InstallationID != "" {
+			return nil, host.UndeterminedProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot, host.GatewayURLForState(state))
+		}
+		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot, host.GatewayURLForState(state))
+	}
 	// A live supervisor owns the host: restart through its channel so its view
 	// of the child stays consistent.
 	if client, err := control.Connect(state); err == nil {
 		response, restartErr := client.Restart(ctx)
 		if restartErr != nil {
-			return c.fail(1, asLauncherError(restartErr))
+			return nil, asDiag(restartErr)
 		}
-		return c.succeed(map[string]any{"ok": true, "operation": "restart", "stopped": response.Stopped, "host": response.Host}, "host restarted")
+		return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": response.Stopped, "host": response.Host}), nil
 	}
-	stopped, err := runner.Stop(ctx)
-	if err != nil {
-		return c.fail(1, asLauncherError(err))
+	outcome, restartErr := host.RestartWithRecovery(ctx, c.PlatformRoot, runner,
+		func(ctx context.Context, current *host.ProcessRunner) (host.Info, error) {
+			return c.spawnSupervisor(ctx, current, current.State)
+		})
+	if restartErr != nil {
+		return nil, asDiag(restartErr)
 	}
-	info, startErr := c.spawnSupervisor(ctx, runner, state)
-	if startErr != nil {
-		return c.fail(1, asLauncherError(startErr))
-	}
-	return c.succeed(map[string]any{"ok": true, "operation": "restart", "stopped": stopped, "host": info}, "host restarted")
+	return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": outcome.Stopped, "host": outcome.Info}), nil
 }
 
 // lifecycleHost is the supervised host as the swap operations see it. Both
@@ -322,59 +453,37 @@ type lifecycleHost struct {
 }
 
 func (h lifecycleHost) Halt(ctx context.Context) (bool, error) {
-	runner, err := host.NewRunner(h.command.PlatformRoot, h.state)
+	runner, err := host.NewRunner(h.command.PlatformRoot)
 	if err != nil {
 		return false, err
 	}
-	result, err := halt(ctx, runner, h.state)
+	result, err := halt(ctx, runner, runner.State)
 	return result.WasRunning, err
 }
 
 func (h lifecycleHost) Resume(ctx context.Context) error {
-	runner, err := host.NewRunner(h.command.PlatformRoot, h.state)
+	runner, err := host.NewRunner(h.command.PlatformRoot)
 	if err != nil {
 		return err
 	}
-	_, err = h.command.spawnSupervisor(ctx, runner, h.state)
+	_, err = h.command.spawnSupervisor(ctx, runner, runner.State)
 	return err
 }
 
-func asLauncherError(err error) *contracts.LauncherError {
-	var typed *contracts.LauncherError
+func asDiag(err error) *diag.Diag {
+	if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
+		return contracts.NewDiag(contracts.CodeSecretStoreUnsupported,
+			"The platform secret state uses a format this launcher cannot safely read.",
+			"Preserve the existing platform root, then run `kb-create install --platform-root NEW_ROOT` with a new empty path.", nil)
+	}
+	if errors.Is(err, secrets.ErrBootstrapCredentialLocked) {
+		return contracts.NewDiag(contracts.CodeBootstrapCredentialLocked,
+			"The first-administrator credential cannot be replaced after bootstrap completes.",
+			"Stop the host, then run `kb-create doctor --platform-root <platform-root> --recover --email <email> --generate --yes`; restart with `kb-create start --platform-root <platform-root>`.", nil)
+	}
+	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		return typed
 	}
-	return contracts.NewLauncherError("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err)
-}
-
-func (c hostCommand) succeed(payload map[string]any, human string) int {
-	if c.JSON {
-		_ = json.NewEncoder(c.Out).Encode(payload)
-	} else {
-		fmt.Fprintln(c.Out, human)
-	}
-	return 0
-}
-
-func (c hostCommand) fail(code int, failure *contracts.LauncherError) int {
-	return c.failWith(code, failure, nil)
-}
-
-func (c hostCommand) failWith(code int, failure *contracts.LauncherError, extra map[string]any) int {
-	if c.JSON {
-		payload := map[string]any{"ok": false, "error": failure}
-		for key, value := range extra {
-			if key != "ok" {
-				payload[key] = value
-			}
-		}
-		_ = json.NewEncoder(c.Out).Encode(payload)
-		return code
-	}
-	fmt.Fprintf(c.Err, "%s: %s\n", failure.Code, failure.Message)
-	if failure.Cause != "" {
-		fmt.Fprintf(c.Err, "cause: %s\n", failure.Cause)
-	}
-	fmt.Fprintf(c.Err, "hint: %s\n", failure.Hint)
-	return code
+	return contracts.NewDiag("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err)
 }

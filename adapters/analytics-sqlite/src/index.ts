@@ -11,9 +11,11 @@
  */
 
 import Database from 'better-sqlite3';
-import { join, isAbsolute, dirname } from 'node:path';
+import { dirname } from 'node:path';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { mkdirSync } from 'node:fs';
+import { AdapterConfigError, AdapterUnavailableError } from '@kb-labs/sdk';
+import type { ILogger } from '@kb-labs/sdk/adapters';
 import type {
   IAnalytics,
   IDisposable,
@@ -26,6 +28,7 @@ import type {
   BufferStatus,
   DlqStatus,
   DailyStats,
+  PlatformDataContext,
 } from '@kb-labs/sdk/adapters';
 
 
@@ -55,6 +58,8 @@ const CREATE_INDEXES = [
   `CREATE INDEX IF NOT EXISTS events_product_idx ON events (product)`,
   `CREATE INDEX IF NOT EXISTS events_type_ts_idx ON events (type, ts)`,
 ];
+
+const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 // ─── groupBy mappings ─────────────────────────────────────────────────────────
 
@@ -86,19 +91,6 @@ const KNOWN_METRICS: Record<string, string> = {
   estimatedCost: `SUM(CAST(json_extract(payload, '$.estimatedCost') AS REAL)) as estimatedCost`,
   durationMs: `AVG(CAST(json_extract(payload, '$.durationMs') AS REAL)) as durationMs`,
   textLength: `SUM(CAST(json_extract(payload, '$.textLength') AS REAL)) as textLength`,
-  vectorCount: `SUM(CAST(json_extract(payload, '$.vectorCount') AS REAL)) as vectorCount`,
-  resultsCount: `AVG(CAST(json_extract(payload, '$.resultsCount') AS REAL)) as resultsCount`,
-  // VectorStore — event counts by type
-  totalSearches: `SUM(CASE WHEN type = 'vectorstore.search.completed' THEN 1 ELSE 0 END) as totalSearches`,
-  totalUpserts: `SUM(CASE WHEN type = 'vectorstore.upsert.completed' THEN 1 ELSE 0 END) as totalUpserts`,
-  totalDeletes: `SUM(CASE WHEN type = 'vectorstore.delete.completed' THEN 1 ELSE 0 END) as totalDeletes`,
-  // Cache — event counts by type + hit rate
-  totalHits: `SUM(CASE WHEN type = 'cache.get.hit' THEN 1 ELSE 0 END) as totalHits`,
-  totalMisses: `SUM(CASE WHEN type = 'cache.get.miss' THEN 1 ELSE 0 END) as totalMisses`,
-  hitRate: `CAST(SUM(CASE WHEN type = 'cache.get.hit' THEN 1 ELSE 0 END) AS REAL) / NULLIF(SUM(CASE WHEN type IN ('cache.get.hit', 'cache.get.miss') THEN 1 ELSE 0 END), 0) * 100 as hitRate`,
-  // Storage — sum payload byte fields
-  totalBytesRead: `SUM(CAST(json_extract(payload, '$.bytesRead') AS REAL)) as totalBytesRead`,
-  totalBytesWritten: `SUM(CAST(json_extract(payload, '$.bytesWritten') AS REAL)) as totalBytesWritten`,
 };
 
 function buildMetricsSelect(metrics: string[]): string[] {
@@ -113,15 +105,6 @@ function getDefaultMetrics(typeFilter?: string | string[]): string[] {
   if (types.some((t) => t.startsWith('embeddings.'))) {
     return ['textLength', 'estimatedCost', 'durationMs'];
   }
-  if (types.some((t) => t.startsWith('vectorstore.'))) {
-    return ['totalSearches', 'totalUpserts', 'totalDeletes', 'resultsCount', 'durationMs', 'vectorCount'];
-  }
-  if (types.some((t) => t.startsWith('cache.'))) {
-    return ['totalHits', 'totalMisses', 'hitRate', 'durationMs'];
-  }
-  if (types.some((t) => t.startsWith('storage.'))) {
-    return ['totalBytesRead', 'totalBytesWritten', 'durationMs'];
-  }
   return ['durationMs'];
 }
 
@@ -130,14 +113,17 @@ function getDefaultMetrics(typeFilter?: string | string[]): string[] {
 export interface SQLiteAnalyticsOptions {
   /** Path to the SQLite database file. Default: `<KB_HOME>/state/<projectId>/analytics/analytics.sqlite` */
   dbPath?: string;
-  /** Alias for dbPath — accepted for config compatibility with kb.config.json */
-  filename?: string;
   /** Analytics context for event enrichment */
   context?: AnalyticsContext;
   /** Workspace context injected by core-runtime (provides cwd for relative path resolution) */
   workspace?: { cwd: string };
+  /** Runtime context for platform-owned configured output paths. */
+  platformData?: PlatformDataContext;
   /** Analytics context injected by core-runtime (for auto-enrichment) */
   analytics?: AnalyticsContext;
+  /** Delete events older than this many days on startup and at least daily. Default: 90. */
+  retentionDays?: number;
+  logger?: ILogger;
 }
 
 // ─── Adapter ──────────────────────────────────────────────────────────────────
@@ -151,14 +137,18 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
   private readonly dbPath: string;
   private context: AnalyticsContext;
   private db: Database.Database;
+  private retentionDays = 90;
+  private retentionTimer?: ReturnType<typeof setInterval>;
+  private readonly logger?: ILogger;
 
   constructor(options: SQLiteAnalyticsOptions = {}) {
+    this.logger = options.logger;
     const cwd = options.workspace?.cwd ?? process.cwd();
-    const rawPath = options.dbPath ?? options.filename;
+    const rawPath = options.dbPath;
     // No explicit path: per-project runtime state lives outside the repository (ADR-0044).
     this.dbPath = rawPath === undefined
       ? resolveRuntimeStatePath(cwd, ['analytics', 'analytics.sqlite'])
-      : isAbsolute(rawPath) ? rawPath : join(cwd, rawPath);
+      : rawPath;
 
     this.context = options.context ?? options.analytics ?? {
       source: { product: 'unknown', version: '0.0.0' },
@@ -171,20 +161,65 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
     // Open database — better-sqlite3 is synchronous
     this.db = new Database(this.dbPath);
 
-    // WAL mode: multiple readers + one writer, no exclusive lock
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('busy_timeout = 5000');
-    this.db.pragma('synchronous = NORMAL');
+    try {
+      // WAL mode: multiple readers + one writer, no exclusive lock
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('busy_timeout = 5000');
+      this.db.pragma('synchronous = NORMAL');
 
-    // Setup schema
-    this.db.exec(CREATE_EVENTS_TABLE);
-    for (const idx of CREATE_INDEXES) {
-      this.db.exec(idx);
+      // Setup schema
+      this.db.exec(CREATE_EVENTS_TABLE);
+      for (const idx of CREATE_INDEXES) {
+        this.db.exec(idx);
+      }
+      this.retentionDays = options.retentionDays ?? 90;
+      if (!Number.isInteger(this.retentionDays) || this.retentionDays < 1) {
+        throw new AdapterConfigError(
+          'platform.adapterOptions.analytics.retentionDays',
+          'must be a positive integer',
+          'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90',
+        );
+      }
+      this.pruneExpiredEvents();
+    } catch (error) {
+      try {
+        this.db.close();
+      } catch {
+        // better-sqlite3 can leave a connection unusable after a failed open.
+      }
+      if (isCorruptDatabaseError(error)) {
+        const command = 'kb-create stop --platform-root "$PLATFORM_ROOT"';
+        throw new AdapterUnavailableError(
+          'analytics',
+          'load-failed',
+          `Analytics SQLite file is not a valid database: ${this.dbPath}`,
+          error,
+          {
+            userMessage: `Analytics database ${this.dbPath} is not a valid SQLite database.`,
+            hint: `Stop the host with \`${command}\`, restore a valid backup to this path, then run \`kb-create start --platform-root "$PLATFORM_ROOT"\`.`,
+            action: { id: 'stop-host', label: 'Stop the host', command },
+          },
+        );
+      }
+      throw error;
     }
 
-    // Ensure clean shutdown — checkpoint WAL and close connection.
-    // Without this, process.exit() leaves WAL in inconsistent state
-    // causing "database disk image is malformed" for other processes.
+    this.retentionTimer = setInterval(() => {
+      try {
+        this.pruneExpiredEvents();
+      } catch (error) {
+        this.logger?.error('Analytics retention pruning failed', error instanceof Error ? error : new Error(String(error)), {
+          adapter: 'analytics-sqlite',
+          operation: 'retention-prune',
+          retentionDays: this.retentionDays,
+          dbPath: this.dbPath,
+        });
+      }
+    }, RETENTION_INTERVAL_MS);
+    this.retentionTimer.unref();
+
+    // Platform shutdown closes this adapter after service teardown. Process
+    // listeners remain a final cleanup path for one-shot runtimes.
     this._onExit = () => this.close();
     process.on('exit', this._onExit);
     process.on('SIGINT', this._onExit);
@@ -194,10 +229,19 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
   private _onExit: () => void;
   private _closed = false;
 
+  private pruneExpiredEvents(): void {
+    const cutoff = new Date(Date.now() - this.retentionDays * RETENTION_INTERVAL_MS).toISOString();
+    this.db.prepare('DELETE FROM events WHERE ts < ?').run(cutoff);
+  }
+
   /** Checkpoint WAL and close the database connection cleanly. */
   close(): void {
     if (this._closed) {return;}
     this._closed = true;
+    if (this.retentionTimer) {
+      clearInterval(this.retentionTimer);
+      this.retentionTimer = undefined;
+    }
     try {
       this.db.pragma('wal_checkpoint(TRUNCATE)');
       this.db.close();
@@ -403,6 +447,11 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
   }
 }
 
+function isCorruptDatabaseError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {return false;}
+  return error.code === 'SQLITE_NOTADB' || error.code === 'SQLITE_CORRUPT';
+}
+
 // ─── SQL helpers ──────────────────────────────────────────────────────────────
 
 function buildWhereClause(query?: EventsQuery): { where: string; params: unknown[] } {
@@ -474,8 +523,8 @@ export { manifest } from './manifest.js';
 /**
  * Factory function required by core-runtime adapter discovery.
  */
-export function createAdapter(options?: SQLiteAnalyticsOptions): IAnalytics {
-  return new SQLiteAnalytics(options);
+export function createAdapter(options: SQLiteAnalyticsOptions = {}, deps: { logger?: ILogger } = {}): IAnalytics {
+  return new SQLiteAnalytics({ ...options, logger: deps.logger });
 }
 
 export default createAdapter;

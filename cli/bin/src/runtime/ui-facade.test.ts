@@ -15,8 +15,33 @@ describe('CLI UI adapter errors', () => {
 
     expect(errorOutput).toHaveBeenCalledOnce();
     expect(errorOutput.mock.calls[0]?.[0]).toBe(
-      'Service llm is not configured. Configure it with: kb config set platform.adapters.llm @kb-labs/adapters-openai',
+      'Service llm is not configured. Configure it with: kb adapter bind llm @kb-labs/adapters-openai',
     );
     expect(errorOutput.mock.calls[0]?.[0]).not.toContain(' at ');
+  });
+
+  // case: S-051.2
+  it('keeps the typed failure message intact when stderr is not a terminal', () => {
+    const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const message = 'Plugin @kb-labs/not-published was not found in the registry. [KB_PLUGIN_NOT_FOUND]';
+
+    createCLIUIFacade().error(message, { hint: 'kb marketplace search' });
+
+    expect(errorOutput).toHaveBeenCalledOnce();
+    expect(String(errorOutput.mock.calls[0]?.[0])).toContain(message);
+  });
+
+  it('keeps diagnostics on stderr and writes the boundary result unchanged in JSON mode', () => {
+    process.env.KB_OUTPUT_MODE = 'json';
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const ui = createCLIUIFacade();
+
+    ui.warn('configuration warning');
+    ui.json({ plugins: [] });
+
+    expect(stderr).toHaveBeenCalledOnce();
+    expect(stdout).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({ plugins: [] });
   });
 });

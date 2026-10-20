@@ -19,16 +19,13 @@ export default defineCommand({
   handler: {
     async execute(ctx: PluginContextV3, input: CLIInput<SendFlags>) {
       if (!input.flags.to) {
-        validationError(ctx, '--to is required', 'Usage: kb inbox send --to user@example.com --subject "..." --body "..."', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('--to is required', 'Usage: kb inbox send --to user@example.com --subject "..." --body "..."');
       }
       if (!input.flags.subject) {
-        validationError(ctx, '--subject is required', undefined, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('--subject is required');
       }
       if (!input.flags.body) {
-        validationError(ctx, '--body is required', undefined, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('--body is required');
       }
 
       try {
@@ -42,15 +39,13 @@ export default defineCommand({
         });
 
         if (input.flags.json) {
-          ctx.ui?.json?.({ ok: true, result });
-          return { ok: true, result };
+          return result;
         }
 
         ctx.ui?.success?.(`Message sent  id: ${result.messageId}`);
-          return { ok: true, result };
+          return result;
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

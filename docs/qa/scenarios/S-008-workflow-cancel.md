@@ -1,47 +1,30 @@
 ---
 id: S-008
-title: Workflow — Cancel running workflow
+title: Workflow — Cancel an active run
 persona: solo-developer
+area: workflow
 priority: P1
-automation: e2e-todo
-e2e: e2e/workflows/scenarios/default/cases/cancellation.spec.ts
+status: active
+release: true
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer cancels a workflow that is actively running. Run stops cleanly, no zombie processes.
+
+A user cancels an active workflow run and verifies its terminal state.
 
 ## Prerequisites
-- [ ] Platform installed, services running
-- [ ] A long-running workflow exists (e.g. with a `sleep` step)
 
----
+- [ ] Host running; current directory is a registered project with workflow commands available.
+- [ ] A workflow named `long-task` has a step blocked on a controllable local test gate for at least 30 seconds.
+- [ ] In secured mode, an authenticated gateway session is available.
 
 ## Steps
 
-### Phase 1 — Start and cancel
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Start long-running workflow: `kb workflow run <name>` | Run starts, status `running` | | ⬜ |
-| 2 | `kb workflow cancel <runId>` | Accepted, status transitions to `cancelled` | | ⬜ |
-| 3 | `kb workflow status <runId>` | Status is `cancelled`, not `running` or `failed` | | ⬜ |
-
-### Phase 2 — Cancel via HTTP
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 4 | `POST /api/v1/runs/:runId/cancel` | HTTP 200, run cancelled | | ⬜ |
-| 5 | `GET /api/v1/runs/:runId` after cancel | `status: "cancelled"` | | ⬜ |
-
-### Phase 3 — Edge cases
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 6 | Cancel already-completed run | 400 or no-op with message — not crash | | ⬜ |
-| 7 | Cancel non-existent runId | 404 with clear message | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-008.1 | Run `kb workflow run --workflow-id=long-task`; copy the returned run ID | CLI returns the run ID while its status is `running`. |
+| S-008.2 | Run `kb workflow runs cancel <run-id>` using that ID | CLI confirms the cancellation request for that run ID. |
+| S-008.3 | Poll `kb workflow runs view <run-id> --json=status` for up to 30 seconds | JSON reports status `cancelled`; the run does not remain `running`. |
+| S-008.4 | Run `kb workflow runs cancel <run-id>` again after cancellation | CLI reports that the run is already finished and exits non-zero; the stored status remains `cancelled`. |

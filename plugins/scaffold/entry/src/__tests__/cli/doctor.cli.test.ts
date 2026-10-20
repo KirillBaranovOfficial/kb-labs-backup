@@ -26,12 +26,12 @@ describe('scaffold:doctor', () => {
     const ctx = createMockContext({ ui });
     const result = await doctorCommand.execute(ctx, {});
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ packagesScanned: 3, findings: [] });
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('3');
   });
 
-  it('SD-02: --json outputs structured JSON with findings and packagesScanned', async () => {
+  it('SD-02: --json returns the scan report directly', async () => {
     const findings = [
       { severity: 'warn' as const, message: 'missing field', package: 'my-pkg' },
     ];
@@ -44,14 +44,11 @@ describe('scaffold:doctor', () => {
     const ctx = createMockContext({ ui });
     const result = await doctorCommand.execute(ctx, { json: true });
 
-    expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
-    const payload = captured.json[0] as { packagesScanned: number; findings: unknown[] };
-    expect(payload.packagesScanned).toBe(2);
-    expect(payload.findings).toEqual(findings);
+    expect(result).toMatchObject({ packagesScanned: 2, findings });
   });
 
-  it('SD-03: findings with severity=error — exitCode 1, error message shown', async () => {
+  // case: S-203.1
+  it('returns the same typed failure for error findings in JSON and human modes', async () => {
     mockedScanRoot.mockResolvedValue({
       findings: [
         { severity: 'error' as const, message: 'missing manifest', package: 'bad-pkg' },
@@ -59,12 +56,18 @@ describe('scaffold:doctor', () => {
       packagesScanned: 1,
     });
 
-    const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui });
-    const result = await doctorCommand.execute(ctx, {});
+    const jsonResult = await doctorCommand.execute(createMockContext({ ui: createCapturedUI().ui }), { json: true });
+    const result = await doctorCommand.execute(createMockContext({ ui: createCapturedUI().ui }), {});
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!('ok' in result) || result.ok) { throw new Error('expected scaffold doctor findings to fail'); }
+    expect(jsonResult).toEqual(result);
+    expect(result.error.message).toContain('1 error(s) found');
+    expect(result.error.hint).toContain('error.diagnostics');
+    expect(result.error.diagnostics).toEqual([{
+      code: 'KB_SCAFFOLD_DOCTOR_FINDING',
+      severity: 'error',
+      message: 'bad-pkg: missing manifest',
+    }]);
   });
 
   it('SD-04: --path is forwarded to scanRoot', async () => {
@@ -90,7 +93,9 @@ describe('scaffold:doctor', () => {
     const ctx = createMockContext({ ui });
     const result = await doctorCommand.execute(ctx, {});
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!('ok' in result) || result.ok) { throw new Error('expected scan failure to fail scaffold doctor'); }
+    expect(result.error.message).toBe('An unexpected error occurred.');
+    expect(result.error.message).not.toContain('ENOENT');
+    expect(result.error.hint).toBeTruthy();
   });
 });

@@ -76,6 +76,16 @@ describe('createStreamingUI', () => {
     }));
   });
 
+  // case: S-215.1
+  it('delegates prompt calls to the host responder without substituting a default', async () => {
+    const base = createMockUI();
+    vi.mocked(base.prompt).mockResolvedValue('host answer');
+    const ui = createStreamingUI(base, vi.fn(async () => {}));
+
+    await expect(ui.prompt('Project name', { default: 'fallback' })).resolves.toBe('host answer');
+    expect(base.prompt).toHaveBeenCalledWith('Project name', { default: 'fallback' });
+  });
+
   it('emits log.line for success → stdout', () => {
     const base = createMockUI();
     const emitter: EventEmitterFn = vi.fn(async () => {});

@@ -6,9 +6,11 @@
  * Use --log-failed to see only the logs from failed steps.
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import type { WorkflowRunDetail } from '../http-client.js';
 import { WorkflowDaemonClient } from '../http-client.js';
+import { workflowCommandError } from './errors.js';
+import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 
 interface RunsViewFlags {
   'run-id'?: string;
@@ -174,7 +176,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
   description: 'View workflow run details for investigation',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<RunsViewFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunsViewFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const rawJson = flags?.json;
       const jsonFields: string | undefined =
@@ -198,7 +200,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
           const latest = await client.listRuns({ limit: 1 });
           if (!latest.length) {
             ctx.ui?.info?.('No runs found');
-            return { ok: true };
+            return undefined;
           }
           runId = latest[0]!.id!;
           ctx.ui?.info?.(`Showing latest run: ${runId}`);
@@ -209,12 +211,11 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
         // --json=fields output (--json=all for full, --json=status,jobs for selective)
         if (jsonFields) {
           if (jsonFields === 'all') {
-            ctx.ui?.json?.({ ok: true, data: run });
+            return run;
           } else {
             const fields = jsonFields.split(',').map(f => f.trim());
-            ctx.ui?.json?.({ ok: true, data: pickFields(run, fields) });
+            return pickFields(run, fields);
           }
-          return { ok: true };
         }
 
         // --log or --log-failed: show run logs
@@ -231,7 +232,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
             // Run still in progress — stream live via SSE
             ctx.ui?.info?.(`Streaming logs for run ${runId} (Ctrl+C to stop)...`);
             const eventsUrl = client.getRunEventsUrl(runId);
-            const response = await fetch(eventsUrl, { headers: { Accept: 'text/event-stream' } });
+            const response = await gatewayApiFetch(eventsUrl, { headers: { Accept: 'text/event-stream' } });
             if (!response.ok || !response.body) {
               throw new Error(`Failed to connect to events stream: ${response.statusText}`);
             }
@@ -264,7 +265,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
                 } catch { /* skip malformed */ }
               }
             }
-            return { ok: true };
+            return undefined;
           }
 
           // Run already completed — fetch historical logs
@@ -276,7 +277,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
 
           if (filteredLogs.length === 0) {
             ctx.ui?.info?.('No logs found');
-            return { ok: true };
+            return undefined;
           }
 
           const logLines = filteredLogs.map(l => {
@@ -290,7 +291,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
             { header: showLogFailed ? 'Failed step logs' : 'Run logs', items: logLines },
           ];
           ctx.ui?.success?.(`Run ${runId}`, { title: run.name, sections });
-          return { ok: true };
+          return undefined;
         }
 
         // Default: show run tree (optionally with per-step stdout)
@@ -325,12 +326,9 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
           sections,
         });
 
-        return failed
-          ? { ok: false, error: 'Workflow run failed' }
-          : { ok: true };
+        return undefined;
       } catch (error) {
-        handleError(ctx, error, !!jsonFields);
-        return { ok: false, error: 'Command failed' };
+        return handleError(error);
       }
     },
   },

@@ -8,6 +8,7 @@
  */
 
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import type { FSShim, FileStat, DirEntry, MkdirOptions, RmOptions, WriteFileOptions, GlobOptions, PermissionSpec } from '@kb-labs/plugin-contracts';
 import { PermissionError } from '@kb-labs/plugin-contracts';
@@ -26,13 +27,51 @@ const HARDCODED_DENIED_PATTERNS = [
   /\.ssh/,
   /\/etc\//,
   /\/usr\//,
-  /\/var\//,
   /credentials/i,
   /password/i,
   /\.pem$/,
   /\.key$/,
   /\.secret$/,
 ];
+
+const VAR_PATH_PATTERN = /\/var(?:\/|$)/;
+
+function isWithinPath(candidate: string, root: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error &&
+    (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+}
+
+/** Resolve existing symlinks in a path while retaining any missing suffix. */
+async function realPathForSecurity(filePath: string): Promise<string> {
+  let existingPath = filePath;
+  const missingSegments: string[] = [];
+
+  while (true) {
+    try {
+      return path.resolve(await fs.realpath(existingPath), ...missingSegments.reverse());
+    } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw error;
+      }
+
+      const parent = path.dirname(existingPath);
+      if (parent === existingPath) {
+        return filePath;
+      }
+      missingSegments.push(path.basename(existingPath));
+      existingPath = parent;
+    }
+  }
+}
 
 /**
  * Convert glob pattern to regex
@@ -48,9 +87,11 @@ function globToRegex(pattern: string): RegExp {
 }
 
 export interface CreateFSShimOptions {
+  pluginId: string;
   permissions: PermissionSpec;
   cwd: string;
   outdir?: string;
+  strictPermissions?: boolean;
 }
 
 /**
@@ -78,61 +119,79 @@ function matchesGlobPattern(filePath: string, pattern: string, cwd: string): boo
  * Create a sandboxed filesystem shim
  */
 export function createFSShim(options: CreateFSShimOptions): FSShim {
-  const { permissions, cwd, outdir } = options;
+  const { permissions, cwd, outdir, pluginId, strictPermissions = false } = options;
+  const permissionDetails = (permission: string) => ({ plugin: pluginId, permission });
 
   // Store patterns for glob matching (not resolved to absolute paths yet)
   const readablePatterns: string[] = [
-    '.', // cwd always allowed for reading
+    ...(strictPermissions ? [] : ['.']), // trusted/local execution retains cwd access
     ...(permissions.fs?.read ?? []),
   ];
 
   // Store patterns for writing
   const writablePatterns: string[] = [
-    outdir ? path.relative(cwd, path.resolve(outdir)) : '.kb/output', // outdir always allowed
+    ...(strictPermissions ? [] : [outdir ? path.relative(cwd, path.resolve(outdir)) : '.kb/output']),
     ...(permissions.fs?.write ?? []),
   ];
+  let realTempDirPromise: Promise<string> | undefined;
+
+  function getRealTempDir(): Promise<string> {
+    realTempDirPromise ??= fs.realpath(os.tmpdir());
+    return realTempDirPromise;
+  }
 
   function normalizePath(filePath: string): string {
     return path.normalize(path.resolve(cwd, filePath));
   }
 
-  function checkDeniedPatterns(normalizedPath: string): void {
+  async function checkDeniedPatterns(normalizedPath: string): Promise<string> {
+    const realPath = await realPathForSecurity(normalizedPath);
+    const realTempDir = await getRealTempDir();
+    const macUserTempDir = process.platform === 'darwin' &&
+      realTempDir.includes(`${path.sep}var${path.sep}folders${path.sep}`);
+    const isInsideMacUserTemp = macUserTempDir && isWithinPath(realPath, realTempDir);
+
     // Check hardcoded security patterns (platform-level, not configurable)
     for (const pattern of HARDCODED_DENIED_PATTERNS) {
-      if (pattern.test(normalizedPath)) {
-        throw new PermissionError(`Access denied: path matches security pattern`, {
-          path: normalizedPath,
-          pattern: pattern.toString(),
-        });
+      if (pattern.test(normalizedPath) || pattern.test(realPath)) {
+        throw new PermissionError('Access denied: path matches security pattern', permissionDetails('fs.access'));
       }
     }
+
+    if (!isInsideMacUserTemp && (VAR_PATH_PATTERN.test(normalizedPath) || VAR_PATH_PATTERN.test(realPath))) {
+      throw new PermissionError('Access denied: path matches security pattern', permissionDetails('fs.access'));
+    }
+
+    return realPath;
   }
 
-  function checkReadPermission(filePath: string): string {
+  async function checkReadPermission(filePath: string): Promise<string> {
     const normalized = normalizePath(filePath);
-    checkDeniedPatterns(normalized);
+    const realPath = await checkDeniedPatterns(normalized);
+    const realCwd = await realPathForSecurity(cwd);
 
     const isAllowed = readablePatterns.some(pattern =>
-      matchesGlobPattern(normalized, pattern, cwd)
+      matchesGlobPattern(realPath, pattern, realCwd)
     );
 
     if (!isAllowed) {
-      throw new PermissionError(`Read access denied`, { path: filePath });
+      throw new PermissionError('Read access denied', permissionDetails('fs.read'));
     }
 
     return normalized;
   }
 
-  function checkWritePermission(filePath: string): string {
+  async function checkWritePermission(filePath: string): Promise<string> {
     const normalized = normalizePath(filePath);
-    checkDeniedPatterns(normalized);
+    const realPath = await checkDeniedPatterns(normalized);
+    const realCwd = await realPathForSecurity(cwd);
 
     const isAllowed = writablePatterns.some(pattern =>
-      matchesGlobPattern(normalized, pattern, cwd)
+      matchesGlobPattern(realPath, pattern, realCwd)
     );
 
     if (!isAllowed) {
-      throw new PermissionError(`Write access denied`, { path: filePath });
+      throw new PermissionError('Write access denied', permissionDetails('fs.write'));
     }
 
     return normalized;
@@ -140,12 +199,12 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
 
   return {
     async readFile(filePath: string, encoding: BufferEncoding = 'utf-8'): Promise<string> {
-      const resolved = checkReadPermission(filePath);
+      const resolved = await checkReadPermission(filePath);
       return fs.readFile(resolved, encoding);
     },
 
     async readFileBuffer(filePath: string): Promise<Uint8Array> {
-      const resolved = checkReadPermission(filePath);
+      const resolved = await checkReadPermission(filePath);
       const buffer = await fs.readFile(resolved);
       return new Uint8Array(buffer);
     },
@@ -155,7 +214,7 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
       content: string | Uint8Array,
       options?: WriteFileOptions
     ): Promise<void> {
-      const resolved = checkWritePermission(filePath);
+      const resolved = await checkWritePermission(filePath);
 
       // Ensure parent directory exists
       await fs.mkdir(path.dirname(resolved), { recursive: true });
@@ -172,12 +231,12 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
     },
 
     async readdir(dirPath: string): Promise<string[]> {
-      const resolved = checkReadPermission(dirPath);
+      const resolved = await checkReadPermission(dirPath);
       return fs.readdir(resolved);
     },
 
     async readdirWithStats(dirPath: string): Promise<DirEntry[]> {
-      const resolved = checkReadPermission(dirPath);
+      const resolved = await checkReadPermission(dirPath);
       const entries = await fs.readdir(resolved, { withFileTypes: true });
 
       return entries.map(entry => ({
@@ -188,7 +247,7 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
     },
 
     async stat(filePath: string): Promise<FileStat> {
-      const resolved = checkReadPermission(filePath);
+      const resolved = await checkReadPermission(filePath);
       const stats = await fs.stat(resolved);
 
       return {
@@ -202,7 +261,7 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
 
     async exists(filePath: string): Promise<boolean> {
       try {
-        const resolved = checkReadPermission(filePath);
+        const resolved = await checkReadPermission(filePath);
         await fs.access(resolved);
         return true;
       } catch {
@@ -211,12 +270,12 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
     },
 
     async mkdir(dirPath: string, options?: MkdirOptions): Promise<void> {
-      const resolved = checkWritePermission(dirPath);
+      const resolved = await checkWritePermission(dirPath);
       await fs.mkdir(resolved, { recursive: options?.recursive ?? false });
     },
 
     async rm(filePath: string, options?: RmOptions): Promise<void> {
-      const resolved = checkWritePermission(filePath);
+      const resolved = await checkWritePermission(filePath);
       await fs.rm(resolved, {
         recursive: options?.recursive ?? false,
         force: options?.force ?? false,
@@ -224,8 +283,8 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
     },
 
     async copy(src: string, dest: string): Promise<void> {
-      const resolvedSrc = checkReadPermission(src);
-      const resolvedDest = checkWritePermission(dest);
+      const resolvedSrc = await checkReadPermission(src);
+      const resolvedDest = await checkWritePermission(dest);
 
       // Ensure parent directory exists
       await fs.mkdir(path.dirname(resolvedDest), { recursive: true });
@@ -233,8 +292,8 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
     },
 
     async move(src: string, dest: string): Promise<void> {
-      const resolvedSrc = checkWritePermission(src); // Need write to delete source
-      const resolvedDest = checkWritePermission(dest);
+      const resolvedSrc = await checkWritePermission(src); // Need write to delete source
+      const resolvedDest = await checkWritePermission(dest);
 
       // Ensure parent directory exists
       await fs.mkdir(path.dirname(resolvedDest), { recursive: true });
@@ -252,7 +311,7 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
       async function walk(dir: string): Promise<void> {
         // Check read permission for directory
         try {
-          checkReadPermission(dir);
+          await checkReadPermission(dir);
         } catch {
           return; // Skip directories we can't read
         }

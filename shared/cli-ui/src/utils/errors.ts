@@ -1,38 +1,48 @@
-interface ErrorContext {
-  ui?: {
-    json?: (data: unknown) => void;
-    error?: (message: string, opts?: Record<string, unknown>) => void;
+import { toErrorEnvelope } from '@kb-labs/plugin-contracts';
+import type { CommandFailure } from '@kb-labs/plugin-contracts';
+import type { CommandError } from '@kb-labs/plugin-contracts';
+
+/** Render a platform failure consistently for system and plugin CLI commands. */
+export function renderErrorEnvelope(envelope: CommandError): string {
+  return [
+    `${envelope.message} [${envelope.code}]`,
+    ...(envelope.cause ? [`  Cause: ${envelope.cause}`] : []),
+    ...(envelope.diagnostics ?? []).map((item) => `  - ${item.code} (${item.severity})${item.path ? ` ${item.path}${item.line ? `:${item.line}` : ''}` : ''}: ${item.message}${item.hint ? ` — ${item.hint}` : ''}`),
+    ...Object.entries(envelope.details ?? {}).map(([key, value]) => `  ${key}: ${value}`),
+    `  Hint:  ${envelope.hint}`,
+    ...(envelope.correlationId ? [`  Correlation ID: ${envelope.correlationId}`] : []),
+  ].join('\n');
+}
+
+/**
+ * Return a typed validation failure for the shared command renderer.
+ * Call before try/catch, right before returning the command result.
+ */
+export function validationError(
+  message: string,
+  hint?: string,
+): CommandFailure {
+  return {
+    ok: false,
+    error: {
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      message,
+      hint: hint ?? 'Run the command with --help to check its required arguments.',
+    },
   };
 }
 
 /**
- * Structured validation error — emits { ok: false, error: { code: 'INVALID_ARGS', ... } } in JSON mode.
- * Call before try/catch, right before `return { exitCode: 1 }`.
+ * Return a typed runtime/API failure for the shared command renderer.
+ * Call in catch blocks, right before returning the command result.
  */
-export function validationError(
-  ctx: ErrorContext,
-  message: string,
-  hint?: string,
-  isJson?: boolean,
-): void {
-  if (isJson) {
-    ctx.ui?.json?.({ ok: false, error: { code: 'INVALID_ARGS', message, ...(hint && { hint }) } });
-  } else {
-    ctx.ui?.error?.(message, { ...(hint && { hint }) });
-  }
-}
-
-/**
- * Structured runtime/API error — emits { ok: false, error: { code: 'INTERNAL_ERROR', ... } } in JSON mode.
- * Call in catch blocks, right before `return { exitCode: 1 }`.
- */
-export function handleError(ctx: ErrorContext, err: unknown, isJson?: boolean): void {
-  const message = err instanceof Error ? err.message : String(err);
-  if (isJson) {
-    ctx.ui?.json?.({ ok: false, error: { code: 'INTERNAL_ERROR', message } });
-  } else {
-    ctx.ui?.error?.(message);
-  }
+export function handleError(err: unknown, correlationId?: string): CommandFailure {
+  const source = err !== null && typeof err === 'object' && 'envelope' in err ? err.envelope : err;
+  const typedEnvelope = toErrorEnvelope(source, correlationId ? { correlationId } : {});
+  return {
+    ok: false,
+    error: typedEnvelope,
+  };
 }
 
 /**

@@ -1,7 +1,10 @@
 // kb-monitor is a remote observability tool for deployed services.
 package main
 
-import "github.com/kb-labs/kb-monitor/cmd"
+import (
+	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/kb-monitor/cmd"
+)
 
 var (
 	version = "dev"
@@ -11,5 +14,5 @@ var (
 
 func main() {
 	cmd.SetVersionInfo(version, commit, date)
-	cmd.Execute()
+	command.Exit(cmd.Execute())
 }

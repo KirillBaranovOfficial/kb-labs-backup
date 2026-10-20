@@ -8,7 +8,7 @@
  *   pnpm kb agent quality report --json
  */
 
-import { defineCommand, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { promises as fs } from 'fs';
@@ -117,7 +117,7 @@ export default defineCommand({
   description: 'Show quality control report for agent runs (quality, tokens, tools, drift, regressions)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: QualityReportInput): Promise<CommandResult<unknown>> {
+    async execute(ctx: PluginCommandContextV3, input: QualityReportInput): Promise<CommandResult<unknown>> {
       const flags = ('flags' in input && typeof (input as { flags?: unknown }).flags === 'object' && (input as { flags?: unknown }).flags !== null)
         ? (input as { flags: QualityReportInput }).flags
         : input;
@@ -128,17 +128,14 @@ export default defineCommand({
       const json = Boolean(flags.json);
 
       if (!Number.isFinite(days) || days <= 0) {
-        const err = { success: false, error: '--days must be a positive number' };
-        ctx.ui?.json?.(err);
-        return { ok: false, error: 'Command failed', result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: '--days must be a positive number', hint: 'Pass a positive number with `kb agents quality report --days <n>`.' } };
       }
 
       const analyticsDir = resolveRuntimeStatePath(process.cwd(), ['analytics', 'buffer']);
       const files = await listEventFiles(analyticsDir, days);
       if (files.length === 0) {
         const out = { success: true, message: 'No analytics files found for selected period', runs: 0 };
-        ctx.ui?.json?.(out);
-        return { ok: true, result: out };
+        return out;
       }
 
       const since = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -152,12 +149,12 @@ export default defineCommand({
       const report = buildReport(runs, regressions, { days, sessionIdFilter });
 
       if (json) {
-        ctx.ui?.json?.({ success: true, report });
+        return { success: true, report };
       } else {
         printReport(ctx, report);
       }
 
-      return { ok: true, result: report };
+      return report;
     },
   },
 });
@@ -523,7 +520,7 @@ function scorecardOf(runs: RunSnapshot[]) {
   };
 }
 
-function printReport(ctx: PluginContextV3, report: ReturnType<typeof buildReport>): void {
+function printReport(ctx: PluginCommandContextV3, report: ReturnType<typeof buildReport>): void {
   if (report.runs === 0) {
     ctx.ui.write(`No KPI runs for selected period (${report.periodDays}d)\n`);
     return;

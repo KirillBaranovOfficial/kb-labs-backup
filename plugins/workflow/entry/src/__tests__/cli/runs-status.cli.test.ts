@@ -14,6 +14,7 @@ const MockedClient = vi.mocked(WorkflowDaemonClient);
 
 const sampleRun: WorkflowRunDetail = {
   id: 'r-001',
+  workflowId: 'e2e-hello',
   name: 'e2e-hello',
   status: 'success',
   createdAt: new Date().toISOString(),
@@ -51,7 +52,6 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: {}, argv: ['r-001'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -66,7 +66,6 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: { 'run-id': 'r-001' } }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -81,11 +80,9 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: { json: true }, argv: ['r-001'] }));
 
-    expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: WorkflowRunDetail };
-    expect(payload.ok).toBe(true);
-    expect(payload.data.id).toBe('r-001');
-    expect(payload.data.status).toBe('success');
+    const payload = result as WorkflowRunDetail;
+    expect(payload.id).toBe('r-001');
+    expect(payload.status).toBe('success');
   });
 
   it('RST-04: missing runId returns exitCode 1 with validation error message', async () => {
@@ -93,8 +90,8 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: {}, argv: [] }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.some(e => e.includes('Missing run ID'))).toBe(true);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('Missing run ID') } });
   });
 
   it('RST-05: daemon unavailable returns exitCode 1', async () => {
@@ -108,7 +105,7 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: {}, argv: ['r-001'] }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 });

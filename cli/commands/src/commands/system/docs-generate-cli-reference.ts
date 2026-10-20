@@ -23,6 +23,8 @@ type DocsGenerateResult = CommandResult & {
 
 export const docsGenerateCliReference = defineSystemCommand<GenerateCliReferenceFlags, DocsGenerateResult>({
   name: 'generate-cli-reference',
+  scope: 'project',
+  jsonTest: { noSafeValidPath: "This command writes generated documentation." },
   description: 'Generate CLI reference documentation from command registry',
   category: 'docs',
   examples: generateExamples('generate-cli-reference', 'docs', [
@@ -103,7 +105,7 @@ export const docsGenerateCliReference = defineSystemCommand<GenerateCliReference
           for (const flag of cmd.manifest.flags) {
             const alias = flag.alias ? ` (-${flag.alias})` : '';
             const required = flag.required ? ' **(required)**' : '';
-            const defaultVal = flag.default !== undefined ? ` (default: \`${flag.default}\`)` : '';
+            const defaultVal = flag.default !== undefined && flag.secret !== true ? ` (default: \`${flag.default}\`)` : '';
             const choices = flag.choices ? ` (choices: ${flag.choices.map(c => `\`${c}\``).join(', ')})` : '';
             lines.push(`- \`--${flag.name}\`${alias}: ${flag.description || 'No description'}${required}${defaultVal}${choices}`);
           }
@@ -159,8 +161,7 @@ export const docsGenerateCliReference = defineSystemCommand<GenerateCliReference
     ];
 
     return {
-      ok: true,
-      status: 'success',
+
       message,
       sections,
       json: {

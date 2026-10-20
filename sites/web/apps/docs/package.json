@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prebuild": "pnpm --filter @kb-labs/studio-ui-kit build && pnpm --filter @kb-labs/sdk build",
     "build": "next build",
+    "predev": "pnpm --filter @kb-labs/studio-ui-kit build && pnpm --filter @kb-labs/sdk build",
     "dev": "next dev -p 3001",
     "docs:source-check": "node scripts/docs-source-check.mjs",
     "docs:source-sync": "node scripts/docs-source-check.mjs --write",
@@ -14,10 +16,12 @@
   },
   "dependencies": {
     "@kb-labs/sdk": "workspace:*",
+    "@kb-labs/studio-ui-kit": "workspace:*",
     "@kb-labs/web-i18n": "workspace:*",
     "@kb-labs/web-og": "workspace:*",
     "@kb-labs/web-site-tokens": "workspace:*",
     "@mdx-js/react": "^3.0.1",
+    "antd": "^5.22.5",
     "fuse.js": "^7.3.0",
     "gray-matter": "^4.0.3",
     "lucide-react": "^0.474.0",
@@ -26,6 +30,7 @@
     "next-mdx-remote": "^6.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0",
     "rehype-pretty-code": "^0.14.3",
     "remark-gfm": "^4.0.1",
     "shiki": "^4.0.2"

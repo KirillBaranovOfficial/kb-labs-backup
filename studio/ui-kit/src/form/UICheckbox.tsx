@@ -3,6 +3,7 @@
  *
  * Wraps Ant Design Checkbox with group support.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"children":"Enable gateway authentication","defaultChecked":true,"disabled":false}
  */
 
 import * as React from 'react';

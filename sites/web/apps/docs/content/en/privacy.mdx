@@ -1,7 +1,7 @@
 ---
 title: "Privacy & Telemetry"
 description: "What KB Labs collects, where it goes, and how to opt out."
-updatedAt: "2026-04-16"
+updatedAt: "2026-10-11"
 order: 99
 ---
 
@@ -22,7 +22,7 @@ Every event carries a **device ID** — a random UUID generated once on first in
 
 ### During platform operation
 
-Services (REST API, gateway, workflow daemon) emit **analytics events** if the analytics adapter is configured. The default `@kb-labs/adapters-analytics-file` writes to a local JSONL file (`.kb/analytics/events.jsonl`) and does **not** transmit anything externally.
+Services (REST API, gateway, workflow daemon) emit **analytics events** if the analytics adapter is configured. The default `@kb-labs/adapters-analytics-file` writes JSONL files under `<KB_HOME>/state/<projectId>/analytics/buffer` and does **not** transmit anything externally.
 
 The only adapter that sends analytics to the network is `@kb-labs/adapters-kblabs-gateway` — and only when your project is configured to use the KB Labs Gateway for LLM calls. In that case, the gateway receives your LLM prompts (required to produce a response) and records request counts for quota enforcement. Prompts are not stored beyond the request lifecycle.
 
@@ -90,7 +90,7 @@ This disables all analytics event collection — plugins that call `useAnalytics
 
 - **Installation events:** aggregated within 24 hours, raw payloads discarded after 7 days.
 - **LLM prompts:** not stored beyond the request lifecycle. The gateway proxies to the upstream LLM provider and discards the request/response pair after delivery.
-- **Local analytics (JSONL file):** retained indefinitely on your machine. Delete `.kb/analytics/` at any time.
+- **Local analytics (JSONL file):** retained indefinitely on your machine. Delete the project state directory under `<KB_HOME>/state/<projectId>/` at any time.
 
 ## Contact
 

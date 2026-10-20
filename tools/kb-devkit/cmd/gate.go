@@ -3,7 +3,7 @@ package cmd
 import (
 	"bytes"
 	"fmt"
-	"os"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"os/exec"
 	"strings"
 
@@ -32,8 +32,7 @@ Exits with code 1 if any errors are found, blocking the commit.`,
 			if !jsonMode {
 				newOutput().OK("No staged files — gate passed")
 			} else {
-				_ = JSONOut(map[string]any{"ok": true, "packages": []any{}})
-				return nil
+				return JSONOut(map[string]any{"packages": []any{}})
 			}
 			return nil
 		}
@@ -77,15 +76,13 @@ Exits with code 1 if any errors are found, blocking the commit.`,
 		}
 
 		if jsonMode {
-			_ = JSONOut(map[string]any{
-				"ok":      errorCount == 0,
+			if errorCount > 0 {
+				return commandFailure("kb-devkit gate")
+			}
+			return JSONOut(map[string]any{
 				"errors":  errorCount,
 				"results": results,
 			})
-			if errorCount > 0 {
-				return errSilent
-			}
-			return nil
 		}
 
 		o := newOutput()
@@ -98,7 +95,7 @@ Exits with code 1 if any errors are found, blocking the commit.`,
 		for _, r := range results {
 			for _, issue := range r.Issues {
 				if issue.Severity == checks.SeverityError {
-					fmt.Printf("  %s  %s: %s\n",
+					clikitcommand.Printf("  %s  %s: %s\n",
 						o.errStyle.Render("✕"),
 						r.Package.Name,
 						issue.Message,
@@ -106,8 +103,7 @@ Exits with code 1 if any errors are found, blocking the commit.`,
 				}
 			}
 		}
-		os.Exit(1)
-		return nil
+		return commandFailure("kb-devkit gate")
 	},
 }
 

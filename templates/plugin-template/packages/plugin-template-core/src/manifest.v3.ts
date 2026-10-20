@@ -58,6 +58,7 @@ export const manifest = {
     commands: [
       {
         id: 'plugin-template:hello',
+        path: 'plugin-template hello',
         group: 'plugin-template',
         describe: 'Print a hello message (V3 migrated)',
         longDescription: 'V3 version with improved UI, timing tracking, and structured output.',
@@ -89,6 +90,7 @@ export const manifest = {
       },
       {
         id: 'plugin-template:test-loader',
+        path: 'plugin-template test-loader',
         group: 'plugin-template',
         describe: 'Test UI loader/spinner functionality (V3 migrated)',
         longDescription: 'Demonstrates spinner, multi-stage progress, and rapid updates for testing UI loader components.',
@@ -131,5 +133,3 @@ export const manifest = {
 
   permissions: pluginPermissions,
 };
-
-export default manifest;

@@ -38,3 +38,12 @@ export {
 } from './mock-logger.js';
 
 export { MockEmbeddings } from './mock-embeddings.js';
+
+export {
+  FaultInjectingCache,
+  FaultInjectingEventBus,
+  type CacheOperation,
+  type EventBusOperation,
+} from './fault-injection.js';
+
+export { FaultInjectingStorage, type StorageOperation } from './fault-injecting-storage.js';

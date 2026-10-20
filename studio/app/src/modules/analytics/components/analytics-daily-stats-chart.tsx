@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type React from 'react';
-import { UIText, UICard, UIAreaChart, useChartColors } from '@kb-labs/studio-ui-kit';
+import { UIText, UICard, UIAreaChart, UISkeletonChart, useChartColors } from '@kb-labs/studio-ui-kit';
 import type { DailyStats } from '@kb-labs/studio-data-client';
 import dayjs from 'dayjs';
 
@@ -162,9 +162,7 @@ export function AnalyticsDailyStatsChart({
   return (
     <UICard title={title} style={cardStyle}>
       {loading && (
-        <div style={{ textAlign: 'center', padding: '40px 0' }}>
-          <UIText color="secondary">Loading chart data...</UIText>
-        </div>
+        <UISkeletonChart height={height} series={metrics.length} label="Loading chart data" />
       )}
 
       {!loading && chartData.length > 0 && (

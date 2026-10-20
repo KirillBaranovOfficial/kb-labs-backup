@@ -332,7 +332,6 @@ version: 1.0.0
 description: My workflow description
 on:
   manual: true
-  push: true
 jobs:
   my-job:
     runsOn: local
@@ -516,4 +515,3 @@ See `kb-labs-workflow/packages/workflow-contracts/examples/` for complete workfl
 - `conditional-deployment.yml` - Conditional execution example
 - `workflow-with-hooks.yml` - Job hooks example
 - `plugin-*.yml` - Plugin workflow examples
-

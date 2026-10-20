@@ -131,6 +131,48 @@ func TestBuildKeepsResolvedAdapterBindingsAlongsideManifestDefault(t *testing.T)
 	}
 }
 
+// case: S-054.1
+func TestBuildPreservesResolvedAdapterExportSubpath(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = []contracts.ConfigPatch{
+		{Path: "/platform/adapters/kvStore", Value: "@kb-labs/adapters-sqlite@2.0.0", Owner: "adapter:sqlite-stores"},
+		{Path: "/platform/adapters", JSON: `{"kvStore":"@kb-labs/adapters-sqlite/kv"}`, Owner: "manifest:platform.adapters"},
+	}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Platform struct {
+			Adapters map[string]string `json:"adapters"`
+		} `json:"platform"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.Platform.Adapters["kvStore"]; got != "@kb-labs/adapters-sqlite/kv" {
+		t.Fatalf("rendered kvStore module specifier = %q, want package export subpath", got)
+	}
+}
+
+// case: S-179.10
+func TestBuildNeverRendersTheWorkspaceDevelopmentModeMarker(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = []contracts.ConfigPatch{{Path: "/platform/mode", JSON: `"development"`, Owner: "manifest:platform.mode"}}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	platformConfig, _ := config["platform"].(map[string]any)
+	if mode, ok := platformConfig["mode"]; ok {
+		t.Fatalf("installed platform config must not contain workspace development mode, got %v", mode)
+	}
+}
+
 func TestWriteProducesTheRuntimeConfigAndNoServiceManagerFile(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Write(testPlan(root)); err != nil {
@@ -149,27 +191,50 @@ func TestWriteProducesTheRuntimeConfigAndNoServiceManagerFile(t *testing.T) {
 	}
 }
 
-func TestWriteCreatesProjectPointerWithoutOverwritingUserConfig(t *testing.T) {
+func TestWritePreservesSharedConfigLinkAndUpdatesItsInstallRootTarget(t *testing.T) {
+	installRoot := t.TempDir()
+	versionRoot := filepath.Join(installRoot, "versions", "v1")
+	if err := os.MkdirAll(filepath.Join(versionRoot, ".kb"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stateRoot := filepath.Join(installRoot, "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configLink := filepath.Join(versionRoot, ".kb", ConfigFilename)
+	configTarget := filepath.Join(stateRoot, ConfigFilename)
+	relativeTarget, err := filepath.Rel(filepath.Dir(configLink), configTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(relativeTarget, configLink); err != nil {
+		t.Fatal(err)
+	}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
+		Request:      contracts.InstallRequest{PlatformRoot: versionRoot},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"},
+		Host:         &contracts.HostSpec{Command: "host", HealthURL: "http://127.0.0.1:4000/health"}}
+	if _, err := Write(plan); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(configLink)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("shared config link was replaced: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(configTarget); err != nil {
+		t.Fatalf("shared install-root config was not created: %v", err)
+	}
+}
+
+func TestWriteNeverCreatesFilesInSelectedProject(t *testing.T) {
 	platformRoot, projectRoot := t.TempDir(), t.TempDir()
 	plan := testPlan(platformRoot)
 	plan.Request.ProjectRoot = projectRoot
 	if _, err := Write(plan); err != nil {
 		t.Fatal(err)
 	}
-	pointer := filepath.Join(projectRoot, ".kb", ConfigFilename)
-	data, err := os.ReadFile(pointer)
-	if err != nil || !strings.Contains(string(data), platformRoot) {
-		t.Fatalf("project pointer = %s, error = %v", data, err)
-	}
-	if err := os.WriteFile(pointer, []byte(`{"platform":{"dir":"user-owned"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Write(plan); err != nil {
-		t.Fatal(err)
-	}
-	data, err = os.ReadFile(pointer)
-	if err != nil || !strings.Contains(string(data), "user-owned") {
-		t.Fatalf("user config was overwritten: %s / %v", data, err)
+	if _, err := os.Stat(filepath.Join(projectRoot, ".kb")); !os.IsNotExist(err) {
+		t.Fatalf("installer created project files: %v", err)
 	}
 }
 

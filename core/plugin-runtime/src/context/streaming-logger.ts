@@ -40,6 +40,7 @@ export function createStreamingLogger(base: ILogger, emitter: EventEmitterFn): I
     warn: wrap('warn', base.warn),
     error: wrap('error', base.error),
     fatal: wrap('fatal', base.fatal),
+    flush: () => base.flush(),
     getLogBuffer: base.getLogBuffer?.bind ? base.getLogBuffer.bind(base) : base.getLogBuffer,
     child(fields: Record<string, unknown>): ILogger {
       return createStreamingLogger(base.child(fields), emitter);

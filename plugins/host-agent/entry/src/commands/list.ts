@@ -3,7 +3,8 @@
  * List all connected Workspace Agents via Gateway REST API.
  */
 
-import { defineCommand, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, getHostServiceAddress, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
+import { GatewayApiError, gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -31,7 +32,7 @@ export default defineCommand({
   description: 'List all connected Workspace Agents',
 
   handler: {
-    async execute(ctx: PluginContextV3, rawInput: ListInput): Promise<CommandResult<ListResult>> {
+    async execute(ctx: PluginCommandContextV3, rawInput: ListInput): Promise<CommandResult<ListResult>> {
       const input: ListInput = rawInput.flags ?? rawInput;
 
       // Resolve Gateway URL: flag > agent config > env > default
@@ -45,57 +46,33 @@ export default defineCommand({
           // No agent config
         }
       }
-      gatewayUrl = gatewayUrl ?? ctx.runtime?.env?.('KB_GATEWAY_URL') ?? 'http://localhost:4000';
-
-      // Get auth token
-      let token: string | undefined;
-      try {
-        const configPath = join(homedir(), '.kb', 'agent.json');
-        const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-        if (config.clientId && config.clientSecret) {
-          const tokenRes = await fetch(`${gatewayUrl}/auth/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ clientId: config.clientId, clientSecret: config.clientSecret }),
-          });
-          if (tokenRes.ok) {
-            const body = await tokenRes.json() as { accessToken?: string };
-            token = body.accessToken;
-          }
-        }
-      } catch {
-        // Auth failed — try without
-      }
-
-      // Fetch hosts
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
+      gatewayUrl = gatewayUrl ?? getHostServiceAddress('gateway', {
+        KB_GATEWAY_URL: ctx.runtime?.env?.('KB_GATEWAY_URL'),
+      });
 
       let hosts: HostEntry[] = [];
       try {
-        const res = await fetch(`${gatewayUrl}/hosts`, { headers });
+        const res = await gatewayApiFetch(`${gatewayUrl}/hosts`);
         if (res.ok) {
           const body = await res.json() as { hosts: HostEntry[] };
           hosts = body.hosts;
         } else {
-          handleError(ctx, new Error(`Failed to list hosts: HTTP ${res.status}`), input.json);
-          return { ok: false, error: `Failed to list hosts: HTTP ${res.status}`, result: { hosts: [] } };
+          return handleError(new Error(`Failed to list hosts: HTTP ${res.status}`));
         }
       } catch (err) {
-        handleError(ctx, new Error(`Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`), input.json);
-        return { ok: false, error: `Cannot reach Gateway at ${gatewayUrl}`, result: { hosts: [] } };
+        if (err instanceof GatewayApiError) {
+          return handleError(err);
+        }
+        return handleError(new Error(`Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`));
       }
 
       if (input.json) {
-        ctx.ui?.json?.({ hosts });
-        return { ok: true, result: { hosts } };
+        return { hosts };
       }
 
       if (hosts.length === 0) {
         ctx.ui?.info?.('No Workspace Agents connected.');
-        return { ok: true, result: { hosts: [] } };
+        return { hosts: [] };
       }
 
       const ago = (ts: number) => {
@@ -118,7 +95,7 @@ export default defineCommand({
         }],
       });
 
-      return { ok: true, result: { hosts } };
+      return { hosts };
     },
   },
 });

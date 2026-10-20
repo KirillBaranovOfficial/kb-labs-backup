@@ -1,7 +1,7 @@
 ---
 title: "kb.config.json"
 description: "The main KB Labs configuration file — adapters, execution, profiles, and per-product config."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-16"
 order: 1
 ---
 
@@ -182,18 +182,23 @@ When a plugin calls `useLLM({ tier: 'small' })`, the router resolves against thi
 
 Other adapters use free-form options:
 
+Relative filesystem paths in platform adapter options resolve under the
+platform data root (`<workspace>/.kb/data` in a development checkout and
+`<install-root>/state/data` for an installed platform). Absolute paths remain
+absolute. Project adapters without a platform path use their project state
+directory under `<KB_HOME>/state/<projectId>/`.
+
 ```json
 "adapterOptions": {
-  "storage":     { "basePath": ".kb/storage" },
+  "storage":     { "baseDir": "storage" },
   "vectorStore": { "url": "http://localhost:6333" },
   "cache":       { "url": "redis://localhost:6379" },
-  "analytics":   { "filename": ".kb/analytics/analytics.sqlite" },
+  "analytics":   { "dbPath": "analytics/analytics.sqlite" },
   "logger":      {
     "level": "info",
     "streaming": { "enabled": true, "bufferSize": 1000, "bufferMaxAge": 3600000 }
   },
   "workspace": {
-    "gatewayUrl": "http://localhost:4000",
     "namespaceId": "default",
     "cacheDir": ".kb/runtime/workspaces"
   }
@@ -251,14 +256,8 @@ Controls how plugin handlers run. This is the most consequential knob for produc
 interface ExecutionConfig {
   mode?: 'auto' | 'in-process' | 'worker-pool' | 'remote' | 'container';
 
-  container?: {
-    gatewayDispatchUrl:   string;
-    gatewayInternalSecret: string;
-  };
-
   workspaceAgent?: {
     enabled:        boolean;
-    gatewayUrl:     string;
     internalSecret: string;
     fallback?:      'local' | 'error';
   };
@@ -287,7 +286,7 @@ interface ExecutionConfig {
 - `auto` (default) — detect from environment (`EXECUTION_MODE`, `KUBERNETES_SERVICE_HOST`).
 - `in-process` — handlers run in the host's own Node process. No isolation, fastest dev loop.
 - `worker-pool` — each handler runs in a pooled worker thread. Production default for single-node deployments.
-- `container` — handlers run inside Docker containers provisioned on demand via the Gateway. Requires `container.gatewayDispatchUrl` and `container.gatewayInternalSecret`. See [Execution Model](/concepts/execution-model).
+- `container` — handlers run inside Docker containers provisioned on demand. Control, platform calls, and logs use the attached stdio stream; networking is disabled at the container boundary. No Gateway URL or secret is required. See [Execution Model](/concepts/execution-model).
 - `remote` — offload to a remote executor service. Phase 3, not wired up in the current codebase — the type is defined but there are no adapters.
 
 **Worker pool knobs.** `min`/`max` control the pool size, `maxRequestsPerWorker` and `maxUptimeMsPerWorker` recycle workers to bound memory leaks, and `warmup` lets you pre-initialize hot handlers to avoid cold starts on the first invocation.
@@ -338,7 +337,7 @@ The profile ID defaults to `'default'` or the `KB_PROFILE` env var.
 
 ### Legacy flat structure
 
-Older installs put product config directly under the top level (`kb.config.json` → `{ "mind": { ... } }`). The loader still reads it for backward compatibility — `knowledge` is the legacy alias for `mind`. New installs should use Profiles v2 exclusively.
+Older installs may put product config directly under the top level (`kb.config.json` → `{ "mind": { ... } }`). The loader reads a top-level key only when it exactly matches the product ID; `knowledge` is not an alias for `mind`. New installs should use Profiles v2.
 
 ## Other top-level sections
 
@@ -410,7 +409,7 @@ The smallest useful `kb.config.json`:
       "logger":  "@kb-labs/adapters-pino"
     },
     "adapterOptions": {
-      "storage": { "basePath": ".kb/storage" }
+      "storage": { "baseDir": "storage" }
     },
     "execution": {
       "mode": "in-process"
@@ -422,7 +421,7 @@ The smallest useful `kb.config.json`:
 This gets you:
 
 - An OpenAI LLM (reads `OPENAI_API_KEY` from env via the adapter).
-- Local filesystem storage under `.kb/storage`.
+- Configured platform filesystem storage under the platform data root.
 - Pino logging to stdout.
 - In-process plugin execution (fastest, no isolation).
 
@@ -447,3 +446,12 @@ The reference config in this monorepo ([.kb/kb.config.json](.kb/kb.config.json))
 - [devservices.yaml](/configuration/dev-config) — the `kb-dev` service manager config, a separate file.
 - [Adapters → Overview](/adapters) — how adapter packages plug into the `platform.adapters` slot.
 - [Execution Model](/concepts/execution-model) — more on the `platform.execution` knob.
+
+
+## Gateway webhook history
+
+Gateway webhook delivery history is stored in the platform document database. The default retention is the latest 100 records per webhook endpoint (project, plugin, event, and instance). The Gateway prunes older records when it writes new history.
+
+The Gateway keeps this default bounded automatically; there is no additional configuration key.
+
+The record contains the delivery ID, project, received-at time, plugin and handler identity, outcome code, duration, and correlation ID. Payload bodies and webhook secrets are never stored. See [Gateway webhooks](/gateway/webhooks) for the REST and CLI inspection commands.

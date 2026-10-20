@@ -46,7 +46,7 @@ describe('devlink:freeze', () => {
 
     const result = await freezeCommand.execute(ctx as never, mockCLIInput<FreezeFlags>());
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ frozenAt: '2026-01-01T00:00:00Z', plan: { mode: 'npm' } });
     expect(freeze).toHaveBeenCalledOnce();
     expect(captured.success.length).toBeGreaterThan(0);
   });
@@ -57,9 +57,7 @@ describe('devlink:freeze', () => {
 
     const result = await freezeCommand.execute(ctx as never, mockCLIInput<FreezeFlags>({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect((captured.json[0] as Record<string, unknown>).frozenAt).toBeDefined();
+    expect(result).toMatchObject({ frozenAt: expect.any(String) });
   });
 
   it('FREEZE-03: --dry-run shows intent, freeze is NOT called', async () => {
@@ -68,7 +66,7 @@ describe('devlink:freeze', () => {
 
     const result = await freezeCommand.execute(ctx as never, mockCLIInput<FreezeFlags>({ flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ summary: expect.stringContaining('Freeze current dependency state'), operations: expect.any(Array) });
     expect(freeze).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

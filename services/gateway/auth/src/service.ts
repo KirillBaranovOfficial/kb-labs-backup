@@ -26,6 +26,8 @@ import {
   signRefreshToken,
   verifyAccessToken,
   verifyRefreshToken,
+  verifyRefreshTokenKind,
+  type RefreshTokenKind,
   type JwtConfig,
 } from './jwt.js';
 
@@ -34,6 +36,10 @@ export class AuthService {
     private readonly cache: ICache,
     private readonly jwtConfig: JwtConfig,
   ) {}
+
+  async classifyRefreshToken(refreshToken: string): Promise<import('./jwt.js').TokenVerification<RefreshTokenKind>> {
+    return verifyRefreshTokenKind(refreshToken, this.jwtConfig);
+  }
 
   // ── Register ──────────────────────────────────────────────────────────────
 
@@ -79,7 +85,7 @@ export class AuthService {
           hostId: record.hostId,
           namespaceId: record.namespaceId,
           tier: record.tier,
-          type: 'machine',
+          type: 'machine_access',
           permissions: record.permissions ?? ['host:connect'],
         },
         this.jwtConfig,
@@ -94,14 +100,14 @@ export class AuthService {
 
   // ── Refresh token pair ────────────────────────────────────────────────────
 
-  async refreshTokens(refreshToken: string): Promise<TokenResponse | null> {
+  async refreshTokens(refreshToken: string): Promise<import('./jwt.js').TokenVerification<TokenResponse>> {
     // Verify JWT signature first
     const jwtResult = await verifyRefreshToken(refreshToken, this.jwtConfig);
-    if (!jwtResult) {return null;}
+    if (!jwtResult.ok) {return jwtResult;}
 
     // Consume from store (rotation — old token invalidated)
     const stored = await consumeRefreshToken(this.cache, refreshToken);
-    if (!stored) {return null;}
+    if (!stored) {return { ok: false, reason: 'revoked' };}
 
     // Reload client record to get current permissions + tier.
     // getClientByHostId does a two-key lookup: hostIndex → clientId → record.
@@ -115,7 +121,7 @@ export class AuthService {
           hostId,
           namespaceId: stored.namespaceId,
           tier: record?.tier ?? 'free',
-          type: 'machine',
+          type: 'machine_access',
           permissions: record?.permissions ?? ['host:connect'],
         },
         this.jwtConfig,
@@ -125,7 +131,12 @@ export class AuthService {
 
     await saveRefreshToken(this.cache, newRefreshToken, hostId, stored.namespaceId);
 
-    return { accessToken, refreshToken: newRefreshToken, expiresIn, tokenType: 'Bearer' };
+    return { ok: true, payload: { accessToken, refreshToken: newRefreshToken, expiresIn, tokenType: 'Bearer' } };
+  }
+
+  async revokeRefreshToken(refreshToken: string): Promise<boolean> {
+    if (!(await verifyRefreshToken(refreshToken, this.jwtConfig)).ok) {return false;}
+    return (await consumeRefreshToken(this.cache, refreshToken)) !== null;
   }
 
   // ── Profile lookup ────────────────────────────────────────────────────────
@@ -138,16 +149,17 @@ export class AuthService {
 
   // ── Verify access token → AuthContext ────────────────────────────────────
 
-  async verify(token: string): Promise<AuthContext | null> {
+  async verify(token: string): Promise<import('./jwt.js').TokenVerification<AuthContext>> {
     const payload = await verifyAccessToken(token, this.jwtConfig);
-    if (!payload) {return null;}
+    if (!payload.ok) {return payload;}
 
-    return {
-      type: payload.type,
-      userId: payload.sub,
-      namespaceId: payload.namespaceId,
-      tier: payload.tier,
-      permissions: payload.permissions ?? ['host:connect'],
-    };
+    return { ok: true, payload: {
+      type: 'machine',
+      userId: payload.payload.sub,
+      tokenId: payload.payload.jti,
+      namespaceId: payload.payload.namespaceId,
+      tier: payload.payload.tier,
+      permissions: payload.payload.permissions ?? ['host:connect'],
+    } };
   }
 }

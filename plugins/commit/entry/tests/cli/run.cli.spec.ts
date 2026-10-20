@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 vi.mock('@kb-labs/commit-core', () => ({
   generateCommitPlan: vi.fn(),
   savePlan: vi.fn().mockResolvedValue(undefined),
   hasChanges: vi.fn().mockReturnValue(true),
-  getGitStatus: vi.fn().mockResolvedValue({ staged: [], unstaged: [] }),
+  getGitStatus: vi.fn().mockResolvedValue({ staged: [], unstaged: [], untracked: [] }),
   applyCommitPlan: vi.fn(),
   pushCommits: vi.fn(),
   saveToHistory: vi.fn().mockResolvedValue(undefined),
@@ -33,8 +37,10 @@ vi.mock('../../src/rest/handlers/scope-resolver.js', () => ({
 }));
 
 import { generateCommitPlan, applyCommitPlan, hasChanges, getGitStatus, savePlan, saveToHistory, clearPlan } from '@kb-labs/commit-core';
+import { AdapterCredentialsMissingError, AdapterUnavailableError, findRepoRoot } from '@kb-labs/sdk';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import runCommand from '../../src/cli/commands/run.js';
+import generateCommand from '../../src/cli/commands/generate.js';
 
 const mockPlan = {
   commits: [
@@ -73,7 +79,7 @@ const mockApplyResult = {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(getGitStatus).mockResolvedValue({ staged: [], unstaged: [] } as never);
+  vi.mocked(getGitStatus).mockResolvedValue({ staged: [], unstaged: [], untracked: [] } as never);
   vi.mocked(hasChanges).mockReturnValue(true);
   vi.mocked(generateCommitPlan).mockResolvedValue(mockPlan as never);
   vi.mocked(savePlan).mockResolvedValue(undefined);
@@ -82,32 +88,42 @@ beforeEach(() => {
   vi.mocked(clearPlan).mockResolvedValue(undefined);
 });
 
+function createRunContext(ui: ReturnType<typeof createCapturedUI>['ui']) {
+  return createMockContext({
+    ui,
+    cwd: '/project',
+    platformConfig: { platform: { adapters: { llm: '@kb-labs/adapter-fixture' } } },
+  });
+}
+
 describe('commit:commit (run)', () => {
-  it('CR-01: applies commits — exitCode 0, success message', async () => {
+  it('CR-01: applies commits — successful result and success message', async () => {
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(vi.mocked(applyCommitPlan)).toHaveBeenCalledOnce();
   });
 
-  it('CR-02: no changes — exitCode 1, warns user', async () => {
+  // case: S-160.4
+  it('CR-02: no changes — successful no-op result', async () => {
     vi.mocked(hasChanges).mockReturnValue(false);
 
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.exitCode).toBe(1);
-    expect(captured.warnings.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+    expect(captured.success[0]?.message).toContain('No changes to commit');
     expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
+    expect(vi.mocked(generateCommitPlan)).not.toHaveBeenCalled();
   });
 
-  it('CR-03: apply fails — exitCode 1, error shown', async () => {
+  it('CR-03: apply fails — failed result and error shown', async () => {
     vi.mocked(applyCommitPlan).mockResolvedValue({
       success: false,
       errors: ['Merge conflict'],
@@ -115,49 +131,176 @@ describe('commit:commit (run)', () => {
     } as never);
 
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.exitCode).toBe(1);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-04: --json outputs CommitRunOutput', async () => {
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.exitCode).toBe(0);
-    const out = captured.json[0] as Record<string, unknown>;
+    const out = result as Record<string, unknown>;
     expect(out.applied).toBe(true);
     expect(Array.isArray(out.commits)).toBe(true);
   });
 
-  it('CR-05: --dry-run shows intent, applyCommitPlan is NOT called', async () => {
-    const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+  it('CR-05: --dry-run returns a preview without changing HEAD, index, or working tree', async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), 'commit-dry-run-'));
+    try {
+      execFileSync('git', ['init', '-q', repo]);
+      execFileSync('git', ['-C', repo, 'config', 'user.name', 'Test User']);
+      execFileSync('git', ['-C', repo, 'config', 'user.email', 'test@example.com']);
+      await writeFile(path.join(repo, 'tracked.txt'), 'committed\n');
+      execFileSync('git', ['-C', repo, 'add', 'tracked.txt']);
+      execFileSync('git', ['-C', repo, 'commit', '-qm', 'test: initial']);
+      await writeFile(path.join(repo, 'tracked.txt'), 'staged change\n');
+      execFileSync('git', ['-C', repo, 'add', 'tracked.txt']);
+      await writeFile(path.join(repo, 'tracked.txt'), 'working tree change\n');
+      await mkdir(path.join(repo, 'untracked-dir'));
+      await writeFile(path.join(repo, 'untracked-dir', 'new.txt'), 'untracked\n');
 
-    const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true } }));
+      vi.mocked(findRepoRoot).mockResolvedValue(repo);
+      const gitSnapshot = () => ({
+        head: execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+        index: execFileSync('git', ['-C', repo, 'diff', '--cached', '--binary'], { encoding: 'utf8' }),
+        worktree: execFileSync('git', ['-C', repo, 'diff', '--binary'], { encoding: 'utf8' }),
+        status: execFileSync('git', ['-C', repo, 'status', '--porcelain=v1', '--untracked-files=all'], { encoding: 'utf8' }),
+      });
+      const before = gitSnapshot();
+      const { ui, captured } = createCapturedUI();
+      const result = await runCommand.execute(createRunContext(ui) as never, mockCLIInput({
+        flags: { 'dry-run': true, json: true },
+      }));
 
-    expect(result.exitCode).toBe(0);
-    expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
-    expect(captured.infos[0]?.message).toContain('Dry-run');
-    expect(captured.infos[0]?.message).toContain('2 commit');
+      expect(result).not.toHaveProperty('ok');
+      expect(gitSnapshot()).toEqual(before);
+      expect(generateCommitPlan).toHaveBeenCalledOnce();
+      expect(applyCommitPlan).not.toHaveBeenCalled();
+      expect(savePlan).not.toHaveBeenCalled();
+      expect(saveToHistory).not.toHaveBeenCalled();
+      expect(clearPlan).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ plan: mockPlan, applied: false, pushed: false, commits: [] });
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
   });
 
-  it('CR-06: --dry-run with no changes — shows intent with empty operations', async () => {
+  it('CR-06: --dry-run with no changes — returns an empty preview in the same result shape', async () => {
     vi.mocked(hasChanges).mockReturnValue(false);
 
     const { ui, captured } = createCapturedUI();
+    const ctx = createRunContext(ui);
+
+    const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true, json: true } }));
+
+    expect(result).not.toHaveProperty('ok');
+    expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+  });
+
+  // case: S-160.4
+  it('CR-07: no changes without --dry-run — returns a successful empty result', async () => {
+    vi.mocked(hasChanges).mockReturnValue(false);
+
+    const { ui, captured } = createCapturedUI();
+    const result = await runCommand.execute(createRunContext(ui) as never, mockCLIInput({ flags: { json: true } }));
+
+    expect(result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+    expect(applyCommitPlan).not.toHaveBeenCalled();
+    expect(generateCommitPlan).not.toHaveBeenCalled();
+  });
+
+  // case: S-160.2
+  it('missing LLM adapter fails with the typed adapter error', async () => {
+    const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: '/project' });
 
-    const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true } }));
+    await expect(runCommand.execute(ctx, mockCLIInput({ flags: { 'dry-run': true } })))
+      .rejects.toBeInstanceOf(AdapterUnavailableError);
+    expect(generateCommitPlan).not.toHaveBeenCalled();
+    expect(applyCommitPlan).not.toHaveBeenCalled();
+  });
+});
 
-    expect(result.exitCode).toBe(0);
-    expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
-    expect(captured.infos[0]?.message).toContain('Dry-run');
-    expect(captured.infos[0]?.message).toContain('No changes');
+describe('commit:generate (adapter errors)', () => {
+  it('returns the typed adapter envelope in JSON mode when the LLM is unconfigured', async () => {
+    vi.mocked(generateCommitPlan).mockRejectedValueOnce(new AdapterUnavailableError('llm'));
+
+    const { ui, captured } = createCapturedUI();
+    const ctx = createRunContext(ui);
+    const result = await generateCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
+
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_ADAPTER_NOT_CONFIGURED',
+        message: expect.stringContaining('not configured'),
+        hint: expect.any(String),
+        details: { service: 'llm' },
+      },
+    });
+  });
+
+  // case: S-054.5
+  it('returns one typed missing OpenAI key envelope through the shared result boundary', async () => {
+    vi.mocked(generateCommitPlan).mockRejectedValueOnce(new AdapterCredentialsMissingError(
+      'llm', 'OPENAI_API_KEY', 'platform.adapterOptions.llm.apiKey',
+    ));
+
+    const { ui, captured } = createCapturedUI();
+    const ctx = createMockContext({
+      ui,
+      cwd: '/project',
+      platformConfig: { platform: { adapters: { llm: '@kb-labs/adapters-openai' } } },
+    });
+    const result = await generateCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
+
+    expect(result.ok).toBe(false);
+    expect(captured.json).toHaveLength(0);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_ADAPTER_CREDENTIALS_MISSING',
+        message: expect.stringContaining('OPENAI_API_KEY'),
+        hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"),
+      },
+    });
+    expect(result.error?.hint).toContain('No request was sent');
+    expect(JSON.stringify(result)).not.toContain('test-secret-value');
+    expect(captured.errors).toHaveLength(0);
+    expect(captured.infos).toHaveLength(0);
+  });
+
+  // case: S-054.8
+  it('returns a typed missing OpenAI key envelope in JSON mode when OpenAI is bound', async () => {
+    vi.mocked(generateCommitPlan).mockRejectedValueOnce(new AdapterCredentialsMissingError(
+      'llm', 'OPENAI_API_KEY', 'platform.adapterOptions.llm.apiKey',
+    ));
+
+    const { ui, captured } = createCapturedUI();
+    const ctx = createMockContext({
+      ui,
+      cwd: '/project',
+      platformConfig: { platform: { adapters: { llm: '@kb-labs/adapters-openai' } } },
+    });
+    const result = await generateCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
+
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_ADAPTER_CREDENTIALS_MISSING',
+        message: expect.stringContaining('OPENAI_API_KEY'),
+        hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"),
+      },
+    });
+    expect(result.error?.hint).toContain('No request was sent');
   });
 });

@@ -9,15 +9,17 @@ import { defineSystemCommandGroup } from '@kb-labs/shared-command-kit';
 import { hello } from './hello';
 import { version } from './version';
 import { health } from './health';
-import { diag } from './diag';
 import { registryDiagnostics } from './registry-diagnostics';
+import { registryCommands } from './registry-commands';
 import { docsGenerateCliReference } from './docs-generate-cli-reference';
 import { logsDiagnose, logsContext, logsSummarize, logsQuery, logsSearch, logsGet, logsStats } from './logs';
-import { authLogin, authLogout, authStatus, authRegister } from './auth';
+import { authLogin, authLogout, authStatus, authRegister, authResetLink, authTokens } from './auth';
 import { platformSyncCommand } from './platform/sync';
-import { webhookProvision, webhookList, webhookRevoke } from './webhook';
+import { webhookProvision, webhookList, webhookRevoke, webhookHistory } from './webhook';
 import { configShow, configGet, configSet } from './config';
 import { projectAdd, projectList, projectShow, projectRemove } from './project';
+import { mcpConfig } from './mcp';
+import { adapterBind, adapterList, adapterUnbind } from './adapter';
 
 /**
  * Info Commands Group
@@ -26,7 +28,6 @@ export const infoGroup = defineSystemCommandGroup('info', 'System information co
   hello,
   version,
   health,
-  diag,
 ]);
 
 /**
@@ -54,6 +55,7 @@ export const logsGroup = defineSystemCommandGroup('logs', 'Log viewing and analy
  */
 export const registryGroup = defineSystemCommandGroup('registry', 'Entity registry commands', [
   registryDiagnostics,
+  registryCommands,
 ]);
 
 /**
@@ -64,6 +66,8 @@ export const authGroup = defineSystemCommandGroup('auth', 'Gateway authenticatio
   authLogout,
   authStatus,
   authRegister,
+  authResetLink,
+  authTokens,
 ]);
 
 /**
@@ -87,6 +91,7 @@ export const webhookGroup = defineSystemCommandGroup('webhook', 'Webhook managem
   webhookProvision,
   webhookList,
   webhookRevoke,
+  webhookHistory,
 ]);
 
 /**
@@ -114,4 +119,15 @@ export const projectGroup = defineSystemCommandGroup('project', 'Project registr
   projectList,
   projectShow,
   projectRemove,
+]);
+
+export const mcpGroup = defineSystemCommandGroup('mcp', 'Model Context Protocol commands', [
+  mcpConfig,
+]);
+
+/** Adapter commands manage platform-installed adapters and bindings. */
+export const adapterGroup = defineSystemCommandGroup('adapter', 'Adapter installation and binding commands', [
+  adapterList,
+  adapterBind,
+  adapterUnbind,
 ]);

@@ -1,18 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { SubRepo } from '@kb-labs/impact-contracts';
+import { findRegisteredProjectContainingPathSync, requireProjectContext } from '@kb-labs/sdk';
 
 export function findWorkspaceRoot(cwd?: string): string {
-  let dir = resolve(cwd ?? process.cwd());
-  for (let i = 0; i < 10; i++) {
-    if (existsSync(join(dir, '.gitmodules')) || existsSync(join(dir, '.kb', 'kb.config.json'))) {
-      return dir;
-    }
-    const parent = resolve(dir, '..');
-    if (parent === dir) {break;}
-    dir = parent;
-  }
-  throw new Error('Could not find workspace root (no .gitmodules or .kb/kb.config.json found)');
+  const current = resolve(cwd ?? process.cwd());
+  const project = findRegisteredProjectContainingPathSync(current);
+  return requireProjectContext(project?.path, current);
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { AdapterManifest } from "@kb-labs/sdk/adapters";
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "voyage-ai-embeddings",
   name: "Voyage AI Embeddings",
@@ -11,6 +12,7 @@ export const manifest: AdapterManifest = {
   license: "MIT",
   type: "core",
   implements: "IEmbeddings",
+  networkRequired: true,
   capabilities: {
     batch: true,
   },

@@ -35,18 +35,14 @@ Add to your `kb.config.json`:
 {
   "platform": {
     "adapters": {
-      "db": "@kb-labs/adapters-sqlite"
-    },
-    "adapterOptions": {
-      "db": {
-        "filename": ".kb/data/kb.db",
-        "readonly": false,
-        "timeout": 5000
-      }
+      "documentDatabase": "@kb-labs/adapters-sqlite"
     }
   }
 }
 ```
+
+No `filename` option is needed for the default. The runtime stores SQLite
+state under `<KB_HOME>/state/<projectId>/database/`.
 
 ### Options
 

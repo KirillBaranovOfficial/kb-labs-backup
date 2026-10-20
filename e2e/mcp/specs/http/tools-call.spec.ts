@@ -8,7 +8,7 @@ import { listTools, postMcp, type McpCallResult } from './_helpers.js'
 test('M-10: calling a known tool returns text content', async ({ request }) => {
   const token = await getAccessToken(request)
   const tools = await listTools(request, token)
-  test.skip(tools.length === 0, 'no tools available — check plugin discovery in platform setup')
+  expect(tools.length, 'MCP tools/list returned an empty catalog; project plugin discovery is unavailable').toBeGreaterThan(0)
 
   const tool = tools[0]
   const { result } = await postMcp<McpCallResult>(

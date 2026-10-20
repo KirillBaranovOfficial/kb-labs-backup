@@ -14,17 +14,24 @@ func writeHumanDiag(w io.Writer, d *diag.Diag) {
 	if d == nil {
 		return
 	}
+	envelope := errorEnvelope(d)
 	o := ui.New(w)
-	msg := d.Message
-	if d.Code != "" {
-		msg = d.Code + ": " + d.Message
+	msg := envelope.Message
+	if envelope.Code != "" {
+		msg = envelope.Code + ": " + envelope.Message
 	}
 	o.Err(msg)
 	if d.Reason != "" {
 		o.Detail("why:  " + d.Reason)
 	}
-	if d.Hint != "" {
-		o.Detail("hint: " + d.Hint)
+	if envelope.Hint != "" {
+		o.Detail("Hint: " + envelope.Hint)
+	}
+	if envelope.CorrelationID != "" {
+		o.Detail("correlationId: " + envelope.CorrelationID)
+	}
+	if remoteID, ok := d.Meta["remoteCorrelationId"].(string); ok && diag.IsValidCorrelationID(remoteID) {
+		o.Detail("remote correlationId: " + remoteID)
 	}
 }
 

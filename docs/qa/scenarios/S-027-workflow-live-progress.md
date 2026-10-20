@@ -1,61 +1,33 @@
 ---
 id: S-027
-title: Workflow — Live progress while running
+title: Workflow — Follow live progress from the CLI
 persona: solo-developer
+area: workflow
 priority: P0
-automation: e2e-todo
-e2e: e2e/workflows/scenarios/default/cases/sse/
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer triggers a workflow and watches steps complete one-by-one in real time —
-without refreshing or polling manually. Critical for long workflows where waiting blind is painful.
+
+A user watches a multi-step workflow and sees step transitions before the run finishes.
 
 ## Prerequisites
-- [ ] Platform running, workflow daemon healthy
-- [ ] A multi-step workflow exists (≥3 jobs with visible steps)
 
----
+- [ ] Host running with workflow commands available from a registered project.
+- [ ] Workflow `multi-step` has two local steps, each held at a controllable test gate long enough to observe a transition.
+- [ ] In secured mode, an authenticated gateway session is available.
+- [ ] A workflow engine test can inject a failing event bus or cache adapter for terminal side effects.
 
 ## Steps
 
-### Phase 1 — Start and observe live
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Start workflow: `kb workflow run <name> --watch` | Output streams immediately | CLI blocked by auth (B-001) | ❌ |
-| 2 | Each job appears as it starts — not all at once | Steps print as they begin | Not tested via CLI | ⬜ |
-| 3 | Completed step shows ✅, running shows progress | Visual distinction | Not tested | ⬜ |
-| 4 | Final status shown when all jobs done | `completed` / `failed` at the end | Not tested | ⬜ |
-
-### Phase 2 — Stream via API (SSE)
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 5 | `GET /api/v1/runs/:runId/stream` | Event stream opens | 404 — route not found | ❌ |
-| 6 | Events include `job.started`, `job.completed` | Typed events | Route doesn't exist | ❌ |
-| 7 | Stream closes cleanly on run finish | No hanging connection | N/A | ⬜ |
-
-### Phase 3 — Reconnect after disconnect
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 8 | Kill SSE connection mid-run, reconnect | Catches up with missed events | Not tested — no SSE endpoint | ⬜ |
-
----
-
-## Result
-
-**FAIL** — SSE streaming endpoint does not exist (`/api/v1/runs/:runId/stream` → 404).
-Developer has no way to watch live progress. Must poll `/api/v1/runs/:runId` manually.
-
-## Bugs
-
-| ID | Priority | Description |
+| # | Action | Expected |
 |---|---|---|
-| B-027 | P0 | No SSE streaming endpoint for run progress — developer must poll manually |
-
-## Notes
-
-- Run date: 2026-06-05. Platform 2.94.0.
-- e2e SSE specs exist in `e2e/workflows/scenarios/default/cases/sse/` — may be testing a different path or gateway route.
+| S-027.1 | Run `kb workflow run --workflow-id=multi-step` and copy its run ID | CLI returns a non-empty run ID. |
+| S-027.2 | Run `kb workflow runs watch <run-id>` while the run is active | Output includes events for the run ID and identifies both step IDs as they enter and leave execution. |
+| S-027.3 | Wait for the workflow to finish | Watch output includes the terminal event with status `success`, then the command exits 0 within 60 seconds of the last step completing. |
+| S-027.4 | Fail event publishing, blocked-dependent cancellation, or dead-letter storage after a workflow step finishes | The terminal run remains persisted before ancillary work. The caller receives a typed ancillary failure result, and run detail/history exposes the persisted diagnostic. A blocked dependent whose cancellation write fails remains queued with that state persisted. The platform log contains one structured record with operation, run ID, job ID, and the adapter error. Later ancillary operations still run. |
+| S-027.5 | Cancel a running run through the workflow engine | The persisted run and history show `cancelled`; terminal events and other ancillary effects run after that state is durable. |
+| S-027.6 | Kill the real workflow worker process while a step is running | The daemon detects the worker death, transitions the run to a terminal failed state, and run history exposes a diagnostic naming the process-death cause. |

@@ -16,7 +16,7 @@ import '@fastify/type-provider-typebox';
 // such peer, so the augmentation needs an explicit side-effect import here.
 import '@fastify/swagger';
 import type { EventHub } from '../events/hub';
-import type { ILogger } from '@kb-labs/core-platform';
+import type { IContextLogger } from '@kb-labs/core-platform';
 
 declare module 'fastify/types/instance' {
   interface FastifyInstance<
@@ -38,6 +38,11 @@ declare module 'fastify/types/instance' {
 }
 
 declare module 'fastify' {
+  interface FastifyContextConfig {
+    ux?: 'raw';
+    uxFixture?: { validResult: 'error-envelope' };
+  }
+
   interface FastifyInstance {
     registry?: IEntityRegistry;
     kbReadiness?: ReadinessState;
@@ -45,7 +50,6 @@ declare module 'fastify' {
       inFlight: number;
     };
     kbEventHub?: EventHub;
-    kbPluginMountPromise?: Promise<void>;
     listening?: boolean;
   }
 }
@@ -62,7 +66,7 @@ declare module 'fastify/types/request' {
       rateLimitKeys: Record<string, string>;
       sanitized: Record<string, string>;
     };
-    kbLogger?: ILogger;
+    kbLogger?: IContextLogger;
     kbPluginId?: string;
     tenantId?: string;
   }

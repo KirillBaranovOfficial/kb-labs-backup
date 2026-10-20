@@ -1,3 +1,5 @@
+import type { Readable, Writable } from 'node:stream';
+
 /**
  * @module @kb-labs/core-platform/environment/environment-provider
  * Environment lifecycle abstraction.
@@ -71,9 +73,51 @@ export interface ReservedEnvironment {
  */
 export interface StartEnvironmentRequest {
   image?: string;
-  workspacePath?: string;
-  env?: Record<string, string>;
+  workspacePath: string;
+  executionPolicy: EnvironmentExecutionPolicy;
   metadata?: Record<string, unknown>;
+}
+
+/** OS-level container boundaries projected from a plugin's PermissionSpec. */
+export interface EnvironmentExecutionPolicy {
+  mounts: Array<{ path: string; access: 'read-only' | 'read-write' }>;
+  environment: Record<string, string>;
+}
+
+/** Attached control stream exposed by an environment started for plugin execution. */
+export interface EnvironmentExecutionStream {
+  readable: Readable;
+  writable: Writable;
+  diagnostics: Readable;
+  completion: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+}
+
+export type EnvironmentProvisioningFailureCause =
+  | 'daemon-unreachable'
+  | 'image-unavailable'
+  | 'daemon-error';
+
+/** Typed failure emitted by an environment provider while provisioning a container. */
+export class EnvironmentProvisioningError extends Error {
+  constructor(
+    readonly failureCause: EnvironmentProvisioningFailureCause,
+    readonly image: string,
+    readonly originalError: unknown,
+  ) {
+    super(`Container provisioning failed (${failureCause}) for image ${image}`);
+    this.name = 'EnvironmentProvisioningError';
+  }
+}
+
+/** Typed failure emitted when an environment provider cannot confirm container removal. */
+export class EnvironmentTeardownError extends Error {
+  constructor(
+    readonly containerRef: string,
+    readonly daemonError: unknown,
+  ) {
+    super(`Container teardown failed for ${containerRef}`);
+    this.name = 'EnvironmentTeardownError';
+  }
 }
 
 /**
@@ -167,6 +211,9 @@ export interface IEnvironmentProvider {
    * Optional — only providers that support explicit reservation need to implement this.
    */
   start?(environmentId: string, request: StartEnvironmentRequest): Promise<EnvironmentDescriptor>;
+
+  /** Return the attached child stdio stream for a started execution environment. */
+  getExecutionStream(environmentId: string): EnvironmentExecutionStream;
 
   /**
    * Renew environment lease (if provider supports it).

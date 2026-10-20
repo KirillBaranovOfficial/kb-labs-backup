@@ -4,6 +4,7 @@
  */
 
 // Adapter Manifest
+export type { PlatformDataContext } from "./platform-data.js";
 export type {
   AdapterManifest,
   AdapterType,
@@ -12,6 +13,9 @@ export type {
   AdapterCapabilities,
   AdapterFactory,
 } from "./adapter-manifest.js";
+export { adapterManifestProvidesSlot } from "./adapter-manifest.js";
+export { declaredManifestPath, loadAdapterManifest, resolveAdapterManifestModulePath, resolveInstalledAdapterPackageRoot } from "./adapter-manifest-loader.js";
+export type { AdapterManifestLoadResult, AdapterManifestSource } from "./adapter-manifest-loader.js";
 
 // Analytics
 export type {
@@ -159,9 +163,16 @@ export type {
   ReserveEnvironmentRequest,
   ReservedEnvironment,
   StartEnvironmentRequest,
+  EnvironmentExecutionPolicy,
+  EnvironmentExecutionStream,
   EnvironmentDescriptor,
   EnvironmentStatusResult,
   EnvironmentProviderCapabilities,
+} from "../environment/environment-provider.js";
+export {
+  EnvironmentProvisioningError,
+  EnvironmentTeardownError,
+  type EnvironmentProvisioningFailureCause,
 } from "../environment/environment-provider.js";
 
 // Workspace lifecycle
@@ -224,3 +235,4 @@ export type {
   ProcessTerminationReason,
   ProcessUsage,
 } from "./process-executor.js";
+export type { IWebSocketHostOperations } from "./websocket.js";

@@ -3,6 +3,7 @@ import { Card } from 'antd';
 import dayjs from 'dayjs';
 import { UILineChart } from './UILineChart';
 import { UIText } from '../../primitives';
+import { UISkeletonChart } from '../../feedback/UISkeleton';
 import { useChartColors } from './useChartColors';
 import type { LineConfig } from '@ant-design/charts';
 
@@ -229,9 +230,7 @@ export function UIStatisticsChart({
   const renderContent = () => (
     <>
       {loading && (
-        <div style={{ textAlign: 'center', padding: '40px 0' }}>
-          <UIText color="secondary">Loading chart data...</UIText>
-        </div>
+        <UISkeletonChart height={height} series={metrics.length || 2} label="Loading chart data" />
       )}
 
       {!loading && (!chartData || chartData.length === 0) && (

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,12 +138,12 @@ If devkit.yaml already exists, the command exits with an error unless --force is
 
 		o := newOutput()
 		o.OK("Created devkit.yaml")
-		fmt.Println()
-		fmt.Println("  Add categories, tasks, or packs, then:")
-		fmt.Println()
-		fmt.Printf("  %s\n", o.dim.Render("kb-devkit run build"))
-		fmt.Printf("  %s\n", o.dim.Render("kb-devkit check"))
-		fmt.Println()
+		clikitcommand.Println()
+		clikitcommand.Println("  Add categories, tasks, or packs, then:")
+		clikitcommand.Println()
+		clikitcommand.Printf("  %s\n", o.dim.Render("kb-devkit run build"))
+		clikitcommand.Printf("  %s\n", o.dim.Render("kb-devkit check"))
+		clikitcommand.Println()
 		return nil
 	},
 }

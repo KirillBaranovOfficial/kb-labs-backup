@@ -4,12 +4,16 @@
  * Tests for response envelope middleware.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify from 'fastify';
+import { Readable } from 'node:stream';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { createContextLogger } from '@kb-labs/core-platform';
 import { registerEnvelopeMiddleware } from '../envelope';
+import { assertNoStackTraceLeak } from '../../__tests__/helpers/safe-error-envelope';
+import { platform } from '@kb-labs/core-runtime';
 
 const TEST_CONFIG: RestApiConfig = {
   port: 3000,
@@ -33,7 +37,11 @@ describe('registerEnvelopeMiddleware', () => {
   });
 
   afterEach(async () => {
-    await app.close();
+    try {
+      await app.close();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   describe('successful responses', () => {
@@ -54,6 +62,19 @@ describe('registerEnvelopeMiddleware', () => {
       expect(body.meta.apiVersion).toBe('1.0.0');
       expect(body.meta.requestId).toBeDefined();
       expect(typeof body.meta.durationMs).toBe('number');
+    });
+
+    it('keeps non-JSON output raw when the route definition declares ux: raw', async () => {
+      app.get('/raw-response', { config: { ux: 'raw' } }, async (_request: FastifyRequest, reply: FastifyReply) => {
+        reply.type('text/plain');
+        return 'health probe';
+      });
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/raw-response' });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toBe('health probe');
+      expect(response.headers['content-type']).toContain('text/plain');
     });
 
     it('should add x-schema-version header', async () => {
@@ -105,14 +126,53 @@ describe('registerEnvelopeMiddleware', () => {
       expect(body.meta).toEqual({ custom: 'meta' });
       expect(body.data.ok).toBeUndefined();
     });
+
+    it('canonicalizes failure-shaped success responses through the shared error validator', async () => {
+      app.get('/forged-failure', async () => ({
+        ok: false,
+        error: {
+          code: 'KB_FAKE', area: 'product', stage: 'run', severity: 'error', retryable: false,
+          message: 'forged', hint: 'forged', details: { nested: JSON.stringify({ value: 1 }) },
+        },
+      }));
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/forged-failure' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_PLUGIN_CONTRACT_VIOLATION' } });
+      expect(response.body).not.toContain('KB_FAKE');
+    });
+  });
+
+  it('renders a route-enforced 413 limit from the REST request boundary', async () => {
+    app.post('/limited-body', { bodyLimit: 12 }, async () => ({ accepted: true }));
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/limited-body',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ value: 'larger than twelve bytes' }),
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE',
+        message: 'The request body exceeds 12 B.',
+        hint: 'Reduce the request body to 12 B and resend it.',
+        details: { limit: '12 B', limitBytes: '12' },
+      },
+    });
   });
 
   describe('error responses', () => {
-    it('should wrap errors in error envelope', async () => {
+    it('should return a catalogued validation failure using the platform envelope', async () => {
       app.get('/error', async () => {
         const error = new Error('Something went wrong') as Error & { statusCode?: number; code?: string };
         error.statusCode = 400;
-        error.code = 'E_BAD_REQUEST';
+        error.code = 'KB_RUNTIME_INPUT_INVALID';
         throw error;
       });
       await app.ready();
@@ -122,12 +182,13 @@ describe('registerEnvelopeMiddleware', () => {
 
       const body = response.json();
       expect(body.ok).toBe(false);
-      expect(body.error.code).toBe('E_BAD_REQUEST');
-      expect(body.error.message).toBe('Something went wrong');
-      expect(body.meta.apiVersion).toBe('1.0.0');
+      expect(body.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
+      expect(body.error.correlationId).toBeDefined();
+      expect(body.error.cause).toBeUndefined();
+      expect(body.meta).toBeUndefined();
     });
 
-    it('should default to E_INTERNAL for unknown errors', async () => {
+    it('should redact unknown errors and correlate them', async () => {
       app.get('/internal-error', async () => {
         throw new Error('Unexpected error');
       });
@@ -138,10 +199,48 @@ describe('registerEnvelopeMiddleware', () => {
 
       const body = response.json();
       expect(body.ok).toBe(false);
-      expect(body.error.code).toBe('E_INTERNAL');
+      expect(body.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(body.error.correlationId).toBeDefined();
+      expect(body.error.message).not.toContain('Unexpected error');
+      assertNoStackTraceLeak(body);
     });
 
-    it('should include error details when provided', async () => {
+    it('logs a thrown route exception with its response correlation id and stack', async () => {
+      const log = vi.spyOn(platform.logger, 'error').mockImplementation(() => {});
+      const privateValue = 'private-session-value-sentinel';
+      createContextLogger(platform.logger, {
+        applicationId: 'rest-api', serviceId: 'rest', instanceId: 'test-instance', layer: 'service',
+      }).registerSensitiveValues([privateValue]);
+      app.post('/thrown-route', async () => {
+        throw new Error(`route failed before creating a session: ${privateValue}`);
+      });
+      await app.ready();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/thrown-route?token=private-query-value-sentinel',
+        payload: { task: 'private task body sentinel' },
+      });
+      const error = response.json().error;
+      const failureRecord = log.mock.calls.find(([, thrown]) => thrown instanceof Error);
+
+      expect(response.statusCode).toBe(500);
+      expect(error.correlationId).toBeTruthy();
+      expect(failureRecord).toBeDefined();
+      expect(failureRecord?.[1]?.message).toBe('route failed before creating a session: [REDACTED]');
+      expect(failureRecord?.[1]?.stack).not.toContain(privateValue);
+      expect(failureRecord?.[2]).toMatchObject({
+        correlationId: error.correlationId,
+        errorCode: error.code,
+        statusCode: 500,
+      });
+      expect(failureRecord?.[2]).not.toHaveProperty('requestId');
+      expect(JSON.stringify(failureRecord)).not.toContain('private task body sentinel');
+      expect(JSON.stringify(failureRecord)).not.toContain(privateValue);
+      expect(JSON.stringify(failureRecord)).not.toContain('private-query-value-sentinel');
+    });
+
+    it('should not expose internal error details', async () => {
       app.get('/detailed-error', async () => {
         const error = new Error('Validation failed') as Error & { statusCode?: number; code?: string; details?: unknown };
         error.statusCode = 422;
@@ -152,10 +251,13 @@ describe('registerEnvelopeMiddleware', () => {
       await app.ready();
 
       const body = (await app.inject({ method: 'GET', url: '/detailed-error' })).json();
-      expect(body.error.details).toEqual({ field: 'email', reason: 'invalid format' });
+      expect(body.error.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
+      expect(body.error.message).toContain('must include a non-empty message');
+      expect(body.error.details).toMatchObject({ field: 'message' });
+      expect(JSON.stringify(body)).not.toContain('email');
     });
 
-    it('should include traceId when provided', async () => {
+    it('should not expose internal trace fields', async () => {
       app.get('/traced-error', async () => {
         const error = new Error('Traceable error') as Error & { statusCode?: number; traceId?: string };
         error.statusCode = 500;
@@ -165,7 +267,8 @@ describe('registerEnvelopeMiddleware', () => {
       await app.ready();
 
       const body = (await app.inject({ method: 'GET', url: '/traced-error' })).json();
-      expect(body.error.traceId).toBe('trace-123-abc');
+      expect(body.error.correlationId).toBeDefined();
+      expect(body.error.traceId).toBeUndefined();
     });
 
     it('should always produce ok:false for error responses — never ok:true wrapping', async () => {
@@ -196,12 +299,45 @@ describe('registerEnvelopeMiddleware', () => {
       // Must be ErrorEnvelope, not { ok: true, data: PluginErrorEnvelope }
       expect(body.ok).toBe(false);
       expect(body.error).toBeDefined();
-      expect(body.error.code).toBe('E_PLUGIN_VALIDATION');
-      expect(body.error.message).toBe('Plugin validation failed');
-      // Plugin metadata preserved in details
-      expect(body.error.details.pluginId).toBe('my-plugin');
-      expect(body.error.details.pluginVersion).toBe('1.0.0');
+      expect(body.error.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
+      expect(body.error.correlationId).toBeDefined();
+      expect(JSON.stringify(body)).not.toContain('my-plugin');
       expect(body.data).toBeUndefined();
+    });
+
+    // case: S-203.2
+    it('normalizes route-local secured failures and preserves the HTTP status', async () => {
+      app.get('/unauthorized', async (_request: FastifyRequest, reply: FastifyReply) => reply.code(401).send({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Authenticate with Gateway.', details: { gatewayUrl: 'https://gateway.example.test' } } }));
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/unauthorized' });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED', correlationId: expect.any(String) } });
+    });
+
+    it('normalizes direct reply failures through the shared boundary', async () => {
+      app.get('/reply-failure', async (_request: FastifyRequest, reply: FastifyReply) =>
+        reply.code(409).send({ error: { code: 'KB_PROJECT_ALREADY_REGISTERED', details: { path: '/fixture/project' } } }));
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/reply-failure' });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ ok: false, error: {
+        code: 'KB_PROJECT_ALREADY_REGISTERED', correlationId: expect.any(String),
+      } });
+    });
+
+    it('normalizes non-JSON HTTP failures and redacts their bodies', async () => {
+      app.get('/text-failure', async (_request: FastifyRequest, reply: FastifyReply) =>
+        reply.code(502).type('text/plain').send('private upstream detail'));
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/text-failure' });
+      expect(response.statusCode).toBe(502);
+      expect(response.json()).toMatchObject({ ok: false, error: {
+        code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String),
+      } });
+      expect(response.body).not.toContain('private upstream detail');
     });
   });
 
@@ -224,9 +360,9 @@ describe('registerEnvelopeMiddleware', () => {
 
   describe('streaming responses', () => {
     it('should skip envelope for SSE responses', async () => {
-      app.get('/events', async (request: FastifyRequest, reply: FastifyReply) => {
+      app.get('/events', { config: { ux: 'raw' } }, async (_request: FastifyRequest, reply: FastifyReply) => {
         reply.header('content-type', 'text/event-stream');
-        return 'data: test\n\n';
+        return Readable.from(['data: test\n\n']);
       });
       await app.ready();
 

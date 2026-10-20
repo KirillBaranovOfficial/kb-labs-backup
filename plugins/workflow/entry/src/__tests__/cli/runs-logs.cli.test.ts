@@ -33,9 +33,26 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: {}, argv: ['r-123'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.logs.length).toBe(3);
     expect(captured.logs[0]?.message).toContain('Step started');
+  });
+
+  // case: S-029.3
+  it('renders persisted command output tails with the failed workflow log message', async () => {
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ getRunLogs: async () => [{
+        level: 'warn',
+        message: 'Shell command failed',
+        timestamp: new Date().toISOString(),
+        context: { stdoutTail: 'journey-failure-diagnostic', stderrTail: 'command detail' },
+      }] });
+    });
+
+    const { ui, captured } = createCapturedUI();
+    await runsLogsCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: {}, argv: ['failed-run'] }));
+
+    expect(captured.logs.map((entry) => entry.message).join('\n')).toContain('journey-failure-diagnostic');
+    expect(captured.logs.map((entry) => entry.message).join('\n')).toContain('command detail');
   });
 
   it('RLG-02: --run-id flag form renders log lines', async () => {
@@ -49,7 +66,6 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: { 'run-id': 'r-456' } }));
 
-    expect(result.ok).toBe(true);
     expect(captured.logs.length).toBe(3);
   });
 
@@ -64,11 +80,9 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: { json: true }, argv: ['r-123'] }));
 
-    expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: { logs: typeof sampleLogs } };
-    expect(payload.ok).toBe(true);
-    expect(Array.isArray(payload.data.logs)).toBe(true);
-    expect(payload.data.logs.length).toBe(3);
+    const payload = result as { logs: typeof sampleLogs };
+    expect(Array.isArray(payload.logs)).toBe(true);
+    expect(payload.logs.length).toBe(3);
   });
 
   it('RLG-04: missing runId returns exitCode 1 with validation error message', async () => {
@@ -76,8 +90,8 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: {}, argv: [] }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.some(e => e.includes('Missing run ID'))).toBe(true);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('Missing run ID') } });
   });
 
   it('RLG-07: --step passes stepId to getRunLogs', async () => {
@@ -127,7 +141,7 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: {}, argv: ['r-123'] }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 });

@@ -1,4 +1,4 @@
-import { defineCommand, useLoader, TimingTracker, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useLoader, TimingTracker, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { listBackups, restoreBackup } from '@kb-labs/devlink-core';
 import type { DevlinkBackup } from '@kb-labs/devlink-contracts';
 
@@ -24,7 +24,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
   description: 'List and restore backups',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: BackupsInput): Promise<CommandResult<BackupsResult>> {
+    async execute(ctx: PluginCommandContextV3, input: BackupsInput): Promise<CommandResult<BackupsResult>> {
       const tracker = new TimingTracker();
       const flags = (input.flags ?? input) as BackupsFlags;
       const outputJson = flags.json ?? false;
@@ -43,8 +43,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
           ({ restored, errors } = restoreBackup(rootDir, restoreId));
         } catch (err) {
           loader.fail('Restore failed');
-          handleError(ctx, err, outputJson);
-          return { ok: false, error: 'Backup operation failed' };
+          return handleError(err);
         }
         loader.succeed(`Restored ${restored} file(s)`);
         tracker.checkpoint('restore');
@@ -53,7 +52,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
         const result: BackupsResult = { backups, restored };
 
         if (outputJson) {
-          ctx.ui?.json?.(result);
+          return result;
         } else {
           ctx.ui?.success?.(`Restored ${restored} file(s) from backup ${restoreId}`, {
             title: 'DevLink — Restore Backup',
@@ -65,7 +64,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
           });
         }
 
-        return { ok: true, result, meta: { timing: tracker.total() } };
+        return result;
       }
 
       // ─── List mode ───────────────────────────────────────────────────────────
@@ -75,7 +74,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
       const result: BackupsResult = { backups };
 
       if (outputJson) {
-        ctx.ui?.json?.(result);
+        return result;
       } else {
         if (backups.length === 0) {
           ctx.ui?.info?.('No backups found. Backups are created automatically before each switch.');
@@ -94,7 +93,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
         }
       }
 
-      return { ok: true, result, meta: { timing: tracker.total() } };
+      return result;
     },
   },
 });

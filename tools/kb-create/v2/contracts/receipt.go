@@ -1,28 +1,93 @@
 package contracts
 
-import "time"
+import (
+	"time"
+
+	"github.com/kb-labs/clikit/diag"
+)
 
 const (
-	ResolvedPlanSchema = "kb.create.resolved-plan/v2"
-	ReceiptSchema      = "kb.create.receipt/v2"
-	SnapshotSchema     = "kb.create.snapshot/v2"
+	ResolvedPlanSchema          = "kb.create.resolved-plan/v2"
+	ReceiptSchema               = "kb.create.receipt/v3"
+	SnapshotSchema              = "kb.create.snapshot/v2"
+	CodeArtifactIdentityInvalid = "KB_INSTALL_PLAN_ARTIFACT_IDENTITY_INVALID"
 )
 
 type Artifact struct {
-	ID      string              `json:"id"`
-	Kind    string              `json:"kind"`
-	Package string              `json:"package"`
-	Version string              `json:"version"`
-	SHA256  string              `json:"sha256"`
-	URL     string              `json:"url,omitempty"`
-	Tarball string              `json:"tarball,omitempty"`
-	Target  string              `json:"target,omitempty"`
-	Config  []ConfigRequirement `json:"config,omitempty"`
+	ID            string              `json:"id"`
+	Kind          string              `json:"kind"`
+	Package       string              `json:"package"`
+	Version       string              `json:"version"`
+	SHA256        string              `json:"sha256"`
+	SizeBytes     int64               `json:"sizeBytes,omitempty"`
+	URL           string              `json:"url,omitempty"`
+	Tarball       string              `json:"tarball,omitempty"`
+	Target        string              `json:"target,omitempty"`
+	ResolvedFrom  string              `json:"resolvedFrom"`
+	ResolvedURL   string              `json:"resolvedUrl,omitempty"`
+	PlatformRange string              `json:"platformRange,omitempty"`
+	SDKRange      string              `json:"sdkRange,omitempty"`
+	Config        []ConfigRequirement `json:"config,omitempty"`
 	// Registry names the discovery kind ("plugin" or "adapter") of an artifact
 	// that is installed under another Kind, e.g. a platform member that is also
 	// a catalog plugin/adapter. Empty for artifacts that are not registry entities.
-	Registry string `json:"registry,omitempty"`
+	Registry   string              `json:"registry,omitempty"`
+	Provenance ArtifactProvenance `json:"provenance"`
 }
+
+type ArtifactProvenance struct {
+	SourceRevision string `json:"sourceRevision"`
+	Integrity      string `json:"integrity"`
+	DistSHA256     string `json:"distSha256"`
+}
+
+// Identity is the single installed-unit identity shared by plan producers and
+// consumers. Package artifacts are identified by their package name; binaries
+// have no package and are identified by their target and ID.
+func (a Artifact) Identity() string {
+	if a.Package != "" {
+		return a.Package
+	}
+	return "binary:" + a.ID + ":" + a.Target
+}
+
+// DuplicateArtifactIdentity returns the first identity that the artifacts list
+// more than once, regardless of the artifact's discovery or installation role.
+func DuplicateArtifactIdentity(artifacts []Artifact) (string, bool) {
+	seen := make(map[string]struct{}, len(artifacts))
+	for _, artifact := range artifacts {
+		identity := artifact.Identity()
+		if _, exists := seen[identity]; exists {
+			return identity, true
+		}
+		seen[identity] = struct{}{}
+	}
+	return "", false
+}
+
+// ValidateArtifactIdentities rejects plan artifacts that represent one
+// installed unit more than once with the catalogued plan diagnostic, and
+// requires every artifact to declare an identity.
+func ValidateArtifactIdentities(artifacts []Artifact) error {
+	for _, artifact := range artifacts {
+		compatibilityChecked := artifact.Kind == "plugin" || artifact.Kind == "adapter" ||
+			artifact.Registry == "plugin" || artifact.Registry == "adapter"
+		if compatibilityChecked && artifact.ID == "" {
+			return ArtifactMissingIdentityDiagnostic("the plan contains", artifact)
+		}
+		if artifact.Package == "" && artifact.ID == "" {
+			return ArtifactMissingIdentityDiagnostic("the plan contains", artifact)
+		}
+	}
+	if identity, duplicated := DuplicateArtifactIdentity(artifacts); duplicated {
+		return PlanArtifactIdentityFailure(identity)
+	}
+	return nil
+}
+
+// IsBinary reports whether this artifact is an executable rather than an
+// installed package with a manifest projection.
+func (a Artifact) IsBinary() bool { return a.Kind == "binary" }
 
 type Service struct {
 	ID          string   `json:"id"`
@@ -54,6 +119,7 @@ type ResolvedInstallPlan struct {
 	Request          InstallRequest    `json:"request"`
 	Artifacts        []Artifact        `json:"artifacts"`
 	ServiceGraph     ServiceGraph      `json:"serviceGraph"`
+	PlatformChannel  string            `json:"platformChannel"`
 	ProviderBindings []ProviderBinding `json:"providerBindings,omitempty"`
 	// Host is how the launcher runs this platform: one supervised process. The
 	// resolver copies it from the platform bundle; a plan without it is invalid.
@@ -62,6 +128,39 @@ type ResolvedInstallPlan struct {
 	PlanHash            string        `json:"planHash"`
 	ReleaseDigest       string        `json:"releaseDigest,omitempty"`
 	ScenarioStateDigest string        `json:"scenarioStateDigest,omitempty"`
+}
+
+// ValidatePlanArtifactIdentities enforces the plan boundary invariant that
+// each installable package or binary target appears once, independent of role.
+func ValidatePlanArtifactIdentities(plan ResolvedInstallPlan) error {
+	return ValidateArtifactIdentities(plan.Artifacts)
+}
+
+// PlanArtifactIdentityFailure is the diagnostic for a resolved plan that lists
+// identity more than once. It is an internal contract break, not a user error.
+func PlanArtifactIdentityFailure(identity string) *diag.Diag {
+	return ArtifactIdentityDiagnostic("the resolved plan contains", identity,
+		"Use a current sealed release index and kb-create launcher; if the error persists, report the correlationId.")
+}
+
+// ArtifactIdentityDiagnostic renders a plan/receipt identity violation with
+// the shared catalogued error code and the context-specific next step.
+func ArtifactIdentityDiagnostic(subject string, identity string, hint string) *diag.Diag {
+	failure := diag.New(CodeArtifactIdentityInvalid,
+		subject+" more than one record for artifact "+identity,
+		diag.WithMeta(map[string]any{"artifact": identity}))
+	failure.Hint = hint
+	return failure
+}
+
+// ArtifactMissingIdentityDiagnostic renders a plan/receipt identity violation
+// when an artifact lacks kind or id.
+func ArtifactMissingIdentityDiagnostic(subject string, artifact Artifact) *diag.Diag {
+	failure := diag.New(CodeArtifactIdentityInvalid,
+		subject+" an artifact with missing identity (kind: "+artifact.Kind+", id: "+artifact.ID+")",
+		diag.WithMeta(map[string]any{"kind": artifact.Kind, "id": artifact.ID}))
+	failure.Hint = "Use a current sealed release index and kb-create launcher; if the error persists, report the correlationId."
+	return failure
 }
 
 type ConfigPatch struct {
@@ -84,13 +183,17 @@ type Verification struct {
 // InstallReceipt is written only after the renderer and verifier succeed.
 // It is the authoritative input for update, doctor and rollback.
 type InstallReceipt struct {
-	Schema        string              `json:"schema"`
-	ID            string              `json:"id"`
-	CreatedAt     time.Time           `json:"createdAt"`
-	CorrelationID string              `json:"correlationId"`
-	Plan          ResolvedInstallPlan `json:"plan"`
-	Verification  Verification        `json:"verification"`
-	SnapshotID    string              `json:"snapshotId,omitempty"`
+	Schema               string              `json:"schema"`
+	ID                   string              `json:"id"`
+	InstallationID       string              `json:"installationId"`
+	ProjectSelectedPath  string              `json:"projectSelectedPath,omitempty"`
+	ProjectID            string              `json:"projectId,omitempty"`
+	ProjectCanonicalPath string              `json:"projectCanonicalPath,omitempty"`
+	CreatedAt            time.Time           `json:"createdAt"`
+	CorrelationID        string              `json:"correlationId"`
+	Plan                 ResolvedInstallPlan `json:"plan"`
+	Verification         Verification        `json:"verification"`
+	SnapshotID           string              `json:"snapshotId,omitempty"`
 }
 
 type Snapshot struct {

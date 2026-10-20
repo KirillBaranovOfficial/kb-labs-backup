@@ -4,6 +4,7 @@
 
 import {
   defineSystemCommand,
+  throwSystemCommandError,
   type CommandResult,
 } from "@kb-labs/shared-command-kit";
 import { generateExamples } from "../../../utils/generate-examples";
@@ -12,10 +13,7 @@ import type { LogQuery, LogRecord, LogLevel } from "@kb-labs/core-platform";
 import { parseRelativeTime, formatLogLine, formatLogJson } from "./logs-utils";
 
 type LogQueryResult = CommandResult & {
-  logs?: ReturnType<typeof formatLogJson>[];
-  total?: number;
-  hasMore?: boolean;
-  source?: string;
+  data: { logs: ReturnType<typeof formatLogJson>[]; total: number; hasMore: boolean; source?: string };
   _raw?: LogRecord[];
 };
 
@@ -27,6 +25,7 @@ type Flags = {
   "plugin-id": { type: "string"; description?: string };
   component: { type: "string"; description?: string };
   operation: { type: "string"; description?: string };
+  "correlation-id": { type: "string"; description?: string };
   "request-id": { type: "string"; description?: string };
   "trace-id": { type: "string"; description?: string };
   "execution-id": { type: "string"; description?: string };
@@ -39,6 +38,8 @@ type Flags = {
 
 export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
   name: "query",
+  scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description:
     "Query logs by level, platform context, correlation, and time range",
   category: "logs",
@@ -67,6 +68,7 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
     "plugin-id": { type: "string", description: "Filter by plugin ID" },
     component: { type: "string", description: "Filter by component" },
     operation: { type: "string", description: "Filter by operation" },
+    "correlation-id": { type: "string", description: "Filter by error correlation ID" },
     "request-id": { type: "string", description: "Filter by request ID" },
     "trace-id": { type: "string", description: "Filter by trace ID" },
     "execution-id": { type: "string", description: "Filter by execution ID" },
@@ -82,10 +84,7 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
   async handler(_ctx, _argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return {
-        ok: false,
-        error: "Log reader not available. Ensure platform is initialized.",
-      };
+      throwSystemCommandError("Log reader not available. Ensure platform is initialized.", "Run `kb logs query --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const query: LogQuery = {};
@@ -110,6 +109,9 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
     if (flags.operation) {
       query.operation = flags.operation;
     }
+    if (flags["correlation-id"]) {
+      query.correlationId = flags["correlation-id"];
+    }
     if (flags["request-id"]) {
       query.requestId = flags["request-id"];
     }
@@ -133,29 +135,17 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
     });
 
     return {
-      ok: true,
-      logs: result.logs.map(formatLogJson),
-      total: result.total,
-      hasMore: result.hasMore,
-      source: result.source,
-      _raw: result.logs, // kept for formatter
+
+      data: {
+        logs: result.logs.map(formatLogJson),
+        total: result.total,
+        hasMore: result.hasMore,
+        source: result.source,
+      },
+      _raw: result.logs,
     };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      const { _raw, ...jsonResult } = result;
-      ctx.ui.json(jsonResult);
-      return;
-    }
-
-    if (!result.ok) {
-      const error = typeof result.error === "string" ? result.error : "Unknown";
-      ctx.ui.error("Log Query", {
-        sections: [{ header: "Error", items: [error] }],
-      });
-      return;
-    }
-
     const raw = result._raw;
     if (!raw || raw.length === 0) {
       ctx.ui.write("No logs found matching criteria.\n");
@@ -167,7 +157,7 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
     }
 
     ctx.ui.write(
-      `\n--- ${raw.length} of ${result.total} logs (source: ${result.source}) ---\n`,
+      `\n--- ${raw.length} of ${result.data.total} logs (source: ${result.data.source}) ---\n`,
     );
   },
 });

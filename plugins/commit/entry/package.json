@@ -15,8 +15,7 @@
       "import": "./dist/manifest.js"
     },
     "./cli": "./dist/cli/index.js",
-    "./lifecycle": "./dist/lifecycle/index.js",
-    "./dist/*": "./dist/*"
+    "./lifecycle": "./dist/lifecycle/index.js"
   },
   "files": [
     "dist",
@@ -58,7 +57,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "kb": {

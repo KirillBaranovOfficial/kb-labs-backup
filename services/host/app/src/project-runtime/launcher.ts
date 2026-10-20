@@ -31,7 +31,8 @@ import type {
   RuntimeProject,
 } from "./manager.js";
 
-const OUTPUT_TAIL_BYTES = 8 * 1024;
+const OUTPUT_TAIL_BYTES = 256 * 1024;
+const HEALTH_STATUS_BYTES = 4 * 1024;
 
 /**
  * Variables that would make a runtime bind or resolve something the host owns
@@ -70,6 +71,7 @@ function isWindows(): boolean {
 class ChildRuntime implements RuntimeProcess {
   readonly exited: Promise<RuntimeExit>;
   private output = "";
+  private healthStatus = "";
   private done = false;
   private stopping: Promise<void> | undefined;
 
@@ -104,6 +106,14 @@ class ChildRuntime implements RuntimeProcess {
     return this.output;
   }
 
+  recordHealthStatus(statusCode: number, body: string): void {
+    this.healthStatus = `HTTP ${statusCode}: ${body.slice(0, HEALTH_STATUS_BYTES)}`;
+  }
+
+  lastHealthStatus(): string {
+    return this.healthStatus;
+  }
+
   stop(): Promise<void> {
     this.stopping ??= this.terminate();
     return this.stopping;
@@ -135,15 +145,42 @@ class ChildRuntime implements RuntimeProcess {
   }
 
   private async terminate(): Promise<void> {
-    if (this.done) {
-      return;
+    if (!this.done) {
+      this.signalTree("SIGTERM");
+      const timer = setTimeout(() => this.signalTree("SIGKILL"), this.stopTimeoutMs);
+      try {
+        await this.exited;
+      } finally {
+        clearTimeout(timer);
+      }
     }
-    this.signalTree("SIGTERM");
-    const timer = setTimeout(() => this.signalTree("SIGKILL"), this.stopTimeoutMs);
+
+    const pid = this.child.pid;
+    if (pid === undefined || isWindows()) {return;}
+    this.reapGroup();
+    const deadline = Date.now() + this.stopTimeoutMs;
+    while (this.isGroupAlive(pid)) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Project runtime process group ${pid} did not stop within ${this.stopTimeoutMs} ms`,
+        );
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  private isGroupAlive(pid: number): boolean {
     try {
-      await this.exited;
-    } finally {
-      clearTimeout(timer);
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+        return false;
+      }
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        return true;
+      }
+      throw error;
     }
   }
 
@@ -168,8 +205,24 @@ export function probeRuntime(runtime: RuntimeProcess): Promise<boolean> {
         timeout: 2000,
       },
       (res) => {
-        res.resume();
-        resolve(res.statusCode === 200);
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        res.on("data", (chunk: Buffer) => {
+          if (bytes >= HEALTH_STATUS_BYTES) {
+            return;
+          }
+          const remaining = HEALTH_STATUS_BYTES - bytes;
+          const bounded = chunk.subarray(0, remaining);
+          chunks.push(bounded);
+          bytes += bounded.length;
+        });
+        res.once("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          if ("recordHealthStatus" in runtime && typeof runtime.recordHealthStatus === "function") {
+            runtime.recordHealthStatus(res.statusCode ?? 0, body);
+          }
+          resolve(res.statusCode === 200);
+        });
       },
     );
     req.once("timeout", () => {

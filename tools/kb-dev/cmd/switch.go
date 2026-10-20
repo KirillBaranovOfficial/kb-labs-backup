@@ -31,16 +31,16 @@ func runSwitch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr, startResult, err := switchToAlias(cmd.Context(), platformDir, alias, switchKeepOthers, false)
+	mgr, startResult, err := switchToAlias(cmd.Context(), cmd, platformDir, alias, switchKeepOthers, false)
 	if err != nil {
 		return err
 	}
 
+	if !startResult.OK {
+		return commandFailure("kb-dev switch")
+	}
 	if jsonMode {
 		return JSONOut(startResult)
-	}
-	if !startResult.OK {
-		return errSilent
 	}
 	printHighlights(mgr.Config().Services)
 	return nil
@@ -56,7 +56,7 @@ func runSwitch(cmd *cobra.Command, args []string) error {
 // log) — it does not affect the hard-error guarantee: a stop that didn't
 // actually take effect always returns an error rather than silently piling a
 // second instance on top of a still-running project.
-func switchToAlias(ctx context.Context, platformDir, alias string, keepOthers, quiet bool) (*manager.Manager, *manager.Result, error) {
+func switchToAlias(ctx context.Context, cmd *cobra.Command, platformDir, alias string, keepOthers, quiet bool) (*manager.Manager, *manager.Result, error) {
 	projects, err := config.ReadProjects(platformDir)
 	if err != nil {
 		return nil, nil, err
@@ -81,7 +81,7 @@ func switchToAlias(ctx context.Context, platformDir, alias string, keepOthers, q
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := ensureSupportedRuntime(nil, preflightMgr); err != nil {
+	if err := ensureSupportedRuntime(cmd, preflightMgr); err != nil {
 		return nil, nil, err
 	}
 

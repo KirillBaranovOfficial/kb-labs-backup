@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -21,7 +21,7 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
   description: 'Run devkit tasks and record results',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaRunFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaRunFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -46,15 +46,30 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
         kind: 'run', id: '', timestamp: new Date().toISOString(), durationMs, tasks, raw,
       };
 
+      const result = raw.ok ? raw : {
+        ok: false as const,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: 'QA run failed',
+          hint: 'Review failed task output, then rerun `kb qa run`.',
+          diagnostics: raw.results.filter((task) => !task.OK).map((task) => ({
+            code: 'KB_QA_TASK_FAILED',
+            severity: 'error',
+            path: task.Package,
+            message: task.Error || task.Stderr || `Task ${task.Task} exited ${task.ExitCode}.`,
+          })),
+        },
+      };
+
       if (flags.json) {
-        ctx.ui?.json?.(buildRunJsonReport(effective));
+        return raw.ok ? buildRunJsonReport(effective) : result;
       } else {
         for (const section of buildRunReport(effective)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return raw.ok ? { ok: true, result: raw } : { ok: false, error: 'QA run failed', result: raw };
+      return result;
     },
   },
 });

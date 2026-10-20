@@ -4,8 +4,13 @@ package contracts
 
 import (
 	"fmt"
+	"net"
+	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 const RequestSchema = "kb.create/v2"
@@ -21,9 +26,8 @@ const (
 type CompatibilityPolicy string
 
 const (
-	PolicyStrict      CompatibilityPolicy = "strict"
-	PolicyCompatible  CompatibilityPolicy = "compatible"
-	PolicyUpgradeSafe CompatibilityPolicy = "upgrade-safe"
+	PolicyStrict     CompatibilityPolicy = "strict"
+	PolicyCompatible CompatibilityPolicy = "compatible"
 )
 
 type ArtifactSource string
@@ -57,6 +61,7 @@ type InstallRequest struct {
 	Platform            VersionSelector     `json:"platform"`
 	SDK                 VersionSelector     `json:"sdk,omitempty"`
 	ServiceProfile      string              `json:"serviceProfile,omitempty"`
+	GatewayURL          string              `json:"gatewayUrl,omitempty"`
 	Plugins             []ComponentRequest  `json:"plugins,omitempty"`
 	Adapters            []ComponentRequest  `json:"adapters,omitempty"`
 	ProviderPreferences map[string]string   `json:"providerPreferences,omitempty"`
@@ -72,12 +77,39 @@ type InstallRequest struct {
 	ProjectRoot         string `json:"projectRoot,omitempty"`
 }
 
+// RequestValidationError identifies the request field that needs correction at
+// the shared V2 request boundary.
+type RequestValidationError struct {
+	Code    string
+	Field   string
+	Message string
+	Hint    string
+	Cause   error
+}
+
+func (e *RequestValidationError) Error() string {
+	if e.Cause != nil {
+		return e.Message + ": " + e.Cause.Error()
+	}
+	return e.Message
+}
+
+func (e *RequestValidationError) Unwrap() error { return e.Cause }
+
+func invalidRequestField(code, field, message, action string, cause error) error {
+	return &RequestValidationError{
+		Code: code, Field: field, Message: message,
+		Hint: action, Cause: cause,
+	}
+}
+
 func (r InstallRequest) Normalize() (InstallRequest, error) {
 	if r.Schema == "" {
 		r.Schema = RequestSchema
 	}
 	if r.Schema != RequestSchema {
-		return InstallRequest{}, fmt.Errorf("unsupported request schema %q", r.Schema)
+		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "schema",
+			fmt.Sprintf("unsupported request schema %q", r.Schema), "Set schema to `kb.create/v2` in the request JSON, then retry.", nil)
 	}
 	if r.Platform.Version == "" && r.Platform.Channel == "" {
 		r.Platform.Channel = ChannelStable
@@ -88,32 +120,62 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	if err := validateSelector("sdk", r.SDK); err != nil {
 		return InstallRequest{}, err
 	}
+	if r.GatewayURL != "" {
+		parsed, err := url.Parse(r.GatewayURL)
+		if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Port() == "" ||
+			(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "gatewayUrl",
+				"gateway URL must be an http loopback origin with an explicit port",
+				"Set gatewayUrl to an http loopback origin with an explicit port in the request JSON, then retry.", err)
+		}
+		port, err := strconv.Atoi(parsed.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "gatewayUrl",
+				"gateway URL port must be between 1 and 65535",
+				"Set gatewayUrl to an http loopback origin with a port from 1 to 65535, then retry.", err)
+		}
+		hostname := parsed.Hostname()
+		ip := net.ParseIP(hostname)
+		if hostname != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "gatewayUrl",
+				"gateway URL must use a loopback host",
+				"Set gatewayUrl to use localhost or a loopback IP address, then retry.", nil)
+		}
+		r.GatewayURL = "http://" + parsed.Host
+	}
 	if r.Policy == "" {
 		r.Policy = PolicyStrict
 	}
-	if r.Policy != PolicyStrict && r.Policy != PolicyCompatible && r.Policy != PolicyUpgradeSafe {
-		return InstallRequest{}, fmt.Errorf("unsupported compatibility policy %q", r.Policy)
+	if r.Policy != PolicyStrict && r.Policy != PolicyCompatible {
+		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "policy",
+			fmt.Sprintf("unsupported compatibility policy %q", r.Policy),
+			"Set policy to `strict` or `compatible` in the request JSON, then retry.", nil)
 	}
 	if r.Source == "" {
 		r.Source = SourceRegistry
 	}
 	if r.Source != SourceRegistry && r.Source != SourceOffline {
-		return InstallRequest{}, fmt.Errorf("unsupported artifact source %q", r.Source)
+		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "source",
+			fmt.Sprintf("unsupported artifact source %q", r.Source),
+			"Set source to `registry` or `offline` in the request JSON, then retry.", nil)
 	}
 	if r.PlatformRoot == "" {
-		return InstallRequest{}, fmt.Errorf("platform root is required")
+		return InstallRequest{}, invalidRequestField(CodeInputRequired, "platformRoot", "platformRoot is required",
+			"Set `platformRoot` to a non-empty directory in the request JSON.", nil)
 	}
 	// Resolve user supplied paths at the request boundary so later execution
 	// never interprets a relative root against a changed working directory.
-	root, err := absolutePath(r.PlatformRoot)
+	root, err := AbsolutePath(r.PlatformRoot)
 	if err != nil {
-		return InstallRequest{}, fmt.Errorf("resolve platform root: %w", err)
+		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "platformRoot", "platform root could not be resolved",
+			"Set `platformRoot` to a directory path that can be resolved in the request JSON.", err)
 	}
 	r.PlatformRoot = root
 	if r.ProjectRoot != "" {
-		project, err := absolutePath(r.ProjectRoot)
+		project, err := AbsolutePath(r.ProjectRoot)
 		if err != nil {
-			return InstallRequest{}, fmt.Errorf("resolve project root: %w", err)
+			return InstallRequest{}, invalidRequestField(CodeInputRequired, "projectRoot", "project directory could not be resolved",
+				"Pass a project directory path that can be resolved, then retry.", err)
 		}
 		r.ProjectRoot = project
 	}
@@ -134,7 +196,48 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	return r, nil
 }
 
-func absolutePath(value string) (string, error) {
+// ValidateProjectSelection resolves a project path selected for registration
+// and requires it to identify an existing directory. Request normalization
+// does not call this because replaying an installed request does not select or
+// write to its project.
+func ValidateProjectSelection(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	absolute, err := AbsolutePath(value)
+	if err != nil {
+		return "", invalidRequestField(CodeInputRequired, "projectRoot", "project directory could not be resolved",
+			"Pass an existing project directory, then retry.", err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if _, linkErr := os.Lstat(absolute); os.IsNotExist(linkErr) {
+				return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project directory must exist",
+					fmt.Sprintf("Create it with `%s` or pass an existing project directory, then retry.", ShellCommand("mkdir", "-p", value)), err)
+			}
+			return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project path does not resolve to an existing directory",
+				"Pass an existing project directory, then retry.", err)
+		}
+		return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project directory could not be checked",
+			"Pass an existing project directory, then retry.", err)
+	}
+	if !info.IsDir() {
+		return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project path is not a directory",
+			"Pass an existing project directory, then retry.", nil)
+	}
+	return absolute, nil
+}
+
+// ShellQuote returns a POSIX shell-safe single-quoted argument for actionable
+// hints. ParseShellCommands parses this word grammar for exact argv execution.
+func ShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+// AbsolutePath applies the install request's lexical absolute-path rule. It
+// cleans path syntax but deliberately does not resolve filesystem identity.
+func AbsolutePath(value string) (string, error) {
 	if filepath.IsAbs(value) {
 		return filepath.Clean(value), nil
 	}
@@ -146,11 +249,19 @@ func absolutePath(value string) (string, error) {
 }
 
 func validateSelector(name string, selector VersionSelector) error {
+	field := name + ".version"
+	if selector.Channel != "" {
+		field = name + ".channel"
+	}
 	if selector.Version != "" && selector.Channel != "" {
-		return fmt.Errorf("%s cannot specify both version and channel", name)
+		return invalidRequestField(CodeIncompatibleComponents, name,
+			fmt.Sprintf("%s cannot specify both version and channel", name),
+			fmt.Sprintf("Set either `%s.version` or `%s.channel` in the request JSON, then retry.", name, name), nil)
 	}
 	if selector.Channel != "" && selector.Channel != ChannelStable && selector.Channel != ChannelCanary && selector.Channel != ChannelExperimental {
-		return fmt.Errorf("unsupported %s channel %q", name, selector.Channel)
+		return invalidRequestField(CodeIncompatibleComponents, field,
+			fmt.Sprintf("unsupported %s channel %q", name, selector.Channel),
+			fmt.Sprintf("Set `%s` to `stable`, `canary`, or `experimental` in the request JSON, then retry.", field), nil)
 	}
 	return nil
 }
@@ -160,12 +271,16 @@ func normalizeComponents(kind string, components []ComponentRequest) ([]Componen
 	result := make([]ComponentRequest, 0, len(components))
 	for _, component := range components {
 		if component.ID == "" {
-			return nil, fmt.Errorf("%s ID is required", kind)
+			return nil, invalidRequestField(CodeIncompatibleComponents, kind+"s[].id",
+				fmt.Sprintf("%s ID is required", kind),
+				fmt.Sprintf("Set an `id` for every entry in `%ss` in the request JSON, then retry.", kind), nil)
 		}
 		if _, exists := seen[component.ID]; exists {
-			return nil, fmt.Errorf("duplicate %s %q", kind, component.ID)
+			return nil, invalidRequestField(CodeIncompatibleComponents, kind+"s",
+				fmt.Sprintf("duplicate %s %q", kind, component.ID),
+				fmt.Sprintf("Remove the duplicate `%s` entry from `%ss` in the request JSON, then retry.", component.ID, kind), nil)
 		}
-		if err := validateSelector(kind+" "+component.ID, component.Version); err != nil {
+		if err := validateSelector(kind+"s["+component.ID+"]", component.Version); err != nil {
 			return nil, err
 		}
 		seen[component.ID] = struct{}{}

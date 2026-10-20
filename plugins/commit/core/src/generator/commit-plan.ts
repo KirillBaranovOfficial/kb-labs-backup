@@ -422,11 +422,7 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
       const errMsg = error instanceof Error ? error.message : String(error);
       const errStack = error instanceof Error && error.stack ? error.stack : '';
       if (error instanceof AdapterUnavailableError && error.reason === 'not-configured') {
-        await logger.debug('LLM is not configured; using heuristic commit messages', {
-          capability: error.slot,
-          stack: errStack,
-        });
-        onProgress?.('No LLM configured — using heuristics. To enable AI messages: kb config set platform.adapters.llm @kb-labs/adapters-openai');
+        throw error;
       } else {
         await logger.warn(`LLM generation failed, falling back to heuristics: ${errMsg}`, {
           error: errMsg,
@@ -437,7 +433,7 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
       commits = generateHeuristicPlan(summaries);
     }
   } else {
-    commits = generateHeuristicPlan(summaries);
+    throw new AdapterUnavailableError('llm');
   }
 
   // 6. Track analytics

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
 	"github.com/spf13/cobra"
 )
 
@@ -45,20 +48,30 @@ Examples:
 }
 
 // Execute is the main entry point called from main.go.
-func Execute() {
+func Execute() diag.ExitStatus {
+	args := os.Args[1:]
+	if clikitcommand.HandleCobraHelp(rootCmd, args, os.Stdout) {
+		return diag.SuccessStatus()
+	}
+	_, _, findErr := rootCmd.Find(args)
+	if status, handled := clikitcommand.HandleUnknownCommand(rootCmd, args, os.Stdout, os.Stderr, result.ResolveMode(jsonMode, false, ""), findErr == nil); handled {
+		return status
+	}
 	err := rootCmd.Execute()
 	if err == nil {
-		return
+		return diag.SuccessStatus()
 	}
+	diagnostic := diag.FromError(err)
+	diagnostic.Binary = rootCmd.Name()
 	if jsonMode {
-		if err.Error() != "" {
-			_ = JSONOut(map[string]any{"ok": false, "hint": err.Error()})
+		if diagnostic.Error() != "" {
+			_ = JSONOut(map[string]any{"ok": false, "hint": diagnostic.Error()})
 		}
 	} else {
 		out := newOutput()
-		out.Err(err.Error())
+		out.Err(diagnostic.Error())
 	}
-	os.Exit(1)
+	return diag.ExitCode(diagnostic)
 }
 
 func init() {

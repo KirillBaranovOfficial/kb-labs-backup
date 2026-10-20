@@ -103,11 +103,7 @@ describe('buildRegistrySseAuthHook', () => {
     hook?.(request as any, reply as any, done as any);
     expect(done).not.toHaveBeenCalled();
     expect(reply.statusCode).toBe(401);
-    expect(reply.payload).toMatchObject({
-      status: 'unauthorized',
-      reason: 'invalid_token',
-    });
+    expect(reply.payload).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
   });
 });
-
 

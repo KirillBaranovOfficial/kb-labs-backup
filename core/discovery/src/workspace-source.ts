@@ -11,6 +11,9 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { glob } from 'glob';
 import { parse as parseYaml } from 'yaml';
+import { declaredManifestPath } from '@kb-labs/core-platform';
+import { DISCOVERY_PACKAGE_MANIFEST, DISCOVERY_WORKSPACE_FILE } from './discovery-inputs.js';
+import { resolveDeclaredManifestPath } from './manifest-loader.js';
 
 export interface WorkspaceCandidate {
   /** `name` from package.json */
@@ -21,28 +24,26 @@ export interface WorkspaceCandidate {
 
 const IGNORED_DIRS = ['.kb/**', '**/node_modules/**'];
 
+function isMissingFile(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
 async function readPackageJson(file: string): Promise<Record<string, unknown> | null> {
   try {
     return JSON.parse(await fs.readFile(file, 'utf-8')) as Record<string, unknown>;
-  } catch {
-    return null;
+  } catch (error) {
+    if (isMissingFile(error)) return null;
+    throw error;
   }
-}
-
-/** The manifest file named by package.json `kbLabs.manifest` / `kb.manifest`, if any. */
-export function declaredManifest(pkg: Record<string, unknown>): string | undefined {
-  const kbLabs = pkg.kbLabs as Record<string, unknown> | undefined;
-  const kb = pkg.kb as Record<string, unknown> | undefined;
-  const field = kbLabs?.manifest ?? kb?.manifest;
-  return typeof field === 'string' ? field : undefined;
 }
 
 async function exists(file: string): Promise<boolean> {
   try {
     await fs.access(file);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isMissingFile(error)) return false;
+    throw error;
   }
 }
 
@@ -52,16 +53,62 @@ async function exists(file: string): Promise<boolean> {
  * a fresh checkout has hundreds of them and none is an error.
  */
 async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | null> {
-  const pkg = await readPackageJson(path.join(packageRoot, 'package.json'));
+  const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST));
   if (!pkg || typeof pkg.name !== 'string') {return null;}
-  const manifestRel = declaredManifest(pkg);
-  if (!manifestRel) {return null;}
-
-  const manifestFile = path.resolve(packageRoot, manifestRel);
-  const built =
-    (await exists(manifestFile)) ||
-    (await exists(manifestFile.replace(/\.[cm]?js$/, '.json')));
+  const manifestField = declaredManifestPath(pkg);
+  if (!manifestField) {return null;}
+  const resolved = resolveDeclaredManifestPath(packageRoot, manifestField);
+  if (resolved.escapesRoot) return { packageName: pkg.name, packageRoot };
+  const built = await exists(resolved.manifestPath) || await exists(resolved.manifestPath.replace(/\.[cm]?js$/, '.json'));
   return built ? { packageName: pkg.name, packageRoot } : null;
+}
+
+async function workspacePackageRoots(
+  root: string,
+  onInputRead?: (filePath: string) => void,
+): Promise<string[]> {
+  const absRoot = path.resolve(root);
+
+  let patterns: string[] | null = null;
+  try {
+    const workspaceFile = path.join(absRoot, DISCOVERY_WORKSPACE_FILE);
+    onInputRead?.(workspaceFile);
+    const parsed = parseYaml(await fs.readFile(workspaceFile, 'utf-8')) as
+      | { packages?: unknown }
+      | null;
+    if (Array.isArray(parsed?.packages)) {
+      patterns = parsed.packages.filter((p): p is string => typeof p === 'string');
+    }
+  } catch (error) {
+    if (!isMissingFile(error)) throw error;
+  }
+
+  if (!patterns) {
+    return [absRoot];
+  }
+
+  const include = patterns.filter(p => !p.startsWith('!'));
+  const exclude = patterns.filter(p => p.startsWith('!')).map(p => `${p.slice(1).replace(/\/$/, '')}/**`);
+  const roots = new Set<string>();
+  for (const pattern of include) {
+    const files = await glob(path.posix.join(pattern.replace(/\/$/, ''), DISCOVERY_PACKAGE_MANIFEST), {
+      cwd: absRoot,
+      ignore: [...IGNORED_DIRS, ...exclude],
+    });
+    for (const file of files) {
+      roots.add(path.dirname(path.join(absRoot, file)));
+    }
+  }
+  return [...roots].sort();
+}
+
+/** Enumerate every package matched by a workspace, whether built or not. */
+export async function findWorkspacePackages(root: string): Promise<WorkspaceCandidate[]> {
+  const packages = await Promise.all((await workspacePackageRoots(root)).map(async packageRoot => {
+    const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST));
+    return pkg && typeof pkg.name === 'string' ? { packageName: pkg.name, packageRoot } : null;
+  }));
+  return packages.filter((candidate): candidate is WorkspaceCandidate => candidate !== null);
 }
 
 /**
@@ -74,40 +121,14 @@ async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | nu
  *
  * Results are sorted by package root for a deterministic order.
  */
-export async function findWorkspaceCandidates(root: string): Promise<WorkspaceCandidate[]> {
-  const absRoot = path.resolve(root);
-
-  let patterns: string[] | null = null;
-  try {
-    const parsed = parseYaml(await fs.readFile(path.join(absRoot, 'pnpm-workspace.yaml'), 'utf-8')) as
-      | { packages?: unknown }
-      | null;
-    if (Array.isArray(parsed?.packages)) {
-      patterns = parsed.packages.filter((p): p is string => typeof p === 'string');
-    }
-  } catch {
-    // no workspace file — handled below
-  }
-
-  if (!patterns) {
-    const single = await toCandidate(absRoot);
-    return single ? [single] : [];
-  }
-
-  const include = patterns.filter(p => !p.startsWith('!'));
-  const exclude = patterns.filter(p => p.startsWith('!')).map(p => `${p.slice(1).replace(/\/$/, '')}/**`);
-
-  const roots = new Set<string>();
-  for (const pattern of include) {
-    const files = await glob(path.posix.join(pattern.replace(/\/$/, ''), 'package.json'), {
-      cwd: absRoot,
-      ignore: [...IGNORED_DIRS, ...exclude],
-    });
-    for (const file of files) {
-      roots.add(path.dirname(path.join(absRoot, file)));
-    }
-  }
-
-  const candidates = await Promise.all([...roots].sort().map(toCandidate));
+export async function findWorkspaceCandidates(
+  root: string,
+  onInputRead?: (filePath: string) => void,
+): Promise<WorkspaceCandidate[]> {
+  const candidates = await Promise.all((await workspacePackageRoots(root, onInputRead)).map(async (packageRoot) => {
+    const packagePath = path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST);
+    onInputRead?.(packagePath);
+    return toCandidate(packageRoot);
+  }));
   return candidates.filter((c): c is WorkspaceCandidate => c !== null);
 }

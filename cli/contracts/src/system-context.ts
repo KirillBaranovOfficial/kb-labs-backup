@@ -41,7 +41,7 @@ export interface Output {
  *     // Direct environment access
  *     console.log(ctx.env.HOME);
  *
- *     return { ok: true };
+ *     return { message: 'Command complete' };
  *   }
  * });
  * ```

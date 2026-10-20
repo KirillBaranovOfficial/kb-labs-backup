@@ -1,6 +1,7 @@
 import type { AdapterManifest } from '@kb-labs/sdk/adapters';
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'worktree-workspace-provider',
   name: 'Git Worktree Workspace Provider',
@@ -10,6 +11,7 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'IWorkspaceProvider',
+  networkRequired: false,
   contexts: ['workspace'],
   capabilities: {
     custom: {

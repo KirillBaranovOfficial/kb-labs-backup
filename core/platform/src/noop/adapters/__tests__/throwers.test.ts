@@ -6,12 +6,15 @@
  * name attached for clean error reporting.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AdapterUnavailableError } from '../../../errors.js';
 import { NoOpLLM } from '../llm.js';
 import { NoOpEmbeddings } from '../embeddings.js';
-import { NoOpNotifier } from '../notifier.js';
-import { NoOpLogReader } from '../log-reader.js';
+import { UnavailableNotifier } from '../notifier.js';
+import { UnavailableLogReader } from '../log-reader.js';
+import { UnavailableVectorStore } from '../vector-store.js';
+import { inmemoryFactories } from '../../../inmemory/index.js';
+import { InMemoryNotifier } from '../../../inmemory/adapters/notifier.js';
 import { noopFactories } from '../../index.js';
 
 describe('NoOpLLM', () => {
@@ -68,10 +71,10 @@ describe('NoOpEmbeddings', () => {
   });
 });
 
-describe('NoOpNotifier', () => {
-  const notifier = new NoOpNotifier();
+describe('UnavailableNotifier', () => {
+  const notifier = new UnavailableNotifier();
 
-  it('notify() does NOT throw — silent drop is the contract', async () => {
+  it('notify() throws a typed error instead of silently dropping the event', async () => {
     await expect(
       notifier.notify({
         severity: 'info',
@@ -79,28 +82,23 @@ describe('NoOpNotifier', () => {
         title: 'hi',
         body: 'msg',
       }),
-    ).resolves.toBeUndefined();
+    ).rejects.toMatchObject({ name: 'AdapterUnavailableError', slot: 'notifier' });
   });
 
-  it('subscribe() returns a no-op unsubscribe function', () => {
-    const unsub = notifier.subscribe({}, async () => {});
-    expect(typeof unsub).toBe('function');
-    expect(() => unsub()).not.toThrow();
+  it('subscribe() throws a typed error instead of creating a dead subscription', () => {
+    expect(() => notifier.subscribe({}, async () => {})).toThrow(AdapterUnavailableError);
   });
 });
 
-describe('NoOpLogReader', () => {
-  const reader = new NoOpLogReader();
+describe('UnavailableLogReader', () => {
+  const reader = new UnavailableLogReader();
 
-  it('query() returns an empty result, never throws', async () => {
-    const result = await reader.query({});
-    expect(result.logs).toEqual([]);
-    expect(result.total).toBe(0);
-    expect(result.hasMore).toBe(false);
+  it('query() throws a typed error when no local log reader is configured', async () => {
+    await expect(reader.query({})).rejects.toMatchObject({ name: 'AdapterUnavailableError', slot: 'logs' });
   });
 
-  it('getById() returns null', async () => {
-    expect(await reader.getById('any-id')).toBeNull();
+  it('getById() throws when no local reader exists', async () => {
+    await expect(reader.getById('any-id')).rejects.toMatchObject({ slot: 'logs' });
   });
 
   it('getCapabilities() reports no backends', () => {
@@ -112,12 +110,29 @@ describe('NoOpLogReader', () => {
   });
 });
 
+describe('InMemoryNotifier', () => {
+  it('delivers matching local notifications to subscribers', async () => {
+    const notifier = new InMemoryNotifier();
+    const handler = vi.fn(async () => {});
+    notifier.subscribe({ severity: ['warn'] }, handler);
+    await notifier.notify({ severity: 'warn', title: 'warning', body: 'local' });
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'warning',
+      id: expect.any(String),
+      emittedAt: expect.any(Number),
+    }));
+    expect(inmemoryFactories.notifier()).toBeInstanceOf(InMemoryNotifier);
+  });
+});
+
 describe('noopFactories', () => {
   it('provides factories for slots whose defaultFallback is noop', () => {
     expect(noopFactories.llm).toBeDefined();
     expect(noopFactories.embeddings).toBeDefined();
-    expect(noopFactories.notifier).toBeDefined();
     expect(noopFactories.logs).toBeDefined();
+    expect(noopFactories.vectorStore).toBeDefined();
+    expect(Object.hasOwn(noopFactories, 'notifier')).toBe(false);
+    expect(inmemoryFactories.notifier).toBeDefined();
   });
 
   it('factory returns a fresh instance each call', () => {
@@ -126,5 +141,18 @@ describe('noopFactories', () => {
     expect(a).toBeInstanceOf(NoOpLLM);
     expect(b).toBeInstanceOf(NoOpLLM);
     expect(a).not.toBe(b);
+  });
+});
+
+describe('UnavailableVectorStore', () => {
+  const store = new UnavailableVectorStore();
+
+  it('throws a typed missing-capability error instead of returning empty results', async () => {
+    await expect(store.search([], 1)).rejects.toMatchObject({
+      name: 'AdapterUnavailableError',
+      slot: 'vectorStore',
+      reason: 'not-configured',
+    });
+    await expect(store.count()).rejects.toMatchObject({ slot: 'vectorStore' });
   });
 });

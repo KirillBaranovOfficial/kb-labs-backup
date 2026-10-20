@@ -3,7 +3,7 @@
  * Atomic step: reads plan, runs git ops, emits output marker for workflow.
  */
 
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3, useLoader, useConfig } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3, useLoader, useConfig } from '@kb-labs/sdk';
 import {
   planRelease,
   commitAndTagRelease,
@@ -53,7 +53,7 @@ export default defineCommand({
   description: 'Commit, tag, and push release changes',
 
   handler: {
-    async intent(ctx: PluginContextV3, input: CLIInput<GitFlags>) {
+    async intent(ctx: PluginCommandContextV3, input: CLIInput<GitFlags>) {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -87,7 +87,7 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<GitFlags>): Promise<ReleaseGitResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<GitFlags>): Promise<ReleaseGitResult> {
       const { flags } = input;
       const noVerify = flags['no-verify'] ?? false;
       const cwd = ctx.cwd || process.cwd();
@@ -127,10 +127,9 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         const msg = `No packages found${flags.scope ? ` matching scope: ${flags.scope}` : ''}`;
-        if (flags.json) { ctx.ui?.json?.({ committed: false, tagged: [], pushed: false, message: msg }); }
+        if (flags.json) { return { committed: false, tagged: [], pushed: false, message: msg }; }
         else { ctx.ui?.write?.(msg); }
-        console.log('::kb-output::' + JSON.stringify({ committed: false, tagged: [], pushed: false }));
-        return { ok: true, result: { committed: false, tagged: [], pushed: false } };
+        return { committed: false, tagged: [], pushed: false };
       }
 
       const scopePath = await resolveScopePath(repoRoot, flags.scope ?? 'root');
@@ -158,15 +157,8 @@ export default defineCommand({
         gitLoader.succeed(`Committed, tagged (${result.tagged.length})`);
       }
 
-      console.log('::kb-output::' + JSON.stringify({
-        committed: result.committed,
-        tagged: result.tagged,
-        pushed: result.pushed,
-      }));
-
       if (flags.json) {
-        ctx.ui?.json?.(result);
-        return { ok: true, result };
+        return result;
       }
 
       ctx.ui?.sideBox?.({
@@ -175,7 +167,7 @@ export default defineCommand({
         status: 'success',
       });
 
-      return { ok: true, result };
+      return result;
     },
   },
 });

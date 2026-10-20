@@ -2,8 +2,9 @@ import { createErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform"
 
 /**
  * A project-runtime failure that maps to a catalog error code
- * (`KB_PROJECT_RUNTIME_START_FAILED`, `KB_PROJECT_RUNTIME_LIMIT`). Carries the
- * unified error envelope so the gateway can answer with it.
+ * (`KB_PROJECT_RUNTIME_PROCESS_START_FAILED`, `KB_PROJECT_RUNTIME_RELOAD_FAILED`,
+ * `KB_PROJECT_RUNTIME_LIMIT`). Carries the unified error envelope so the
+ * gateway can answer with it.
  */
 export class ProjectRuntimeError extends Error {
   readonly envelope: ErrorEnvelope;
@@ -22,9 +23,30 @@ export function runtimeStartFailed(
   projectId: string,
   cause: string,
 ): ProjectRuntimeError {
+  if (cause.includes("KB_PROJECT_RUNTIME_IDENTITY_MISMATCH")) {
+    return new ProjectRuntimeError(
+      createErrorEnvelope("KB_PROJECT_RUNTIME_IDENTITY_MISMATCH", {
+        details: { projectId },
+        cause: "the host-passed project identity does not match the project registry",
+      }),
+    );
+  }
   return new ProjectRuntimeError(
-    createErrorEnvelope("KB_PROJECT_RUNTIME_START_FAILED", {
-      details: { project: projectId },
+    createErrorEnvelope("KB_PROJECT_RUNTIME_PROCESS_START_FAILED", {
+      details: { projectId },
+      cause,
+    }),
+  );
+}
+
+/** The project runtime could not reload after its discovered plugin set changed. */
+export function runtimeReloadFailed(
+  projectId: string,
+  cause: string,
+): ProjectRuntimeError {
+  return new ProjectRuntimeError(
+    createErrorEnvelope("KB_PROJECT_RUNTIME_RELOAD_FAILED", {
+      details: { projectId },
       cause,
     }),
   );

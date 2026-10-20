@@ -1,7 +1,8 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse, type AxiosError } from 'axios';
 import type { RequestInterceptor, ResponseInterceptor, ErrorInterceptor } from './types';
 import { KBError } from '../errors/kb-error';
-import { mapFetchError } from './error-mapper';
+import { mapFetchError, mapInvalidResultEnvelope } from './error-mapper';
+import { decodeUxSuccessResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import { ulid } from 'ulid';
 
 export class HttpClient {
@@ -33,15 +34,20 @@ export class HttpClient {
     this.client.interceptors.response.use(
       (response) => {
         const data = response.data;
+        const requireUxResult = (response.config as AxiosRequestConfig & { requireUxResult?: boolean }).requireUxResult === true;
 
-        // Check if response is an envelope
-        if (data && typeof data === 'object' && 'ok' in data) {
-          if (data.ok === true && 'data' in data) {
+        // Check if response claims to use the shared result envelope.
+        if (isUxResultCandidate(data)) {
+          if (!isUxResult(data)) {
+            return Promise.reject(mapInvalidResultEnvelope(response.status));
+          }
+          if (data.ok) {
             // Success envelope: unwrap and return data
-            response.data = data.data;
-          } else if (data.ok === false && 'error' in data) {
+            response.data = decodeUxSuccessResult(data);
+            if (requireUxResult) return response;
+          } else {
             // Error envelope: throw error
-            const error = mapFetchError(data.error, {
+            const error = mapFetchError(data, {
               status: response.status,
               statusText: response.statusText,
             } as Response);
@@ -49,12 +55,24 @@ export class HttpClient {
           }
         }
 
+        if (requireUxResult) {
+          return Promise.reject(mapInvalidResultEnvelope(response.status));
+        }
+
         return response;
       },
       (error: AxiosError) => {
         // Transform axios error to KBError
-        const kbError = mapFetchError(error.response?.data, {
-          status: error.response?.status ?? 500,
+        const body = error.response?.data;
+        const status = error.response?.status ?? 500;
+        const requireUxResult = (error.response?.config as AxiosRequestConfig & { requireUxResult?: boolean } | undefined)?.requireUxResult === true;
+        const malformedResult = isUxResultCandidate(body) && !isUxResult(body);
+        const kbError = requireUxResult && !isUxResultCandidate(body)
+          ? mapInvalidResultEnvelope(status)
+          : malformedResult
+            ? mapInvalidResultEnvelope(status)
+            : mapFetchError(body, {
+          status,
           statusText: error.response?.statusText ?? 'Unknown Error',
         } as Response);
         return Promise.reject(kbError);
@@ -78,12 +96,27 @@ export class HttpClient {
     return this.baseUrl;
   }
 
+  /** Gateway URL without the versioned API path, for absolute streaming URLs. */
+  getGatewayBaseUrl(): string {
+    return gatewayBaseFromApiBase(this.baseUrl);
+  }
+
   async fetch<T>(path: string, options: AxiosRequestConfig = {}): Promise<T> {
+    return this.fetchWithUxPolicy<T>(path, options, false);
+  }
+
+  /** Fetch a JSON route that must return a valid shared UX result envelope. */
+  async fetchUx<T>(path: string, options: AxiosRequestConfig = {}): Promise<T> {
+    return this.fetchWithUxPolicy<T>(path, options, true);
+  }
+
+  private async fetchWithUxPolicy<T>(path: string, options: AxiosRequestConfig, requireUxResult: boolean): Promise<T> {
     try {
       // Apply custom request interceptors (if any)
-      const config: AxiosRequestConfig = {
+      const config: AxiosRequestConfig & { requireUxResult?: boolean } = {
         url: path,
         ...options,
+        requireUxResult,
       };
 
       // Note: Custom interceptors work with FetchOptions (headers as Headers object)
@@ -111,3 +144,21 @@ export class HttpClient {
   }
 }
 
+/** Resolve an absolute streaming URL base from the HTTP client's versioned API base. */
+export function gatewayBaseFromApiBase(
+  baseUrl: string,
+  origin = typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
+): string {
+  const url = new URL(baseUrl || '/', origin);
+  if (url.pathname === '/api/v1') {
+    url.pathname = '';
+  } else if (url.pathname.endsWith('/api/v1/')) {
+    url.pathname = url.pathname.slice(0, -'/api/v1/'.length);
+  } else if (url.pathname.endsWith('/api/v1')) {
+    url.pathname = url.pathname.slice(0, -'/api/v1'.length);
+  }
+  const pathname = url.pathname === '/' ? '' : url.pathname;
+  return url.origin === 'http://localhost' && !baseUrl.startsWith('http')
+    ? `${pathname}${url.search}`
+    : `${url.origin}${pathname}${url.search}`;
+}

@@ -396,7 +396,7 @@ output:
   ```
 - [ ] Check analytics for failures
   ```bash
-  grep "did not call submit_result" .kb/analytics/buffer/*.jsonl
+  grep "did not call submit_result" <KB_HOME>/state/<projectId>/analytics/buffer/*.jsonl
   # Should be zero!
   ```
 
@@ -546,18 +546,18 @@ const result = await mindRagQuery({ text: "...", mode: "auto" })
 ### Monitoring
 ```bash
 # Track success rate
-grep "orchestrator.specialist.completed" .kb/analytics/buffer/*.jsonl | \
+grep "orchestrator.specialist.completed" <KB_HOME>/state/<projectId>/analytics/buffer/*.jsonl | \
   jq -s 'group_by(.payload.specialist_id) |
          map({specialist: .[0].payload.specialist_id,
               total: length,
               success: map(select(.payload.success)) | length})'
 
 # Track submit_result failures
-grep "did not call submit_result" .kb/analytics/buffer/*.jsonl | wc -l
+grep "did not call submit_result" <KB_HOME>/state/<projectId>/analytics/buffer/*.jsonl | wc -l
 # Target: 0
 
 # Track validation errors
-grep "Verification failed" .kb/analytics/buffer/*.jsonl | wc -l
+grep "Verification failed" <KB_HOME>/state/<projectId>/analytics/buffer/*.jsonl | wc -l
 # Target: near 0
 ```
 

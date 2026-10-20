@@ -1,6 +1,7 @@
 package checks
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,6 +99,64 @@ fi
 	}
 }
 
+func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.T) {
+	root := t.TempDir()
+	payloadPath := filepath.Join(root, "payload.json")
+	callsPath := filepath.Join(root, "calls.txt")
+	scriptPath := filepath.Join(root, "check.sh")
+	script := "#!/bin/sh\ncat > '" + payloadPath + "'\nprintf x >> '" + callsPath + "'\nprintf '{\"issues\":[]}\\n'\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	cfg := &config.DevkitConfig{
+		Presets: map[string]config.Preset{"typescript": {Language: "typescript"}},
+		Custom:  []config.CustomCheck{{Name: "workspace-check", Run: scriptPath, On: []string{"check"}, Scope: "workspace"}},
+	}
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{
+		{Name: "@acme/adapter", Dir: filepath.Join(root, "adapters", "adapter"), Category: "adapter", Preset: "typescript", Language: "typescript", RelPath: "adapters/adapter"},
+		{Name: "@acme/library", Dir: filepath.Join(root, "packages", "library"), Category: "ts-lib", Preset: "typescript", Language: "typescript", RelPath: "packages/library"},
+	}}
+	results := RunAll(ws, cfg, Build(cfg, root, "check"), nil)
+	if got := string(mustReadFile(t, callsPath)); got != "x" {
+		t.Fatalf("workspace check calls = %q, want one invocation", got)
+	}
+	var input struct {
+		Workspace struct {
+			Root     string `json:"root"`
+			Packages []struct {
+				Name        string `json:"name"`
+				Category    string `json:"category"`
+				RelPath     string `json:"relPath"`
+				BuildTarget bool   `json:"buildTarget"`
+			} `json:"packages"`
+		} `json:"workspace"`
+	}
+	if err := json.Unmarshal(mustReadFile(t, payloadPath), &input); err != nil {
+		t.Fatalf("decode workspace stdin: %v", err)
+	}
+	if input.Workspace.Root != root || len(input.Workspace.Packages) != 2 {
+		t.Fatalf("workspace input = %#v, want root and both discovered packages", input.Workspace)
+	}
+	if input.Workspace.Packages[0].Category != "adapter" || input.Workspace.Packages[1].Category != "ts-lib" {
+		t.Fatalf("package categories = %#v, want resolved devkit categories", input.Workspace.Packages)
+	}
+	if input.Workspace.Packages[0].BuildTarget || input.Workspace.Packages[1].BuildTarget {
+		t.Fatalf("build targets = %#v, want false because config declares no build task", input.Workspace.Packages)
+	}
+	if result, ok := results["workspace"]; !ok || len(result.Issues) != 0 || result.ChecksRun != 1 {
+		t.Fatalf("clean workspace check result = %#v, want one successful anchored check", result)
+	}
+}
+
+func mustReadFile(t *testing.T, file string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	return data
+}
+
 func TestBuildSkipsDisabledOrMismatchedExternalChecks(t *testing.T) {
 	cfg := &config.DevkitConfig{
 		Checks: config.ChecksConfig{
@@ -117,5 +176,78 @@ func TestBuildSkipsDisabledOrMismatchedExternalChecks(t *testing.T) {
 		if rule.Name() == "disabled" || rule.Name() == "go-only" {
 			t.Fatalf("unexpected external rule %q in typescript registry", rule.Name())
 		}
+	}
+}
+
+func TestExternalCheckHonorsCategoryFilter(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"adapter-manifest\",\"severity\":\"error\",\"message\":\"reported\"}]}\\n'\n"), 0o755); err != nil {
+		t.Fatalf("write check script: %v", err)
+	}
+	cfg := &config.DevkitConfig{
+		Presets: map[string]config.Preset{"typescript": {Language: "typescript"}},
+		Custom:  []config.CustomCheck{{Name: "adapter-manifest", Run: script, On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}}},
+	}
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{
+		{Name: "@acme/adapter", Dir: root, Category: "adapter", Preset: "typescript", Language: "typescript"},
+		{Name: "@acme/library", Dir: root, Category: "ts-lib", Preset: "typescript", Language: "typescript"},
+	}}
+	results := RunAll(ws, cfg, Build(cfg, root, "check"), []string{"adapter-manifest"})
+	if len(results["@acme/adapter"].Issues) != 1 {
+		t.Fatalf("adapter issues = %#v, want one", results["@acme/adapter"].Issues)
+	}
+	if len(results["@acme/library"].Issues) != 0 {
+		t.Fatalf("library issues = %#v, want none", results["@acme/library"].Issues)
+	}
+}
+
+func TestExternalCheckUsesCallerToolPath(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	node := filepath.Join(binDir, "node")
+	if err := os.WriteFile(node, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"tool-path\",\"severity\":\"error\",\"message\":\"caller node selected\"}]}\\n'\n"), 0o755); err != nil {
+		t.Fatalf("write fake node: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+"/bin:/usr/bin")
+	rule := &externalRule{name: "tool-path", run: "node", phase: "check", workspaceRoot: root}
+	issues := rule.Check(workspace.Package{Name: "@acme/demo", Dir: root}, config.Preset{Language: "typescript"})
+	if len(issues) != 1 || issues[0].Message != "caller node selected" {
+		t.Fatalf("issues = %#v, want the fake node issue", issues)
+	}
+}
+
+func TestExternalCheckCrashIsNotReportedAsAStandardsFinding(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'node:fs:441 raw stack details' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	rule := &externalRule{name: "adapter-manifest", run: script, phase: "check", workspaceRoot: root}
+	issues := rule.Check(workspace.Package{Name: "@acme/demo", Dir: root}, config.Preset{Language: "typescript"})
+	if len(issues) != 1 || !issues[0].CheckFailure || issues[0].Check != "adapter-manifest" {
+		t.Fatalf("issues = %#v, want a typed external-check failure", issues)
+	}
+	if issues[0].Cause != "external command exited with status 1" || issues[0].Message == "node:fs:441 raw stack details" {
+		t.Fatalf("failure exposed raw process output: %#v", issues[0])
+	}
+}
+
+func TestExternalCheckRetainsIssuesWhenCommandFails(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"ci-clean-machine-lanes\",\"severity\":\"error\",\"message\":\"journey claim failed\",\"fix\":\"Rerun with: kb-devkit check --only ci-clean-machine-lanes\"}]}\\n'\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write check script: %v", err)
+	}
+	rule := &externalRule{name: "ci-clean-machine-lanes", run: script, phase: "check", scope: "workspace", workspaceRoot: root}
+	issues := rule.CheckWorkspace(&workspace.Workspace{Root: root})
+	if len(issues) != 1 {
+		t.Fatalf("issues = %#v, want the issue emitted before command failure", issues)
+	}
+	if issues[0].Message != "journey claim failed" || issues[0].Fix != "Rerun with: kb-devkit check --only ci-clean-machine-lanes" {
+		t.Fatalf("issue = %#v, want the emitted detail and rerun command", issues[0])
 	}
 }

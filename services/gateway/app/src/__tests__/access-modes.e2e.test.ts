@@ -129,7 +129,7 @@ const startGateway = async (choices: Choices): Promise<Instance> => {
   setPointer(config, '/gateway/auth/bcryptCost', 6);
   setPointer(config, '/gateway/auth/passwordPolicy', { hibpEnabled: false });
 
-  mkdirSync(join(dir, '.kb/v2'), { recursive: true });
+  mkdirSync(join(dir, '.kb'), { recursive: true });
   mkdirSync(join(dir, 'node_modules/@kb-labs'), { recursive: true });
   for (const a of adapters) {symlinkSync(a.dir, join(dir, 'node_modules', a.pkg));}
   const gateway = (config as { gateway: Record<string, unknown> }).gateway;
@@ -137,19 +137,18 @@ const startGateway = async (choices: Choices): Promise<Instance> => {
     platform: {
       adapters: { documentDatabase: '@kb-labs/adapters-sqlite', serviceTransport: '@kb-labs/adapters-service-transport-http' },
       adapterOptions: {
-        documentDatabase: { filename: '.kb/database/kb.sqlite' },
+        documentDatabase: { filename: 'database/kb.sqlite' },
         serviceTransport: { services: { rest: { url: 'http://127.0.0.1:1' } } },
       },
     },
     gateway,
   }));
 
-  // Secrets: env references in the service, values in the private store keyed by
-  // the variable name — the state the installer's apply step leaves behind.
+  // This Gateway access-mode fixture supplies its service environment directly;
+  // it does not model or write the installer's private secret record.
   const wired = requirements.filter((r) => r.secret && choices.secrets?.[r.id] !== undefined);
-  writeFileSync(join(dir, '.kb/v2/secrets.env'), wired.map((r) => `${r.env}=${choices.secrets![r.id]}`).join('\n') + (wired.length ? '\n' : ''), { mode: 0o600 });
   const envLines = [
-    ...wired.map((r) => `      ${r.env}: "\${${r.env}}"`),
+    ...wired.map((r) => `      ${r.env}: ${JSON.stringify(choices.secrets![r.id])}`),
     ...Object.entries(choices.env ?? {}).map(([k, v]) => `      ${k}: "${v}"`),
   ];
   const envBlock = envLines.length ? `    env:\n${envLines.join('\n')}\n` : '';

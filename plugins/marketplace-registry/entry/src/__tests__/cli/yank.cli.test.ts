@@ -24,7 +24,7 @@ describe('marketplace:yank', () => {
       flags: {},
     }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toBeUndefined();
     expect(mockedPost).toHaveBeenCalledWith(
       '/packages/kirill/my-plugin/1.0.0/yank',
       expect.any(Object),
@@ -55,8 +55,8 @@ describe('marketplace:yank', () => {
       flags: { json: true },
     }));
 
-    expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ yanked: true, version: '1.0.0' });
+    expect(result).toEqual({ yanked: true, pkg: 'kb:kirill/my-plugin', version: '1.0.0' });
+
   });
 
   it('YK-04: missing pkg — exitCode 1, no HTTP call', async () => {
@@ -64,7 +64,7 @@ describe('marketplace:yank', () => {
     const ctx = createMockContext({ ui });
     const result = await yankCommand.execute(ctx, mockCLIInput({ argv: [], flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -76,7 +76,7 @@ describe('marketplace:yank', () => {
       flags: {},
     }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -88,7 +88,7 @@ describe('marketplace:yank', () => {
       flags: {},
     }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -100,7 +100,7 @@ describe('marketplace:yank', () => {
       flags: {},
     }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
   });
 
   it('YK-08: HTTP error — exitCode 1, error captured', async () => {
@@ -112,7 +112,7 @@ describe('marketplace:yank', () => {
       flags: {},
     }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false });
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

@@ -123,7 +123,7 @@ export async function platformSync(
     return result;
   }
 
-  const entries = Object.entries(lock.installed);
+  const entries = [...Object.entries(lock.plugins), ...Object.entries(lock.adapters ?? {})];
   result.checked = entries.length;
 
   const installer =
@@ -137,27 +137,34 @@ export async function platformSync(
       continue;
     }
 
-    const absPath = path.resolve(root, entry.resolvedPath);
+    const entryPath = entry.resolvedPath ?? entry.link;
+    if (!entryPath) {
+      result.missing.push(packageId);
+      result.ok = false;
+      result.errors.push({ packageId, message: `platform lock entry ${packageId} has no resolvedPath` });
+      continue;
+    }
+    const absPath = path.resolve(root, entryPath);
     const present = await pathExists(path.join(absPath, 'package.json'));
 
     if (!present) {
       if (effectiveMode === 'validate') {
         result.missing.push(packageId);
         result.ok = false;
-        logger.warn?.(`platform-sync: missing package ${packageId} (${entry.resolvedPath})`);
+        logger.warn?.(`platform-sync: missing package ${packageId} (${entryPath})`);
         continue;
       }
 
       // reconcile: only marketplace entries can be auto-installed;
       // local entries are a dev-setup problem the user must fix.
-      if (entry.source !== 'marketplace') {
+      if (entry.source !== 'platform' && entry.source !== 'marketplace') {
         result.missing.push(packageId);
         result.ok = false;
         result.errors.push({
           packageId,
           message:
             `cannot reconcile local entry ${packageId}: ` +
-            `path ${entry.resolvedPath} does not exist. ` +
+            `path ${entryPath} does not exist. ` +
             `Run DevLink or restore the workspace.`,
         });
         continue;
@@ -165,6 +172,7 @@ export async function platformSync(
 
       try {
         logger.info?.(`platform-sync: installing ${packageId}@${entry.version}`);
+        if (!entry.version) {throw new Error(`platform lock entry ${packageId} has no exact version`);}
         await installer!.install({
           root,
           name: packageId,
@@ -185,14 +193,12 @@ export async function platformSync(
     // Local entries are expected to drift (editing the linked package mutates
     // package.json), so we don't treat that as a failure here. Real verification
     // happens in DiscoveryManager at discovery time.
-    if (entry.source !== 'marketplace') {
+    if (entry.source !== 'platform') {
       continue;
     }
 
-    // Empty integrity in marketplace entries: warn but don't fail.
-    // This is the pragmatic hole left open for Phase 6 (`kb platform lock --for-prod`):
-    // until we generate real integrity hashes for derived prod locks, gateway CI
-    // writes empty strings and sync needs to accept them.
+    // Schema v3 requires an integrity pin; this guard protects against malformed
+    // in-memory locks supplied by callers that bypassed the shared reader.
     if (!entry.integrity) {
       logger.warn?.(
         `platform-sync: no integrity for ${packageId} — skipping verification`,
@@ -245,7 +251,7 @@ async function resolveMode(
 
 async function loadLock(root: string): Promise<MarketplaceLock | null> {
   const diag = new DiagnosticCollector();
-  return readMarketplaceLock(root, diag);
+  return readMarketplaceLock(root, diag, 'platform');
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -263,6 +269,10 @@ function createSilentLogger(): ILogger {
     info: noop,
     warn: noop,
     error: noop,
+    fatal: noop,
     debug: noop,
-  } as unknown as ILogger;
+    trace: noop,
+    flush: async () => {},
+    child: () => createSilentLogger(),
+  };
 }

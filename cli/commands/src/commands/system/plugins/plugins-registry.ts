@@ -2,7 +2,7 @@
  * marketplace:registry command - List all REST API plugin manifests
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../../utils/generate-examples';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { promises as fs } from 'node:fs';
@@ -33,10 +33,10 @@ interface PluginManifestWithPath {
   pluginRoot: string;
 }
 
-type PluginsRegistryResult = CommandResult & {
-  manifests?: ManifestV3[];
-  manifestsWithPaths?: PluginManifestWithPath[];
-  total?: number;
+type PluginsRegistryResult = {
+  manifests: ManifestV3[];
+  manifestsWithPaths: PluginManifestWithPath[];
+  total: number;
   plugins?: PluginManifestWithPath[];
 };
 
@@ -223,7 +223,7 @@ async function discoverRestApiPlugins(repoRoot: string): Promise<PluginManifestW
       // Load manifest
       try {
         const module = await import(manifestPath);
-        const manifest: unknown = module.default || module.manifest || module;
+        const manifest: unknown = module.manifest;
         
         // Check if it's ManifestV3 with rest.routes
         if (
@@ -238,9 +238,9 @@ async function discoverRestApiPlugins(repoRoot: string): Promise<PluginManifestW
           Array.isArray(manifest.rest.routes) &&
           manifest.rest.routes.length > 0
         ) {
-          const manifestV2 = manifest as ManifestV3;
+          const v3Manifest = manifest as ManifestV3;
           results.push({
-            manifest: manifestV2,
+            manifest: v3Manifest,
             manifestPath: path.resolve(manifestPath),
             pluginRoot: pkgRoot,
           });
@@ -264,6 +264,8 @@ type PluginsRegistryFlags = {
 
 export const pluginsRegistry = defineSystemCommand<PluginsRegistryFlags, PluginsRegistryResult>({
   name: 'registry',
+  scope: 'project',
+  jsonTest: { safeArgs: [] },
   description: 'List all REST API plugin manifests for REST API server',
   category: 'marketplace',
   examples: generateExamples('registry', 'marketplace', [
@@ -297,19 +299,13 @@ export const pluginsRegistry = defineSystemCommand<PluginsRegistryFlags, Plugins
     ctx.platform?.logger?.info('Plugins registry scan completed', { count: manifests.length });
 
     if (flags.json) {
-      ctx.ui.json({
-        ok: true,
+      const jsonData = {
         manifests: manifests.map((p) => p.manifest),
         manifestsWithPaths,
         total: manifests.length,
-      });
-      return {
-        ok: true,
-        manifests: manifests.map((p) => p.manifest),
-        manifestsWithPaths,
-        total: manifests.length,
-        plugins: manifests,
       };
+
+      return jsonData;
     }
 
     const sections: Array<{ header?: string; items: string[] }> = [
@@ -346,7 +342,6 @@ export const pluginsRegistry = defineSystemCommand<PluginsRegistryFlags, Plugins
     ctx.ui.info('Plugins Registry', { sections });
 
     return {
-      ok: true,
       manifests: manifests.map((p) => p.manifest),
       manifestsWithPaths,
       total: manifests.length,

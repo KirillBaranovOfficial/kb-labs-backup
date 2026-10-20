@@ -14,6 +14,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
+import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import { DiscoveryManager } from '../discovery-manager.js';
 import {
   writeMarketplaceLock,
@@ -84,11 +85,12 @@ describe('Discovery Integration: install → discover → available', () => {
     });
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/commit'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '1.5.0',
       integrity,
+      package: '@kb-labs/commit',
       resolvedPath: relPath,
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin', 'cli-command'],
     });
@@ -110,6 +112,67 @@ describe('Discovery Integration: install → discover → available', () => {
     const manifest = result.manifests.get('@kb-labs/commit');
     expect(manifest).toBeDefined();
     expect(manifest!.cli?.commands).toHaveLength(1);
+  });
+
+  // case: S-203.25
+  it('fails closed for marketplace plugins when policy config is broken and retains local sources', async () => {
+    const marketplace = await installPlugin({ name: 'marketplace', id: '@vendor/marketplace', version: '1.0.0' });
+    const firstParty = await installPlugin({ name: 'first-party', id: '@vendor/platform-shipped', version: '1.0.0' });
+    const linked = await installPlugin({ name: 'linked', id: '@vendor/linked', version: '1.0.0' });
+    const firstPartyPackageJsonPath = path.join(firstParty.dir, 'package.json');
+    const firstPartyPackageJson = JSON.parse(await fs.readFile(firstPartyPackageJsonPath, 'utf8')) as Record<string, unknown>;
+    firstPartyPackageJson.kb = { manifest: './kb.plugin.json' };
+    await fs.writeFile(firstPartyPackageJsonPath, JSON.stringify(firstPartyPackageJson));
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), 'packages:\n  - "plugins/*"\n');
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    const configPath = path.join(tmpDir, '.kb', 'kb.config.json');
+    await fs.writeFile(configPath, '{"plugins":');
+
+    const lock = createEmptyLock();
+    lock.plugins['@vendor/marketplace'] = createMarketplaceEntry({
+      version: '1.0.0', integrity: marketplace.integrity, resolvedPath: marketplace.relPath,
+      package: '@vendor/marketplace', source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'],
+    });
+    lock.plugins['@vendor/linked'] = createMarketplaceEntry({
+      version: '1.0.0', integrity: linked.integrity, resolvedPath: linked.relPath,
+      source: 'local', primaryKind: 'plugin', provides: ['plugin'],
+    });
+    await writeMarketplaceLock(tmpDir, lock);
+
+    const extensionStore: IExtensionStore = {
+      root: path.join(tmpDir, 'store'),
+      casDir: path.join(tmpDir, 'store', 'cas'),
+      entriesDir: path.join(tmpDir, 'store', 'entries'),
+      lookup: async () => ({
+        packageRoot: marketplace.dir,
+        entryDir: path.join(tmpDir, 'store', 'entries', 'marketplace'),
+        entry: {
+          schema: 'kb.store-entry/1',
+          name: '@vendor/marketplace',
+          version: '1.0.0',
+          kind: 'plugin',
+          integrity: marketplace.integrity,
+          installedAt: '2026-10-12T00:00:00.000Z',
+        },
+      }),
+      resolve: async () => { throw new Error('resolve must not run during discovery'); },
+      listEntries: async () => [],
+    };
+    const result = await new DiscoveryManager({ root: tmpDir, scope: 'project', extensionStore }).discover();
+
+    expect(result.plugins.map(plugin => plugin.id).sort()).toEqual(['@vendor/linked', '@vendor/platform-shipped']);
+    expect(result.failures.map(failure => failure.id)).toContain('@vendor/marketplace');
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'JSON_PARSE_FAILED',
+        context: expect.objectContaining({ filePath: configPath }),
+        remediation: expect.stringContaining('python3 -m json.tool'),
+      }),
+      expect.objectContaining({
+        code: 'JSON_PARSE_FAILED',
+        context: expect.objectContaining({ filePath: configPath }),
+      }),
+    ]));
   });
 
   it('discovers multiple plugins with different entity kinds', async () => {
@@ -140,7 +203,7 @@ describe('Discovery Integration: install → discover → available', () => {
       { ...api, id: '@kb-labs/rest-api', version: '2.0.0', provides: ['plugin', 'rest-route'] },
       { ...workflow, id: '@kb-labs/deploy', version: '0.5.0', provides: ['plugin', 'workflow'] },
     ]) {
-      lock.installed[id] = createMarketplaceEntry({
+      lock.plugins[id] = createMarketplaceEntry({
         version, integrity, resolvedPath: relPath,
         source: 'local', primaryKind: 'plugin', provides,
       });
@@ -174,11 +237,11 @@ describe('Discovery Integration: install → discover → available', () => {
 
     // Install as disabled
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/toggle'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/toggle'] = createMarketplaceEntry({
       version: '1.0.0', integrity, resolvedPath: relPath,
       source: 'local', primaryKind: 'plugin', provides: ['plugin'],
     });
-    lock.installed['@kb-labs/toggle']!.enabled = false;
+    lock.plugins['@kb-labs/toggle']!.enabled = false;
     await writeMarketplaceLock(tmpDir, lock);
 
     // Discovery should skip
@@ -187,7 +250,7 @@ describe('Discovery Integration: install → discover → available', () => {
     expect(result.plugins).toHaveLength(0);
 
     // Enable
-    lock.installed['@kb-labs/toggle']!.enabled = true;
+    lock.plugins['@kb-labs/toggle']!.enabled = true;
     await writeMarketplaceLock(tmpDir, lock);
 
     // Discovery should find
@@ -205,11 +268,12 @@ describe('Discovery Integration: install → discover → available', () => {
 
     // Install with wrong integrity
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/tampered'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/tampered'] = createMarketplaceEntry({
       version: '1.0.0',
-      integrity: 'sha256-WRONG_HASH',
+      integrity: 'sha256-WRONGHASH',
+      package: '@kb-labs/tampered',
       resolvedPath: relPath,
-      source: 'marketplace', // marketplace = strict integrity check
+      source: 'platform', // marketplace = strict integrity check
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -232,7 +296,7 @@ describe('Discovery Integration: install → discover → available', () => {
     });
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/vanished'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/vanished'] = createMarketplaceEntry({
       version: '1.0.0', integrity,
       resolvedPath: './plugins/vanished',
       source: 'local', primaryKind: 'plugin', provides: ['plugin'],

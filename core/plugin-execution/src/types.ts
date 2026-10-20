@@ -2,7 +2,7 @@
  * @module @kb-labs/plugin-execution/types
  *
  * Facade surface:
- * - canonical execution contracts from @kb-labs/core-contracts
+ * - canonical execution contracts from @kb-labs/core-platform
  * - backend/runtime specializations from @kb-labs/plugin-execution-factory
  * - worker-pool operational types from local backend module
  */
@@ -16,11 +16,12 @@ export type {
   WorkspaceConfig,
   ArtifactsConfig,
   ExecutionResponse,
-} from '@kb-labs/core-contracts';
+} from '@kb-labs/core-platform';
 
 export type {
   ExecutionRequest,
   ExecutionResult,
+  NormalizedExecutionResult,
   ExecutionError,
   ExecutionErrorCode,
   ExecutionMetadata,
@@ -28,13 +29,13 @@ export type {
   LogEntry,
   OnLogCallback,
   ExecutionBackend,
+  ResolvedExecutionMode,
   HealthStatus,
   ExecutionStats,
   PluginInvokerFn,
   BackendOptions,
   WorkerPoolOptions,
   WarmupPolicy,
-  RemoteOptions,
   PluginHandler,
   HandlerMetadata,
   HandlerSchema,

@@ -34,10 +34,7 @@ test('WJ-02: POST /api/v1/jobs submits a job and returns a jobId', async ({ requ
   const res = await request.post(`${WORKFLOW}/api/v1/jobs`, {
     data: { type: 'e2e-hello#default', payload: { source: 'wj-02' } },
   });
-  test.skip(
-    res.status() === 422 || res.status() === 400,
-    'e2e-hello#default handler not registered — needs kb-dev start with workflow plugin',
-  );
+  expect([200, 201], 'e2e-hello#default handler must be registered by the workflow service').toContain(res.status());
   expect([200, 201]).toContain(res.status());
   const body = await res.json();
   const jobId = body.data?.jobId ?? body.data?.id ?? body.jobId;
@@ -50,10 +47,7 @@ test('WJ-03: GET /api/v1/jobs/:jobId returns job detail', async ({ request }) =>
   const res = await request.post(`${WORKFLOW}/api/v1/jobs`, {
     data: { type: 'e2e-hello#default', payload: {} },
   });
-  test.skip(
-    res.status() === 422 || res.status() === 400,
-    'e2e-hello#default handler not registered',
-  );
+  expect([200, 201], 'e2e-hello#default handler must be registered by the workflow service').toContain(res.status());
 
   const submitBody = await res.json();
   const jobId: string = submitBody.data?.jobId ?? submitBody.data?.id ?? submitBody.jobId;
@@ -71,10 +65,7 @@ test('WJ-04: GET /api/v1/jobs/:jobId/logs returns log entries array', async ({ r
   const submitRes = await request.post(`${WORKFLOW}/api/v1/jobs`, {
     data: { type: 'e2e-hello#default', payload: {} },
   });
-  test.skip(
-    submitRes.status() === 422 || submitRes.status() === 400,
-    'e2e-hello#default handler not registered',
-  );
+  expect([200, 201], 'e2e-hello#default handler must be registered by the workflow service').toContain(submitRes.status());
 
   const submitBody = await submitRes.json();
   const jobId: string = submitBody.data?.jobId ?? submitBody.data?.id ?? submitBody.jobId;

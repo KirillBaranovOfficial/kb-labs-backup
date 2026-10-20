@@ -1,4 +1,4 @@
-import { defineCommand, handleError, validationError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { addTopic } from '@kb-labs/steward-core';
 import { parseList } from '../utils/flags.js';
 
@@ -9,22 +9,20 @@ export default defineCommand({
   description: 'Register a topic with aliases in the routing dictionary — do this deliberately, not automatically',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<Flags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const { name, aliases, json } = input.flags;
       if (!name?.trim()) {
-        validationError(ctx, '--name is required', undefined, json);
-        return { ok: false, error: 'INVALID_ARGS', result: null };
+        return validationError('--name is required');
       }
 
       try {
         const topic = await addTopic({ name, aliases: parseList(aliases) ?? [] });
-        if (json) {ctx.ui?.json?.({ ok: true, result: topic });}
+        if (json) {return topic;}
         else {ctx.ui?.info?.(`Registered topic "${topic.name}" (aliases: ${topic.aliases.join(', ') || 'none'})`);}
-        return { ok: true, result: topic };
+        return topic;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:topic.add failed', err instanceof Error ? err : new Error(String(err)));
-        handleError(ctx, err, json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: null };
+        return handleError(err);
       }
     },
   },

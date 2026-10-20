@@ -1,11 +1,12 @@
 /**
  * @module @kb-labs/workflow-daemon/file-watcher
- * WorkflowFileWatcher - watches .kb/workflows/ and .kb/jobs/ for YAML changes
+ * WorkflowFileWatcher - watches .kb/workflows/ and .kb/crons/ for YAML changes
  * and triggers manifest cache invalidation + cron re-discovery on each change.
  */
 
 import { watch } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { access } from 'node:fs/promises';
 import type { ILogger } from '@kb-labs/core-platform';
 import type { WorkflowService } from '@kb-labs/workflow-engine';
@@ -13,7 +14,7 @@ import type { CronDiscovery } from './cron-discovery.js';
 import type { CronScheduler } from './cron-scheduler.js';
 
 export interface WorkflowFileWatcherOptions {
-  /** Absolute paths to watch (e.g. ['.kb/workflows', '.kb/jobs']). */
+  /** Absolute paths to watch (e.g. ['.kb/workflows', '.kb/crons']). */
   watchDirs: string[];
   workflowService: WorkflowService;
   cronDiscovery: CronDiscovery;
@@ -32,12 +33,16 @@ export interface WorkflowFileWatcherOptions {
  */
 export class WorkflowFileWatcher {
   private readonly watchers: FSWatcher[] = [];
+  private readonly watchedDirs = new Set<string>();
+  private readonly pendingDirs = new Set<string>();
+  private readonly dirsByParent = new Map<string, Set<string>>();
   private readonly workflowService: WorkflowService;
   private readonly cronDiscovery: CronDiscovery;
   private readonly cronScheduler: CronScheduler;
   private readonly logger: ILogger;
   private readonly debounceMs: number;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private closed = false;
 
   constructor(options: WorkflowFileWatcherOptions) {
     this.workflowService = options.workflowService;
@@ -47,13 +52,16 @@ export class WorkflowFileWatcher {
     this.debounceMs = options.debounceMs ?? 300;
 
     for (const dir of options.watchDirs) {
-      this.startWatcher(dir);
+      this.startDirectoryWatch(dir);
     }
   }
 
-  private startWatcher(dir: string): void {
-    // Check directory existence asynchronously; skip silently if missing.
+  private startDirectoryWatch(dir: string): void {
+    if (this.watchedDirs.has(dir) || this.pendingDirs.has(dir)) { return; }
+    this.pendingDirs.add(dir);
     access(dir).then(() => {
+      this.pendingDirs.delete(dir);
+      if (this.closed || this.watchedDirs.has(dir)) { return; }
       try {
         const watcher = watch(dir, { persistent: false }, (eventType, filename) => {
           if (!filename) { return; }
@@ -69,6 +77,7 @@ export class WorkflowFileWatcher {
         });
 
         this.watchers.push(watcher);
+        this.watchedDirs.add(dir);
         this.logger.info('WorkflowFileWatcher: watching directory', { dir });
       } catch (err) {
         this.logger.warn('WorkflowFileWatcher: could not start watcher', {
@@ -77,7 +86,49 @@ export class WorkflowFileWatcher {
         });
       }
     }).catch(() => {
+      this.pendingDirs.delete(dir);
+      if (this.closed) { return; }
       this.logger.debug('WorkflowFileWatcher: directory does not exist, skipping', { dir });
+      this.watchParentForCreation(dir);
+    });
+  }
+
+  private watchParentForCreation(dir: string): void {
+    const parent = dirname(dir);
+    const children = this.dirsByParent.get(parent) ?? new Set<string>();
+    children.add(dir);
+    this.dirsByParent.set(parent, children);
+    if (this.watchedDirs.has(parent) || this.pendingDirs.has(parent)) { return; }
+    this.pendingDirs.add(parent);
+    access(parent).then(() => {
+      this.pendingDirs.delete(parent);
+      if (this.closed || this.watchedDirs.has(parent)) { return; }
+      try {
+        const watcher = watch(parent, { persistent: false }, (_eventType, filename) => {
+          if (!filename) { return; }
+          for (const child of this.dirsByParent.get(parent) ?? []) {
+            if (filename.toString() === basename(child)) { this.startDirectoryWatch(child); }
+          }
+        });
+        watcher.on('error', (err) => {
+          this.logger.warn('WorkflowFileWatcher: parent watcher error', {
+            dir: parent,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+        this.watchers.push(watcher);
+        this.watchedDirs.add(parent);
+        this.logger.info('WorkflowFileWatcher: watching parent for directory creation', { dir: parent });
+      } catch (err) {
+        this.logger.warn('WorkflowFileWatcher: could not watch parent directory', {
+          dir: parent,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }).catch(() => {
+      this.pendingDirs.delete(parent);
+      if (this.closed) { return; }
+      this.logger.warn('WorkflowFileWatcher: parent directory is unavailable', { dir: parent });
     });
   }
 
@@ -115,6 +166,7 @@ export class WorkflowFileWatcher {
 
   /** Stop all watchers and cancel any pending debounce timer. */
   close(): void {
+    this.closed = true;
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
@@ -125,6 +177,9 @@ export class WorkflowFileWatcher {
     }
 
     this.watchers.length = 0;
+    this.watchedDirs.clear();
+    this.pendingDirs.clear();
+    this.dirsByParent.clear();
     this.logger.info('WorkflowFileWatcher: stopped');
   }
 }

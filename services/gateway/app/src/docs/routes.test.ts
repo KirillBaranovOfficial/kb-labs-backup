@@ -48,7 +48,7 @@ describe('GET /openapi-merged.json', () => {
         return {
           ok: true,
           statusCode: 200,
-          payload: { openapi: '3.1.0', info: { title: 'b' }, paths: { '/b/x': {} } },
+          payload: { openapi: '3.1.0', info: { title: 'b', version: '1.0.0' }, paths: { '/b/x': {} } },
         };
       },
       stream: async () => { throw new Error('not used'); },
@@ -98,7 +98,7 @@ describe('GET /openapi-merged.json', () => {
       call: async () => ({
         ok: true,
         statusCode: 200,
-        payload: { openapi: '3.1.0', info: { title: 'a' }, paths: {} },
+        payload: { openapi: '3.1.0', info: { title: 'a', version: '1.0.0' }, paths: {} },
       }),
       stream: async () => { throw new Error('not used'); },
     } as unknown as IServiceTransport;

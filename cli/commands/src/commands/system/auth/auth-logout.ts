@@ -1,13 +1,11 @@
 /**
  * kb auth logout — Remove stored Gateway credentials.
  *
- * Clears both identity stores — ~/.kb/credentials.json (machine) and
- * ~/.kb/session.json (human) — "log out" is one verb regardless of which
- * one(s) are actually present.
+ * Revokes Gateway refresh tokens, then clears both local identity stores.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
-import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { AuthSessionOwner } from '@kb-labs/cli-runtime/gateway';
 
 type LogoutFlags = {
   json: { type: 'boolean'; description: string };
@@ -15,8 +13,11 @@ type LogoutFlags = {
 
 export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
   name: 'logout',
+  scope: 'platform',
+  authProtection: 'public',
+  jsonTest: { noSafeValidPath: "This command revokes an authentication session." },
   description: 'Remove stored Gateway credentials',
-  longDescription: 'Deletes ~/.kb/credentials.json and ~/.kb/session.json. CLI will no longer be able to reach Gateway until re-login.',
+  longDescription: 'Revokes saved Gateway refresh tokens, then deletes ~/.kb/credentials.json and ~/.kb/session.json.',
   category: 'auth',
   examples: [
     'kb auth logout',
@@ -26,30 +27,26 @@ export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
     json: { type: 'boolean', description: 'Output in JSON format' },
   },
   async handler(ctx, _argv, flags) {
-    const credentialsManager = new CredentialsManager();
-    const sessionManager = new SessionManager();
-    const [existingCredentials, existingSession] = await Promise.all([
-      credentialsManager.load(),
-      sessionManager.load(),
-    ]);
-
-    if (!existingCredentials && !existingSession) {
-      if (flags.json) {
-        ctx.ui?.json({ ok: true, message: 'No credentials found — already logged out.' });
-      } else {
-        ctx.ui?.write?.('No credentials found — already logged out.\n');
+    let loggedOut: boolean;
+    try {
+      loggedOut = await new AuthSessionOwner().logout();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Gateway token revocation failed.';
+      throwSystemCommandError(message, 'Run `kb auth status` to inspect the session, then retry `kb auth logout`.');
+    }
+    if (!loggedOut) {
+      const message = 'No credentials found — already logged out.';
+      if (!flags.json) {
+        ctx.ui?.write?.(`${message}\n`);
       }
-      return { ok: true };
+      return {  message };
     }
 
-    await Promise.all([credentialsManager.clear(), sessionManager.clear()]);
-
-    if (flags.json) {
-      ctx.ui?.json({ ok: true, message: 'Logged out. Credentials removed.' });
-    } else {
-      ctx.ui?.write?.('Logged out. Credentials removed.\n');
+    const message = 'Logged out. Credentials removed.';
+    if (!flags.json) {
+      ctx.ui?.write?.(`${message}\n`);
     }
 
-    return { ok: true };
+    return {  message };
   },
 });

@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, updateList } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 
@@ -14,7 +14,7 @@ export default defineCommand({
   description: 'Update a list',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<ListUpdateFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<ListUpdateFlags>) {
       const [listId] = input.argv;
       const skipKeys = new Set(['json', 'full', 'dry-run']);
       const changes = Object.entries(input.flags)
@@ -26,28 +26,26 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<ListUpdateFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ListUpdateFlags>) {
       const listId = input.argv[0] as string | undefined;
       if (!listId) {
-        validationError(ctx, 'listId is required', 'Usage: kb clickup list update <listId> --name "new name"', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('listId is required', 'Usage: kb clickup list update <listId> --name "new name"');
       }
 
       try {
         const list = await updateList(requireApiKey(), listId, { name: input.flags.name });
 
         if (input.flags.json) {
-          ctx.ui?.json?.(input.flags.full ? list : { id: list.id, name: list.name });
+          return input.flags.full ? list : { id: list.id, name: list.name };
         } else {
           ctx.ui?.success?.('List updated', {
             sections: [{ items: [`id: ${list.id}`, `name: ${list.name}`] }],
           });
         }
 
-        return { ok: true, result: list };
+        return list;
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, type ComponentType } from 'react';
-import { Spin, ConfigProvider } from 'antd';
-import { loadPageComponent, type PageLoadError } from './widget-loader.js';
+import { ConfigProvider } from 'antd';
+import { UICard, UISkeleton } from '@kb-labs/studio-ui-kit';
+import { loadPageComponent } from './widget-loader.js';
 import { PageErrorBoundary } from './page-error-boundary.js';
 import { PluginErrorUI } from './plugin-error-ui.js';
+import { normalizeStudioFailure, recordStudioFailure, type StudioFailure } from './error-contract.js';
 import { PageContextProvider, type PageContext, getAntDesignTokens, getAntDesignComponents } from '@kb-labs/studio-hooks';
 import { EventBusProvider } from '@kb-labs/studio-event-bus';
 
@@ -21,7 +23,7 @@ export interface PageContainerProps {
  * Loads an MF remote page component and wraps it with providers.
  *
  * Lifecycle:
- * 1. Shows loading spinner
+ * 1. Shows the shared Studio page skeleton
  * 2. Loads remote via Module Federation (retries built-in)
  * 3. On load failure → PluginErrorUI (load variant) with retry
  * 4. On runtime crash → PageErrorBoundary catches → PluginErrorUI (crash variant)
@@ -40,6 +42,7 @@ export function PageContainer({
 }: PageContainerProps) {
   const [PageComponent, setPageComponent] = useState<ComponentType<unknown> | null>(null);
   const [loadError, setLoadError] = useState<Error | null>(null);
+  const [loadFailure, setLoadFailure] = useState<StudioFailure | null>(null);
   const [loading, setLoading] = useState(true);
   const [retryKey, setRetryKey] = useState(0);
 
@@ -52,6 +55,7 @@ export function PageContainer({
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
+    setLoadFailure(null);
     setPageComponent(null);
 
     loadPageComponent(remoteName, entry, remoteEntryUrl)
@@ -64,12 +68,15 @@ export function PageContainer({
       .catch((err: Error) => {
         if (!cancelled) {
           setLoadError(err);
+          const failure = normalizeStudioFailure(err);
+          setLoadFailure(failure);
+          recordStudioFailure(`Plugin page ${pluginId}/${pageId} failed to load`, failure);
           setLoading(false);
         }
       });
 
     return () => { cancelled = true; };
-  }, [remoteName, entry, retryKey]);
+  }, [remoteName, entry, pageId, pluginId, retryKey]);
 
   const handleRetry = useCallback(() => {
     setRetryKey((k) => k + 1);
@@ -77,22 +84,35 @@ export function PageContainer({
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 320 }}>
-        <Spin size="large" />
+      <div
+        role="status"
+        aria-label={`Loading ${pluginId} page`}
+        style={{ padding: 24, maxWidth: 1440, width: '100%', margin: '0 auto', boxSizing: 'border-box' }}
+      >
+        <div style={{ marginBottom: 24 }}>
+          <UISkeleton active title lines={2} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 16 }}>
+          {[0, 1, 2].map((item) => (
+            <UICard key={item}>
+              <UISkeleton active title={false} lines={2} />
+            </UICard>
+          ))}
+        </div>
+        <UICard>
+          <UISkeleton active title lines={7} />
+        </UICard>
       </div>
     );
   }
 
   if (loadError) {
-    const mfError = loadError as PageLoadError;
     return (
       <PluginErrorUI
         type="load"
         pluginId={pluginId}
         pageId={pageId}
-        error={loadError}
-        remoteName={mfError.remoteName ?? remoteName}
-        entry={mfError.exposedModule ?? entry}
+        failure={loadFailure ?? normalizeStudioFailure(loadError)}
         onRetry={handleRetry}
       />
     );

@@ -12,33 +12,37 @@
 package marketplace
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Schema must match core-discovery's MarketplaceLock schema
 // (core/discovery/src/marketplace-lock.ts) — the TS reader rejects any
 // other value outright.
-const Schema = "kb.marketplace/2"
+const Schema = "kb.marketplace/3"
 
 type Lock struct {
-	Schema    string          `json:"schema"`
-	Installed map[string]Item `json:"installed"`
+	Schema   string          `json:"schema"`
+	Plugins  map[string]Item `json:"plugins"`
+	Adapters map[string]Item `json:"adapters,omitempty"`
 }
 
 type Item struct {
-	Version      string   `json:"version"`
-	Integrity    string   `json:"integrity"`
-	ResolvedPath string   `json:"resolvedPath"`
-	InstalledAt  string   `json:"installedAt"`
-	Source       string   `json:"source"`
-	PrimaryKind  string   `json:"primaryKind"`
-	Provides     []string `json:"provides"`
-	Enabled      bool     `json:"enabled"`
+	Version      string `json:"version"`
+	Integrity    string `json:"integrity"`
+	ResolvedPath string `json:"resolvedPath"`
+	Package      string `json:"package,omitempty"`
+	// Source identifies machine-installed platform artifacts.
+	Source  string `json:"source"`
+	Enabled bool   `json:"enabled"`
 }
 
 // WriteLock regenerates .kb/marketplace.lock at platformRoot from the exact
@@ -46,22 +50,17 @@ type Item struct {
 // discoverable registry entities; "platform" and "binary" artifacts are
 // skipped, matching what the pre-cutover scanner reported.
 //
-// Entries carry no integrity hash. core-discovery only verifies it when
-// non-empty (core/discovery/src/discovery-manager.ts), and every V2 artifact
-// is already integrity-checked at resolve time against the sealed release
-// index's SHA256 — re-asserting a second, differently-shaped hash here would
-// just duplicate a check already done upstream.
-//
-// `provides` is set to the artifact's own kind. core-discovery does not
-// actually read this field for routing: it re-derives the real entity kinds
-// (cli-command, rest-route, ws-channel, ...) by loading each plugin's own
-// manifest at scan time (extractEntityKinds in discovery-manager.ts). The
-// lock only needs to name which packages exist and where.
+// The platform lock is machine-local: it records its platform-relative path.
+// Integrity matches core-discovery's package.json hash contract, not the
+// artifact tarball digest in the resolved plan.
 func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Time) error {
-	existing, _ := readLock(platformRoot) // best-effort: preserve `enabled` across re-applies
+	existing, err := readLock(platformRoot)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read existing marketplace lock: %w", err)
+	}
 
-	lock := Lock{Schema: Schema, Installed: make(map[string]Item)}
-	installedAt := now.UTC().Format(time.RFC3339)
+	lock := Lock{Schema: Schema, Plugins: make(map[string]Item), Adapters: make(map[string]Item)}
+	_ = now // retained for call-site compatibility; lock declarations have no timestamp.
 	for _, a := range artifacts {
 		kind := a.Kind
 		if a.Registry != "" {
@@ -70,25 +69,40 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 		if kind != "plugin" && kind != "adapter" {
 			continue
 		}
+		integrity, err := packageIntegrity(platformRoot, a.Package)
+		if err != nil {
+			return fmt.Errorf("read installed package metadata for %s: %w", a.Package, err)
+		}
 		enabled := true
 		if existing != nil {
-			if prior, ok := existing.Installed[a.ID]; ok {
+			prior, ok := existing.Plugins[a.ID]
+			if kind == "adapter" {
+				prior, ok = existing.Adapters[a.ID]
+			}
+			if ok {
 				enabled = prior.Enabled
 			}
 		}
-		lock.Installed[a.ID] = Item{
+		item := Item{
 			Version:      a.Version,
+			Integrity:    integrity,
 			ResolvedPath: "node_modules/" + a.Package,
-			InstalledAt:  installedAt,
-			Source:       "marketplace",
-			PrimaryKind:  kind,
-			Provides:     []string{kind},
+			Source:       "platform",
 			Enabled:      enabled,
+		}
+		if kind == "adapter" {
+			lock.Adapters[a.ID] = item
+		} else {
+			item.Package = a.Package
+			lock.Plugins[a.ID] = item
 		}
 	}
 
-	if len(lock.Installed) == 0 {
+	if len(lock.Plugins) == 0 && len(lock.Adapters) == 0 {
 		return nil
+	}
+	if len(lock.Adapters) == 0 {
+		lock.Adapters = nil
 	}
 
 	kbDir := filepath.Join(platformRoot, ".kb")
@@ -101,11 +115,19 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 	}
 	data = append(data, '\n')
 	target := filepath.Join(kbDir, "marketplace.lock")
-	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
+	return versionroot.AtomicWriteFile(target, data, 0o600)
+}
+
+func packageIntegrity(platformRoot, packageName string) (string, error) {
+	if packageName == "" {
+		return "", fmt.Errorf("package name is required")
 	}
-	return os.Rename(tmp, target)
+	packageJSON, err := os.ReadFile(filepath.Join(platformRoot, "node_modules", filepath.FromSlash(packageName), "package.json"))
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(packageJSON)
+	return "sha256-" + base64.StdEncoding.EncodeToString(digest[:]), nil
 }
 
 func readLock(platformRoot string) (*Lock, error) {
@@ -117,6 +139,14 @@ func readLock(platformRoot string) (*Lock, error) {
 	var lock Lock
 	if err := json.Unmarshal(data, &lock); err != nil {
 		return nil, err
+	}
+	if lock.Schema != Schema {
+		return nil, fmt.Errorf("invalid marketplace lock schema %q", lock.Schema)
+	}
+	for id, entry := range lock.Plugins {
+		if entry.Source != "platform" || entry.Package == "" {
+			return nil, fmt.Errorf("invalid marketplace lock plugin %q: platform entries require a package", id)
+		}
 	}
 	return &lock, nil
 }

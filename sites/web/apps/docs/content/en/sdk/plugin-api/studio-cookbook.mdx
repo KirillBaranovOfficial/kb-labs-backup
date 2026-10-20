@@ -1,0 +1,61 @@
+---
+title: "Studio UI cookbook"
+description: "Task-oriented recipes for common plugin page patterns."
+updatedAt: "2026-10-04"
+order: 10
+---
+
+These examples combine public UI kit components into practical page patterns. The cookbook is intentionally flat: use the table of contents to jump to a recipe, and use the component catalog pages for API discovery.
+
+## Action choice
+
+Use a segmented control when a small set of options changes the current view. Use buttons for actions that commit a change.
+
+```tsx
+import { UIButton, UISegmented } from '@kb-labs/sdk/studio';
+
+function ViewToolbar() {
+  return (
+    <div className="toolbar">
+      <UISegmented
+        size="sm"
+        defaultValue="Overview"
+        options={['Overview', 'Activity', 'Settings']}
+      />
+      <UIButton size="sm" variant="primary">Create</UIButton>
+    </div>
+  );
+}
+```
+
+## Page sections with route sync
+
+Use underline tabs for a plugin page with distinct sections. URL sync is opt-in, so tabs remain local by default.
+
+```tsx
+import { UITabs } from '@kb-labs/sdk/studio';
+
+function GatewayPage() {
+  return (
+    <UITabs
+      variant="underline"
+      size="md"
+      syncUrl="search"
+      items={[
+        { key: 'overview', label: 'Overview', children: <Overview /> },
+        { key: 'auth', label: 'Authentication', children: <Authentication /> },
+      ]}
+    />
+  );
+}
+```
+
+## Source-backed command output
+
+When documenting a CLI flow, use the docs command example mechanism rather than copying a possibly stale terminal transcript. It renders commands and expected output from the generated source snapshot. See [First workflow](/guides/first-workflow) for a complete example.
+
+## Related component pages
+
+- [Core controls](/sdk/plugin-api/studio-core)
+- [Navigation](/sdk/plugin-api/studio-navigation)
+- [Form controls](/sdk/plugin-api/studio-form)

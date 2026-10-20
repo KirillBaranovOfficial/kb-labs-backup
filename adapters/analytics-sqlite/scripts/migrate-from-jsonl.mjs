@@ -6,19 +6,21 @@
  *   node scripts/migrate-from-jsonl.mjs [--source <dir>] [--db <path>] [--dry-run]
  *
  * Defaults:
- *   --source  .kb/analytics/buffer
- *   --db      .kb/analytics/analytics.sqlite
+ *   --source  analytics/buffer
+ *   --db      analytics/analytics.sqlite
  */
 
 import Database from 'better-sqlite3';
 import { existsSync, readdirSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { parseArgs } from 'node:util';
+import { resolvePlatformDataRoot } from '@kb-labs/sdk/adapters';
 
 const { values: args } = parseArgs({
   options: {
-    source: { type: 'string', default: '.kb/analytics/buffer' },
-    db: { type: 'string', default: '.kb/analytics/analytics.sqlite' },
+    'platform-root': { type: 'string' },
+    source: { type: 'string', default: 'analytics/buffer' },
+    db: { type: 'string', default: 'analytics/analytics.sqlite' },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', default: false },
   },
@@ -30,19 +32,26 @@ if (args.help) {
 migrate-from-jsonl.mjs — Import JSONL events into SQLite
 
 Usage:
-  node scripts/migrate-from-jsonl.mjs [options]
+  node scripts/migrate-from-jsonl.mjs --platform-root <path> [options]
 
 Options:
-  --source <dir>    Source directory with .jsonl files (default: .kb/analytics/buffer)
-  --db <path>       SQLite database file path (default: .kb/analytics/analytics.sqlite)
+  --platform-root <path> Platform root that owns the data root (or set KB_PLATFORM_ROOT)
+  --source <dir>    Source directory with .jsonl files (default: analytics/buffer)
+  --db <path>       SQLite database file path (default: analytics/analytics.sqlite)
   --dry-run         Show what would be migrated without writing
   --help            Show this help
 `);
   process.exit(0);
 }
 
-const sourceDir = resolve(process.cwd(), args.source);
-const dbPath = resolve(process.cwd(), args.db);
+const platformRoot = args['platform-root'] ?? process.env.KB_PLATFORM_ROOT;
+if (!platformRoot) {
+  console.error('Platform root is required. Pass --platform-root <path> or set KB_PLATFORM_ROOT, then rerun the migration.');
+  process.exit(1);
+}
+const dataRoot = await resolvePlatformDataRoot(resolve(platformRoot));
+const sourceDir = resolve(dataRoot, args.source);
+const dbPath = resolve(dataRoot, args.db);
 const isDryRun = args['dry-run'];
 
 if (!existsSync(sourceDir)) {

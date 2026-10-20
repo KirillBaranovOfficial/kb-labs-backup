@@ -35,8 +35,8 @@ beforeEach(() => {
   MockedClient.mockReset();
 });
 
-describe('workflow:status', () => {
-  it('CS-01: --job-id renders status with jobs and steps', async () => {
+describe('workflow job status', () => {
+  it('CS-01: positional job ID renders status with jobs and steps', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
         getJobStatus: async () => runningJob,
@@ -45,12 +45,12 @@ describe('workflow:status', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const result = await statusCommand.execute(ctx, mockCLIInput({ flags: { 'job-id': 'job-abc' } }));
+    const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-abc'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
+  // case: S-185.2
   it('CS-02: --json returns { ok: true, data: JobStatusDetail }', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
@@ -60,22 +60,20 @@ describe('workflow:status', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const result = await statusCommand.execute(ctx, mockCLIInput({ flags: { 'job-id': 'job-abc', json: true } }));
+    const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-abc'], flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: JobStatusDetail };
-    expect(payload.ok).toBe(true);
-    expect(payload.data.id).toBe('job-abc');
-    expect(payload.data.status).toBe('running');
+    const payload = result as JobStatusDetail;
+    expect(payload.id).toBe('job-abc');
+    expect(payload.status).toBe('running');
   });
 
   it('CS-03: missing --job-id returns exitCode 1 with error message', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const result = await statusCommand.execute(ctx, mockCLIInput({ flags: {} }));
+    const result = await statusCommand.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('CS-04: daemon unavailable returns exitCode 1 with readable message', async () => {
@@ -87,10 +85,10 @@ describe('workflow:status', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const result = await statusCommand.execute(ctx, mockCLIInput({ flags: { 'job-id': 'job-abc' } }));
+    const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-abc'] }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('CS-05: job in running state renders status without throwing', async () => {
@@ -107,23 +105,9 @@ describe('workflow:status', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const result = await statusCommand.execute(ctx, mockCLIInput({ flags: { 'job-id': 'job-xyz' } }));
+    const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-xyz'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.errors.length).toBe(0);
   });
 
-  it('CS-06: emits deprecation warning on every invocation', async () => {
-    MockedClient.mockImplementation(function MockedClientImplementation() {
-      return makeClient({
-        getJobStatus: async () => runningJob,
-      });
-    });
-
-    const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui });
-    await statusCommand.execute(ctx, mockCLIInput({ flags: { 'job-id': 'job-abc' } }));
-
-    expect(captured.warnings.some((w: { message: string }) => w.message.includes('deprecated'))).toBe(true);
-  });
 });

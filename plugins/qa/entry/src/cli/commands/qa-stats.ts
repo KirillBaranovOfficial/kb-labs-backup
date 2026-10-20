@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -21,7 +21,7 @@ export default defineCommand<unknown, CLIInput<QaStatsFlags>, unknown>({
   description: 'Show devkit health score and category breakdown',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaStatsFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaStatsFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -43,14 +43,14 @@ export default defineCommand<unknown, CLIInput<QaStatsFlags>, unknown>({
       };
 
       if (flags.json) {
-        ctx.ui?.json?.(buildStatsJsonReport(effective));
+        return buildStatsJsonReport(effective);
       } else {
         for (const section of buildStatsReport(effective)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return { ok: true };
+      return {  };
     },
   },
 });

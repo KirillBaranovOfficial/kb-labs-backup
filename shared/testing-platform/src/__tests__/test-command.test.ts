@@ -16,7 +16,7 @@ const greetHandler = {
   ): Promise<CommandResult<{ message: string }>> {
     const name = input.flags.name || 'World';
     ctx.ui.success(`Hello, ${name}!`);
-    return { ok: true, result: { message: `Hello, ${name}!` } };
+    return { message: `Hello, ${name}!` };
   },
 };
 
@@ -26,8 +26,7 @@ const failingHandler = {
     ctx: PluginContextV3,
     _input: { flags: Record<string, unknown>; argv: string[] }
   ): Promise<CommandResult> {
-    ctx.ui.error('Something went wrong');
-    return { ok: false, error: 'test-failure', meta: { reason: 'test-failure' } };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Something went wrong.', hint: 'Resolve the test failure and retry.' } };
   },
 };
 
@@ -41,7 +40,7 @@ const analyzeHandler = {
     const response = await ctx.platform.llm.complete(`Analyze ${file}`);
     const analysis = response.content;
     ctx.ui.info(`Analysis for ${file}: ${analysis}`);
-    return { ok: true, result: { analysis } };
+    return { analysis };
   },
 };
 
@@ -54,10 +53,10 @@ const cachedHandler = {
     const key = input.flags.key || 'default';
     const cached = await ctx.platform.cache.get(key);
     if (cached) {
-      return { ok: true, result: { cached: true, value: cached } };
+      return { cached: true, value: cached };
     }
     await ctx.platform.cache.set(key, 'computed-value', 60000);
-    return { ok: true, result: { cached: false, value: 'computed-value' } };
+    return { cached: false, value: 'computed-value' };
   },
 };
 
@@ -74,7 +73,7 @@ const restHandler = {
   },
 };
 
-/** REST route handler (like defineRoute output) — returns CommandResult */
+/** REST route handler (like defineRoute output) — returns plain data or CommandFailure */
 const routeHandler = {
   async execute(
     ctx: PluginContextV3,
@@ -82,9 +81,9 @@ const routeHandler = {
   ): Promise<CommandResult<{ found: boolean }>> {
     const id = input.query?.id;
     if (!id) {
-      return { ok: false, error: 'not found', result: { found: false } };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'The requested item was not found.', hint: 'Check the item ID and retry.' } };
     }
-    return { ok: true, result: { found: true } };
+    return { found: true };
   },
 };
 
@@ -104,8 +103,8 @@ const handlerWithCleanup = {
   async execute(
     _ctx: PluginContextV3,
     _input: { flags: Record<string, unknown>; argv: string[] }
-  ): Promise<CommandResult> {
-    return { ok: true };
+  ): Promise<void> {
+    return undefined;
   },
   async cleanup() {
     cleanupCalled = true;
@@ -118,7 +117,7 @@ const configHandler = {
     ctx: PluginContextV3<{ apiKey: string; verbose: boolean }>,
     _input: { flags: Record<string, unknown>; argv: string[] }
   ): Promise<CommandResult<{ key: string }>> {
-    return { ok: true, result: { key: ctx.config!.apiKey } };
+    return { key: ctx.config!.apiKey };
   },
 };
 
@@ -134,12 +133,8 @@ const metaHandler = {
   async execute(
     _ctx: PluginContextV3,
     _input: { flags: Record<string, unknown>; argv: string[] }
-  ): Promise<CommandResult<string>> {
-    return {
-      ok: true,
-      result: 'ok',
-      meta: { tokens: 150, model: 'gpt-4' },
-    };
+  ): Promise<string> {
+    return 'ok';
   },
 };
 
@@ -183,7 +178,7 @@ describe('testCommand', () => {
           input: { flags: Record<string, unknown>; argv: string[] }
         ): Promise<CommandResult<string[]>> {
           argvCapture.push(...input.argv);
-          return { ok: true, result: input.argv };
+          return input.argv;
         },
       };
 
@@ -200,8 +195,11 @@ describe('testCommand', () => {
       result.cleanup();
 
       expect(result.exitCode).toBe(1);
-      expect(result.ui.error).toHaveBeenCalledWith('Something went wrong');
-      expect(result.meta).toEqual({ reason: 'test-failure' });
+      expect(result.raw).toMatchObject({
+        ok: false,
+        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Something went wrong.', hint: expect.any(String) },
+      });
+      expect(result.meta).toBeUndefined();
     });
 
     it('should handle void return', async () => {
@@ -276,7 +274,7 @@ describe('testCommand', () => {
       expect(result.ui.info).toHaveBeenCalledWith('Creating in my-project: release-v2');
     });
 
-    it('should handle REST route handler with CommandResult', async () => {
+    it('should handle REST route handler with plain data', async () => {
       const result = await testCommand(routeHandler, {
         host: 'rest',
         query: { id: '123' },
@@ -295,7 +293,8 @@ describe('testCommand', () => {
       result.cleanup();
 
       expect(result.exitCode).toBe(1);
-      expect(result.result).toEqual({ found: false });
+      expect(result.result).toBeUndefined();
+      expect(result.raw).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
     });
 
     it('should pass params for REST', async () => {
@@ -304,7 +303,7 @@ describe('testCommand', () => {
           _ctx: PluginContextV3,
           input: { params?: { id?: string } }
         ): Promise<CommandResult<string>> {
-          return { ok: true, result: input.params?.id || 'none' };
+          return input.params?.id || 'none';
         },
       };
 
@@ -327,7 +326,7 @@ describe('testCommand', () => {
           _ctx: PluginContextV3,
           input: { custom: string; data: number[] }
         ): Promise<CommandResult<string>> {
-          return { ok: true, result: `${input.custom}:${input.data.length}` };
+          return `${input.custom}:${input.data.length}`;
         },
       };
 
@@ -345,7 +344,7 @@ describe('testCommand', () => {
           _ctx: PluginContextV3,
           input: unknown
         ): Promise<CommandResult<unknown>> {
-          return { ok: true, result: input };
+          return input;
         },
       };
 
@@ -377,11 +376,12 @@ describe('testCommand', () => {
   // ── Metadata ───────────────────────────────────────────────────
 
   describe('meta', () => {
-    it('should return meta from CommandResult', async () => {
+    it('should not extract metadata from plain command data', async () => {
       const result = await testCommand(metaHandler);
       result.cleanup();
 
-      expect(result.meta).toEqual({ tokens: 150, model: 'gpt-4' });
+      expect(result.meta).toBeUndefined();
+      expect(result.result).toBe('ok');
     });
 
     it('should return undefined meta for raw-data handlers', async () => {
@@ -392,6 +392,7 @@ describe('testCommand', () => {
       result.cleanup();
 
       expect(result.meta).toBeUndefined();
+      expect(result.result).toEqual({ workspace: 'root', name: 'test' });
     });
   });
 
@@ -435,7 +436,7 @@ describe('testCommand', () => {
       const handler = {
         async execute(ctx: PluginContextV3): Promise<CommandResult> {
           capturedHost.push(ctx.host);
-          return { ok: true };
+          return undefined;
         },
       };
 
@@ -463,7 +464,7 @@ describe('testCommand', () => {
     it('should pass tenantId to context', async () => {
       const handler = {
         async execute(ctx: PluginContextV3): Promise<CommandResult<string | undefined>> {
-          return { ok: true, result: ctx.tenantId };
+          return ctx.tenantId;
         },
       };
 
@@ -476,7 +477,7 @@ describe('testCommand', () => {
     it('should pass cwd to context', async () => {
       const handler = {
         async execute(ctx: PluginContextV3): Promise<CommandResult<string>> {
-          return { ok: true, result: ctx.cwd };
+          return ctx.cwd;
         },
       };
 
@@ -497,7 +498,7 @@ describe('testCommand', () => {
           ctx.ui.warn('caution');
           ctx.ui.success('done');
           ctx.ui.debug('internal');
-          return { ok: true };
+          return undefined;
         },
       };
 
@@ -510,7 +511,7 @@ describe('testCommand', () => {
       expect(result.ui.debug).toHaveBeenCalledWith('internal');
     });
 
-    it('should support UI override', async () => {
+    it('should not render command failures; the shared CLI renderer owns them', async () => {
       const customError = vi.fn();
 
       const result = await testCommand(failingHandler, {
@@ -518,22 +519,19 @@ describe('testCommand', () => {
       });
       result.cleanup();
 
-      expect(customError).toHaveBeenCalledWith('Something went wrong');
+      expect(customError).not.toHaveBeenCalled();
+      expect(result.raw).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
     });
   });
 
   // ── raw field ──────────────────────────────────────────────────
 
   describe('raw return value', () => {
-    it('should expose raw return for CommandResult handlers', async () => {
+    it('should expose raw return for plain-data handlers', async () => {
       const result = await testCommand(metaHandler);
       result.cleanup();
 
-      expect(result.raw).toEqual({
-        ok: true,
-        result: 'ok',
-        meta: { tokens: 150, model: 'gpt-4' },
-      });
+      expect(result.raw).toBe('ok');
     });
 
     it('should expose raw return for data-returning handlers', async () => {

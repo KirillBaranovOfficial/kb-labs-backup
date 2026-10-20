@@ -12,12 +12,21 @@
 import type { IGatewayClient, GatewayExecuteRequest } from '@kb-labs/cli-runtime/gateway';
 import { resolveTransport, TerminalEventRenderer } from '@kb-labs/cli-runtime/gateway';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 export interface GatewayExecutionOptions {
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
   manifestCmd: RegisteredCommand | undefined;
+}
+
+export function pluginCommandUnavailable(commandPath: string): ErrorEnvelopeError {
+  return new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+    message: `Plugin command "${commandPath}" has no executable handler in its manifest.`,
+    hint: 'Run `kb marketplace plugins doctor --scope platform` to inspect the installed manifest, then update or rebuild the plugin with its command handler.',
+    details: { command: commandPath },
+  }));
 }
 
 /**
@@ -46,11 +55,11 @@ export async function executeViaGateway(
   const { commandId, argv, flags, manifestCmd } = options;
 
   if (!manifestCmd) {
-    throw new Error(`No manifest found for command: ${commandId}`);
+    throw pluginCommandUnavailable(commandId);
   }
 
   // Build Gateway execute request from manifest command
-  const v3Manifest = manifestCmd.v3Manifest ?? manifestCmd.manifest.manifestV2;
+  const v3Manifest = manifestCmd.manifest.v3Manifest;
   const pluginId = v3Manifest?.id || manifestCmd.manifest.id;
   const commandPath = manifestCmd.manifest.segments.join(' ');
   const cliCommand = v3Manifest?.cli?.commands?.find((c) => c.path === commandPath);

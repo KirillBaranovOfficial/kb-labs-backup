@@ -18,6 +18,9 @@ import {
   baselineUpdateFlags,
   baselineStatusFlags,
   baselineDiffFlags,
+  qaCasesListFlags,
+  qaCasesValidateFlags,
+  qaCasesCoverageFlags,
 } from './cli/commands/flags.js';
 import { QA_BASE_PATH, QA_ROUTES } from '@kb-labs/qa-contracts';
 
@@ -63,6 +66,7 @@ export const manifest = {
       { path: 'qa baseline', describe: 'Baseline management' },
       { path: 'qa ci', describe: 'CI evidence and reliability analysis' },
       { path: 'qa ci evidence', describe: 'Immutable CI evidence capture' },
+      { path: 'qa cases', describe: 'Case catalog and test coverage' },
     ],
     commands: [
       {
@@ -165,6 +169,19 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
+        path: 'qa cases list', category: 'Cases', describe: 'List the configured QA case catalog', operationType: 'read' as const,
+        handler: './cli/commands/qa-cases-list.js#default', flags: defineCommandFlags(qaCasesListFlags.schema), permissions: pluginPermissions,
+      },
+      {
+        path: 'qa cases validate', category: 'Cases', describe: 'Validate case catalog and test claims', operationType: 'analyze' as const,
+        handler: './cli/commands/qa-cases-validate.js#default', flags: defineCommandFlags(qaCasesValidateFlags.schema), permissions: pluginPermissions,
+      },
+      {
+        path: 'qa coverage show', category: 'Cases', describe: 'Compute case coverage from test claims and run results', operationType: 'analyze' as const,
+        handler: './cli/commands/qa-coverage-show.js#default', flags: defineCommandFlags(qaCasesCoverageFlags.schema), permissions: pluginPermissions,
+        examples: ['kb qa coverage show --level release --json'],
+      },
+      {
         path: 'qa baseline update',
         category: 'Baseline',
         describe: 'Run check + stats and save as new baseline',
@@ -240,5 +257,3 @@ export const manifest = {
 
   permissions: pluginPermissions,
 };
-
-export default manifest;

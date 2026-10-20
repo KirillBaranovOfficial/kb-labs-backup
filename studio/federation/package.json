@@ -24,10 +24,12 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/studio-devtools": "workspace:*",
     "@kb-labs/studio-event-bus": "workspace:*",
     "@kb-labs/studio-hooks": "workspace:*",
+    "@kb-labs/studio-ui-kit": "workspace:*",
     "@module-federation/runtime": "^2.3.0"
   },
   "devDependencies": {
@@ -42,7 +44,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "peerDependencies": {

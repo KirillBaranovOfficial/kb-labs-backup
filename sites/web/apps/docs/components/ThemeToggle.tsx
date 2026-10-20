@@ -2,6 +2,7 @@
 
 import { useTheme } from './ThemeProvider';
 import s from './ThemeToggle.module.css';
+import { useTranslations } from 'next-intl';
 
 function SunIcon() {
   return (
@@ -27,16 +28,30 @@ function MoonIcon() {
   );
 }
 
+function SystemIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="1.5" y="2" width="13" height="9" rx="1.5" />
+      <path d="M5.5 14h5M8 11v3" />
+    </svg>
+  );
+}
+
 export function ThemeToggle() {
-  const { theme, toggle } = useTheme();
+  const t = useTranslations('header');
+  const { mode, toggle } = useTheme();
+  const modeLabel = t(`theme.${mode}`);
+  const nextMode = mode === 'system' ? 'light' : mode === 'light' ? 'dark' : 'system';
+  const label = t('theme.current', { mode: modeLabel, next: t('theme.switchTo', { mode: t(`theme.${nextMode}`) }) });
   return (
     <button
       className={s.btn}
       onClick={toggle}
-      aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+      aria-label={label}
+      title={label}
       type="button"
     >
-      {theme === 'light' ? <MoonIcon /> : <SunIcon />}
+      {mode === 'system' ? <SystemIcon /> : mode === 'light' ? <MoonIcon /> : <SunIcon />}
     </button>
   );
 }

@@ -203,56 +203,6 @@ export async function registerRoutes(
     );
   }
 
-  // Create a resolved promise for initial mount (already completed)
-  let mountPromise = Promise.resolve();
-
-  const scheduleRemount = (): void => {
-    // Check if server is already listening - Fastify doesn't allow adding routes after listen()
-    // Check both Fastify's listening property and underlying Node.js server
-    const isListening = server.listening ||
-                       (server.server && (server.server as { listening?: boolean }).listening);
-    
-    if (isListening) {
-      platform.logger.warn(
-        'Cannot remount plugin routes: server is already listening. Restart required.'
-      );
-      return;
-    }
-
-    readiness.pluginMountInProgress = true;
-    mountPromise = mountPromise
-      .catch(() => void 0)
-      .then(async () => {
-        // Double-check server is not listening before remount
-        const stillListening = server.listening ||
-                               (server.server && (server.server as { listening?: boolean }).listening);
-        
-        if (stillListening) {
-          platform.logger.warn(
-            'Cannot remount plugin routes: server started listening during remount. Restart required.'
-          );
-          return;
-        }
-        platform.logger.info('Registry change detected, remounting plugin routes');
-        await runMount();
-      })
-      .then(() => {
-        platform.logger.info('Plugin route remount completed');
-      })
-      .catch(error => {
-        platform.logger.error(
-          'Plugin route remount failed',
-          error instanceof Error ? error : new Error(String(error))
-        );
-      });
-
-    server.kbPluginMountPromise = mountPromise;
-  };
-
-  registry.onChange(() => {
-    scheduleRemount();
-  });
-
   const basePath = normalizeBasePath(config.basePath);
 
   await registerHealthRoutes(server, config, repoRoot, registry, readiness);

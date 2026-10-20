@@ -12,6 +12,27 @@ import healthCommand from '../../commands/health.js';
 
 const MockedClient = vi.mocked(WorkflowDaemonClient);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function failureError(result: unknown): Record<string, unknown> {
+  if (!isRecord(result) || !isRecord(result.error)) {
+    throw new Error('Expected a workflow command failure envelope.');
+  }
+  return result.error;
+}
+
+function normalizeFailure(error: Record<string, unknown>): Record<string, unknown> {
+  const { correlationId, hint, ...fields } = error;
+  return {
+    ...fields,
+    hint: typeof correlationId === 'string' && typeof hint === 'string'
+      ? hint.replace(correlationId, '<correlationId>')
+      : hint,
+  };
+}
+
 beforeEach(() => {
   MockedClient.mockReset();
 });
@@ -28,7 +49,6 @@ describe('workflow:health', () => {
     const ctx = createMockContext({ ui });
     const result = await healthCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('healthy');
   });
@@ -44,8 +64,7 @@ describe('workflow:health', () => {
     const ctx = createMockContext({ ui });
     const result = await healthCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: { ok: true, service: 'workflow' } });
+    expect(result).toMatchObject({ ok: true, service: 'workflow' });
   });
 
   it('CH-03: daemon unavailable — prints error, returns exitCode 1', async () => {
@@ -59,7 +78,25 @@ describe('workflow:health', () => {
     const ctx = createMockContext({ ui });
     const result = await healthCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
+  });
+
+  // case: S-203.1
+  it('keeps daemon failures identical in human and JSON modes', async () => {
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ health: async () => { throw new Error('ECONNREFUSED'); } });
+    });
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui });
+    const humanResult = await healthCommand.execute(ctx, mockCLIInput({ flags: {} }));
+    const jsonResult = await healthCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+
+    expect(humanResult).toHaveProperty('ok', false);
+    const humanError = failureError(humanResult);
+    const jsonError = failureError(jsonResult);
+    expect(normalizeFailure(jsonError)).toEqual(normalizeFailure(humanError));
+    expect(jsonError.correlationId).toBeTruthy();
+    expect(jsonError.hint).toContain(jsonError.correlationId);
   });
 });

@@ -3,14 +3,17 @@
  *
  * Wraps Ant Design DatePicker with variants.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"placeholder":"Select a date","format":"YYYY-MM-DD","allowClear":true,"showTime":false,"size":"middle"}
  */
 
 import * as React from 'react';
 import { DatePicker as AntDatePicker, TimePicker as AntTimePicker } from 'antd';
 import type { DatePickerProps as AntDatePickerProps, TimePickerProps as AntTimePickerProps } from 'antd';
 import type { Dayjs } from 'dayjs';
+import { toAntSize } from '../core/UISize';
+import type { UICompatibleSize } from '../core/UISize';
 
-export interface UIDatePickerProps extends Omit<AntDatePickerProps, 'onChange'> {
+export interface UIDatePickerProps extends Omit<AntDatePickerProps, 'onChange' | 'size'> {
   /** Selected date */
   value?: Dayjs | null;
   /** Default date */
@@ -27,9 +30,11 @@ export interface UIDatePickerProps extends Omit<AntDatePickerProps, 'onChange'> 
   showTime?: boolean;
   /** Change handler (returns Dayjs or null) */
   onChange?: (date: Dayjs | null) => void;
+  /** Shared size scale. Ant Design values remain accepted as aliases. */
+  size?: UICompatibleSize;
 }
 
-export interface UITimePickerProps extends Omit<AntTimePickerProps, 'onChange'> {
+export interface UITimePickerProps extends Omit<AntTimePickerProps, 'onChange' | 'size'> {
   /** Selected time */
   value?: Dayjs | null;
   /** Default time */
@@ -44,6 +49,8 @@ export interface UITimePickerProps extends Omit<AntTimePickerProps, 'onChange'> 
   allowClear?: boolean;
   /** Change handler (returns Dayjs or null) */
   onChange?: (time: Dayjs | null) => void;
+  /** Shared size scale. Ant Design values remain accepted as aliases. */
+  size?: UICompatibleSize;
 }
 
 /**
@@ -66,6 +73,7 @@ export function UIDatePicker({
   format,
   allowClear = true,
   showTime,
+  size,
   onChange,
   ...rest
 }: UIDatePickerProps) {
@@ -78,6 +86,7 @@ export function UIDatePicker({
       format={format}
       allowClear={allowClear}
       showTime={showTime}
+      size={toAntSize(size)}
       onChange={onChange}
       {...rest}
     />
@@ -100,6 +109,7 @@ export function UITimePicker({
   disabled,
   format,
   allowClear = true,
+  size,
   onChange,
   ...rest
 }: UITimePickerProps) {
@@ -111,6 +121,7 @@ export function UITimePicker({
       disabled={disabled}
       format={format}
       allowClear={allowClear}
+      size={toAntSize(size)}
       onChange={onChange}
       {...rest}
     />
@@ -120,6 +131,8 @@ export function UITimePicker({
 /**
  * UIRangePicker - Date range picker
  */
-export function UIRangePicker(props: React.ComponentProps<typeof AntDatePicker.RangePicker>) {
-  return <AntDatePicker.RangePicker {...props} />;
+export type UIRangePickerProps = Omit<React.ComponentProps<typeof AntDatePicker.RangePicker>, 'size'> & { size?: UICompatibleSize };
+
+export function UIRangePicker({ size, ...props }: UIRangePickerProps) {
+  return <AntDatePicker.RangePicker {...props} size={toAntSize(size)} />;
 }

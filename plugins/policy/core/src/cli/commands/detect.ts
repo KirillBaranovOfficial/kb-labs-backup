@@ -1,4 +1,4 @@
-import { defineCommand, useConfig, findRepoRoot, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useConfig, findRepoRoot, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { execSync } from 'node:child_process';
 import type { PolicyConfig, CategoryResult } from '@kb-labs/policy-contracts';
 import { detectCategory } from '../../core/category-resolver.js';
@@ -15,14 +15,13 @@ export default defineCommand({
   description: 'Detect the policy category for repos based on changed files or a specific path',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: DetectInput): Promise<CommandResult<DetectResult>> {
+    async execute(ctx: PluginCommandContextV3, input: DetectInput): Promise<CommandResult<DetectResult>> {
       const flags = (input as { flags?: DetectInput }).flags ?? input;
       const workspaceRoot = (await findRepoRoot(ctx.cwd)) ?? ctx.cwd;
       const policyConfig = await useConfig<PolicyConfig>();
 
       if (!policyConfig?.categories) {
-        ctx.ui.error('No policies config found in .kb/kb.config.json (expected "policies" key)');
-        return { ok: false, error: 'No policies config found', result: { repos: [] } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No policies config found', hint: "Run `kb policy detect --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const repoPaths = flags.path
@@ -32,7 +31,7 @@ export default defineCommand({
       const repos = repoPaths.map((p) => detectCategory(p, policyConfig));
 
       if (flags.json) {
-        ctx.ui.json?.({ repos });
+        return { repos };
       } else {
         if (repos.length === 0) {
           ctx.ui.info?.('No repos detected');
@@ -46,7 +45,7 @@ export default defineCommand({
         }
       }
 
-      return { ok: true, result: { repos } };
+      return { repos };
     },
   },
 });

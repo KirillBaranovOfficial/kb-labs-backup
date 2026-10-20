@@ -9,7 +9,7 @@ import {
   useConfig,
   validationError,
   handleError,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CLIInput,
   type CommandResult,
 } from '@kb-labs/sdk';
@@ -28,7 +28,7 @@ type RunFlags = {
   task?: string;
   preset?: string;
   files?: string[];
-  eslintConfig?: string;
+  'eslint-config'?: string;
   cwd?: string;
   json?: boolean;
   agent?: boolean;
@@ -206,13 +206,13 @@ function toAgentReport(result: ReviewResult): AgentReviewReport {
   return { passed, issues, summary };
 }
 
-export default defineCommand<unknown, CLIInput<RunFlags>, AgentReviewReport>({
+export default defineCommand<unknown, CLIInput<RunFlags>, ReviewResult | AgentReviewReport>({
   id: 'review:run',
   description: 'Run code review analysis',
 
   handler: {
     // eslint-disable-next-line sonarjs/cognitive-complexity -- Main orchestration handler: coordinates input modes (repos/files/scope), git resolution, security filtering, output formats (agent/json/human), and severity-based exit codes
-    async execute(ctx: PluginContextV3, input: CLIInput<RunFlags>): Promise<CommandResult<AgentReviewReport>> {
+      async execute(ctx: PluginCommandContextV3, input: CLIInput<RunFlags>): Promise<CommandResult<ReviewResult | AgentReviewReport>> {
       const startTime = Date.now();
 
       // Extract flags from input
@@ -346,8 +346,7 @@ export default defineCommand<unknown, CLIInput<RunFlags>, AgentReviewReport>({
           const hint = scope === 'staged'
             ? 'No staged files found. Stage files with `git add` first, or use `--scope=changed`.'
             : 'No changed files found. Use `--scope=all` to review all files, or `--files` to specify files explicitly.';
-          validationError(ctx, hint, undefined, flags.json);
-          return { ok: false, error: 'Command failed', result: { passed: false, issues: [], summary: hint } };
+          return validationError(hint);
         }
 
         // Run review
@@ -359,16 +358,14 @@ export default defineCommand<unknown, CLIInput<RunFlags>, AgentReviewReport>({
           taskContext: flags.task,
           repoScope,
           config: {
-            eslintConfig: flags.eslintConfig ?? fileConfig?.eslintConfig,
+            eslintConfig: flags['eslint-config'] ?? fileConfig?.eslintConfig,
           },
         });
 
         loader.succeed(`Found ${result.findings.length} issue(s)`);
 
         // Output results
-        if (flags.json) {
-          ctx.ui?.json?.(result);
-        } else {
+        if (!flags.json) {
           // Build sections
           const sections: Array<{ header?: string; items: string[] }> = [];
 
@@ -491,21 +488,49 @@ export default defineCommand<unknown, CLIInput<RunFlags>, AgentReviewReport>({
         const agentReport = toAgentReport(result);
 
         if (blockerCount > 0) {
-          return { ok: false, error: 'Command failed', result: agentReport };
+          return {
+            ok: false,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: 'Command failed',
+              hint: "Run `kb review run --help` to review its inputs and recovery steps, then retry.",
+              diagnostics: agentReport.issues.map((issue) => ({
+                code: 'KB_REVIEW_FINDING',
+                severity: issue.severity === 'blocker' || issue.severity === 'high' ? 'error' as const : 'warning' as const,
+                path: issue.file,
+                line: issue.line,
+                message: issue.problem,
+                hint: issue.fix,
+              })),
+            },
+          };
         }
 
         if (mode === 'heuristic' && highCount > 0) {
           // In CI mode (heuristic), fail on high severity
-          return { ok: false, error: 'Command failed', result: agentReport };
+          return {
+            ok: false,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: 'Command failed',
+              hint: "Run `kb review run --help` to review its inputs and recovery steps, then retry.",
+              diagnostics: agentReport.issues.map((issue) => ({
+                code: 'KB_REVIEW_FINDING',
+                severity: issue.severity === 'blocker' || issue.severity === 'high' ? 'error' as const : 'warning' as const,
+                path: issue.file,
+                line: issue.line,
+                message: issue.problem,
+                hint: issue.fix,
+              })),
+            },
+          };
         }
 
-        return { ok: true, result: agentReport };
+        return agentReport;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         loader.fail(`Review failed: ${message}`);
-        handleError(ctx, error, flags.json);
-        ctx.platform.logger?.error?.('review:run failed', error instanceof Error ? error : new Error(message));
-        return { ok: false, error: 'Command failed', result: { passed: false, issues: [], summary: `Review error: ${message}` } };
+        return handleError(error);
       }
     },
   },

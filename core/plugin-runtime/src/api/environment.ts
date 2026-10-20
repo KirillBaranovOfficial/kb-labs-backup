@@ -4,6 +4,8 @@
  * Adapter from plugin-facing EnvironmentAPI to runtime EnvironmentManager.
  */
 
+import { matchesPermissionPattern } from '@kb-labs/plugin-contracts';
+
 import type {
   EnvironmentAPI,
   EnvironmentCreateRequest,
@@ -23,16 +25,6 @@ interface EnvironmentManagerClient {
 export interface CreateEnvironmentAPIOptions {
   permissions?: PermissionSpec;
   manager: EnvironmentManagerClient;
-}
-
-function matchesPattern(value: string, pattern: string): boolean {
-  if (pattern === '*') {
-    return true;
-  }
-  if (pattern.endsWith('*')) {
-    return value.startsWith(pattern.slice(0, -1));
-  }
-  return value === pattern;
 }
 
 function checkEnvironmentPermission(
@@ -57,7 +49,7 @@ function checkEnvironmentPermission(
   }
 
   if (operation === 'create' && request?.templateId && envPerms.templates?.length) {
-    const allowed = envPerms.templates.some(pattern => matchesPattern(request.templateId!, pattern));
+    const allowed = envPerms.templates.some(pattern => matchesPermissionPattern(request.templateId!, pattern));
     if (!allowed) {
       throw new Error(
         `Environment template '${request.templateId}' denied: not in allowed templates scope`
@@ -67,7 +59,7 @@ function checkEnvironmentPermission(
 
   if (operation === 'create' && request?.namespace && envPerms.namespaces?.length) {
     const allowed = envPerms.namespaces.some(pattern =>
-      matchesPattern(request.namespace!, pattern)
+      matchesPermissionPattern(request.namespace!, pattern)
     );
     if (!allowed) {
       throw new Error(

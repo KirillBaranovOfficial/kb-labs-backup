@@ -1,11 +1,20 @@
 package contracts
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
-	"regexp"
 	"strings"
+
+	"github.com/kb-labs/clikit/diag"
 )
+
+// Diagnostic converts shared request validation into the platform CLI failure
+// contract, including its input exit code and field metadata.
+func (e *RequestValidationError) Diagnostic() *diag.Diag {
+	failure := NewDiag(e.Code, e.Message, e.Hint, e.Cause)
+	failure.Meta = map[string]any{"field": e.Field}
+	return failure
+}
 
 // ErrorStage is the moment of the user journey in which an error happened.
 // The set is open; the values below are the ones the launcher emits.
@@ -26,219 +35,115 @@ const (
 	StageRollback   ErrorStage = "rollback"
 )
 
-//go:generate go run ./gen
-
-// validStages is the journey vocabulary from error-envelope.schema.json.
-var validStages = map[ErrorStage]bool{StagePreflight: true, StageResolve: true, StageApply: true, StageVerify: true, StageRecover: true, StageStart: true, StageLogin: true, StageAddProject: true, StageRun: true, StageExtend: true, StageUpdate: true, StageRollback: true}
-
-// ErrorArea groups error codes by the part of the product they belong to.
-type ErrorArea string
-
+// Error codes emitted by kb-create's operation layer.
 const (
-	AreaInstall ErrorArea = "install"
-	AreaHost    ErrorArea = "host"
-	AreaAuth    ErrorArea = "auth"
-	AreaProject ErrorArea = "project"
-	AreaConfig  ErrorArea = "config"
-	AreaPlugin  ErrorArea = "plugin"
-	AreaUpdate  ErrorArea = "update"
-	AreaRuntime ErrorArea = "runtime"
-	AreaProduct ErrorArea = "product"
+	CodeToolchainUnsupported      = "KB_INSTALL_TOOLCHAIN_UNSUPPORTED"
+	CodeMemoryInsufficient        = "KB_INSTALL_MEMORY_INSUFFICIENT"
+	CodeResourceCheckFailed       = "KB_INSTALL_RESOURCE_CHECK_FAILED"
+	CodePackageManagerKilled      = "KB_INSTALL_PACKAGE_MANAGER_KILLED"
+	CodePortInUse                 = "KB_INSTALL_PORT_IN_USE"
+	CodeIncompatibleComponents    = "KB_INSTALL_INCOMPATIBLE_COMPONENTS"
+	CodeProviderUnresolved        = "KB_INSTALL_PROVIDER_UNRESOLVED"
+	CodeProviderAmbiguous         = "KB_INSTALL_PROVIDER_AMBIGUOUS"
+	CodeInputRequired             = "KB_INSTALL_INPUT_REQUIRED"
+	CodeConfigRequired            = "KB_INSTALL_CONFIG_REQUIRED"
+	CodeScenarioInvalid           = "KB_INSTALL_SCENARIO_INVALID"
+	CodeWizardInputInvalid        = "KB_INSTALL_WIZARD_INPUT_INVALID"
+	CodeSecretInputInvalid        = "KB_INSTALL_SECRET_INPUT_INVALID"
+	CodeSecretStoreUnsupported    = "KB_INSTALL_SECRET_STORE_UNSUPPORTED"
+	CodeSecretStateChanged        = "KB_INSTALL_SECRET_STATE_CHANGED"
+	CodeBootstrapCredentialLocked = "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED"
+	CodeReleaseIndexInvalid       = "KB_INSTALL_RELEASE_INDEX_INVALID"
+	CodeReleaseIndexSealFailed    = "KB_RELEASE_INDEX_SEAL_FAILED"
+	CodeReleaseIndexUnreadable    = "KB_INSTALL_RELEASE_INDEX_UNREADABLE"
+	CodeOfflineArtifactMissing    = "KB_INSTALL_OFFLINE_ARTIFACT_MISSING"
+	CodeIndexSchemaUnsupported    = "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED"
+	CodeLauncherTooOld            = "KB_INSTALL_LAUNCHER_TOO_OLD"
+	CodeArtifactMismatch          = "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH"
+	CodeServiceGraphMismatch      = "KB_INSTALL_SERVICE_GRAPH_MISMATCH"
+	CodeApplyFailed               = "KB_INSTALL_APPLY_FAILED"
+	CodeOperationFailed           = "KB_INSTALL_OPERATION_FAILED"
+	CodeRecoveryFailed            = "KB_INSTALL_RECOVERY_FAILED"
+	CodeReceiptUnavailable        = "KB_INSTALL_RECEIPT_UNAVAILABLE"
+	CodeDoctorInputInvalid        = "KB_INSTALL_DOCTOR_INPUT_INVALID"
+	CodeLogUnavailable            = "KB_INSTALL_LOG_UNAVAILABLE"
+	CodeDiagnosticUnavailable     = "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE"
+	CodeRollbackFailed            = "KB_INSTALL_ROLLBACK_FAILED"
+	CodeOperationInProgress       = "KB_INSTALL_OPERATION_IN_PROGRESS"
+	CodeRecoveryHostRunning       = "KB_INSTALL_RECOVERY_HOST_RUNNING"
+	CodeRecoveryUnavailable       = "KB_INSTALL_RECOVERY_UNAVAILABLE"
+	CodeUpdateApplyFailed         = "KB_UPDATE_APPLY_FAILED"
+	CodeUpdateIncompatible        = "KB_UPDATE_INCOMPATIBLE"
+	CodeUpdateDowngradeRefused    = "KB_UPDATE_DOWNGRADE_REFUSED"
+	CodeUpdateHostNotHealthy      = "KB_UPDATE_HOST_NOT_HEALTHY"
+	CodeUpdateNoSnapshot          = "KB_UPDATE_NO_SNAPSHOT"
+	CodeUpdateSecretRefused       = "KB_UPDATE_SECRET_REFUSED"
+	CodeInstallLayoutUnsupported  = "KB_INSTALL_LAYOUT_UNSUPPORTED"
+	CodeHostSpecInvalid           = "KB_HOST_SPEC_INVALID"
+	CodeHostStateDirUnwritable    = "KB_HOST_STATE_DIR_UNWRITABLE"
+	CodeOperationLockUnsupported  = "KB_HOST_OPERATION_LOCK_UNSUPPORTED"
+	CodeHostProcessIdentityStale  = "KB_HOST_PROCESS_IDENTITY_STALE"
+	CodeGatewayIndexUnavailable   = "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE"
+	CodeProvenanceMismatch        = "KB_INSTALL_PROVENANCE_MISMATCH"
 )
 
-// ErrorSeverity distinguishes a blocking error from a non-blocking warning.
-type ErrorSeverity string
-
 const (
-	SeverityError   ErrorSeverity = "error"
-	SeverityWarning ErrorSeverity = "warning"
+	CodeProjectSelectionChanged   = "KB_INSTALL_PROJECT_SELECTION_CHANGED"
+	CodeProjectRegistrationFailed = "KB_INSTALL_PROJECT_REGISTRATION_FAILED"
 )
 
-// Launcher error codes. The catalog of record is
-// core/platform/src/error-envelope/errors.catalog.json; codes_gen.go
-// is generated from it (go generate) and a test fails when it is stale.
-const (
-	CodeOperationInvalid       = "KB_INSTALL_OPERATION_INVALID"
-	CodeToolchainUnsupported   = "KB_INSTALL_TOOLCHAIN_UNSUPPORTED"
-	CodeNodeVersion            = "KB_INSTALL_NODE_VERSION"
-	CodeMemoryInsufficient     = "KB_INSTALL_MEMORY_INSUFFICIENT"
-	CodeResourceCheckFailed    = "KB_INSTALL_RESOURCE_CHECK_FAILED"
-	CodePackageManagerKilled   = "KB_INSTALL_PACKAGE_MANAGER_KILLED"
-	CodePortInUse              = "KB_INSTALL_PORT_IN_USE"
-	CodeIncompatibleComponents = "KB_INSTALL_INCOMPATIBLE_COMPONENTS"
-	CodeProviderUnresolved     = "KB_INSTALL_PROVIDER_UNRESOLVED"
-	CodeProviderAmbiguous      = "KB_INSTALL_PROVIDER_AMBIGUOUS"
-	CodeInputRequired          = "KB_INSTALL_INPUT_REQUIRED"
-	CodeConfigRequired         = "KB_INSTALL_CONFIG_REQUIRED"
-	CodeScenarioInvalid        = "KB_INSTALL_SCENARIO_INVALID"
-	CodeWizardInputInvalid     = "KB_INSTALL_WIZARD_INPUT_INVALID"
-	CodeSecretInputInvalid     = "KB_INSTALL_SECRET_INPUT_INVALID"
-	CodeReleaseIndexInvalid    = "KB_INSTALL_RELEASE_INDEX_INVALID"
-	CodeIndexSchemaUnsupported = "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED"
-	CodeLauncherTooOld         = "KB_INSTALL_LAUNCHER_TOO_OLD"
-	CodeArtifactMismatch       = "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH"
-	CodeServiceGraphMismatch   = "KB_INSTALL_SERVICE_GRAPH_MISMATCH"
-	CodeApplyFailed            = "KB_INSTALL_APPLY_FAILED"
-	CodeOperationFailed        = "KB_INSTALL_OPERATION_FAILED"
-	CodeRecoveryFailed         = "KB_INSTALL_RECOVERY_FAILED"
-	CodeReceiptUnavailable     = "KB_INSTALL_RECEIPT_UNAVAILABLE"
-	CodeStatusUnhealthy        = "KB_INSTALL_STATUS_UNHEALTHY"
-	CodeDoctorInputInvalid     = "KB_INSTALL_DOCTOR_INPUT_INVALID"
-	CodeLogUnavailable         = "KB_INSTALL_LOG_UNAVAILABLE"
-	CodeDiagnosticUnavailable  = "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE"
-	CodeRollbackFailed         = "KB_INSTALL_ROLLBACK_FAILED"
-	CodeOperationInProgress    = "KB_INSTALL_OPERATION_IN_PROGRESS"
-	CodeRecoveryHostRunning    = "KB_INSTALL_RECOVERY_HOST_RUNNING"
-	CodeRecoveryUnavailable    = "KB_INSTALL_RECOVERY_UNAVAILABLE"
-	CodeUpdateApplyFailed      = "KB_UPDATE_APPLY_FAILED"
-	CodeUpdateHostNotHealthy   = "KB_UPDATE_HOST_NOT_HEALTHY"
-	CodeUpdateNoSnapshot       = "KB_UPDATE_NO_SNAPSHOT"
-	CodeHostSpecInvalid        = "KB_HOST_SPEC_INVALID"
-	CodeHostStateDirUnwritable = "KB_HOST_STATE_DIR_UNWRITABLE"
-)
-
-// CodeInfo is the catalog data the launcher needs to build an envelope offline.
-// launcherCodes (codes_gen.go) holds every catalog code.
-type CodeInfo struct {
-	Area      ErrorArea
-	Stage     ErrorStage
-	Retryable bool
-}
-
-// LookupCode returns the launcher's catalog data for a code.
-func LookupCode(code string) (CodeInfo, bool) {
-	info, ok := launcherCodes[code]
-	return info, ok
-}
-
-// codePrefixAreas maps the KB_<PREFIX>_ segment of a code to its area.
-// KB_ADAPTER_* is a plugin-area family (see 08-errors.md section 5F).
-var codePrefixAreas = map[string]ErrorArea{
-	"INSTALL": AreaInstall,
-	"HOST":    AreaHost,
-	"AUTH":    AreaAuth,
-	"PROJECT": AreaProject,
-	"CONFIG":  AreaConfig,
-	"PLUGIN":  AreaPlugin,
-	"ADAPTER": AreaPlugin,
-	"UPDATE":  AreaUpdate,
-	"RUNTIME": AreaRuntime,
-}
-
-// AreaForCode derives the area from a code: KB_<AREA>_* for platform codes,
-// product for <PLUGIN>_* codes, and empty for an empty code.
-func AreaForCode(code string) ErrorArea {
-	if code == "" {
-		return ""
+// NewDiag constructs the shared clikit diagnostic for a kb-create error code.
+// The wrapped cause remains available through Unwrap. Its sanitized text is
+// exposed in both machine and human diagnostics at this shared boundary.
+func NewDiag(code, message, hint string, cause error) *diag.Diag {
+	if causeRequired(code) && (cause == nil || strings.TrimSpace(cause.Error()) == "") {
+		panic(fmt.Sprintf("diagnostic %s requires a non-empty cause", code))
 	}
-	parts := strings.SplitN(code, "_", 3)
-	if parts[0] != "KB" {
-		return AreaProduct
-	}
-	if len(parts) < 3 {
-		return ""
-	}
-	return codePrefixAreas[parts[1]]
-}
-
-// ErrorAction is a recovery step; Command is copy-ready.
-type ErrorAction struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Command string `json:"command,omitempty"`
-}
-
-// LauncherError is the launcher's side of the unified error envelope
-// (core/platform/src/error-envelope/error-envelope.schema.json, 08-errors.md).
-// It is safe to render for a human, return in JSON/agent protocol and persist
-// in a redacted diagnostic dossier. Cause must never hold secrets.
-type LauncherError struct {
-	Code          string            `json:"code"`
-	Area          ErrorArea         `json:"area"`
-	Stage         ErrorStage        `json:"stage"`
-	Severity      ErrorSeverity     `json:"severity"`
-	Retryable     bool              `json:"retryable"`
-	Message       string            `json:"message"`
-	Cause         string            `json:"cause,omitempty"`
-	Hint          string            `json:"hint"`
-	Actions       []ErrorAction     `json:"actions,omitempty"`
-	Docs          string            `json:"docs,omitempty"`
-	CorrelationID string            `json:"correlationId,omitempty"`
-	Details       map[string]string `json:"details,omitempty"`
-}
-
-// NewLauncherError builds an error for a known launcher code, taking area,
-// stage and retryable from the catalog table. A code the launcher does not
-// know keeps the zero stage, and Validate reports it.
-func NewLauncherError(code, message, hint string, cause error) *LauncherError {
-	result := &LauncherError{Code: code, Message: message, Hint: hint}
-	if info, ok := LookupCode(code); ok {
-		result.Area, result.Stage, result.Retryable = info.Area, info.Stage, info.Retryable
+	opts := make([]diag.Opt, 0, 2)
+	if hint != "" {
+		opts = append(opts, diag.WithHint(hint))
 	}
 	if cause != nil {
-		result.Cause = cause.Error()
+		opts = append(opts, diag.WithCauseAndReason(cause.Error()))
+		return diag.Wrap(cause, code, message, opts...)
 	}
-	return result.normalized()
+	return diag.New(code, message, opts...)
 }
 
-func (e *LauncherError) Error() string {
-	if e == nil {
-		return "<nil>"
+func causeRequired(code string) bool {
+	switch code {
+	case CodeProjectRegistrationFailed, CodeReleaseIndexInvalid, CodeReleaseIndexUnreadable, CodeReleaseIndexSealFailed:
+		return true
+	default:
+		return false
 	}
-	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-// normalized fills the fields that are derivable so every serialised error is
-// a complete envelope: area from the code, severity defaulting to error.
-func (e *LauncherError) normalized() *LauncherError {
-	value := *e
-	if value.Area == "" {
-		value.Area = AreaForCode(value.Code)
+// NewProjectRegistrationFailure builds the only supported diagnostic for a
+// failed post-install project registration. Its cause comes from locally
+// observed request context, never remote response text.
+func NewProjectRegistrationFailure(failedStep, causeCode string, httpStatus *int, remoteCorrelationID, hint string) *diag.Diag {
+	if failedStep != "login" && failedStep != "register" {
+		panic("project registration failure requires a login or register step")
 	}
-	if value.Severity == "" {
-		value.Severity = SeverityError
+	if _, ok := diag.LookupCatalog(causeCode); !ok {
+		panic(fmt.Sprintf("project registration failure requires a catalogued cause code, got %q", causeCode))
 	}
-	return &value
-}
-
-// MarshalJSON always emits the complete envelope, for values and pointers alike.
-func (e LauncherError) MarshalJSON() ([]byte, error) {
-	type envelope LauncherError
-	return json.Marshal(envelope(*e.normalized()))
-}
-
-var (
-	codePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$`)
-	validAreas  = map[ErrorArea]bool{AreaInstall: true, AreaHost: true, AreaAuth: true, AreaProject: true, AreaConfig: true, AreaPlugin: true, AreaUpdate: true, AreaRuntime: true, AreaProduct: true}
-)
-
-// Validate applies the same rules as error-envelope.schema.json and the TS
-// validateErrorEnvelope, after normalisation. It returns the list of problems.
-func (e *LauncherError) Validate() []string {
-	value := e.normalized()
-	var problems []string
-	if !codePattern.MatchString(value.Code) {
-		problems = append(problems, "code must match ^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$")
-	}
-	if !validAreas[value.Area] {
-		problems = append(problems, "area is not a known area")
-	}
-	if !validStages[value.Stage] {
-		problems = append(problems, "stage is not in the journey vocabulary")
-	}
-	if value.Severity != SeverityError && value.Severity != SeverityWarning {
-		problems = append(problems, "severity must be error or warning")
-	}
-	if value.Message == "" {
-		problems = append(problems, "message must not be empty")
-	}
-	if value.Hint == "" {
-		problems = append(problems, "hint must not be empty")
-	}
-	for index, action := range value.Actions {
-		if action.ID == "" || action.Label == "" {
-			problems = append(problems, fmt.Sprintf("actions[%d] needs non-empty id and label", index))
+	causeText := fmt.Sprintf("Project registration failed during %s: %s", failedStep, causeCode)
+	meta := map[string]any{"causeCode": causeCode, "requestStage": failedStep}
+	if httpStatus != nil {
+		if *httpStatus < 100 || *httpStatus > 599 {
+			panic("project registration failure HTTP status must be between 100 and 599")
 		}
+		meta["httpStatus"] = *httpStatus
+		causeText += fmt.Sprintf(" (HTTP %d)", *httpStatus)
 	}
-	return problems
+	if diag.IsValidCorrelationID(remoteCorrelationID) {
+		meta["remoteCorrelationId"] = remoteCorrelationID
+		causeText += "; Gateway correlation ID " + remoteCorrelationID
+	}
+	failure := NewDiag(CodeProjectRegistrationFailed,
+		"The platform is installed, but the selected project is not registered.", hint, errors.New(causeText))
+	failure.Meta = meta
+	return failure
 }

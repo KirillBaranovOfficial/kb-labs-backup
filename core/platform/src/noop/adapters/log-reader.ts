@@ -1,13 +1,4 @@
-/**
- * @module @kb-labs/core-platform/noop/adapters/log-reader
- *
- * NoOp `ILogReader` — read operations return empty results.
- *
- * This is the default fallback when no log-reader is configured. We chose
- * empty-returns over throwing because a missing log backend is benign:
- * "no logs to show" is a valid answer. Real adapters override this with
- * persistence + ring-buffer backends.
- */
+/** Throwing fallback used when no local log buffer or persistence is configured. */
 
 import type {
   ILogReader,
@@ -19,34 +10,34 @@ import type {
   LogStats,
 } from '../../adapters/log-reader.js';
 import type { LogQuery, LogRecord } from '../../adapters/logger.js';
+import { AdapterUnavailableError } from '../../errors.js';
 
-export class NoOpLogReader implements ILogReader {
+export class UnavailableLogReader implements ILogReader {
+  private unavailable(): never {
+    throw new AdapterUnavailableError('logs');
+  }
+
   async query(_filters: LogQuery, _options?: LogQueryOptions): Promise<LogQueryResult> {
-    return { logs: [], total: 0, hasMore: false, source: 'buffer' };
+    return this.unavailable();
   }
 
   async getById(_id: string): Promise<LogRecord | null> {
-    return null;
+    return this.unavailable();
   }
 
   async search(_searchText: string, _options?: LogSearchOptions): Promise<LogSearchResult> {
-    return { logs: [], total: 0, hasMore: false };
+    return this.unavailable();
   }
 
   subscribe(_callback: (log: LogRecord) => void, _filters?: LogQuery): () => void {
-    return () => { /* noop */ };
+    return this.unavailable();
   }
 
   async getStats(): Promise<LogStats> {
-    return {};
+    return this.unavailable();
   }
 
   getCapabilities(): LogCapabilities {
-    return {
-      hasBuffer: false,
-      hasPersistence: false,
-      hasStreaming: false,
-      hasSearch: false,
-    };
+    return { hasBuffer: false, hasPersistence: false, hasStreaming: false, hasSearch: false };
   }
 }

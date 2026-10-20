@@ -10,7 +10,7 @@ import {
   defineCommand,
   type CLIInput,
   type CommandResult,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   useConfig,
 } from '@kb-labs/sdk';
 import {
@@ -51,7 +51,7 @@ export default defineCommand({
   description: 'Check the release environment (branch, tree, Docker, registries, GitHub auth, baseline drift) before running checks',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<PreflightFlags>): Promise<CommandResult<unknown>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<PreflightFlags>): Promise<CommandResult<unknown>> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -79,8 +79,20 @@ export default defineCommand({
       });
 
       const payload = { ok: result.ok, preflight: result, report };
+      const firstFailure = report.failures[0]?.error;
+      const diagnostics = report.failures.map((finding) => ({
+        code: finding.error.code,
+        message: `${finding.checkId} (${finding.package}): ${finding.rootCause} [${finding.classification}]`,
+        severity: finding.optional ? 'warning' as const : 'error' as const,
+        ...(finding.packagePath ? { path: finding.packagePath } : {}),
+        hint: finding.hint,
+      }));
       if (flags.json) {
-        ctx.ui?.json?.(payload);
+        return result.ok
+          ? payload
+          : firstFailure
+            ? { ok: false, error: { code: firstFailure.code, message: firstFailure.message, hint: firstFailure.hint ?? 'Resolve the failed preflight check, then retry `kb release doctor`.', diagnostics } }
+            : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release preflight failed.', hint: "Run `kb release doctor` again after resolving the failed checks shown in the result.", diagnostics } };
       } else {
         ctx.ui?.sideBox?.({
           title: 'Release preflight',
@@ -90,8 +102,10 @@ export default defineCommand({
       }
 
       return result.ok
-        ? { ok: true, result: payload }
-        : { ok: false, error: 'Preflight failed', result: payload };
+        ? payload
+        : firstFailure
+          ? { ok: false, error: { code: firstFailure.code, message: firstFailure.message, hint: firstFailure.hint ?? 'Resolve the failed preflight check, then retry `kb release doctor`.', diagnostics } }
+          : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release preflight failed.', hint: "Resolve the failed checks shown above, then run `kb release doctor` again.", diagnostics } };
     },
   },
 });

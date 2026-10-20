@@ -18,7 +18,7 @@ import type { CommandManifest, DiscoveryResult } from './types';
 import { manifestToCommands, createUnavailableManifest } from './manifest-commands';
 import { toPosixPath } from '../utils/path';
 
-// Discovery diagnostics are opt-in and go to stderr so they never pollute --json output.
+// Discovery errors always go to stderr; warnings are opt-in. Neither affects --json output.
 const DEBUG_MODE = process.env.DEBUG_SANDBOX === '1' || process.env.KB_DISCOVERY_DEBUG === '1';
 
 export interface DiscoverManifestsOptions {
@@ -28,12 +28,42 @@ export interface DiscoverManifestsOptions {
   projectRoot?: string;
 }
 
-function pluginToResult(plugin: DiscoveredPlugin, manifest: ManifestV3): DiscoveryResult {
+function pluginToResult(
+  plugin: DiscoveredPlugin,
+  manifest: ManifestV3,
+  diagnostics: DiagnosticEvent[],
+): DiscoveryResult {
   let manifests: CommandManifest[];
   try {
     manifests = manifestToCommands(manifest, plugin.packageName, toPosixPath(plugin.packageRoot));
   } catch (err: unknown) {
-    manifests = [createUnavailableManifest(plugin.packageName, err instanceof Error ? err.message : String(err))];
+    const message = err instanceof Error ? err.message : String(err);
+    const existing = diagnostics.find(event => event.code === 'COMMAND_SCHEMA_INVALID' && event.context?.pluginId === plugin.id);
+    const remediation = existing?.remediation
+      ?? `Correct the command schema in ${plugin.packageName}, rebuild it, and run "kb marketplace plugins doctor --scope ${plugin.scope}".`;
+    if (!existing) {
+      diagnostics.push({
+        severity: 'error',
+        code: 'COMMAND_SCHEMA_INVALID',
+        message: `Plugin "${plugin.id}" command schema is invalid: ${message}`,
+        context: { pluginId: plugin.id, entityKind: 'cli-command' },
+        ts: Date.now(),
+        remediation,
+      });
+    }
+    manifests = [createUnavailableManifest(plugin.packageName, existing?.message ?? message, plugin.id, 'COMMAND_SCHEMA_INVALID', remediation)];
+  }
+  const handlerFailure = diagnostics.find(event => event.severity === 'error'
+    && (event.code === 'COMMAND_HANDLER_MISSING' || event.code === 'COMMAND_HANDLER_UNREADABLE')
+    && event.context?.pluginId === plugin.id);
+  if (handlerFailure && manifests[0]?.unavailableDiagnostic === undefined) {
+    manifests = [createUnavailableManifest(
+      plugin.packageName,
+      handlerFailure.message,
+      plugin.id,
+      handlerFailure.code,
+      handlerFailure.remediation,
+    )];
   }
   return {
     manifests,
@@ -63,21 +93,25 @@ export function toDiscoveryResults(discovered: CoreDiscoveryResult): DiscoveryRe
   for (const plugin of discovered.plugins) {
     const manifest = discovered.manifests.get(plugin.id);
     if (manifest) {
-      results.push(pluginToResult(plugin, manifest));
+      results.push(pluginToResult(plugin, manifest, discovered.diagnostics));
     }
   }
 
-  const loadedNames = new Set(discovered.plugins.map(p => p.packageName));
   for (const failure of discovered.failures) {
-    if (failure.reason !== 'manifest' || !failure.manifestPath || loadedNames.has(failure.packageName)) {
-      continue;
-    }
+    const diagnosticCode = failure.diagnosticCode
+      ?? discovered.diagnostics.find(event => event.context?.pluginId === failure.id && event.severity === 'error')?.code;
     results.push({
-      manifests: [createUnavailableManifest(failure.packageName, failure.message)],
+      manifests: [createUnavailableManifest(
+        failure.packageName,
+        failure.message,
+        failure.id,
+        diagnosticCode,
+        failure.remediation,
+      )],
       source: failure.origin,
       scope: failure.scope,
       packageName: failure.packageName,
-      manifestPath: toPosixPath(failure.manifestPath),
+      manifestPath: toPosixPath(failure.manifestPath ?? failure.packageRoot),
       pkgRoot: toPosixPath(failure.packageRoot),
     });
   }
@@ -106,10 +140,12 @@ export async function discoverManifestsDetailed(
 
   const discovered = await new DiscoveryManager({ root: projectRoot, platformRoot }).discover();
 
-  if (DEBUG_MODE) {
-    for (const event of discovered.diagnostics) {
-      if (event.severity === 'info' || event.severity === 'debug') {continue;}
+  for (const event of discovered.diagnostics) {
+    if (event.severity === 'error' || (DEBUG_MODE && event.severity === 'warning')) {
       console.error(`[discover] ${event.severity} ${event.code}: ${event.message}`);
+      if (event.remediation) {
+        console.error(`[discover] next: ${event.remediation}`);
+      }
     }
   }
 

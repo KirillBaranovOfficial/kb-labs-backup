@@ -6,14 +6,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { withFileLock, FileLockTimeoutError } from '../user-config/file-lock.js';
+import { parseJsonc } from '../user-config/jsonc-edit.js';
 import { editDistance, resolveKeyPath, suggestKey } from '../user-config/schema-keys.js';
 import { findPlainSecrets, isSecretKeyPath, looksLikeSecretValue } from '../user-config/secrets.js';
 import {
   ConfigWriteError,
   revisionOf,
   setUserConfigValue,
+  unsetUserConfigValue,
   type ConfigWriteErrorCode,
 } from '../user-config/write-user-config.js';
+import { createAdapterOptionsValidator, validateAdapterOptions, validatePlatformAdapterOptions } from '../adapter-schema.js';
 
 const AdapterValue = z.union([z.string().min(1), z.array(z.string().min(1)), z.null()]);
 
@@ -179,7 +182,7 @@ describe('setUserConfigValue: concurrency', () => {
       }),
       'KB_CONFIG_CONFLICT',
     );
-    expect(error.details.path).toContain('kb.config.jsonc');
+    expect(error.details).toHaveProperty('path', expect.stringContaining('kb.config.jsonc'));
     // The conflicting write did not happen.
     expect(await fsp.readFile(file, 'utf8')).toContain('@kb-labs/adapters-openai');
   });
@@ -226,7 +229,7 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'adapters', 'llm'], value: 42, schema: TEST_SCHEMA }),
       'KB_CONFIG_INVALID',
     );
-    expect(error.details.path).toBe('platform.adapters.llm');
+    expect(error.details).toHaveProperty('path', 'platform.adapters.llm');
     expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
   });
 
@@ -235,7 +238,7 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'execution', 'mode'], value: 'turbo', schema: TEST_SCHEMA }),
       'KB_CONFIG_INVALID',
     );
-    expect(error.details.path).toBe('platform.execution.mode');
+    expect(error.details).toHaveProperty('path', 'platform.execution.mode');
   });
 
   it('rejects an unknown key with a "did you mean" suggestion', async () => {
@@ -243,8 +246,8 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'adaptors', 'llm'], value: 'x', schema: TEST_SCHEMA }),
       'KB_CONFIG_UNKNOWN_KEY',
     );
-    expect(error.details.suggestion).toBe('adapters');
-    expect(error.details.path).toBe('platform.adaptors.llm');
+    expect(error.details).toHaveProperty('suggestion', 'adapters');
+    expect(error.details).toHaveProperty('path', 'platform.adaptors.llm');
   });
 
   it('rejects a key outside a strict object', async () => {
@@ -252,7 +255,7 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'execution', 'moed'], value: 'auto', schema: TEST_SCHEMA }),
       'KB_CONFIG_UNKNOWN_KEY',
     );
-    expect(error.details.suggestion).toBe('mode');
+    expect(error.details).toHaveProperty('suggestion', 'mode');
   });
 
   it('accepts custom keys in open sections (product sections, custom adapter slots)', async () => {
@@ -293,6 +296,190 @@ describe('setUserConfigValue: schema validation', () => {
     expect(error.message).toContain('Expected number');
   });
 
+  it('validates configured adapter options before host startup', async () => {
+    const platformRoot = path.join(dir, 'validation-platform');
+    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'analytics-fixture');
+    await fsp.mkdir(packageRoot, { recursive: true });
+    await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@kb-labs/analytics-fixture', type: 'module', kb: { adapter: { manifest: './manifest.js' } },
+    }));
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'analytics-fixture', name: 'Analytics Fixture', version: '1.0.0', type: 'core', implements: 'IAnalytics', networkRequired: false, configSchema: {
+      retentionDays: { type: 'number', integer: true, minimum: 1, minimumMessage: 'Must be a positive integer', hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90' }
+    } };`);
+
+    const issues = await validatePlatformAdapterOptions(platformRoot, {
+      adapters: { analytics: '@kb-labs/analytics-fixture' },
+      adapterOptions: { analytics: { retentionDays: 0 } },
+    });
+
+    expect(issues).toEqual([{
+      path: 'platform.adapterOptions.analytics.retentionDays',
+      message: 'Must be a positive integer',
+      hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90',
+    }]);
+  });
+
+  it('rejects an adapter manifest without its configSchema before using options', async () => {
+    const platformRoot = path.join(dir, 'missing-config-schema-platform');
+    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'missing-config-schema-fixture');
+    await fsp.mkdir(packageRoot, { recursive: true });
+    await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@kb-labs/missing-config-schema-fixture', type: 'module', kb: { adapter: { manifest: './manifest.js' } },
+    }));
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), 'export const manifest = { schema: "kb.adapter/1", manifestVersion: "1.0.0", id: "missing-config-schema-fixture", name: "Missing Config Schema Fixture", version: "1.0.0", type: "core", implements: "IAnalytics", networkRequired: false };');
+
+    await expect(validatePlatformAdapterOptions(platformRoot, {
+      adapters: { analytics: '@kb-labs/missing-config-schema-fixture' },
+      adapterOptions: { analytics: { retentionDays: 30 } },
+    })).resolves.toMatchObject([{
+      path: 'platform.adapterOptions.analytics',
+      message: 'Cannot load a configSchema for configured adapter @kb-labs/missing-config-schema-fixture.',
+    }]);
+  });
+
+  it('keeps missing adapter configSchema a typed error when options are configured', async () => {
+    const platformRoot = path.join(dir, 'missing-config-schema-platform');
+    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'missing-config-schema-fixture');
+    await fsp.mkdir(packageRoot, { recursive: true });
+    await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@kb-labs/missing-config-schema-fixture', type: 'module', kb: { adapter: { manifest: './manifest.js' } },
+    }));
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'missing-config-schema-fixture', name: 'Missing Config Schema Fixture', version: '1.0.0', type: 'core', implements: 'IAnalytics', networkRequired: false };`);
+
+    await expect(validatePlatformAdapterOptions(platformRoot, {
+      adapters: { analytics: '@kb-labs/missing-config-schema-fixture' },
+      adapterOptions: { analytics: { retentionDays: 30 } },
+    })).resolves.toEqual([{
+      path: 'platform.adapterOptions.analytics',
+      message: 'Cannot load a configSchema for configured adapter @kb-labs/missing-config-schema-fixture.',
+      hint: 'Repair the installed adapter manifest for @kb-labs/missing-config-schema-fixture, then run `kb-create start` again.',
+    }]);
+  });
+
+  // case: S-211.7
+  it('rejects adapter options outside the declared manifest shape without changing the file', async () => {
+    const error = await expectCode(
+      setUserConfigValue({
+        filePath: file,
+        path: ['platform', 'adapterOptions', 'llm', 'baseURL'],
+        value: 42,
+        schema: TEST_SCHEMA,
+        validate: (document) => {
+          const platform = document.platform as { adapterOptions?: { llm?: Record<string, unknown> } } | undefined;
+          const options = platform?.adapterOptions?.llm ?? {};
+          return validateAdapterOptions('platform.adapterOptions.llm', options, { baseURL: { type: 'string' } });
+        },
+      }),
+      'KB_CONFIG_INVALID',
+    );
+    expect(error.details).toHaveProperty('path', 'platform.adapterOptions.llm.baseURL');
+    expect(error.message).toContain('Expected string');
+    expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
+  });
+
+  // case: S-211.7
+  it('rejects an adapter binding when its package is not installed at platform scope and preserves config', async () => {
+    const platformRoot = path.join(dir, 'platform');
+    const validate = createAdapterOptionsValidator(
+      ['platform', 'adapters', 'llm'],
+      { platformRoot, effectiveAdapters: { llm: '@kb-labs/adapters-openai' } },
+    );
+    if (!validate) {throw new Error('expected adapter binding validator');}
+    const error = await expectCode(
+      setUserConfigValue({
+        filePath: file,
+        path: ['platform', 'adapters', 'llm'],
+        value: '@kb-labs/adapters-vibeproxy',
+        schema: TEST_SCHEMA,
+        validate,
+      }),
+      'KB_ADAPTER_NOT_INSTALLED',
+    );
+    expect(error.details).toHaveProperty('path', 'platform.adapters.llm');
+    expect(error.details).toHaveProperty('package', '@kb-labs/adapters-vibeproxy');
+    expect(error.details).toHaveProperty('slot', 'llm');
+    expect(error.metadata.hint).toBe('kb marketplace install @kb-labs/adapters-vibeproxy --scope platform');
+    expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
+  });
+
+  // case: S-211.7
+  it('rejects rewriting the same missing adapter binding even when it was already stored', async () => {
+    const missing = '@kb-labs/adapters-vibeproxy';
+    const initial = DOC.replace('@kb-labs/adapters-openai', missing);
+    await fsp.writeFile(file, initial);
+    const validate = createAdapterOptionsValidator(
+      ['platform', 'adapters', 'llm'],
+      { platformRoot: path.join(dir, 'platform') },
+    );
+    if (!validate) {throw new Error('expected adapter binding validator');}
+
+    const error = await expectCode(
+      setUserConfigValue({
+        filePath: file,
+        path: ['platform', 'adapters', 'llm'],
+        value: missing,
+        schema: TEST_SCHEMA,
+        validate,
+      }),
+      'KB_ADAPTER_NOT_INSTALLED',
+    );
+
+    expect(error.details).toHaveProperty('package', missing);
+    expect(await fsp.readFile(file, 'utf8')).toBe(initial);
+  });
+
+  // case: S-211.7
+  it('rejects a package that is installed but does not declare the requested slot', async () => {
+    const platformRoot = path.join(dir, 'platform');
+    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-storage-fixture');
+    await fsp.mkdir(packageRoot, { recursive: true });
+    await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-storage-fixture', type: 'module', kb: { adapter: { manifest: './manifest.js' } } }));
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'storage-fixture', name: 'Storage Fixture', version: '1.0.0', type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: { storage: [] } };`);
+    const validate = createAdapterOptionsValidator(
+      ['platform', 'adapters', 'llm'],
+      { platformRoot, effectiveAdapters: { llm: '@kb-labs/adapters-openai' } },
+    );
+    if (!validate) {throw new Error('expected adapter binding validator');}
+    const error = await expectCode(
+      setUserConfigValue({
+        filePath: file,
+        path: ['platform', 'adapters', 'llm'],
+        value: '@kb-labs/adapters-storage-fixture',
+        schema: TEST_SCHEMA,
+        validate,
+      }),
+      'KB_ADAPTER_SLOT_MISMATCH',
+    );
+    expect(error.details).toHaveProperty('slot', 'llm');
+    expect(error.details).toHaveProperty('package', '@kb-labs/adapters-storage-fixture');
+    expect(error.metadata.hint).toBe(
+      'Install a provider that declares llm with `kb marketplace install <pkg> --scope platform`, then retry.',
+    );
+    expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
+  });
+
+  // case: S-211.7
+  it('does not persist adapter options when the bound package schema cannot be loaded', async () => {
+    const validate = createAdapterOptionsValidator(
+      ['platform', 'adapterOptions', 'llm', 'baseURL'],
+      { platformRoot: path.join(dir, 'missing-platform'), effectiveAdapters: { llm: '@kb-labs/missing-llm' } },
+    );
+    if (!validate) {throw new Error('expected adapter options validator');}
+    const error = await expectCode(
+      setUserConfigValue({
+        filePath: file,
+        path: ['platform', 'adapterOptions', 'llm', 'baseURL'],
+        value: 'http://localhost:8317',
+        schema: TEST_SCHEMA,
+        validate,
+      }),
+      'KB_ADAPTER_NOT_INSTALLED',
+    );
+    expect(error.details).toHaveProperty('path', 'platform.adapterOptions.llm');
+    expect(error.details).toHaveProperty('package', '@kb-labs/adapters-openai');
+    expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
+  });
+
   it('rejects a broken file and a path through a scalar instead of guessing', async () => {
     await fsp.writeFile(file, '{ "platform": ');
     await expectCode(
@@ -305,7 +492,67 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'adapters', 'llm'], value: 'x' }),
       'KB_CONFIG_INVALID',
     );
-    expect(error.details.path).toBe('platform');
+    expect(error.details).toHaveProperty('path', 'platform');
+  });
+});
+
+describe('unsetUserConfigValue', () => {
+  it('removes the user binding while preserving adapter options and unrelated config', async () => {
+    const input = `{
+  // project user config
+  "platform": {
+    "adapters": { "storage": "@kb-labs/adapters-fs", "cache": "@kb-labs/adapters-cache" },
+    "adapterOptions": { "storage": { "baseDir": "storage" } }
+  }
+}
+`;
+    await fsp.writeFile(file, input);
+
+    const result = await unsetUserConfigValue({
+      filePath: file,
+      path: ['platform', 'adapters', 'storage'],
+      schema: TEST_SCHEMA,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.previousValue).toBe('@kb-labs/adapters-fs');
+    expect(parseJsonc(result.text)).toEqual({
+      platform: {
+        adapters: { cache: '@kb-labs/adapters-cache' },
+        adapterOptions: { storage: { baseDir: 'storage' } },
+      },
+    });
+    expect(result.text).toContain('// project user config');
+    expect(await fsp.readFile(file, 'utf8')).toBe(result.text);
+  });
+
+  it('dry-runs without writing and is idempotent when the key is already absent', async () => {
+    await fsp.writeFile(file, JSON.stringify({
+      platform: { adapters: { storage: '@kb-labs/adapters-fs' }, adapterOptions: { storage: { baseDir: 'storage' } } },
+    }));
+    const original = await fsp.readFile(file, 'utf8');
+    const dryRun = await unsetUserConfigValue({
+      filePath: file,
+      path: ['platform', 'adapters', 'storage'],
+      schema: TEST_SCHEMA,
+      dryRun: true,
+    });
+    expect(dryRun.changed).toBe(true);
+    expect(await fsp.readFile(file, 'utf8')).toBe(original);
+
+    const removed = await unsetUserConfigValue({
+      filePath: file,
+      path: ['platform', 'adapters', 'storage'],
+      schema: TEST_SCHEMA,
+    });
+    const unchanged = await unsetUserConfigValue({
+      filePath: file,
+      path: ['platform', 'adapters', 'storage'],
+      schema: TEST_SCHEMA,
+    });
+    expect(removed.changed).toBe(true);
+    expect(unchanged.changed).toBe(false);
+    expect(unchanged.previousValue).toBeUndefined();
   });
 });
 
@@ -371,7 +618,7 @@ describe('setUserConfigValue: secrets', () => {
       }),
       'KB_CONFIG_SECRET_MISSING',
     );
-    expect(error.details.variable).toBe('OPENAI_API_KEY');
+    expect(error.details).toHaveProperty('variable', 'OPENAI_API_KEY');
   });
 
   it('accepts an unset reference with allowMissingEnv', async () => {

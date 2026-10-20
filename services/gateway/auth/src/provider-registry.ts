@@ -11,11 +11,15 @@
  *   `authenticate` function over the wire.
  */
 
-import type { IIdentityProvider } from '@kb-labs/core-contracts';
+import type { IIdentityProvider, IdentityProviderOperationalState } from '@kb-labs/core-contracts';
 
-export interface ProviderInfo {
+export interface ProviderSummary {
   id: string;
   kind: IIdentityProvider['kind'];
+}
+
+export interface ProviderInfo extends ProviderSummary {
+  operational: IdentityProviderOperationalState;
 }
 
 export class ProviderRegistry {
@@ -36,7 +40,15 @@ export class ProviderRegistry {
     return this.providers.has(id);
   }
 
-  list(): ProviderInfo[] {
+  list(): ProviderSummary[] {
     return [...this.providers.values()].map(p => ({ id: p.id, kind: p.kind }));
+  }
+
+  async operationalList(): Promise<ProviderInfo[]> {
+    return Promise.all([...this.providers.values()].map(async (provider) => ({
+      id: provider.id,
+      kind: provider.kind,
+      operational: await provider.getOperationalState(),
+    })));
   }
 }

@@ -23,7 +23,7 @@ describe('steward:project.get', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: ['prj_1'] }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.infos[0]?.message).toContain('Acme API');
   });
 
@@ -33,9 +33,9 @@ describe('steward:project.get', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await command.execute(ctx, mockCLIInput({ argv: ['prj_1'], flags: { json: true } }));
+    const result = await command.execute(ctx, mockCLIInput({ argv: ['prj_1'], flags: { json: true } }));
 
-    expect(captured.json[0]).toMatchObject({ ok: true, result: { project: { id: 'prj_1' } } });
+    expect(result).toMatchObject({ project: { id: 'prj_1' } });
   });
 
   it('not found — NOT_FOUND, exitOk false', async () => {
@@ -45,11 +45,11 @@ describe('steward:project.get', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: ['missing'] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe('NOT_FOUND');
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
+      expect(result.error.code).toBe('KB_RUNTIME_RESOURCE_NOT_FOUND');
     }
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('missing idOrName is a validation error', async () => {
@@ -57,11 +57,11 @@ describe('steward:project.get', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe('INVALID_ARGS');
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
+      expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedGetProject).not.toHaveBeenCalled();
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

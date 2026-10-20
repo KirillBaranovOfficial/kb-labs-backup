@@ -17,7 +17,7 @@ import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-type RunStatus = 'pending' | 'running' | 'queued' | 'success' | 'completed' | 'failed' | string
+type RunStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled' | 'skipped' | 'dlq'
 
 interface RunData {
   status?: RunStatus
@@ -74,7 +74,7 @@ async function waitForRun(
 
   while (Date.now() < deadline) {
     const run = await fetchRun(request, runId)
-    if (/^(success|completed|failed|dlq)$/.test(run.status ?? '')) {
+    if (/^(success|failed|cancelled|skipped|dlq)$/.test(run.status ?? '')) {
       return run
     }
     const delay = intervals[Math.min(attempt++, intervals.length - 1)]
@@ -100,7 +100,7 @@ async function runTestPathsWorkflow(
   request: Parameters<Parameters<typeof test>[1]>[0]['request'],
 ): Promise<{ stdout: string; status: string }> {
   const wf = await findWorkflow(request, 'test-paths')
-  if (!wf) test.skip(true, 'test-paths workflow not found — check .kb/workflows/test-paths.yaml')
+  if (!wf) expect(true, 'test-paths workflow not found — check .kb/workflows/test-paths.yaml').toBe(false)
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
   expect(runId).toBeTruthy()
@@ -118,7 +118,7 @@ test('WWT-01: shell step CWD is worktree, not the platform root', async ({ reque
   test.setTimeout(90_000)
   const { status, stdout } = await runTestPathsWorkflow(request)
 
-  expect(status).toMatch(/^(success|completed)$/)
+  expect(status).toMatch(/^success$/)
   expect(stdout).toBeTruthy()
 
   const cwdMatch = stdout.match(/=== CWD ===\n([^\n]+)/)
@@ -132,7 +132,7 @@ test('WWT-02: KB_PLATFORM_ROOT is set and does not contain .worktrees', async ({
   test.setTimeout(90_000)
   const { status, stdout } = await runTestPathsWorkflow(request)
 
-  expect(status).toMatch(/^(success|completed)$/)
+  expect(status).toMatch(/^success$/)
 
   const match = stdout.match(/=== KB_PLATFORM_ROOT ===\n([^\n]+)/)
   expect(match, 'KB_PLATFORM_ROOT section missing from stdout').toBeTruthy()
@@ -147,7 +147,7 @@ test('WWT-03: KB_WORKSPACE_ROOT is set and points inside .worktrees', async ({ r
   test.setTimeout(90_000)
   const { status, stdout } = await runTestPathsWorkflow(request)
 
-  expect(status).toMatch(/^(success|completed)$/)
+  expect(status).toMatch(/^success$/)
 
   const match = stdout.match(/=== KB_WORKSPACE_ROOT ===\n([^\n]+)/)
   expect(match, 'KB_WORKSPACE_ROOT section missing from stdout').toBeTruthy()
@@ -162,7 +162,7 @@ test('WWT-04: cli/bin/dist symlink target resolves into the platform, not the wo
   test.setTimeout(90_000)
   const { status, stdout } = await runTestPathsWorkflow(request)
 
-  expect(status).toMatch(/^(success|completed)$/)
+  expect(status).toMatch(/^success$/)
 
   const match = stdout.match(/=== cli\/bin\/dist symlink target ===\n([^\n]+)/)
   expect(match, 'symlink section missing from stdout').toBeTruthy()
@@ -177,7 +177,7 @@ test('WWT-05: pnpm kb --version succeeds in the worktree', async ({ request }) =
   test.setTimeout(90_000)
   const { status, stdout } = await runTestPathsWorkflow(request)
 
-  expect(status).toMatch(/^(success|completed)$/)
+  expect(status).toMatch(/^success$/)
   expect(stdout).not.toContain('pnpm kb failed')
 })
 
@@ -187,7 +187,7 @@ test('WWT-06: files written to worktree dist/ do not appear in the platform', as
   test.setTimeout(90_000)
   const { status, stdout } = await runTestPathsWorkflow(request)
 
-  expect(status).toMatch(/^(success|completed)$/)
+  expect(status).toMatch(/^success$/)
   expect(stdout).toContain('not in platform (correct)')
   expect(stdout).not.toContain('LEAKED TO PLATFORM!')
 })

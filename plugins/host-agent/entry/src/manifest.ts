@@ -36,10 +36,6 @@ export const manifest = {
         path: 'workspace',
         describe: 'Workspace management',
       },
-      {
-        path: 'agent',
-        describe: 'Agent management',
-      },
     ],
     commands: [
       // Primary commands: workspace:*
@@ -56,8 +52,8 @@ export const manifest = {
         flags: defineCommandFlags(registerFlags),
 
         examples: [
-          'kb workspace:register --gateway http://localhost:4000',
-          'kb workspace:register --gateway https://gateway.kblabs.dev --name my-laptop --workspace ~/projects/my-app',
+          'kb workspace register --gateway http://localhost:4000',
+          'kb workspace register --gateway https://gateway.kblabs.dev --name my-laptop --workspace ~/projects/my-app',
         ],
       },
 
@@ -74,8 +70,8 @@ export const manifest = {
         flags: defineCommandFlags(statusFlags),
 
         examples: [
-          'kb workspace:status',
-          'kb workspace:status --json',
+          'kb workspace status',
+          'kb workspace status --json',
         ],
       },
 
@@ -91,39 +87,12 @@ export const manifest = {
         flags: defineCommandFlags(listFlags),
 
         examples: [
-          'kb workspace:list',
-          'kb workspace:list --json',
-          'kb workspace:list --gateway https://gateway.kblabs.dev',
+          'kb workspace list',
+          'kb workspace list --json',
+          'kb workspace list --gateway https://gateway.kblabs.dev',
         ],
       },
 
-      // Legacy aliases: agent:* (backwards compatible)
-      {
-        path: 'agent register',
-        describe: '[Alias for workspace:register] Register this machine with a Platform Gateway.',
-
-        handler: './commands/register.js#default',
-
-        flags: defineCommandFlags(registerFlags),
-
-        examples: [
-          'kb agent:register --gateway http://localhost:4000',
-        ],
-      },
-
-      {
-        path: 'agent status',
-        describe: '[Alias for workspace:status] Show Workspace Agent connection status.',
-
-        handler: './commands/status.js#default',
-
-        flags: defineCommandFlags(statusFlags),
-
-        examples: [
-          'kb agent:status',
-          'kb agent:status --json',
-        ],
-      },
     ],
   },
 
@@ -137,5 +106,3 @@ export const manifest = {
     },
   ],
 };
-
-export default manifest;

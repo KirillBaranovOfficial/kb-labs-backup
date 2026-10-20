@@ -1,49 +1,31 @@
 ---
 id: S-021
-title: Studio — View workflow runs
+title: Studio — Inspect workflow runs for the selected project
 persona: solo-developer
+area: studio
 priority: P1
-automation: manual
-e2e: —
+status: active
+release: true
+modes: [local, secured]
+surfaces: [studio]
 ---
 
 ## Goal
-Developer monitors workflow runs in Studio UI — sees status, drill into jobs, reads logs.
+
+A Studio user selects a project and inspects its workflow run history, run details, and step logs.
 
 ## Prerequisites
-- [ ] Studio accessible (S-020 passed)
-- [ ] At least 2 workflow runs in history (completed + failed)
 
----
+- [ ] Host running with Studio available and a registered project selected.
+- [ ] The project has one successful and one failed workflow run with step output.
+- [ ] In secured mode, the user is logged in and authorized to view the project.
 
 ## Steps
 
-### Phase 1 — Runs list
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Navigate to Workflows section in Studio | Page loads without error | | ⬜ |
-| 2 | Runs list shows id, workflow name, status, started time | Data visible | | ⬜ |
-| 3 | Status badges: green (completed), red (failed), yellow (running) | Visual distinction clear | | ⬜ |
-| 4 | List updates when new run is triggered | Live update or auto-refresh works | | ⬜ |
-
-### Phase 2 — Run detail
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 5 | Click on a run | Opens detail view with jobs list | | ⬜ |
-| 6 | Each job shows status + duration | All jobs visible | | ⬜ |
-| 7 | Click on a failed job | Error message shown | | ⬜ |
-
-### Phase 3 — Logs
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 8 | Click "View logs" on a job | Step output displayed | | ⬜ |
-| 9 | Long log doesn't freeze browser | Scrollable, not rendering 10k lines at once | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-021.1 | Open **Workflows → Runs** for the selected project | The runs table shows only runs belonging to the selected project and includes each run ID, workflow ID, status, and start time. |
+| S-021.2 | Open the successful run, then the failed run | Each detail page shows the selected run ID, its exact terminal status (`success` or `failed`), and its workflow ID. |
+| S-021.3 | Open the successful run's step logs | The completed step's captured output is visible. |
+| S-021.4 | Open the failed run's step logs | The failed step is identified and its error message is visible. |
+| S-021.5 | Select a different project with no runs | The Runs view shows an empty state for that project and does not show either run from the first project. |

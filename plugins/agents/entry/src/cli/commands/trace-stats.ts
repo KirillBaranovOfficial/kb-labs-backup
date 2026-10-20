@@ -8,7 +8,7 @@
 
 import { defineCommand, useLogger } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
-import type { PluginContextV3 } from '@kb-labs/sdk';
+import type { PluginCommandContextV3 } from '@kb-labs/sdk';
 import type {
   TraceCommandResponse,
   StatsResponse,
@@ -43,7 +43,7 @@ export default defineCommand({
   description: 'Show trace statistics with cost and performance metrics',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: TraceStatsInput): Promise<TraceStatsResult> {
+    async execute(ctx: PluginCommandContextV3, input: TraceStatsInput): Promise<TraceStatsResult> {
       const logger = useLogger();
       const flags: TraceStatsInput =
         (typeof input === 'object' && input !== null && 'flags' in input)
@@ -59,9 +59,7 @@ export default defineCommand({
           loaded.error.kind === 'not_found' ? 'TRACE_NOT_FOUND' :
           loaded.error.kind === 'too_large' ? 'FILE_TOO_LARGE' :
           'CORRUPTED_TRACE';
-        const err = error(code, formatTraceLoadError(loaded.error));
-        ctx.ui?.json?.(err);
-        return { ok: false, error: 'Command failed', result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: formatTraceLoadError(loaded.error), hint: 'Check the task ID, then rerun `kb agents trace stats --task-id <id>`.' } };
       }
 
       const { events } = loaded;
@@ -84,17 +82,15 @@ export default defineCommand({
 
       // Output
       if (flags.json) {
-        ctx.ui?.json?.(response);
+        return response;
       } else {
         printHumanReadable(ctx, stats);
       }
 
-      return { ok: true, result: response };
+      return response;
     } catch (err) {
       logger.error('trace:stats error:', err instanceof Error ? err : undefined);
-      const errResponse = error('IO_ERROR', err instanceof Error ? err.message : String(err));
-      ctx.ui?.json?.(errResponse);
-      return { ok: false, error: 'Command failed', result: errResponse };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: err instanceof Error ? err.message : String(err), hint: 'Check the trace file, then rerun `kb agents trace stats --task-id <id>`.' } };
     }
     },
   },
@@ -222,7 +218,7 @@ function formatDuration(ms: number): string {
 /**
  * Print human-readable output
  */
-function printHumanReadable(ctx: PluginContextV3, stats: StatsResponse): void {
+function printHumanReadable(ctx: PluginCommandContextV3, stats: StatsResponse): void {
   ctx.ui.write('\n');
   ctx.ui.write('📊 Trace Statistics\n');
   ctx.ui.write('\n');

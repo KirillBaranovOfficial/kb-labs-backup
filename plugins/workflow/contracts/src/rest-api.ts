@@ -5,7 +5,7 @@
 
 import { z } from 'zod'
 import type { ExecutionTarget, IsolationProfile } from './types'
-import type { RunState } from '@kb-labs/workflow-constants'
+import type { RunState, StepState } from '@kb-labs/workflow-constants'
 
 /**
  * Job submission request (POST /api/jobs)
@@ -44,7 +44,7 @@ export interface JobStatusInfo {
   /** Job type */
   type: string;
   /** Current status */
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: RunState;
   /** Tenant ID */
   tenantId?: string;
   /** Priority */
@@ -76,7 +76,7 @@ export interface JobListFilter {
   /** Filter by job type pattern */
   type?: string;
   /** Filter by status */
-  status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status?: RunState;
   /** Pagination limit */
   limit?: number;
   /** Pagination offset */
@@ -100,43 +100,24 @@ export interface JobCancelResponse {
 }
 
 /**
- * Cron job registration request (POST /api/cron)
- */
-export interface CronRegistrationRequest {
-  /** Cron job ID (unique per plugin) */
-  id: string;
-  /** Cron schedule expression */
-  schedule: string;
-  /** Job type to execute (pluginId:jobId) */
-  jobType: string;
-  /** Job payload */
-  payload?: unknown;
-  /** Timezone (default: UTC) */
-  timezone?: string;
-  /** Enabled flag (default: true) */
-  enabled?: boolean;
-}
-
-/**
  * Cron job info (GET /api/cron)
  */
 export interface CronInfo {
   /** Cron job ID */
   id: string;
+  source: 'user' | 'plugin';
   /** Cron schedule expression */
   schedule: string;
   /** Job type */
-  jobType: string;
+  target: { workflow: string } | { handler: string };
+  input?: Record<string, unknown>;
   /** Timezone */
   timezone?: string;
   /** Enabled flag */
   enabled: boolean;
   /** Last run time */
-  lastRun?: Date | string;
-  /** Next run time */
-  nextRun?: Date | string;
-  /** Plugin ID (if plugin-provided) */
-  pluginId?: string;
+  lastRun?: { id: string; status: string; time: string };
+  nextFireAt?: string;
 }
 
 /**
@@ -145,6 +126,7 @@ export interface CronInfo {
 export interface CronListResponse {
   /** List of cron jobs */
   crons: CronInfo[];
+  errors: Array<{ file: string; reason: string }>;
 }
 
 /**
@@ -211,11 +193,13 @@ export interface WorkflowRunRequest {
  * Job status enum schema
  */
 export const JobStatusSchema = z.enum([
-  'pending',
+  'queued',
   'running',
-  'completed',
+  'success',
   'failed',
   'cancelled',
+  'skipped',
+  'dlq',
 ])
 
 /**
@@ -257,13 +241,17 @@ export const JobCancelResponseSchema = z.object({
  */
 export const CronInfoSchema = z.object({
   id: z.string(),
+  source: z.enum(['user', 'plugin']),
   schedule: z.string(),
-  jobType: z.string(),
+  target: z.union([
+    z.object({ workflow: z.string().min(1) }).strict(),
+    z.object({ handler: z.string().min(1) }).strict(),
+  ]),
+  input: z.record(z.string(), z.unknown()).optional(),
   timezone: z.string().optional(),
   enabled: z.boolean(),
-  lastRun: z.union([z.string(), z.date()]).optional(),
-  nextRun: z.union([z.string(), z.date()]).optional(),
-  pluginId: z.string().optional(),
+  lastRun: z.object({ id: z.string(), status: z.string(), time: z.string() }).optional(),
+  nextFireAt: z.string().optional(),
 })
 
 /**
@@ -271,6 +259,7 @@ export const CronInfoSchema = z.object({
  */
 export const CronListResponseSchema = z.object({
   crons: z.array(CronInfoSchema),
+  errors: z.array(z.object({ file: z.string(), reason: z.string() })).default([]),
 })
 
 /**
@@ -361,8 +350,8 @@ export interface DashboardStatsResponse {
   /** Job statistics */
   jobs: {
     running: number;
-    pending: number;
-    completed: number;
+    queued: number;
+    success: number;
     failed: number;
   };
   /** Cron statistics */
@@ -382,12 +371,12 @@ export interface DashboardStatsResponse {
     startedAt: string;
     durationMs?: number;
   }>;
-  /** Recent activity (last 10 completed/failed jobs) */
+  /** Recent terminal activity */
   recentActivity: Array<{
     id: string;
     type: string;
     workflowName?: string;
-    status: 'completed' | 'failed' | 'cancelled';
+    status: RunState;
     finishedAt: string;
     durationMs?: number;
     error?: string;
@@ -422,7 +411,7 @@ export interface JobStepInfo {
   /** Step handler */
   handler?: string;
   /** Step status */
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  status: StepState;
   /** Step progress (0-100) */
   progress?: number;
   /** Step start time */
@@ -446,7 +435,7 @@ export interface JobStepsResponse {
   /** Workflow name (if applicable) */
   workflowName?: string;
   /** Overall status */
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: RunState;
   /** Execution steps */
   steps: JobStepInfo[];
   /** Current step index */
@@ -462,7 +451,7 @@ export interface WorkflowRunInfo {
   /** Workflow ID */
   workflowId: string;
   /** Run status */
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: RunState;
   /** Trigger info */
   trigger: {
     type: 'manual' | 'api' | 'cron';
@@ -505,8 +494,8 @@ export const DashboardStatsResponseSchema = z.object({
   }),
   jobs: z.object({
     running: z.number(),
-    pending: z.number(),
-    completed: z.number(),
+    queued: z.number(),
+    success: z.number(),
     failed: z.number(),
   }),
   crons: z.object({
@@ -528,7 +517,7 @@ export const DashboardStatsResponseSchema = z.object({
     id: z.string(),
     type: z.string(),
     workflowName: z.string().optional(),
-    status: z.enum(['completed', 'failed', 'cancelled']),
+    status: z.enum(['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'dlq']),
     finishedAt: z.string(),
     durationMs: z.number().optional(),
     error: z.string().optional(),
@@ -556,7 +545,7 @@ export const JobLogsResponseSchema = z.object({
 export const JobStepInfoSchema = z.object({
   name: z.string(),
   handler: z.string().optional(),
-  status: z.enum(['pending', 'running', 'completed', 'failed', 'skipped']),
+  status: z.enum(['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'waiting_approval', 'waiting_child']),
   progress: z.number().min(0).max(100).optional(),
   startedAt: z.string().optional(),
   finishedAt: z.string().optional(),
@@ -571,7 +560,7 @@ export const JobStepInfoSchema = z.object({
 export const JobStepsResponseSchema = z.object({
   jobId: z.string(),
   workflowName: z.string().optional(),
-  status: z.enum(['pending', 'running', 'completed', 'failed', 'cancelled']),
+  status: z.enum(['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'dlq']),
   steps: z.array(JobStepInfoSchema),
   currentStep: z.number().optional(),
 })
@@ -582,7 +571,7 @@ export const JobStepsResponseSchema = z.object({
 export const WorkflowRunInfoSchema = z.object({
   id: z.string(),
   workflowId: z.string(),
-  status: z.enum(['pending', 'running', 'completed', 'failed', 'cancelled']),
+  status: z.enum(['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'dlq']),
   trigger: z.object({
     type: z.enum(['manual', 'api', 'cron']),
     user: z.string().optional(),

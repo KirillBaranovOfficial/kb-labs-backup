@@ -80,6 +80,7 @@ export function mockLogger(sharedMessages?: LogEntry[]): MockLoggerInstance {
     warn: createSimpleLogMethod('warn'),
     error: createErrorLogMethod('error'),
     fatal: createErrorLogMethod('fatal'),
+    flush: async () => {},
     child: (_bindings?: Record<string, unknown>) => mockLogger(messages),
     get messages() { return messages; },
     reset: () => {

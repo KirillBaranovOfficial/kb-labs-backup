@@ -1,7 +1,7 @@
 ---
 title: "Profiles"
 description: "Per-product configuration bundles — scopes, inheritance, and how useConfig reads them."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-01"
 order: 3
 ---
 
@@ -236,12 +236,12 @@ Before profiles v2 existed, product config lived directly at the top level of `k
 
 ```json
 {
-  "knowledge": { /* legacy mind config */ },
+  "mind":      { /* mind product config */ },
   "workflow":  { /* legacy workflow config */ }
 }
 ```
 
-The platform still reads this format for backward compatibility, with one quirk: the legacy key `knowledge` maps to the new product ID `mind`. Every other key keeps its name.
+For this older format, product keys must match their product IDs exactly. `knowledge` does not map to the `mind` product. New configurations should use Profiles v2.
 
 Legacy config is treated as a single implicit profile with `id: 'default'`. If both the legacy top-level keys and a `profiles` array are present, `profiles` wins.
 

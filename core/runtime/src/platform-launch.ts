@@ -16,10 +16,13 @@
 import { hostname } from "node:os";
 import {
   createContextLogger,
+  createProcessRootLogContext,
+  type HostServiceEnvironment,
   type IContextLogger,
   type ILogReader,
 } from "@kb-labs/core-platform";
 import { getAdapterStatus, type AdapterSlotStatus } from "./adapter-status.js";
+import { isWorkspaceDevelopmentMode } from "./platform-mode.js";
 import {
   platform,
   type PlatformContainer,
@@ -33,12 +36,13 @@ import {
   type LoadPlatformConfigResult,
 } from "./config-loader.js";
 import { initPlatform, resetPlatform } from "./loader.js";
+import { requireProjectContext } from "./project-context.js";
 
 export type PlatformApplicationKind = "service" | "cli" | "worker" | "test";
 export type PlatformFailurePolicy = "strict" | "degraded";
 
 export type PlatformAssemblyHook = NonNullable<
-  Parameters<typeof initPlatform>[4]
+  NonNullable<Parameters<typeof initPlatform>[4]>['assemblyHook']
 >;
 export type PlatformUiProvider = NonNullable<
   Parameters<typeof initPlatform>[2]
@@ -53,6 +57,10 @@ export interface PlatformLaunchOptions {
   kind: PlatformApplicationKind;
   /** Directory used to resolve project and platform roots. */
   startDir?: string;
+  /** Whether startup should resolve a registered current project. */
+  projectScope?: 'required' | 'platform';
+  /** Registered project identity for a process with required project scope. */
+  projectId?: string;
   /** Entrypoint import.meta.url, useful in installed mode. */
   moduleUrl?: string;
   /** Load layered .env files before config interpolation. @default true */
@@ -63,13 +71,15 @@ export interface PlatformLaunchOptions {
   failurePolicy?: PlatformFailurePolicy;
   /** Host-specific UI provider used by execution backends. */
   uiProvider?: PlatformUiProvider;
+  /** Host addresses needed by this process's own adapters, passed without global env mutation. */
+  hostServiceEnvironment?: HostServiceEnvironment;
   /** Required platform assembly pipeline. */
   assemblyHook: PlatformAssemblyHook;
 }
 
 export interface PlatformRoots {
   platformRoot: string;
-  projectRoot: string;
+  projectRoot?: string;
   sameLocation: boolean;
 }
 
@@ -130,7 +140,6 @@ function registerLifecycleLogging(
         message: "Platform lifecycle start",
         fields: {
           cwd: context.cwd,
-          isChildProcess: context.isChildProcess,
         },
       });
     },
@@ -199,17 +208,27 @@ async function launch(
     storeRawConfig = true,
     failurePolicy = "strict",
     uiProvider,
+    hostServiceEnvironment,
     assemblyHook,
   } = options;
 
   const startedAt = Date.now();
   const instanceId = `${hostname()}:${process.pid}`;
+  const processLogContext = createProcessRootLogContext({
+    applicationId,
+    serviceId,
+    instanceId,
+    layer: kind,
+  });
+  platform.setAdapter('logger', createContextLogger(platform.logger, processLogContext));
   registerLifecycleLogging(applicationId, serviceId, kind, instanceId);
 
   const loadResult = await loadPlatformConfig({
     moduleUrl,
     startDir,
     loadEnvFile: loadEnv,
+    projectScope: options.projectScope,
+    projectId: options.projectId,
   });
   publishConfigGlobals(loadResult, storeRawConfig);
 
@@ -222,6 +241,9 @@ async function launch(
     sameLocation,
     sources,
   } = loadResult;
+  const adapterProjectRoot = loadResult.projectScope === 'platform'
+    ? platformRoot
+    : requireProjectContext(projectRoot, options.startDir);
 
   let effectivePlatformConfig = platformConfig;
   let status: PlatformStartupReport["status"] = "ready";
@@ -230,10 +252,10 @@ async function launch(
   try {
     await initPlatform(
       platformConfig,
-      projectRoot,
+      adapterProjectRoot,
       uiProvider,
-      sameLocation ? undefined : platformRoot,
-      assemblyHook,
+      adapterProjectRoot === platformRoot ? undefined : platformRoot,
+      { assemblyHook, hostServiceEnvironment, workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult) },
     );
   } catch (error) {
     if (failurePolicy === "strict") {
@@ -245,10 +267,10 @@ async function launch(
     effectivePlatformConfig = { adapters: {} };
     await initPlatform(
       effectivePlatformConfig,
-      projectRoot,
+      adapterProjectRoot,
       uiProvider,
       undefined,
-      assemblyHook,
+      { assemblyHook, hostServiceEnvironment, workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult) },
     );
   }
 

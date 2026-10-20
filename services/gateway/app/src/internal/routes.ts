@@ -11,6 +11,8 @@ import type { FastifyInstance } from 'fastify';
 import { globalDispatcher } from '../hosts/dispatcher.js';
 import type { HostRegistry } from '../hosts/registry.js';
 import { getClientByHandle } from '@kb-labs/gateway-auth';
+import { sendAuthError } from '../auth/error-response.js';
+import { uxErrorResponses } from '../route-schema.js';
 
 export function registerInternalRoutes(
   scope: FastifyInstance,
@@ -18,10 +20,26 @@ export function registerInternalRoutes(
   hostRegistry: HostRegistry,
   cache?: import('@kb-labs/core-platform').ICache,
 ): void {
-  scope.post('/internal/dispatch', async (request, reply) => {
+  scope.post('/internal/dispatch', { config: { uxFixture: { validResult: 'error-envelope' } },
+    schema: {
+      body: {
+        type: 'object',
+        properties: {
+          namespaceId: { type: 'string' },
+          hostId: { type: 'string' },
+          adapter: { type: 'string' },
+          method: { type: 'string' },
+          args: { type: 'array' },
+        },
+        required: ['namespaceId', 'adapter', 'method'],
+      },
+      querystring: { type: 'object', properties: {}, additionalProperties: false },
+      response: { 200: { type: 'object', properties: { result: {} }, required: ['result'] }, ...uxErrorResponses([400, 403, 502, 503]) },
+    },
+  }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];
     if (!internalSecret || provided !== internalSecret) {
-      return reply.code(403).send({ error: 'Forbidden' });
+      return sendAuthError(reply, 403);
     }
 
     const body = request.body as {
@@ -64,10 +82,12 @@ export function registerInternalRoutes(
     }
   });
 
-  scope.get('/internal/auth/handle/:handle', async (request, reply) => {
+  scope.get('/internal/auth/handle/:handle', { config: { uxFixture: { validResult: 'error-envelope' } },
+    schema: { params: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'] }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { namespaceId: { type: 'string' }, name: { type: 'string' }, handle: { type: 'string' } }, required: ['namespaceId', 'name', 'handle'] }, ...uxErrorResponses([403, 404, 503]) } },
+  }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];
     if (!internalSecret || provided !== internalSecret) {
-      return reply.code(403).send({ error: 'Forbidden' });
+      return sendAuthError(reply, 403);
     }
     if (!cache) {
       return reply.code(503).send({ error: 'Cache not available' });
@@ -80,10 +100,29 @@ export function registerInternalRoutes(
     return { namespaceId: record.namespaceId, name: record.name, handle: record.handle };
   });
 
-  scope.post('/internal/resolve-host', async (request, reply) => {
+  scope.post('/internal/resolve-host', { config: { uxFixture: { validResult: 'error-envelope' } },
+    schema: {
+      body: {
+        type: 'object',
+        properties: {
+          namespaceId: { type: 'string' },
+          target: {
+            type: 'object',
+            properties: {
+              hostId: { type: 'string' },
+              hostSelection: { type: 'string' },
+              repoFingerprint: { type: 'string' },
+            },
+          },
+        },
+      },
+      querystring: { type: 'object', properties: {}, additionalProperties: false },
+      response: { 200: { type: 'object', properties: { hostId: { type: 'string' }, strategy: { type: 'string' }, namespaceId: { type: 'string' } }, required: ['hostId', 'strategy', 'namespaceId'] }, ...uxErrorResponses([403, 404]) },
+    },
+  }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];
     if (!internalSecret || provided !== internalSecret) {
-      return reply.code(403).send({ error: 'Forbidden' });
+      return sendAuthError(reply, 403);
     }
 
     const body = request.body as {

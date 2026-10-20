@@ -27,7 +27,7 @@ describe('Platform API calls from handler', () => {
     pluginVersion: '1.0.0',
     requestId: 'req-platform-api',
     permissions: {},
-    hostContext: { host: 'cli', argv: [], flags: {} },
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
   };
 
   beforeAll(() => {
@@ -111,7 +111,7 @@ describe('Platform API calls from handler', () => {
     expect(result.data).toEqual({ published: true });
   });
 
-  it('handler can call ctx.ui methods without throwing', async () => {
+  it('handler can call human progress UI methods without printing a final result', async () => {
     const handlerPath = join(testDir, 'ui-calls.js');
     writeFileSync(handlerPath, `
       export default {
@@ -119,7 +119,6 @@ describe('Platform API calls from handler', () => {
           ctx.ui.info('Processing...');
           ctx.ui.success('Done!');
           ctx.ui.warn('Watch out');
-          ctx.ui.error('Oops');
           return { uiCalled: true };
         }
       };
@@ -135,6 +134,30 @@ describe('Platform API calls from handler', () => {
     });
 
     expect(result.data).toEqual({ uiCalled: true });
+  });
+
+  it('rejects direct UI error output with a catalogued plugin contract violation', async () => {
+    const handlerPath = join(testDir, 'ui-error-call.js');
+    writeFileSync(handlerPath, `
+      export default {
+        async execute(ctx) {
+          ctx.ui.error('Oops');
+          return { uiCalled: true };
+        }
+      };
+    `);
+
+    await expect(runInProcess({
+      descriptor,
+      platform: mockPlatform,
+      ui: mockUI,
+      handlerPath,
+      input: {},
+      cwd: testDir,
+    })).rejects.toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      hint: expect.stringContaining('typed failure'),
+    });
   });
 
   it('handler can read ctx.requestId and ctx.pluginId', async () => {

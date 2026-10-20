@@ -8,10 +8,17 @@ KB Labs releases the SDK, platform and binaries as one flow with one version (`p
 | Binaries | `vX.Y.Z-binaries` | the binary assets and checksums referenced by that candidate index | as part of the same candidate |
 
 There is no separate `sdk` flow: `sdk-vX.Y.Z` tags are no longer created
-(existing ones stay). The release index generator rejects SDK, platform or
-binary version skew unless `--allow-version-skew` is passed on purpose.
+(existing ones stay). The release flow stamps one version across the first
+platform, SDK and binary release. The index records each staged version and
+its exact compatibility relations; the catalog's compatibility matrix is the
+only gate.
 
 ## Candidate gates
+
+`release-build-candidate.yml` first runs the installer and user-scenario
+journey contract. The candidate cannot build while any declared scenario is
+marked NOT COVERED or while a journey fails. The contract and current gaps are
+listed in the [release journey coverage page](/guides/release-journey-coverage).
 
 The workflow engine creates a release intent and dispatches the candidate
 builder. The candidate workflow creates the immutable bundle; the delivery
@@ -35,12 +42,15 @@ There is no independent binary release workflow or separate binary promotion
 path. The workflow engine invokes delivery for `canary` or `stable` only after
 the candidate identity and smoke evidence are valid.
 
-The candidate smoke is deliberately a bounded installer/package/config/workflow gate. Actual service startup remains covered by the sharded integration suites; a green smoke does not replace them.
+The delivery workflow's post-publish smoke remains a bounded
+installer/package/config/workflow check. Before candidate build, the release
+journey gate above exercises the declared user scenarios, including service
+startup; a green post-publish smoke does not replace that matrix.
 
-The compatibility matrix is conservative in the first release: it records the
-exact staged Platform/SDK pair (same version) and the SDK's declared runtime peer range. A
-broader compatibility range must be earned by additional release evidence; it
-is never inferred from a shared `2.x` or `3.x` major.
+The first release records exact staged platform, SDK and binary versions and
+their explicit relations in the compatibility matrix. Independent versions
+later are a release-flow data change; the installer, catalog and index
+preparer continue to use the matrix as the only compatibility gate.
 
 ## Promotion checklist
 

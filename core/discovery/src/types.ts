@@ -48,21 +48,13 @@ export type EntityKind =
 // ---------------------------------------------------------------------------
 
 export interface MarketplaceLock {
-  schema: 'kb.marketplace/2';
-  installed: Record<string, MarketplaceEntry>;
+  schema: 'kb.marketplace/3';
+  plugins: Record<string, MarketplaceEntry>;
+  /** Machine-only entries; adapters are never project scoped. */
+  adapters?: Record<string, MarketplaceAdapterEntry>;
 }
 
-export interface MarketplaceEntry {
-  /** Installed version (semver) */
-  version: string;
-  /** SRI integrity hash (sha256-...) */
-  integrity: string;
-  /** Resolved path to the package root (e.g., ./node_modules/@scope/pkg) */
-  resolvedPath: string;
-  /** ISO timestamp of installation */
-  installedAt: string;
-  /** How this package was installed */
-  source: 'marketplace' | 'local';
+interface MarketplaceEntryMetadata {
   /**
    * Trust level: 'trusted' = signed by KB Labs Registry (sealed, no self-upgrade).
    * 'untrusted' = installed from npm/local/workspace. Default: 'untrusted'.
@@ -71,17 +63,51 @@ export interface MarketplaceEntry {
   /** Platform-issued signature (optional, for verified packages) */
   signature?: EntitySignature;
   /** Primary entity kind — discriminator for filtering (e.g., 'plugin', 'adapter') */
-  primaryKind: EntityKind;
+  primaryKind?: EntityKind;
   /** All entity kinds this package provides (extracted from manifest) */
-  provides: EntityKind[];
+  provides?: EntityKind[];
   /** Whether the entity is active (default: true) */
   enabled?: boolean;
-  /**
-   * Canonical install spec (e.g. 'kb:handle/name', '@scope/pkg@version').
-   * Optional, populated when the source preserves the original spec form.
-   */
-  spec?: string;
 }
+
+/** Plugin lock entry; package-manager identity is mandatory for installed pins. */
+export type MarketplaceEntry = MarketplaceEntryMetadata & (
+  | {
+      source: 'marketplace';
+      version: string;
+      integrity: string;
+      package: string;
+      resolvedPath?: string;
+      link?: never;
+    }
+  | {
+      source: 'platform';
+      version: string;
+      integrity: string;
+      package: string;
+      resolvedPath: string;
+      link?: never;
+    }
+  | {
+      source: 'local';
+      link: string;
+      package?: never;
+      version?: string;
+      integrity?: string;
+      resolvedPath?: never;
+    }
+);
+
+/** Machine-local adapter lock entry; adapters use package IDs as their keys. */
+export interface MarketplaceAdapterEntry {
+  source: 'platform';
+  version: string;
+  integrity: string;
+  resolvedPath: string;
+  enabled: boolean;
+}
+
+export type MarketplaceLockEntry = MarketplaceEntry | MarketplaceAdapterEntry;
 
 // ---------------------------------------------------------------------------
 // Discovery Result
@@ -96,7 +122,7 @@ export type DiscoveryScope = 'platform' | 'project';
  * `workspace` > `linked` > `node_modules`.
  *
  * - `workspace`: a pnpm workspace package under the scope root (monorepo development).
- * - `linked`: a marketplace lock entry with `source: 'local'` (`kb marketplace plugins link`).
+ * - `linked`: a marketplace lock entry with `source: 'local'` (`kb marketplace plugins add`).
  * - `node_modules`: a marketplace lock entry with `source: 'marketplace'` (installed package).
  */
 export type DiscoveryOrigin = 'workspace' | 'linked' | 'node_modules';
@@ -141,8 +167,10 @@ export interface DiscoveryFailure {
   /** File that failed to load, when known */
   manifestPath?: string;
   /** `manifest`: the manifest exists but could not be loaded. */
-  reason: 'manifest' | 'integrity' | 'package-missing';
+  reason: 'manifest' | 'integrity' | 'package-missing' | 'package-unavailable';
   message: string;
+  diagnosticCode?: DiagnosticCode;
+  remediation?: string;
 }
 
 export interface DiscoveryResult {
@@ -202,4 +230,8 @@ export type DiagnosticCode =
   | 'PLUGIN_BLOCKED'
   | 'PLUGIN_NOT_ALLOWED'
   | 'PACKAGE_NOT_FOUND'
+  | 'COMMAND_SCHEMA_INVALID'
+  | 'COMMAND_HANDLER_MISSING'
+  | 'COMMAND_HANDLER_UNREADABLE'
+  | 'PLUGIN_ID_MISMATCH'
   | (string & {});

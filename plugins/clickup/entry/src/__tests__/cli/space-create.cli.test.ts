@@ -42,7 +42,7 @@ describe('clickup:space.create', () => {
       mockCLIInput({ flags: { name: 'My Space' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Space created');
     expect(vi.mocked(createSpace)).toHaveBeenCalledWith(
@@ -62,9 +62,9 @@ describe('clickup:space.create', () => {
       mockCLIInput({ flags: { name: 'My Space', json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ id: 'space-1', name: 'My Space' });
-    expect(Object.keys(captured.json[0] as object)).toEqual(['id', 'name']);
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ id: 'space-1', name: 'My Space' });
+    expect(Object.keys(result as object)).toEqual(['id', 'name']);
   });
 
   it('SC-02b: --json --full outputs raw space object', async () => {
@@ -77,8 +77,8 @@ describe('clickup:space.create', () => {
       mockCLIInput({ flags: { name: 'My Space', json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const raw = captured.json[0] as typeof mockSpaceDetail;
+    expect(result).not.toHaveProperty('ok');
+    const raw = result as typeof mockSpaceDetail;
     expect(raw.folders).toBeDefined();
     expect(raw.statuses).toBeDefined();
   });
@@ -91,8 +91,8 @@ describe('clickup:space.create', () => {
       mockCLIInput({ flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('SC-04: core function throws — exitCode 1, error shown', async () => {
@@ -105,8 +105,8 @@ describe('clickup:space.create', () => {
       mockCLIInput({ flags: { name: 'My Space' } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('SC-05: --dry-run shows intent, createSpace is NOT called', async () => {
@@ -117,7 +117,7 @@ describe('clickup:space.create', () => {
       mockCLIInput({ flags: { name: 'My Space', 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(createSpace)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('My Space');

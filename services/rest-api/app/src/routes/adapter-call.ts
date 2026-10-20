@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * Internal adapter-call endpoint — reverse proxy for Workspace Agent.
  *
@@ -20,6 +21,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { platform } from '@kb-labs/core-runtime';
 import { AdapterNameSchema, type AdapterName } from '@kb-labs/gateway-contracts';
+import { sendAuthError } from '@kb-labs/shared-http';
 import { restDomainOperationMetrics } from '../middleware/metrics.js';
 
 // ── Adapter Registry ──
@@ -168,14 +170,21 @@ export async function registerAdapterCallRoutes(
   const internalSecret = process.env.GATEWAY_INTERNAL_SECRET;
   const logger = platform.logger.child({ layer: 'rest', route: 'adapter-call' });
 
-  server.post('/api/v1/internal/adapter-call', async (
+  server.post('/api/v1/internal/adapter-call', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: {
+    querystring: { type: 'object', additionalProperties: false },
+    body: { type: 'object', properties: {
+      requestId: { type: 'string', minLength: 1 }, adapter: { enum: ['llm', 'cache', 'vectorStore', 'embeddings', 'storage', 'state'] }, method: { type: 'string', minLength: 1 }, args: { type: 'array', items: {} },
+      context: { type: 'object', properties: { namespaceId: { type: 'string' }, hostId: { type: 'string' }, workspaceId: { type: 'string' }, environmentId: { type: 'string' }, executionRequestId: { type: 'string' }, userId: { type: 'string' }, sessionId: { type: 'string' } }, required: ['namespaceId', 'hostId'], additionalProperties: false },
+    }, required: ['requestId', 'adapter', 'method', 'args', 'context'], additionalProperties: false },
+    response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, result: {} }, required: ['ok', 'result'], additionalProperties: false } }),
+  } }, async (
     request: FastifyRequest,
     reply: FastifyReply,
   ) => {
     // 1. Auth: x-internal-secret
     const provided = request.headers['x-internal-secret'] as string | undefined;
     if (!internalSecret || provided !== internalSecret) {
-      return reply.code(403).send({ ok: false, error: { code: 'FORBIDDEN', message: 'Invalid internal secret', retryable: false } });
+      return sendAuthError(reply, 403, undefined, 'The internal secret was invalid.');
     }
 
     // 2. Parse & validate request
@@ -191,7 +200,7 @@ export async function registerAdapterCallRoutes(
     const entry = registry.get(adapter as string, method);
     if (!entry) {
       logger.warn('Adapter call rejected', { requestId, adapter, method, hostId: context.hostId });
-      return reply.code(403).send({ ok: false, error: { code: 'ADAPTER_CALL_REJECTED', message: `Method not allowed: ${adapter}.${method}`, retryable: false } });
+      return sendAuthError(reply, 403, undefined, `Method not allowed: ${adapter}.${method}`);
     }
 
     // 4. Execute

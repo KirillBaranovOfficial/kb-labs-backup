@@ -2,7 +2,7 @@
  * workflow:runs-status <runId> command — show status summary for a workflow run
  */
 
-import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 import type { RunsStatusFlags } from '../flags.js';
 
@@ -30,14 +30,13 @@ export default defineCommand<unknown, CLIInput<RunsStatusFlags>, unknown>({
   description: 'Show status summary for a workflow run',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<RunsStatusFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunsStatusFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const outputJson = flags?.json ?? false;
       const runId = flags?.['run-id'] ?? argv[0];
 
       if (!runId) {
-        validationError(ctx, 'Missing run ID', 'Usage: kb workflow runs status <runId>', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return validationError('Missing run ID', 'Usage: kb workflow runs status <runId>');
       }
 
       try {
@@ -45,8 +44,7 @@ export default defineCommand<unknown, CLIInput<RunsStatusFlags>, unknown>({
         const run = await client.getRun(runId);
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: run });
-          return { ok: true };
+          return run;
         }
 
         const trigger = run.trigger
@@ -95,10 +93,9 @@ export default defineCommand<unknown, CLIInput<RunsStatusFlags>, unknown>({
         }
 
         ctx.ui?.success?.('Run Status', { title: run.name, sections });
-        return { ok: true };
+        return undefined;
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(error);
       }
     },
   },

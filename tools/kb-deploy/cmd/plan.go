@@ -3,13 +3,16 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
 	"github.com/spf13/cobra"
 )
 
 var (
 	planJSON bool
+	// These are the documented non-error statuses owned by `kb-deploy plan`.
+	planChangesStatus = diag.PlanChangesStatus()
+	planDriftStatus   = diag.PlanDriftStatus()
 )
 
 var planCmd = &cobra.Command{
@@ -23,7 +26,8 @@ Exit codes:
   0  plan computed, no changes
   2  plan computed, changes present (CI pattern: 'if plan; then skip else apply')
   4  drift detected (human intervention required)
-  1  error (validation, SSH, config)
+  1  catalogued operation failure (inspect the result envelope)
+  2  catalogued input refusal (inspect the result envelope)
 
 Examples:
   kb-deploy plan
@@ -60,12 +64,11 @@ func emitPlanHuman(cmd *cobra.Command, flow *applyFlow) error {
 		"summary: install=%d swap=%d restart=%d skip=%d drift=%d\n",
 		sum.Install, sum.Swap, sum.Restart, sum.Skip, len(flow.Drift))
 
-	// Exit codes (CI contract).
 	switch {
 	case len(flow.Drift) > 0:
-		os.Exit(4) //nolint:gocritic
+		return result.StreamComplete(planDriftStatus)
 	case flow.Plan.HasChanges():
-		os.Exit(2) //nolint:gocritic
+		return result.StreamComplete(planChangesStatus)
 	}
 	return nil
 }
@@ -79,8 +82,8 @@ func emitPlanJSON(cmd *cobra.Command, flow *applyFlow) error {
 			"skip":    flow.Plan.Summary().Skip,
 			"drift":   len(flow.Drift),
 		},
-		"waves":  flow.Plan.Waves,
-		"drift":  flow.Drift,
+		"waves": flow.Plan.Waves,
+		"drift": flow.Drift,
 	}
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetIndent("", "  ")
@@ -89,9 +92,9 @@ func emitPlanJSON(cmd *cobra.Command, flow *applyFlow) error {
 	}
 	switch {
 	case len(flow.Drift) > 0:
-		os.Exit(4) //nolint:gocritic
+		return result.StreamComplete(planDriftStatus)
 	case flow.Plan.HasChanges():
-		os.Exit(2) //nolint:gocritic
+		return result.StreamComplete(planChangesStatus)
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/devkit/internal/engine"
 	"github.com/kb-labs/devkit/internal/workspace"
 	"github.com/spf13/cobra"
@@ -49,6 +52,12 @@ Examples:
 		if len(cfg.Tasks) == 0 {
 			return fmt.Errorf("no tasks defined in devkit.yaml\n\n  Add a tasks: section or run `kb-devkit init` to generate a starter config")
 		}
+		for _, task := range args {
+			if _, ok := cfg.Tasks[task]; !ok {
+				return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("Task %q is not declared in devkit.yaml.", task),
+					diag.WithHint("Add the task under tasks: in devkit.yaml, or run `kb-devkit run build` for the standard build task."))
+			}
+		}
 
 		cacheRoot := filepath.Join(ws.Root, ".kb", "devkit")
 
@@ -72,7 +81,8 @@ Examples:
 		case len(runPackages) > 0:
 			pkgs = ws.FilterByName(runPackages)
 			if len(pkgs) == 0 {
-				return fmt.Errorf("no packages matched: %s", strings.Join(runPackages, ", "))
+				return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("No workspace packages match --packages %q.", strings.Join(runPackages, ", ")),
+					diag.WithHint("Run `kb-devkit deps` to list discovered packages, then rerun with one of those package names."))
 			}
 		}
 
@@ -89,7 +99,7 @@ Examples:
 		o := newOutput()
 
 		if !jsonMode {
-			fmt.Println()
+			clikitcommand.Println()
 			opts.OnResult = func(r engine.TaskResult, done, total int) {
 				printTaskResult(o, r, done, total)
 			}
@@ -99,36 +109,57 @@ Examples:
 		result, err := engine.Run(ws, cfg, opts)
 		elapsed := time.Since(start)
 		if err != nil {
+			var graphErr *engine.TaskGraphError
+			if errors.As(err, &graphErr) {
+				return taskGraphFailure(graphErr)
+			}
 			return err
 		}
 
 		if jsonMode {
-			_ = JSONOut(map[string]any{
-				"ok":      result.OK,
+			payload := map[string]any{
 				"results": result.Results,
 				"summary": result.Summary(),
 				"elapsed": elapsed.String(),
-			})
-			if !result.OK {
-				return errSilent
 			}
-			return nil
+			if !result.OK {
+				return taskFailure(failedTaskResult(result.Results), payload)
+			}
+			return JSONOut(payload)
 		}
 
 		// Summary line.
 		s := result.Summary()
-		fmt.Printf("\n  %s  %s  %s  — %s\n\n",
+		clikitcommand.Printf("\n  %s scheduled  %s  %s  %s  %s  — %s\n\n",
+			o.dim.Render(fmt.Sprintf("%d", s.Scheduled)),
 			o.healthy.Render(fmt.Sprintf("%d passed", s.Passed)),
 			o.dim.Render(fmt.Sprintf("%d cached", s.Cached)),
 			colorCount(s.Failed, o),
+			o.warning.Render(fmt.Sprintf("%d skipped", s.Skipped)),
 			elapsed.Round(time.Millisecond),
 		)
+		if len(s.BlockedTasks) <= 10 {
+			for _, blocked := range s.BlockedTasks {
+				clikitcommand.Printf("  %s\n", o.dim.Render(fmt.Sprintf("%s:%s blocked %d dependents", blocked.Package, blocked.Task, blocked.Dependents)))
+			}
+		} else if len(s.BlockedTasks) > 10 {
+			clikitcommand.Printf("  %s\n", o.dim.Render("Blocked task details omitted; rerun with --json for the full list."))
+		}
 
 		if !result.OK {
-			return fmt.Errorf("tasks failed")
+			return taskFailure(failedTaskResult(result.Results), result.Summary())
 		}
 		return nil
 	},
+}
+
+func failedTaskResult(results []engine.TaskResult) engine.TaskResult {
+	for _, result := range results {
+		if !result.OK && !result.Cached {
+			return result
+		}
+	}
+	return engine.TaskResult{}
 }
 
 func init() {
@@ -171,7 +202,7 @@ func printTaskResult(o output, r engine.TaskResult, done, total int) {
 		name = "…" + name[len(name)-41:]
 	}
 
-	fmt.Printf("  %s %s %-42s  %-12s  %-9s  %-7s  %s\n",
+	clikitcommand.Printf("  %s %s %-42s  %-12s  %-9s  %-7s  %s\n",
 		counter,
 		icon,
 		name,
@@ -185,11 +216,11 @@ func printTaskResult(o output, r engine.TaskResult, done, total int) {
 	if !r.OK && !r.Cached {
 		lines, hidden := failureTail(r.Stdout, r.Stderr, failLineLimit())
 		if hidden > 0 {
-			fmt.Printf("           %s\n", o.dim.Render(
+			clikitcommand.Printf("           %s\n", o.dim.Render(
 				fmt.Sprintf("… %d earlier lines hidden (KB_DEVKIT_FAIL_LINES=0 for all)", hidden)))
 		}
 		for _, line := range lines {
-			fmt.Printf("           %s\n", o.dim.Render(line))
+			clikitcommand.Printf("           %s\n", o.dim.Render(line))
 		}
 	}
 }

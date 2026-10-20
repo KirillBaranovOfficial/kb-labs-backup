@@ -67,7 +67,7 @@ describe('release:promote', () => {
 
     const result = await promoteCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('result');
     expect(vi.mocked(publishPackagesWithOTP)).toHaveBeenCalledOnce();
     const call = vi.mocked(publishPackagesWithOTP).mock.calls[0]![0] as { packages: Array<{ name: string; version: string }> };
     // Promoted at currentVersion, not some recomputed nextVersion.
@@ -105,7 +105,7 @@ describe('release:promote', () => {
 
     const result = await promoteCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
     expect(vi.mocked(publishPackagesWithOTP)).not.toHaveBeenCalled();
     expect(vi.mocked(publishPackagesProgrammatic)).not.toHaveBeenCalled();
   });
@@ -116,8 +116,7 @@ describe('release:promote', () => {
 
     const result = await promoteCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const out = captured.json[0] as { result: { summary: Record<string, unknown> } };
-    expect(out.result.summary).toMatchObject({ total: 2, successful: 2, failed: 0, tag: 'latest' });
+    expect(result).not.toHaveProperty('result');
+    expect(result).toMatchObject({ summary: { total: 2, successful: 2, failed: 0, tag: 'latest' } });
   });
 });

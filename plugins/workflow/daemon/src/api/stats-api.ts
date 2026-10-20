@@ -26,8 +26,8 @@ export function registerStatsAPI(options: StatsAPIOptions): void {
     // Jobs — all statuses
     const { jobs } = await hostService.listJobs(tenantId, {});
     const running = jobs.filter((j) => j.status === 'running').length;
-    const pending = jobs.filter((j) => j.status === 'pending').length;
-    const completed = jobs.filter((j) => j.status === 'completed').length;
+    const queued = jobs.filter((j) => j.status === 'queued').length;
+    const success = jobs.filter((j) => j.status === 'success').length;
     const failed = jobs.filter((j) => j.status === 'failed').length;
 
     // Active executions
@@ -46,9 +46,9 @@ export function registerStatsAPI(options: StatsAPIOptions): void {
       };
     });
 
-    // Recent activity — last 10 completed/failed/cancelled
+    // Recent terminal activity
     const finished = jobs
-      .filter((j) => j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled')
+      .filter((j) => j.status === 'success' || j.status === 'failed' || j.status === 'cancelled' || j.status === 'skipped' || j.status === 'dlq')
       .filter((j) => j.finishedAt != null)
       .sort((a, b) => new Date(b.finishedAt!).getTime() - new Date(a.finishedAt!).getTime())
       .slice(0, 10);
@@ -62,7 +62,7 @@ export function registerStatsAPI(options: StatsAPIOptions): void {
       return {
         id: j.id,
         type: j.type,
-        status: j.status as 'completed' | 'failed' | 'cancelled',
+        status: j.status,
         finishedAt,
         durationMs,
         error: j.error,
@@ -83,7 +83,7 @@ export function registerStatsAPI(options: StatsAPIOptions): void {
     let cronStats = { total: 0, enabled: 0, disabled: 0 };
     if (cronScheduler) {
       try {
-        const { crons } = hostService.listCron();
+        const { crons } = await hostService.listCron();
         const enabled = crons.filter((c) => c.enabled).length;
         cronStats = { total: crons.length, enabled, disabled: crons.length - enabled };
       } catch {
@@ -93,7 +93,7 @@ export function registerStatsAPI(options: StatsAPIOptions): void {
 
     const stats: DashboardStatsResponse = {
       workflows: workflowStats,
-      jobs: { running, pending, completed, failed },
+      jobs: { running, queued, success, failed },
       crons: cronStats,
       activeExecutions,
       recentActivity,

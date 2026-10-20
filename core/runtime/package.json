@@ -34,6 +34,7 @@
     "@kb-labs/core-discovery": "workspace:*",
     "@kb-labs/core-ipc": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-resource-broker": "workspace:*",
     "@kb-labs/core-workspace": "workspace:*",
     "@kb-labs/llm-router": "workspace:*",
@@ -49,7 +50,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "keywords": [

@@ -2,8 +2,8 @@
  * Define a CLI command handler
  */
 
-import type { PluginContextV3, CommandResult, HostContext, MutateIntent, ExecuteIntent, UIFacade } from '@kb-labs/plugin-contracts';
-
+import type { PluginCommandContextV3, HostContext, MutateIntent, ExecuteIntent, PluginHandlerUIFacade } from '@kb-labs/plugin-contracts';
+import type { CommandResult } from '@kb-labs/plugin-contracts';
 /**
  * CLI input wrapper - V3 plugin system wraps flags in this structure
  */
@@ -17,7 +17,7 @@ export interface CommandHandlerV3<TConfig = unknown, TInput = unknown, TResult =
    * Execute the command
    */
   execute(
-    context: PluginContextV3<TConfig>,
+    context: PluginCommandContextV3<TConfig>,
     input: TInput
   ): Promise<CommandResult<TResult>> | CommandResult<TResult>;
 
@@ -28,7 +28,7 @@ export interface CommandHandlerV3<TConfig = unknown, TInput = unknown, TResult =
    * this instead of `execute` and renders the intent output automatically.
    */
   intent?(
-    context: PluginContextV3<TConfig>,
+    context: PluginCommandContextV3<TConfig>,
     input: TInput
   ): Promise<MutateIntent | ExecuteIntent>;
 
@@ -85,11 +85,7 @@ export interface CommandDefinition<TConfig = unknown, TInput = unknown, TResult 
  *       const target = input.flags.name || 'World';
  *       context.ui.success(`Hello, ${target}!`);
  *
- *       return {
- *         ok: true,
- *         result: { message: `Hello, ${target}!`, target },
- *         meta: { version: 'v3' }
- *       };
+ *       return { message: `Hello, ${target}!`, target };
  *     }
  *   }
  * });
@@ -111,7 +107,7 @@ export function defineCommand<TConfig = unknown, TInput = unknown, TResult = unk
         return (async () => {
           const intent = await definition.handler.intent!(context, input);
           renderDryRunIntent(context.ui, intent);
-          return { ok: true, result: intent as unknown as TResult };
+          return intent as TResult;
         })();
       }
 
@@ -122,7 +118,7 @@ export function defineCommand<TConfig = unknown, TInput = unknown, TResult = unk
   } as CommandHandlerV3<TConfig, TInput, TResult>;
 }
 
-function renderDryRunIntent(ui: UIFacade, intent: MutateIntent | ExecuteIntent): void {
+function renderDryRunIntent(ui: PluginHandlerUIFacade, intent: MutateIntent | ExecuteIntent): void {
   if ('operations' in intent) {
     ui.info(`Dry-run: ${intent.summary}`, {
       sections: [{

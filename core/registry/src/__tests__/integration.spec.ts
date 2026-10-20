@@ -90,14 +90,20 @@ async function registerPlugin(
   provides: string[],
   source: 'marketplace' | 'local' = 'local',
 ) {
-  const entry = createMarketplaceEntry({
+  const entryOptions = {
     version: '1.0.0',
     integrity,
     resolvedPath: path.relative(root, pluginDir),
-    source,
     primaryKind: (provides[0] ?? 'plugin') as any,
     provides: provides as any,
-  });
+  };
+  const entry = source === 'local'
+    ? createMarketplaceEntry({ ...entryOptions, source: 'local' })
+    : createMarketplaceEntry({
+      ...entryOptions,
+      source: 'marketplace',
+      package: JSON.parse(await fs.readFile(path.join(pluginDir, 'package.json'), 'utf8')).name,
+    });
   await addToMarketplaceLock(root, id, entry);
 }
 
@@ -233,18 +239,21 @@ describe('Registry Integration', () => {
     await reg2.dispose();
   });
 
-  it('diagnostics report for broken plugins', async () => {
+  it('keeps an unrelated workflow discoverable while retaining a missing-plugin diagnostic', async () => {
     // Good plugin
-    const good = await createFakePlugin(root, '@kb-labs/good');
-    await registerPlugin(root, '@kb-labs/good', good.dir, good.integrity, ['plugin']);
+    const good = await createFakePlugin(root, '@kb-labs/good', {
+      workflows: [{ id: 'unrelated-workflow' }],
+    });
+    await registerPlugin(root, '@kb-labs/good', good.dir, good.integrity, ['plugin', 'workflow']);
 
     // Bad plugin: directory doesn't exist
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/ghost'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-fake',
+      package: '@kb-labs/ghost',
       resolvedPath: './nonexistent',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -252,7 +261,7 @@ describe('Registry Integration', () => {
     const existingLock = JSON.parse(
       await fs.readFile(path.join(root, '.kb', 'marketplace.lock'), 'utf-8'),
     );
-    existingLock.installed['@kb-labs/ghost'] = lock.installed['@kb-labs/ghost'];
+    existingLock.plugins['@kb-labs/ghost'] = lock.plugins['@kb-labs/ghost'];
     await writeMarketplaceLock(root, existingLock);
 
     const registry = await createRegistry({ root });
@@ -260,6 +269,9 @@ describe('Registry Integration', () => {
     // Only good plugin loaded
     expect(registry.listPlugins()).toHaveLength(1);
     expect(registry.listPlugins()[0]!.id).toBe('@kb-labs/good');
+    expect(registry.queryEntities({ kind: 'workflow' })).toMatchObject([
+      { ref: { pluginId: '@kb-labs/good', entityId: 'unrelated-workflow' } },
+    ]);
 
     // Diagnostics show the error
     const diag = registry.getDiagnostics();

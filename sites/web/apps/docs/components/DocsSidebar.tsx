@@ -27,8 +27,57 @@ function ChevronIcon({ open }: { open: boolean }) {
   );
 }
 
+function itemContainsPath(item: NavGroup['items'][number], pathname: string): boolean {
+  return pathname === item.href
+    || pathname.startsWith(item.href + '/')
+    || item.children?.some((child) => itemContainsPath(child, pathname)) === true;
+}
+
+function NavTreeItem({ item, pathname }: { item: NavGroup['items'][number]; pathname: string }) {
+  const active = pathname === item.href;
+  const hasChildren = (item.children?.length ?? 0) > 0;
+  const containsActive = itemContainsPath(item, pathname);
+  const [open, setOpen] = useState(containsActive);
+
+  useEffect(() => {
+    if (containsActive) setOpen(true);
+  }, [containsActive]);
+
+  return (
+    <li>
+      <div className={hasChildren ? s.itemRow : undefined}>
+        <Link
+          href={item.href}
+          className={`${s.item}${active ? ` ${s.itemActive}` : ''}`}
+          aria-current={active ? 'page' : undefined}
+        >
+          {item.label}
+          {item.untranslated && <span className={s.untranslatedTag}>EN</span>}
+        </Link>
+        {hasChildren && (
+          <button
+            className={s.itemToggle}
+            onClick={() => setOpen((value) => !value)}
+            aria-label={`${open ? 'Collapse' : 'Expand'} ${item.label}`}
+            aria-expanded={open}
+          >
+            <ChevronIcon open={open} />
+          </button>
+        )}
+      </div>
+      {hasChildren && open && (
+        <ul className={s.subItems}>
+          {item.children?.map((child) => (
+            <NavTreeItem key={child.href} item={child} pathname={pathname} />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 function NavGroupSection({ group, pathname }: { group: NavGroup; pathname: string }) {
-  const isActiveGroup = group.items.some((item) => pathname === item.href || pathname.startsWith(item.href + '/'));
+  const isActiveGroup = group.items.some((item) => itemContainsPath(item, pathname));
   const [open, setOpen] = useState(isActiveGroup);
 
   // Keep open state in sync when navigating
@@ -49,20 +98,7 @@ function NavGroupSection({ group, pathname }: { group: NavGroup; pathname: strin
 
       {open && (
         <ul className={s.groupItems}>
-          {group.items.map((item) => {
-            const active = pathname === item.href;
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className={`${s.item}${active ? ` ${s.itemActive}` : ''}`}
-                >
-                  {item.label}
-                  {item.untranslated && <span className={s.untranslatedTag}>EN</span>}
-                </Link>
-              </li>
-            );
-          })}
+          {group.items.map((item) => <NavTreeItem key={item.href} item={item} pathname={pathname} />)}
         </ul>
       )}
     </div>

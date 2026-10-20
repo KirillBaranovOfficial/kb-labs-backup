@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/adapters-analytics-file",
-  "description": "File-based analytics adapter for KB Labs platform (writes JSONL to .kb/analytics/buffer)",
+  "description": "File-based analytics adapter for KB Labs platform (writes JSONL to platform state)",
   "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,15 +42,17 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "kb": {
-    "manifest": "./dist/manifest.js"
+    "adapter": {
+      "manifest": "./dist/manifest.js"
+    }
   },
   "packageManager": "pnpm@11.4.0",
   "sideEffects": false,
   "peerDependencies": {
-    "@kb-labs/sdk": "workspace:^"
+    "@kb-labs/sdk": "workspace:*"
   }
 }

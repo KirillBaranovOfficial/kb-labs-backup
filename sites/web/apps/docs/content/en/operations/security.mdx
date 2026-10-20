@@ -1,7 +1,7 @@
 ---
 title: "Security"
 description: "Threat model, sandbox boundaries, secret management, and hardening guidance."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-01"
 order: 3
 ---
 
@@ -87,7 +87,7 @@ Everything external flows through the gateway, which enforces authentication. Se
 - **Bearer tokens** on every proxied request. Either static tokens (for dev/service accounts) or runtime-minted JWTs.
 - **`GATEWAY_JWT_SECRET`** is the HMAC signing key for all JWTs. **Required in production.** The gateway falls back to an insecure default with a warning if unset — do not ship that to production.
 - **Host agents** use a separate auth flow (client credentials → short-lived JWT → WebSocket upgrade).
-- **`/internal/dispatch`** uses `GATEWAY_INTERNAL_SECRET` — a separate shared secret, not a JWT. It's the internal seam between platform services and container execution; keep it off public networks.
+- **Internal gateway-to-service requests** use `GATEWAY_INTERNAL_SECRET` — a separate required shared secret, not a JWT. The gateway, REST API, and marketplace-registry must all receive the same value in every mode; keep it off public networks. kb-create generates and preserves it for local and secured installs.
 
 ## Secret management
 
@@ -108,7 +108,7 @@ From the full [Environment Variables](/configuration/environment-variables) refe
 | Variable | Why it's sensitive |
 |---|---|
 | `GATEWAY_JWT_SECRET` | Forging any JWT for any host |
-| `GATEWAY_INTERNAL_SECRET` | Calling `/internal/dispatch` directly |
+| `GATEWAY_INTERNAL_SECRET` | Forging requests from the gateway to protected internal services |
 | `OPENAI_API_KEY` | LLM cost attribution, rate limits |
 | `ANTHROPIC_API_KEY` | Same |
 | `QDRANT_API_KEY` | Vector store write access |
@@ -127,7 +127,7 @@ Secret values are not logged. The logger redacts env var values; diagnostic even
 For production deployments:
 
 - [ ] **Set `GATEWAY_JWT_SECRET`** to a 32+ byte random value from a secret manager.
-- [ ] **Set `GATEWAY_INTERNAL_SECRET`** to a separate 32+ byte random value if using container-mode execution.
+- [ ] **Provide `GATEWAY_INTERNAL_SECRET`** to the gateway, REST API, and marketplace-registry through the deployment secret manager. kb-create generates and preserves it automatically for local and secured installs.
 - [ ] **Run as a non-root user.** Every service should run under a dedicated user with no login shell.
 - [ ] **Filesystem permissions.** The service user should own the workspace directory; no other user should have write access.
 - [ ] **Don't expose internal services.** Only the gateway should be externally reachable. REST API, workflow daemon, marketplace, state daemon should all be on an internal network.

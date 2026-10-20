@@ -1,18 +1,19 @@
 import { test, expect } from '@playwright/test'
 import { GATEWAY, REST, MARKETPLACE } from '../../fixtures/urls.js'
+import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
 
 // PD-01: gateway /health doesn't report version conflicts
 test('PD-01: gateway health reports consistent version', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health`)
   expect(res.status()).toBe(200)
-  const body = await res.json()
+  const body = decodeUxSuccessResult<{ version?: string }>(await res.json())
   const bodyStr = JSON.stringify(body)
 
   // Must not contain 'unmet' (peer dep warning leaked into health response)
   expect(bodyStr).not.toContain('unmet')
 
   // Must not report the old version that caused peer dep issues
-  const version: string | undefined = body.version ?? body.data?.version
+  const version = body.version
   if (version) {
     expect(version).not.toContain('2.54')
   }
@@ -31,8 +32,10 @@ test('PD-02: services report consistent platform version', async ({ request }) =
   for (const ep of endpoints) {
     const res = await request.get(ep.url)
     expect(res.status()).toBe(200)
-    const body = await res.json()
-    const version: unknown = body.version ?? body.data?.version
+    const responseBody = await res.json()
+    const version = ep.name === 'marketplace'
+      ? (responseBody as { version?: unknown }).version
+      : decodeUxSuccessResult<{ version?: unknown }>(responseBody).version
     if (typeof version === 'string') {
       versions.push(version)
     }

@@ -26,6 +26,22 @@ workspace:
       language: typescript
       preset: e2e-suite
 
+    # Candidate-pack extras live outside pnpm's workspace because they are
+    # installed only by the isolated journey registry. Devkit still discovers
+    # and builds them through this category so a clean release build owns their
+    # generated manifests.
+    e2e-pack-adapter:
+      match:
+        - "e2e/fixtures/adapters/*"
+      language: javascript
+      preset: node-lib
+
+    e2e-pack-plugin:
+      match:
+        - "e2e/journey/fixtures/*"
+      language: javascript
+      preset: node-lib
+
     # Infrastructure E2E suites — one package per domain, each runs `playwright
     # test`. Subject is the platform/gateway/services layer, not a single plugin.
     # Same preset + the same workspace:* --affected tracking.
@@ -72,12 +88,18 @@ workspace:
       preset: node-app
 
     # Adapter packages — node-lib + SDK-only dependency boundary.
-    # Must come before ts-lib so adapters/* doesn't match ts-lib first.
     adapter:
       match:
         - "adapters/*"
       language: typescript
       preset: adapter-lib
+
+    # Runtime is the sole platform owner permitted to construct the backend.
+    core-runtime:
+      match:
+        - "core/runtime"
+      language: typescript
+      preset: runtime-core
 
     # TypeScript libraries — full ruleset
     ts-lib:
@@ -110,6 +132,7 @@ workspace:
         - "tools/kb-deploy"
         - "tools/kb-monitor"
         - "tools/kb-env"
+        - "tools/kb-runner"
       language: go
       preset: go-binary
 
@@ -120,6 +143,7 @@ workspace:
 presets:
   # Playwright e2e suite — minimal preset, only requires `e2e` script
   e2e-suite:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -133,6 +157,7 @@ presets:
 
   # Plugin entry packages — node-lib + required test:cli script
   plugin-entry:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -156,7 +181,6 @@ presets:
         - exports
       type: module
       engines:
-        node: ">=24.0.0"
         pnpm: ">=9.0.0"
     tsconfig:
       must_extend_pattern: "@kb-labs/devkit/tsconfig/"
@@ -177,6 +201,7 @@ presets:
       check_version_consistency: true
 
   node-lib:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -199,7 +224,6 @@ presets:
         - exports
       type: module
       engines:
-        node: ">=24.0.0"
         pnpm: ">=9.0.0"
     tsconfig:
       must_extend_pattern: "@kb-labs/devkit/tsconfig/"
@@ -218,6 +242,13 @@ presets:
       check_links: true
       check_circular: true
       check_version_consistency: true
+
+  # The execution backend constructor is a runtime-owned capability.
+  runtime-core:
+    extends: node-lib
+    dependencies:
+      allowed_kb_imports:
+        - "@kb-labs/plugin-execution-factory/construct"
 
   # Adapter packages — extends node-lib with an SDK-only dependency boundary.
   # An adapter author may import only from @kb-labs/sdk (and its sub-paths);
@@ -251,6 +282,7 @@ presets:
         - "@kb-labs/adapters-*"
 
   node-app:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -273,6 +305,7 @@ presets:
 
   # SPA apps (Rspack / Vite) — no tsup, no exports, paths allowed
   spa-app:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -292,6 +325,7 @@ presets:
   # Next.js/Nuxt apps and their utility packages.
   # Only 'build' is universally required — apps have 'dev', utility packages don't.
   site:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -311,6 +345,12 @@ presets:
         - Makefile
     go:
       min_version: "1.22"
+
+  # All TypeScript package presets inherit the runtime-only construction boundary.
+  backend-construction-boundary:
+    dependencies:
+      forbidden_kb_imports:
+        - "@kb-labs/plugin-execution-factory/construct"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # STRUCTURE CHECKS — plugin/core package conventions
@@ -470,7 +510,27 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [ts-lib, ts-app, adapter]
+    - categories: [e2e-pack-adapter]
+      command: node ../../../scripts/build-pack-extra.mjs
+      inputs:
+        - "manifest.js"
+        - "src/**"
+        - "package.json"
+      outputs:
+        - "dist/**"
+      cache: false
+
+    - categories: [e2e-pack-plugin]
+      command: node ../../../../e2e/scripts/build-pack-extra.mjs
+      inputs:
+        - "manifest.js"
+        - "src/**"
+        - "package.json"
+      outputs:
+        - "dist/**"
+      cache: false
+
+    - categories: [ts-lib, ts-app, adapter, core-runtime]
       command: tsup
       inputs:
         - "src/**"
@@ -514,6 +574,7 @@ tasks:
         - "kb-create"
         - "kb-deploy"
         - "kb-monitor"
+        - "kb-runner"
 
     - categories: [site]
       command: pnpm build
@@ -683,6 +744,22 @@ tasks:
         - "build"
       cache: false
 
+  # Workspace policy regressions, run from the script package that owns the gate.
+  # Run: kb-devkit run test:node-policy --packages @kb-labs/devkit
+  test:node-policy:
+    - categories: [ts-lib]
+      command: node --test ../../scripts/checks/check-node-engine-policy.test.mjs ../../e2e/delivery/scripts/delivery-invoker.test.mjs
+      inputs:
+        - "package.json"
+        - "../../scripts/checks/**"
+        - "../../e2e/delivery/scripts/**"
+        - "../../e2e/delivery/docker-compose.yml"
+        - "../../e2e/delivery/Dockerfile.target"
+        - "../../core/plugin-runtime/src/platform-resolve/node-engine.mjs"
+        - "../../package.json"
+      outputs: []
+      cache: false
+
   e2e:
     # Both the infrastructure matrix (e2e-suite) and the per-plugin matrix
     # (plugin-e2e-suite) run the same `pnpm run e2e`. `--affected` then scopes
@@ -722,10 +799,66 @@ tasks:
 #   { ok: boolean, items: [{ target, message, fix? }] }
 
 custom_checks:
+  - name: release-build-graph
+    run: node scripts/checks/check-release-build-graph.mjs
+    on: [check]
+    scope: workspace
+
+  - name: node-engine-policy
+    run: node scripts/checks/check-node-engine-policy.mjs
+    on: [check]
+    scope: workspace
+
+  - name: pinned-specifiers
+    run: node scripts/checks/check-pinned-specifiers.mjs
+    on: [check]
+    scope: workspace
+
+  - name: browser-node-builtins
+    run: node scripts/checks/check-browser-node-builtins.mjs
+    on: [check]
+    scope: workspace
+
+  - name: error-code-catalog
+    run: node scripts/checks/check-error-code-catalog.mjs
+    on: [check]
+    scope: workspace
+
+  - name: catalogued-error-detail-types
+    run: node scripts/checks/check-catalogued-error-detail-types.mjs
+    on: [check]
+    scope: workspace
+
+  - name: adapter-manifest
+    run: node scripts/checks/check-adapter-manifest.mjs
+    on: [check]
+    scope: workspace
+
+  - name: ci-clean-machine-lanes
+    run: node scripts/ci/ci-clean-machine-lanes-check.mjs
+    on: [check]
+    scope: workspace
+
+  - name: go-module-suite
+    run: node scripts/ci/go-module-suite-gate.mjs
+    on: [check]
+    scope: workspace
+
   - name: test-pyramid
     run: node scripts/checks/check-test-pyramid.mjs
     on: [check]
     categories: [plugin-entry]
+
+  - name: plugin-package-exports
+    run: node scripts/checks/check-plugin-package-exports.mjs
+    on: [check]
+    scope: package
+    categories: [plugin-entry]
+
+  - name: studio-widget-output-path
+    run: node scripts/checks/check-studio-widget-output-path.mjs
+    on: [check]
+    scope: workspace
 
   # i18n translation guard for @kb-labs/web-site.
   # Blocks CI on: EN↔RU key mismatch, missing keys, hardcoded Cyrillic in .tsx.
@@ -826,9 +959,8 @@ custom_checks:
   # or moved but its lock entry wasn't) and corruption (malformed id/path
   # from a buggy install) before it silently rots. Same lock the MKT-02 e2e
   # diagnostics test and `kb marketplace doctor` both read.
-  # Fix: no CLI command prunes stale entries yet ("marketplace sync" only
-  # adds, "rehash" only rebuilds discovery hashes) — edit
-  # .kb/marketplace.lock by hand to remove the offending entry.
+  # The check resolves the lock's scope from the runtime's platform/project roots.
+  # A shared development root is platform-owned; use the reported scope when syncing.
   # Self-filters: runs once, anchored to @kb-labs/devkit.
   # Standalone: node scripts/checks/check-marketplace-lock.mjs
   - name: check-marketplace-lock

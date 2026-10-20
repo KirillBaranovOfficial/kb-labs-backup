@@ -10,17 +10,34 @@ import {
 import type { ReadinessState } from '../readiness';
 import * as fs from 'node:fs/promises';
 import { platform } from '@kb-labs/core-runtime';
+import { resolveWorkspaceRoot } from '@kb-labs/core-workspace';
+import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
+
+const { mountWebSocketChannelsMock, mountedBackend, routeBackend } = vi.hoisted(() => {
+  const mountedBackend = { value: undefined as unknown };
+  const routeBackend = { value: undefined as unknown };
+  const mountWebSocketChannelsMock = vi.fn(async (_server: unknown, _manifest: unknown, options: { backend: unknown }) => {
+    mountedBackend.value = options.backend;
+    return { mounted: 1, errors: [] };
+  });
+  return { mountWebSocketChannelsMock, mountedBackend, routeBackend };
+});
+
+vi.mock('@kb-labs/plugin-execution', () => ({
+  mountEventStreams: vi.fn().mockResolvedValue({ mounted: 0, errors: [] }),
+  mountWebSocketChannels: mountWebSocketChannelsMock,
+}));
 
 // Mock dependencies
 vi.mock('@kb-labs/plugin-execution/http', () => ({
-  mountRoutes: vi.fn().mockResolvedValue(undefined),
+  mountRoutes: vi.fn(async (_server: unknown, _manifest: unknown, options: { backend: unknown }) => {
+    routeBackend.value = options.backend;
+  }),
 }));
 
 vi.mock('@kb-labs/core-runtime', () => ({
   platform: {
-    executionBackend: {
-      type: 'mock-backend',
-    },
+    executionBackend: { type: 'mock-backend' },
     shutdown: vi.fn().mockResolvedValue(undefined),
     logger: {
       trace: vi.fn(),
@@ -126,6 +143,7 @@ function createMockSnapshot(manifests: Array<{
   manifest: ManifestV3;
   pluginRoot: string;
   source?: string;
+  scope?: 'platform' | 'project';
 }>, options?: {
   diagnostics?: Array<{
     severity: 'error' | 'warning' | 'info' | 'debug';
@@ -156,7 +174,7 @@ function createMockSnapshot(manifests: Array<{
       pluginRoot: entry.pluginRoot,
       source: { kind: 'local' as const, path: entry.source ?? 'test' },
       packageName: entry.pluginId,
-      scope: 'project' as const,
+      scope: (entry.scope ?? 'project') as 'platform' | 'project',
       origin: 'workspace' as const,
       manifestPath: `${entry.pluginRoot}/manifest.json`,
       manifestKind: 'static' as const,
@@ -183,6 +201,7 @@ describe('registerPluginRoutes', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
     readiness = createMockReadinessState();
 
     // Mock fs.access to simulate file existence
@@ -192,6 +211,87 @@ describe('registerPluginRoutes', () => {
 
   afterEach(async () => {
     await app.close();
+  });
+
+  // case: S-192.2
+  it('uses the host KB_HOME when resolving a registered project for plugin route mounting', async () => {
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = '/tmp/kb-home-route-mount-test';
+    try {
+      const registry = { snapshot: () => createMockSnapshot([]) } as unknown as IEntityRegistry;
+      await registerPluginRoutes(app, BASE_CONFIG, '/mock/repo', registry, readiness);
+
+      expect(vi.mocked(resolveWorkspaceRoot)).toHaveBeenCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ KB_HOME: '/tmp/kb-home-route-mount-test' }),
+      }));
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
+  it('mounts a platform-scope plugin route in the effective discovered set', async () => {
+    const manifest = createMockManifest({
+      id: '@kb-labs/test-platform-plugin',
+      rest: {
+        basePath: '/v1/plugins/test-platform-plugin',
+        routes: [{ method: 'GET', path: '/status', handler: './handlers/status.js#default' }],
+      },
+    });
+    const registry = { snapshot: () => createMockSnapshot([{
+      pluginId: manifest.id,
+      manifest,
+      pluginRoot: '/mock/plugins/platform',
+      scope: 'platform',
+    }]) } as unknown as IEntityRegistry;
+
+    await registerPluginRoutes(app, BASE_CONFIG, '/mock/repo', registry, readiness);
+
+    expect(readiness.pluginRoutesCount).toBe(1);
+  });
+
+  it('mounts REST WebSocket channels through the platform execution backend', async () => {
+    const manifest = createMockManifest({
+      ws: {
+        basePath: '/v1/ws/plugins/test-plugin',
+        channels: [{ path: '/events', handler: './handlers/events.js' }],
+      },
+    });
+    const registry = { snapshot: () => createMockSnapshot([{
+      pluginId: manifest.id,
+      manifest,
+      pluginRoot: '/mock/plugins/test',
+    }]) } as unknown as IEntityRegistry;
+
+    await registerPluginRoutes(app, BASE_CONFIG, '/mock/repo', registry, readiness);
+
+    expect(mountWebSocketChannelsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      manifest,
+      expect.anything(),
+    );
+    expect(mountedBackend.value).toBe(routeBackend.value);
+  });
+
+  it('mounts platform-scope routes in single-root development discovery', async () => {
+    const manifest = createMockManifest({
+      id: '@kb-labs/dev-plugin',
+      rest: {
+        basePath: '/v1/plugins/dev-plugin',
+        routes: [{ method: 'GET', path: '/status', handler: './handlers/status.js#default' }],
+      },
+    });
+    // Discovery reports every plugin as platform scope when projectRoot === platformRoot.
+    const registry = { snapshot: () => createMockSnapshot([{
+      pluginId: manifest.id,
+      manifest,
+      pluginRoot: '/mock/plugins/dev',
+      scope: 'platform',
+    }]) } as unknown as IEntityRegistry;
+
+    await registerPluginRoutes(app, BASE_CONFIG, '/mock/repo', registry, readiness);
+
+    expect(readiness.pluginRoutesCount).toBe(1);
   });
 
   it('successfully mounts plugin routes with REST endpoints', async () => {
@@ -694,6 +794,7 @@ describe('registerPluginSnapshotRoutes', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
   });
 
   afterEach(async () => {
@@ -791,7 +892,7 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as { manifests: any[] };
+    const payload = response.json().data as { manifests: any[] };
     expect(payload.manifests).toHaveLength(2);
     expect(payload.manifests[0]).toMatchObject({
       pluginId: '@kb-labs/plugin-1',
@@ -818,9 +919,9 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(500);
-    const payload = response.json() as { error: string; message: string };
-    expect(payload.error).toBe('Failed to load plugin registry');
-    expect(payload.message).toContain('Registry service unavailable');
+    const payload = response.json() as { ok: false; error: { code: string; hint: string; correlationId: string } };
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String), correlationId: expect.any(String) });
   });
 
   it('handles studio registry generation errors', async () => {
@@ -838,9 +939,9 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(500);
-    const payload = response.json() as { error: string; message: string };
-    expect(payload.error).toBe('Failed to generate studio registry');
-    expect(payload.message).toContain('Studio registry generation failed');
+    const payload = response.json() as { ok: false; error: { code: string; hint: string; correlationId: string } };
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String), correlationId: expect.any(String) });
   });
 
   it('returns empty manifests when registry is empty', async () => {
@@ -858,7 +959,7 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as { manifests: any[] };
+    const payload = response.json().data as { manifests: any[] };
     expect(payload.manifests).toEqual([]);
   });
 
@@ -886,7 +987,7 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as {
+    const payload = response.json().data as {
       diagnostics: {
         total: number;
         items: Array<{ code: string; reasonCode: string; pluginId?: string }>;
@@ -922,7 +1023,7 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as {
+    const payload = response.json().data as {
       healthy: boolean;
       diagnostics: {
         total: number;

@@ -21,8 +21,8 @@ export const defaultWorkflowClient: WorkflowDaemonClient = {
   health: async () => ({ ok: true, service: 'workflow' }),
 
   getMetrics: async () => ({
-    runs: { total: 0, queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 },
-    jobs: { total: 0, queued: 0, running: 0, completed: 0, failed: 0 },
+    runs: { total: 0, queued: 0, running: 0, success: 0, failed: 0, cancelled: 0 },
+    jobs: { total: 0, queued: 0, running: 0, success: 0, failed: 0 },
   }),
 
   runWorkflow: async (_id: string, _req: WorkflowRunRequest) => ({ runId: 'run-test-123', status: 'queued' }),
@@ -35,6 +35,7 @@ export const defaultWorkflowClient: WorkflowDaemonClient = {
 
   getRun: async (runId: string): Promise<WorkflowRunDetail> => ({
     id: runId,
+    workflowId: 'test-workflow',
     name: 'test-workflow',
     status: 'running',
     createdAt: new Date().toISOString(),
@@ -42,7 +43,12 @@ export const defaultWorkflowClient: WorkflowDaemonClient = {
 
   getRunLogs: async () => [],
 
-  getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+  getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/runs/${runId}/events`,
+
+  fetchRunEvents: async (runId: string, init?: RequestInit) => fetch(
+    `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/runs/${runId}/events`,
+    init,
+  ),
 
   cancelRun: async () => {},
 
@@ -69,9 +75,11 @@ export const defaultWorkflowClient: WorkflowDaemonClient = {
 
   getExecutions: async () => [],
 
-  getCronJobs: async () => ({ crons: [] }),
+  getCronJobs: async () => ({ crons: [], errors: [] }),
 
-  submitJob: async () => ({ id: 'job-test-123', status: 'pending' }),
+  setCronEnabled: async (_id: string, enabled: boolean) => ({ enabled }),
+
+  submitJob: async () => ({ id: 'job-test-123', status: 'queued' }),
 
   listWorkflows: async () => [],
 
@@ -84,6 +92,7 @@ export const defaultWorkflowClient: WorkflowDaemonClient = {
 
 export const sampleRunSummary: WorkflowRunSummary = {
   id: 'run-test-123',
+  workflowId: 'test-workflow',
   name: 'test-workflow',
   status: 'running',
   createdAt: new Date().toISOString(),

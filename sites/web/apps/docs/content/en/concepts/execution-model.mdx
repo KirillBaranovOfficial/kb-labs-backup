@@ -1,7 +1,7 @@
 ---
 title: "Execution Model"
 description: "How plugin code actually runs — in-process, worker pool, container, or remote."
-updatedAt: "2026-04-12"
+updatedAt: "2026-10-16"
 order: 2
 ---
 
@@ -19,7 +19,7 @@ mode?: 'auto' | 'in-process' | 'worker-pool' | 'remote' | 'container';
 
 - **`in-process`** — the plugin handler runs in the same Node process as the service (REST API, workflow daemon, CLI) that invoked it. Fastest path, no process boundary, no isolation. Use for dev and trusted first-party plugins.
 - **`worker-pool`** — plugins run in a pool of worker threads. Each worker has its own V8 isolate. A plugin crash takes down one worker, not the whole service. Default for single-node production.
-- **`container`** — plugins run inside Docker containers provisioned on demand. Full OS-level isolation, enforced resource limits, network namespaces. Use for multi-tenant deployments or untrusted plugins. Requires `container.gatewayDispatchUrl` and `container.gatewayInternalSecret`.
+- **`container`** — plugins run inside Docker containers provisioned on demand. Full OS-level isolation, permission-derived mounts, and networking disabled at the OS boundary. Execution control, platform calls, and logs share the attached stdio stream; no Gateway URL or secret is required.
 - **`remote`** — type is defined in the config schema, but the adapters are not shipped. Roadmap for distributed fleets.
 - **`auto`** — default. Detects the mode from environment variables (`EXECUTION_MODE`, `KUBERNETES_SERVICE_HOST`). Picks `container` in Kubernetes, `worker-pool` elsewhere.
 
@@ -146,11 +146,7 @@ Configured under `platform.execution`:
 
 ```ts
 {
-  mode: 'container',
-  container: {
-    gatewayDispatchUrl: string;           // e.g. http://gateway:4000/internal/dispatch
-    gatewayInternalSecret: string;        // must match gateway's GATEWAY_INTERNAL_SECRET
-  }
+  mode: 'container'
 }
 ```
 
@@ -307,17 +303,11 @@ Switch to container:
 
 ```json
 {
-  "platform": {
-    "execution": {
-      "mode": "container",
-      "container": {
-        "gatewayDispatchUrl": "http://gateway:4000/internal/dispatch",
-        "gatewayInternalSecret": "${GATEWAY_INTERNAL_SECRET}"
-      }
-    }
-  }
+  "platform": { "execution": { "mode": "container" } }
 }
 ```
+
+Platform adapter calls travel through the host over the attached stdio stream. Configure the Docker environment adapter's image separately under `platform.adapterOptions.environment` when the default image does not fit your runtime.
 
 Restart:
 

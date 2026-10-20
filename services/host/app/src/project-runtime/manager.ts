@@ -21,12 +21,14 @@
  */
 
 import type { IContextLogger } from "@kb-labs/core-platform";
-import { runtimeLimitReached, runtimeStartFailed } from "./errors.js";
+import { runtimeLimitReached, runtimeReloadFailed, runtimeStartFailed } from "./errors.js";
 
 export interface RuntimeProject {
   id: string;
   /** Canonical absolute project root. */
   root: string;
+  /** Enabled workflow cron triggers that require this runtime to stay warm. */
+  keptRunningSchedules?: number;
 }
 
 export interface RuntimeAddress {
@@ -51,6 +53,10 @@ export interface RuntimeProcess {
   stop(): Promise<void>;
   /** Last output of the process, for the cause of a failed start. */
   outputTail(): string;
+  /** Latest failed readiness response, when the launcher can capture it. */
+  lastHealthStatus?(): string;
+  /** Records a readiness response so startup failure logs can identify modules. */
+  recordHealthStatus?(statusCode: number, body: string): void;
 }
 
 export interface RuntimeLauncher {
@@ -69,7 +75,7 @@ export interface RestartPolicy {
   resetAfterMs: number;
 }
 
-export type RuntimeState = "starting" | "ready" | "restarting" | "stopping";
+export type RuntimeState = "starting" | "ready" | "restarting" | "reloading" | "stopping";
 
 export interface RuntimeLease {
   projectId: string;
@@ -86,6 +92,7 @@ export interface RuntimeSnapshot {
   lastUsedAt: string;
   inflight: number;
   restarts: number;
+  keptRunningSchedules: number;
   pid?: number;
   address?: RuntimeAddress;
   /** Cause of the last failure, for logs and diagnostics (may contain paths). */
@@ -118,6 +125,8 @@ export interface ProjectRuntimeManagerOptions {
   restart?: Partial<RestartPolicy>;
   /** Called once each time a runtime became ready for a project. */
   onStarted?: (project: RuntimeProject) => void;
+  /** Fingerprints every input that determines the project's discovered plugin set. */
+  getPluginSetDigest?: (project: RuntimeProject) => Promise<string>;
   /** Clock, injectable for tests. */
   now?: () => number;
 }
@@ -166,6 +175,9 @@ interface Entry {
   stopped?: Promise<void>;
   healthTimer?: NodeJS.Timeout;
   healthFailures: number;
+  pluginSetDigest?: string;
+  reloadTask?: Promise<void>;
+  drained?: Deferred;
   /** Wakes a backoff sleep when the entry is being stopped. */
   wake?: () => void;
 }
@@ -241,16 +253,53 @@ export class ProjectRuntimeManager {
       }
       const entry = existing;
       switch (entry.state) {
-        case "ready":
+        case "ready": {
+          let digest: string | undefined;
+          try {
+            digest = await this.options.getPluginSetDigest?.(project);
+          } catch (error) {
+            throw runtimeReloadFailed(
+              project.id,
+              `could not read the plugin-set digest: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          if (this.entries.get(project.id) !== entry || entry.state !== "ready") {
+            continue;
+          }
+          if (digest !== undefined && digest !== entry.pluginSetDigest) {
+            await this.reload(entry, digest);
+            continue;
+          }
           return this.lease(entry);
+        }
         case "starting":
         case "restarting":
           await this.awaitReady(entry);
+          continue;
+        case "reloading":
+          await entry.reloadTask;
           continue;
         case "stopping":
           await entry.stopped;
           continue;
       }
+    }
+  }
+
+  /** Start scheduled projects and refresh the warm-lease count for every runtime. */
+  async syncScheduledProjects(projects: RuntimeProject[]): Promise<void> {
+    const schedules = new Map(projects.map((project) => [project.id, project]));
+    for (const entry of this.entries.values()) {
+      entry.project.keptRunningSchedules = schedules.get(entry.project.id)?.keptRunningSchedules ?? 0;
+    }
+    for (const project of projects) {
+      const existing = this.entries.get(project.id);
+      if (existing) {
+        existing.project.keptRunningSchedules = project.keptRunningSchedules ?? 0;
+        continue;
+      }
+      const lease = await this.acquire(project);
+      lease.release();
     }
   }
 
@@ -263,6 +312,7 @@ export class ProjectRuntimeManager {
         lastUsedAt: new Date(entry.lastUsed).toISOString(),
         inflight: entry.inflight,
         restarts: entry.restarts,
+        keptRunningSchedules: entry.project.keptRunningSchedules ?? 0,
         ...(entry.process?.pid !== undefined ? { pid: entry.process.pid } : {}),
         ...(entry.process ? { address: entry.process.address } : {}),
         ...(entry.lastError ? { lastError: entry.lastError } : {}),
@@ -276,6 +326,7 @@ export class ProjectRuntimeManager {
           lastUsedAt: new Date(failure.at).toISOString(),
           inflight: 0,
           restarts: failure.restarts,
+          keptRunningSchedules: 0,
           lastError: failure.error,
         });
       }
@@ -330,7 +381,7 @@ export class ProjectRuntimeManager {
     if (this.closed || this.entries.has(project.id)) {
       return undefined;
     }
-    while (this.entries.size >= this.options.maxActiveProjects) {
+    while (this.entries.size >= this.options.maxActiveProjects && (project.keptRunningSchedules ?? 0) === 0) {
       const victim = this.leastRecentlyUsedIdle();
       if (!victim) {
         throw runtimeLimitReached(this.options.maxActiveProjects);
@@ -343,6 +394,12 @@ export class ProjectRuntimeManager {
       await this.stopEntry(victim, "evicted");
     }
     this.failures.delete(project.id);
+    let pluginSetDigest: string | undefined;
+    try {
+      pluginSetDigest = await this.options.getPluginSetDigest?.(project);
+    } catch (error) {
+      throw runtimeStartFailed(project.id, `could not read the plugin-set digest: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const entry: Entry = {
       project,
       state: "starting",
@@ -352,6 +409,7 @@ export class ProjectRuntimeManager {
       ready: deferred(),
       task: Promise.resolve(),
       healthFailures: 0,
+      pluginSetDigest,
     };
     this.entries.set(project.id, entry);
     entry.task = this.bringUp(entry);
@@ -361,7 +419,7 @@ export class ProjectRuntimeManager {
   private leastRecentlyUsedIdle(): Entry | undefined {
     let victim: Entry | undefined;
     for (const entry of this.entries.values()) {
-      if (!this.isState(entry, "ready") || entry.inflight > 0) {
+      if (!this.isState(entry, "ready") || entry.inflight > 0 || (entry.project.keptRunningSchedules ?? 0) > 0) {
         continue;
       }
       if (!victim || entry.lastUsed < victim.lastUsed) {
@@ -392,8 +450,50 @@ export class ProjectRuntimeManager {
         released = true;
         entry.inflight -= 1;
         entry.lastUsed = this.now();
+        if (entry.inflight === 0) entry.drained?.resolve();
       },
     };
+  }
+
+  /** One reload promise gates acquisitions while leases on the old runtime drain. */
+  private reload(entry: Entry, digest: string): Promise<void> {
+    if (entry.state === "reloading") return entry.reloadTask ?? Promise.resolve();
+    entry.state = "reloading";
+    entry.drained = entry.inflight > 0 ? deferred() : undefined;
+    entry.reloadTask = this.reloadProcess(entry, digest);
+    return entry.reloadTask;
+  }
+
+  private async reloadProcess(entry: Entry, digest: string): Promise<void> {
+    const previous = entry.process;
+    try {
+      if (entry.drained) await entry.drained.promise;
+      if (entry.state !== "reloading") return;
+      this.clearHealthMonitor(entry);
+      await previous?.stop();
+      if (entry.state !== "reloading") return;
+      entry.process = undefined;
+      await this.startOnce(entry);
+      if (entry.state === "reloading") {
+        entry.pluginSetDigest = digest;
+        entry.restarts += 1;
+        this.markReady(entry);
+      }
+    } catch (error) {
+      if (entry.state !== "reloading") return;
+      const cause = error instanceof Error ? error.message : String(error);
+      this.clearHealthMonitor(entry);
+      await entry.process?.stop().catch(() => undefined);
+      entry.process = undefined;
+      entry.state = "stopping";
+      this.failures.set(entry.project.id, {
+        at: this.now(),
+        error: cause,
+        restarts: entry.restarts,
+      });
+      if (this.entries.get(entry.project.id) === entry) this.entries.delete(entry.project.id);
+      throw runtimeReloadFailed(entry.project.id, cause);
+    }
   }
 
   /**
@@ -523,8 +623,10 @@ export class ProjectRuntimeManager {
       }
       if (this.now() >= deadline) {
         await runtime.stop().catch(() => undefined);
+        const healthStatus = runtime.lastHealthStatus?.();
+        const healthDetail = healthStatus ? `; health: ${healthStatus}` : "";
         throw new Error(
-          `the runtime was not healthy within ${this.options.startTimeoutMs} ms${this.tail(runtime)}`,
+          `the runtime was not healthy within ${this.options.startTimeoutMs} ms${healthDetail}${this.tail(runtime)}`,
         );
       }
       await new Promise<void>((resolve) => {
@@ -557,7 +659,12 @@ export class ProjectRuntimeManager {
     this.options.logger.error(
       "Project runtime could not be started",
       undefined,
-      { projectId: entry.project.id, cause },
+      {
+        projectId: entry.project.id,
+        cause,
+        startupOutput: entry.process?.outputTail(),
+        healthStatus: entry.process?.lastHealthStatus?.(),
+      },
     );
     this.failures.set(entry.project.id, {
       at: this.now(),
@@ -644,7 +751,7 @@ export class ProjectRuntimeManager {
   private sweepIdle(): void {
     const cutoff = this.now() - this.options.idleTimeoutMs;
     for (const entry of [...this.entries.values()]) {
-      if (this.isState(entry, "ready") && entry.inflight === 0 && entry.lastUsed <= cutoff) {
+      if (this.isState(entry, "ready") && entry.inflight === 0 && (entry.project.keptRunningSchedules ?? 0) === 0 && entry.lastUsed <= cutoff) {
         void this.stopEntry(entry, "idle");
       }
     }
@@ -664,10 +771,12 @@ export class ProjectRuntimeManager {
     entry.state = "stopping";
     this.clearHealthMonitor(entry);
     entry.wake?.();
+    entry.drained?.resolve();
     entry.stopped = (async () => {
       try {
         // Let a start/restart in progress notice the state change first.
         await entry.task;
+        await entry.reloadTask?.catch(() => undefined);
         await entry.process?.stop();
       } catch (error) {
         this.options.logger.warn("Stopping a project runtime failed", {

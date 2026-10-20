@@ -9,18 +9,20 @@ import { pathToFileURL } from 'node:url';
 import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { PlatformContainer } from './container.js';
-import type { PlatformConfig, CoreFeaturesConfig, ResourceBrokerConfig, LLMAdapterOptions, AdapterValue, NotifierAdapterOptions } from './config.js';
+import type { PlatformConfig, CoreFeaturesConfig, ResourceBrokerConfig, LLMAdapterOptions, AdapterValue } from './config.js';
 import { platform } from './container.js';
-import { resolveAdapter } from './discover-adapters.js';
 import { createAnalyticsContext } from './analytics-context.js';
 import { AdapterLoader } from './adapter-loader.js';
 import type { AdapterConfig, LoadedAdapterModule } from './adapter-loader.js';
+import { configuredAdapterLoadError, loadDiscoveredAdapterModule } from './adapter-module-loader.js';
 import { EnvironmentManager } from './environment-manager.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { SnapshotManager } from './snapshot-manager.js';
 import { RunExecutor } from './run-executor.js';
 import { RunOrchestrator } from './run-orchestrator.js';
 import { createDefaultExecutionPolicyLLM } from './wrappers/default-execution-policy-llm.js';
+import { resolveInstalledAdapterDefaults } from './default-adapters.js';
+import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
 
 import { ResourceManager } from './core/resource-manager.js';
 import { JobScheduler } from './core/job-scheduler.js';
@@ -29,12 +31,32 @@ import {
   getAdapterStatusRegistry,
   resetAdapterStatus,
 } from './adapter-status.js';
-import { ADAPTER_DEFAULTS, type AdapterSlot } from '@kb-labs/core-platform';
+import { ADAPTER_DEFAULTS, AdapterConfigError, AdapterUnavailableError, type AdapterSlot, type HostServiceEnvironment, type ReservedEnvironment } from '@kb-labs/core-platform';
 import { inmemoryFactories } from '@kb-labs/core-platform/inmemory';
 import { noopFactories } from '@kb-labs/core-platform/noop';
 import { WorkflowEngine } from './core/workflow-engine.js';
+import { getHostGatewayAddresses } from './host-gateway-address.js';
+import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
 
 const OPTIONAL_ADAPTER_SLOTS = new Set(['logPersistence', 'logRingBuffer']);
+
+interface AdapterLoadFailureRecord {
+  packageName: string;
+  correlationId: string;
+  cause: string;
+  causeError: unknown;
+  action: { id: string; label: string; command: string };
+}
+
+export function createDegradedAdapterProxy(fallback: object | undefined, error: AdapterUnavailableError): object {
+  const target = fallback ?? Object.create(null) as object;
+  return new Proxy(target, {
+    get(_target, property) {
+      if (property === 'then' || typeof property === 'symbol') {return undefined;}
+      throw error;
+    },
+  });
+}
 
 function selectPackageExport(value: unknown): string | undefined {
   if (typeof value === 'string') {
@@ -89,8 +111,6 @@ import type {
   VectorRecord,
   RawMiddlewareDecl,
 } from '@kb-labs/core-platform';
-import type { ExecutionRequest } from '@kb-labs/core-contracts';
-
 import { ResourceBroker, InMemoryRateLimitBackend } from '@kb-labs/core-resource-broker';
 import type { RateLimitBackend, IResourceBroker } from '@kb-labs/core-resource-broker';
 
@@ -130,36 +150,6 @@ function getPrimaryAdapter(value: AdapterValue | undefined): string | undefined 
 }
 
 /**
- * Load an adapter from a package path.
- * Uses workspace discovery to load from file paths (kb-labs-adapters/*),
- * then falls back to dynamic import for npm-installed adapters.
- *
- * @param adapterPath - Package name (e.g., "@kb-labs/adapters-openai")
- * @param cwd - Workspace root directory
- * @returns Adapter instance or undefined if loading fails
- */
-async function loadAdapter<T>(adapterPath: string, cwd: string, options?: unknown, platformRoot?: string): Promise<T | undefined> {
-  try {
-    // Use resolveAdapter to try workspace discovery first, then npm
-    const factory = await resolveAdapter(adapterPath, cwd, platformRoot);
-
-    if (factory) {
-      return (await factory(options)) as T;
-    }
-
-    platform.logger.warn('Adapter has no createAdapter or default export', { adapterPath });
-    return undefined;
-  } catch (error) {
-    platform.logger.warn('Failed to load adapter', {
-      adapterPath,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    return undefined;
-  }
-}
-
-
-/**
  * Walk `ADAPTER_DEFAULTS`, decide the mode of every slot, install
  * fallbacks where needed, and record the result in the global adapter
  * status registry.
@@ -176,10 +166,9 @@ async function loadAdapter<T>(adapterPath: string, cwd: string, options?: unknow
  *    last line of defence that turns the silent miss into a thrown
  *    error.
  *
- * 3. **Not configured** → install the policy-driven fallback from
- *    `ADAPTER_DEFAULTS[slot].defaultFallback`. Either an InMemory honest
- *    implementation or a NoOp stub that throws `AdapterUnavailableError`
- *    on use.
+ * 3. **Not configured** → installed platforms resolve any available local
+ *    manifest `defaultFor` provider before this function runs. Only slots
+ *    without such a provider reach `ADAPTER_DEFAULTS`' InMemory or NoOp policy.
  *
  * After this function returns, every slot in `ADAPTER_DEFAULTS` is
  * guaranteed to be filled (except `snapshotManager`, which has no
@@ -188,36 +177,16 @@ async function loadAdapter<T>(adapterPath: string, cwd: string, options?: unknow
  * Throws on the configured-but-failed branch only; never throws for
  * legitimately unconfigured slots.
  */
-function fillAdapterFallbacksAndRecord(
+export function fillAdapterFallbacksAndRecord(
   container: PlatformContainer,
   adapters: Record<string, AdapterValue | undefined>,
+  installedPlatform = false,
+  failures: ReadonlyMap<string, AdapterLoadFailureRecord> = new Map(),
 ): void {
   const status = getAdapterStatusRegistry();
   const now = (): string => new Date().toISOString();
 
   const slots = Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[];
-
-  // Pre-scan: fail-fast before installing any fallbacks if a configured adapter
-  // failed to load. This prevents the platform from starting in a half-initialised
-  // state where some slots have InMemory/NoOp fallbacks while others are missing.
-  const failures: string[] = [];
-  for (const slot of slots) {
-    const configuredPkg = getPrimaryAdapter(adapters[slot]);
-    if (configuredPkg && !container.hasAdapter(slot)) {
-      failures.push(`  - "${slot}" was configured as "${configuredPkg}" but no adapter was loaded.`);
-    }
-  }
-  if (failures.length > 0) {
-    const lines = [
-      'Platform startup aborted: configured adapters failed to load.',
-      ...failures,
-      '',
-      'A configured adapter must succeed at every stage (import, factory, validation).',
-      'Check kb.config.json, .kb/marketplace.lock, and that the listed packages are installed.',
-      'Run `kb platform provision --mode reconcile` (deploy) or `kb marketplace install <pkg>` (dev).',
-    ];
-    throw new Error(lines.join('\n'));
-  }
 
   // Main pass: record real adapters and install InMemory/NoOp fallbacks.
   for (const slot of slots) {
@@ -227,10 +196,40 @@ function fillAdapterFallbacksAndRecord(
     if (status.get(slot)) {
       continue;
     }
-
     const desc = ADAPTER_DEFAULTS[slot];
     const configuredPkg = getPrimaryAdapter(adapters[slot]);
     const hasPresent = container.hasAdapter(slot);
+
+    const failure = failures.get(slot);
+    if (failure) {
+      const unavailable = new AdapterUnavailableError(
+        slot,
+        'load-failed',
+        failure.cause,
+        failure.causeError,
+        {
+          userMessage: `Adapter ${slot} is unavailable because ${failure.packageName} failed to load.`,
+          hint: failure.action.command,
+          action: failure.action,
+        },
+      );
+      const fallback = (noopFactories as Record<string, (() => unknown) | undefined>)[slot]?.()
+        ?? (inmemoryFactories as Record<string, (() => unknown) | undefined>)[slot]?.()
+        ?? Object.create(null) as object;
+      const failedAdapter = createDegradedAdapterProxy(fallback as object, unavailable);
+      container.setAdapter(slot, failedAdapter as never);
+      status.record({
+        slot,
+        mode: 'degraded',
+        implementation: failure.packageName,
+        configuredPackage: failure.packageName,
+        reason: 'load-failed',
+        correlationId: failure.correlationId,
+        action: failure.action,
+        recordedAt: now(),
+      });
+      continue;
+    }
 
     // Branch 1: configured + loaded — record as real.
     if (hasPresent && configuredPkg) {
@@ -242,6 +241,31 @@ function fillAdapterFallbacksAndRecord(
         recordedAt: now(),
       });
       continue;
+    }
+
+    // `platform.logs` is composed by PlatformContainer from local logger
+    // backends rather than loaded as a package for the `logs` slot. Check
+    // this before the seeded NoOp reader is mistaken for the active reader.
+    const hasLocalLogs = slot === 'logs' && (
+      Boolean(container.logger.getLogBuffer?.()) ||
+      container.hasAdapter('logRingBuffer') ||
+      container.hasAdapter('logPersistence')
+    );
+    if (hasLocalLogs) {
+      status.record({
+        slot,
+        mode: 'real',
+        implementation: 'HybridLogReader',
+        recordedAt: now(),
+      });
+      continue;
+    }
+
+    if (installedPlatform && 'preferInstalledDefault' in desc && desc.preferInstalledDefault && !configuredPkg) {
+      throw new Error(
+        `Platform startup aborted: installed platform has no configured or manifest-discovered local default for "${slot}". ` +
+          `Install a local adapter for this slot, then bind it with \`kb adapter bind ${slot} <package>\`.`,
+      );
     }
 
     // Branch 1b: adapter present but not in config — bootstrap fallback
@@ -313,12 +337,12 @@ function fillAdapterFallbacksAndRecord(
   }
 
   // Boot summary — one line, scannable in logs.
-  const counts = { real: 0, inmemory: 0, noop: 0 };
+  const counts = { real: 0, inmemory: 0, noop: 0, degraded: 0 };
   for (const row of status.list()) {
     counts[row.mode]++;
   }
   container.logger.info(
-    `Adapters initialised: ${counts.real} real, ${counts.inmemory} inmemory, ${counts.noop} noop`,
+    `Adapters initialised: ${counts.real} real, ${counts.inmemory} inmemory, ${counts.noop} noop, ${counts.degraded} degraded`,
     counts,
   );
 }
@@ -369,21 +393,25 @@ function initializeCoreFeatures(
  */
 function initializeResourceBroker(
   container: PlatformContainer,
-  config: ResourceBrokerConfig = {}
+  config: ResourceBrokerConfig = {},
+  existingBroker?: ResourceBroker,
 ): ResourceBroker {
-  // Create backend (distributed or in-memory)
-  let backend: RateLimitBackend;
+  let broker = existingBroker;
+  if (!broker) {
+    // Create backend (distributed or in-memory)
+    let backend: RateLimitBackend;
 
-  if (config.distributed) {
-    // For distributed mode, we need StateBroker
-    // This will be implemented when StateBroker is available
-    platform.logger.warn('Distributed ResourceBroker not yet implemented, using InMemory');
-    backend = new InMemoryRateLimitBackend();
-  } else {
-    backend = new InMemoryRateLimitBackend();
+    if (config.distributed) {
+      // For distributed mode, we need StateBroker
+      // This will be implemented when StateBroker is available
+      platform.logger.warn('Distributed ResourceBroker not yet implemented, using InMemory');
+      backend = new InMemoryRateLimitBackend();
+    } else {
+      backend = new InMemoryRateLimitBackend();
+    }
+
+    broker = new ResourceBroker(backend);
   }
-
-  const broker = new ResourceBroker(backend);
 
   // Register LLM resource with broker (queuing applied later by assemblePlatform.resourceBrokerFactory)
   if (container.isReal('llm')) {
@@ -490,15 +518,24 @@ export async function initPlatform(
   cwd: string = process.cwd(),
   uiProvider?: (hostType: string) => any,
   platformRoot?: string,
-  assemblyHook?: (
-    platform: PlatformContainer,
-    broker: IResourceBroker,
-    adapterConfig: Partial<Record<string, unknown>>,
-  ) => Partial<Record<string, unknown>>,
+  options: {
+    assemblyHook?: (
+      platform: PlatformContainer,
+      broker: IResourceBroker,
+      adapterConfig: Partial<Record<string, unknown>>,
+    ) => Partial<Record<string, unknown>>;
+    workspaceDevelopment?: boolean;
+    hostServiceEnvironment?: HostServiceEnvironment;
+  } = {},
 ): Promise<PlatformContainer> {
+  const {
+    assemblyHook,
+    workspaceDevelopment = false,
+    hostServiceEnvironment,
+  } = options;
 
   // ✅ Idempotent: If already initialized, return existing singleton
-  // This prevents duplicate adapter instances across CLI and sandbox processes
+  // This prevents duplicate adapter instances across CLI and service startup.
   platform.logger.debug(`initPlatform isInitialized=${platform.isInitialized} pid=${process.pid}`);
 
   if (platform.isInitialized) {
@@ -507,15 +544,22 @@ export async function initPlatform(
   }
 
   platform.logger.debug(`initPlatform initializing NEW platform pid=${process.pid}`);
-  const { adapters = {}, adapterOptions = {}, core = {}, execution = {} } = config;
+  const { core = {}, execution = {} } = config;
+  const adapterRoot = platformRoot ?? cwd;
+  const installedPlatform = Boolean(platformRoot) || await fs.access(path.join(adapterRoot, '.kb', 'marketplace.lock'))
+    .then(() => true)
+    .catch(() => false);
+  const defaultedConfig = await resolveInstalledAdapterDefaults({
+    adapters: (config.adapters ?? {}) as Record<string, unknown>,
+    adapterOptions: config.adapterOptions ?? {},
+  }, adapterRoot, cwd);
+  const adapters = defaultedConfig.adapters as NonNullable<PlatformConfig['adapters']>;
+  const adapterOptions = defaultedConfig.adapterOptions as NonNullable<PlatformConfig['adapterOptions']>;
 
-  // 🔍 Detect if running in child process (sandbox worker)
-  const isChildProcess = !!process.send; // Has IPC channel = forked child
   const initStartedAt = Date.now();
 
   await platform.emitLifecyclePhase('start', {
     cwd,
-    isChildProcess,
     metadata: {
       adapterKeys: Object.keys(adapters),
       hasExecutionConfig: Object.keys(execution).length > 0,
@@ -524,98 +568,9 @@ export async function initPlatform(
   });
 
   try {
-    if (isChildProcess) {
-    // ══════════════════════════════════════════════════════════════════════
-    // CHILD PROCESS (Sandbox Worker)
-    // ══════════════════════════════════════════════════════════════════════
-    // Create IPC proxy adapters that forward calls to parent process.
-    // This eliminates adapter duplication - only parent has real adapters.
+    // Load real adapters in this platform process.
 
-    platform.logger.debug('initPlatform child process detected - creating proxy adapters');
-
-    // Use Unix Socket transport by default (100-1000x faster than IPC for large messages)
-    const {
-      UnixSocketTransport,
-      VectorStoreProxy,
-      CacheProxy,
-      ConfigProxy,
-      LLMProxy,
-      EmbeddingsProxy,
-      StorageProxy,
-    } = await import('@kb-labs/core-ipc');
-
-    // Create single transport for all adapters
-    const transport = new UnixSocketTransport();
-    platform.logger.debug('initPlatform using Unix Socket transport');
-
-    // Create proxy adapters (replace real adapters with IPC proxies)
-    if (adapters.vectorStore) {
-      platform.setAdapter('vectorStore', new VectorStoreProxy(transport));
-      platform.logger.debug('initPlatform created VectorStoreProxy');
-    }
-
-    if (adapters.cache) {
-      platform.setAdapter('cache', new CacheProxy(transport));
-      platform.logger.debug('initPlatform created CacheProxy');
-    }
-
-    // Config adapter is ALWAYS created (not optional like other adapters)
-    platform.setAdapter('config', new ConfigProxy(transport));
-    platform.logger.debug('initPlatform created ConfigProxy');
-
-    // LLM proxy is ALWAYS created (parent may have real LLM even if not in child config)
-    platform.setAdapter('llm', new LLMProxy(transport));
-    platform.logger.debug('initPlatform created LLMProxy');
-
-    if (adapters.embeddings) {
-      const embeddingsProxy = new EmbeddingsProxy(transport);
-      await embeddingsProxy.getDimensions(); // Initialize dimensions before use
-      platform.setAdapter('embeddings', embeddingsProxy);
-      platform.logger.debug('initPlatform created EmbeddingsProxy');
-    }
-
-    if (adapters.storage) {
-      platform.setAdapter('storage', new StorageProxy(transport));
-      platform.logger.debug('initPlatform created StorageProxy');
-    }
-
-    // Fill remaining slots with InMemory/NoOp fallbacks and populate the
-    // adapter-status registry. Slots the parent already wired through a
-    // proxy stay untouched and are recorded as `mode: 'real'`; slots
-    // without a proxy fall back per `ADAPTER_DEFAULTS`.
-    fillAdapterFallbacksAndRecord(
-      platform,
-      adapters as Record<string, AdapterValue | undefined>,
-    );
-
-    // ⚠️ CRITICAL: Do NOT create ExecutionBackend in child process!
-    // Child processes ARE the workers - creating backend here would spawn infinite workers.
-    // ExecutionBackend is ONLY created in parent process.
-
-    // Core features are initialized normally (they don't duplicate resources)
-    const coreFeatures = initializeCoreFeatures(platform, core);
-    platform.initCoreFeatures(
-      coreFeatures.workflows,
-      coreFeatures.jobs,
-      coreFeatures.cron,
-      coreFeatures.resources
-    );
-
-    // Initialize ResourceBroker for queue and rate limiting
-    const resourceBroker = initializeResourceBroker(platform, core.resourceBroker);
-    platform.initResourceBroker(resourceBroker);
-    platform.logger.debug('initPlatform initialized ResourceBroker');
-
-    platform.logger.debug('initPlatform child process initialization complete');
-
-    } else {
-    // ══════════════════════════════════════════════════════════════════════
-    // PARENT PROCESS (CLI bin)
-    // ══════════════════════════════════════════════════════════════════════
-    // Load real adapters (Qdrant, Redis, OpenAI, etc.)
-    // Start IPC server to handle calls from child processes.
-
-    platform.logger.debug('initPlatform parent process detected - loading real adapters');
+    platform.logger.debug('initPlatform loading platform adapters');
 
     // Create analytics context for auto-enrichment (once per execution)
     const analyticsContext = await createAnalyticsContext(cwd);
@@ -635,16 +590,28 @@ export async function initPlatform(
       workspace: { cwd },
       analytics: analyticsContext,
     };
+    let platformDataContext: { dataRoot: string } | undefined;
+
+    // Platform services are available to generic adapter factories through
+    // their manifest declarations, independent of adapter slot names.
+    const resourceBroker = initializeResourceBroker(platform, core.resourceBroker);
+    platform.initResourceBroker(resourceBroker);
 
     // Module loader function - defined before loop so we can pre-load manifests
     const loadModule = async (modulePath: string): Promise<LoadedAdapterModule> => {
       try {
         const { discoverAdapters } = await import('./discover-adapters.js');
-        // Project wins: pass both roots so workspace adapters override platform's.
-        // projectRoot is only distinct from platformRoot in installed (prod) mode.
         const discovered = await discoverAdapters(
           platformRoot ?? cwd,
-          platformRoot && platformRoot !== cwd ? cwd : undefined,
+          {
+            development: workspaceDevelopment,
+            configuredPackages: Object.entries(adapters).flatMap(([slot, value]) =>
+              normalizeAdapterValue(value as AdapterValue).map(modulePath => ({
+                packageName: modulePath.split('/').slice(0, 2).join('/'),
+                slot,
+              })),
+            ),
+          },
         );
 
         // Parse module path into base package and subpath (same logic as resolveAdapter)
@@ -657,53 +624,7 @@ export async function initPlatform(
         const adapter = discovered.get(basePkgName);
 
         if (adapter && subpath) {
-          // Load subpath export from workspace adapter
-          const subpathFile = path.join(adapter.pkgRoot, 'dist', `${subpath}.js`);
-          try {
-            await fs.access(subpathFile);
-            const module = await import(pathToFileURL(subpathFile).href);
-
-            const factory = module.createAdapter || module.default;
-            const manifest = module.manifest;
-
-            if (!factory) {
-              throw new Error(
-                `Subpath ${modulePath} has no createAdapter or default export`
-              );
-            }
-
-            if (!manifest) {
-              throw new Error(
-                `Subpath ${modulePath} has no manifest export`
-              );
-            }
-
-            return { createAdapter: factory, manifest, pkgRoot: adapter.pkgRoot };
-          } catch (err) {
-            // Subpath file doesn't exist, try loading base package
-            const baseModule = await import(
-              pathToFileURL(
-                path.join(adapter.pkgRoot, 'dist', 'index.js')
-              ).href
-            );
-
-            const factory = baseModule.createAdapter || baseModule.default;
-            const manifest = baseModule.manifest;
-
-            if (!factory) {
-              throw new Error(
-                `Module ${modulePath} has no createAdapter or default export`
-              );
-            }
-
-            if (!manifest) {
-              throw new Error(
-                `Module ${modulePath} has no manifest export`
-              );
-            }
-
-            return { createAdapter: factory, manifest, pkgRoot: adapter.pkgRoot };
-          }
+          return await loadDiscoveredAdapterModule(adapter, modulePath);
         } else if (adapter) {
           // Load base package (no subpath)
           const module = await import(
@@ -791,15 +712,47 @@ export async function initPlatform(
           return { createAdapter: factory, manifest, pkgRoot };
         }
       } catch (error) {
-        throw new Error(
-          `Failed to load adapter module ${modulePath}: ${error instanceof Error ? error.message : String(error)}`
-        );
+        // Keep Node's resolution code and error cause for the typed startup error.
+        throw error;
       }
+    };
+
+    const notifierChannels = async (): Promise<Record<string, unknown>> => {
+      const options = (adapterOptions.notifier ?? {}) as {
+        channels?: Record<string, { type: string; [key: string]: unknown }>;
+      };
+      const channels: Record<string, unknown> = {};
+      for (const [id, channelConfig] of Object.entries(options.channels ?? {})) {
+        try {
+          const { loadAdapterChannelFactory } = await import('./discover-adapters.js');
+          const createChannel = await loadAdapterChannelFactory(channelConfig.type, platformRoot ?? cwd, workspaceDevelopment);
+          channels[id] = createChannel(channelConfig, id);
+        } catch (channelError) {
+          platform.logger.warn('initPlatform: failed to load notifier channel', {
+            type: channelConfig.type,
+            channelId: id,
+            error: channelError instanceof Error ? channelError.message : String(channelError),
+          });
+        }
+      }
+      return channels;
     };
 
     // Build adapter configs for AdapterLoader
     // Supports both single adapter (string) and multi-adapter (string[]) config
     const adapterConfigs: Record<string, AdapterConfig> = {};
+    const adapterLoadFailures = new Map<string, AdapterLoadFailureRecord>();
+    const recordAdapterLoadFailure = (slot: string, packageName: string, error: unknown): void => {
+      if (adapterLoadFailures.has(slot)) {return;}
+      const cause = configuredAdapterLoadError(slot, packageName, error, platformRoot ?? cwd);
+      const correlationId = randomUUID();
+      const action = cause.action;
+      if (!action) {throw new Error(`Adapter load error for ${slot} has no recovery action.`);}
+      adapterLoadFailures.set(slot, { packageName, correlationId, cause: cause.message, causeError: error, action });
+      platform.logger.error(
+        `Configured adapter failed to load; slot=${slot} adapter=${packageName} correlationId=${correlationId}: ${cause.message}`,
+      );
+    };
 
     // Collect raw middleware declarations from adapter manifests (resolved later by execution backends)
     const rawMiddlewareDecls: RawMiddlewareDecl[] = [];
@@ -821,10 +774,36 @@ export async function initPlatform(
         // Pre-load module to access manifest (primary adapter only)
         const module = await loadModule(primaryAdapter);
         const baseOptions = (adapterOptions as Record<string, unknown>)[name] ?? {};
+        const hostServiceOptions = name === 'cache' && hostServiceEnvironment
+          ? { hostServiceEnvironment }
+          : {};
 
         // Inject requested contexts from manifest
         const requestedContexts = module.manifest.contexts ?? [];
         const contexts: Record<string, unknown> = {};
+
+        const pathOptions = Object.entries(module.manifest.configSchema ?? {})
+          .filter(([, schema]) => schema.pathBase === 'platformData');
+        if (requestedContexts.includes('platformData') || pathOptions.length > 0) {
+          platformDataContext ??= {
+            dataRoot: await resolvePlatformDataRoot(adapterRoot, workspaceDevelopment),
+          };
+          runtimeContexts.platformData = platformDataContext;
+        }
+
+        const normalizedOptions: Record<string, unknown> = {
+          ...(baseOptions as Record<string, unknown>),
+        };
+        for (const [option, schema] of pathOptions) {
+          if (Object.hasOwn(normalizedOptions, option)) {
+            normalizedOptions[option] = resolvePlatformDataPath(
+              normalizedOptions[option],
+              platformDataContext!,
+              `platform.adapterOptions.${name}.${option}`,
+              schema.specialValues,
+            );
+          }
+        }
 
         for (const ctxName of requestedContexts) {
           if (runtimeContexts[ctxName]) {
@@ -834,8 +813,9 @@ export async function initPlatform(
 
         adapterConfigs[name] = {
           module: primaryAdapter,
-          // Merge contexts with user options (user options can override)
-          config: { ...contexts, ...baseOptions },
+          // Contexts are runtime-owned. In particular, platformData cannot be
+          // replaced by config supplied by a plugin or platform file.
+          config: { ...normalizedOptions, ...contexts, ...hostServiceOptions },
         };
 
         // Collect middleware declarations from manifest
@@ -853,6 +833,7 @@ export async function initPlatform(
           });
         }
       } catch (error) {
+        if (error instanceof AdapterConfigError) throw error;
         if (OPTIONAL_ADAPTER_SLOTS.has(name)) {
           platform.logger.warn('Optional platform adapter unavailable; capability disabled', {
             adapterSlot: name,
@@ -861,14 +842,40 @@ export async function initPlatform(
           });
           continue;
         }
-        throw error;
+        recordAdapterLoadFailure(name, primaryAdapter, error);
+      }
+    }
+
+    const externalAdapterDependencies = new Map<string, unknown>();
+    for (const config of Object.values(adapterConfigs)) {
+      const module = await loadModule(config.module);
+      for (const dependency of module.manifest.requires?.adapters ?? []) {
+        const token = typeof dependency === 'string' ? dependency : dependency.id;
+        if (adapterConfigs[token] || platform.getAdapter(token)) {continue;}
+        if (!Object.hasOwn(ADAPTER_DEFAULTS, token)) {continue;}
+        const slot = token as AdapterSlot;
+        const fallback = ADAPTER_DEFAULTS[slot].defaultFallback === 'inmemory'
+          ? (inmemoryFactories as Record<string, (() => unknown) | undefined>)[slot]?.()
+          : (noopFactories as Record<string, (() => unknown) | undefined>)[slot]?.();
+        if (fallback) {
+          platform.setAdapter(token, fallback as never);
+          externalAdapterDependencies.set(token, fallback);
+        }
       }
     }
 
     // Load adapters with dependency resolution. Configured adapters that
     // fail to load surface in the next pass via `fillAdapterFallbacksAndRecord`,
     // which throws a single combined error listing every failed slot.
-    const loadedAdapters = await loader.loadAdapters(adapterConfigs, loadModule);
+    const loadedAdapters = await loader.loadAdapters(adapterConfigs, loadModule, {
+      logger: platform.logger,
+      onAdapterLoadFailure: recordAdapterLoadFailure,
+      adapters: externalAdapterDependencies,
+      platformServices: {
+        resourceBroker: () => resourceBroker,
+        notifierChannels,
+      },
+    });
 
     // CRITICAL: Set analytics adapter FIRST (without wrapping) so wrapWithAnalytics() can use it
     if (loadedAdapters.has('analytics')) {
@@ -886,7 +893,7 @@ export async function initPlatform(
     }
 
     // Get dependency graph for extension connection
-    const graph = await loader.buildDependencyGraph(adapterConfigs, loadModule);
+    const graph = await loader.buildDependencyGraph(adapterConfigs, loadModule, externalAdapterDependencies);
     loader.connectExtensions(loadedAdapters, graph);
 
     // Create ConfigAdapter (ALWAYS present, not loaded dynamically)
@@ -900,16 +907,11 @@ export async function initPlatform(
       });
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // Fill remaining slots with InMemory/NoOp fallbacks per ADAPTER_DEFAULTS,
-    // record what's wired into each slot, and fail-fast on any configured
-    // adapter that didn't load. After this call, every slot in
-    // ADAPTER_DEFAULTS is filled (or, for snapshotManager which has no
-    // sensible NoOp, is intentionally left undefined).
-    // ══════════════════════════════════════════════════════════════════════
     fillAdapterFallbacksAndRecord(
       platform,
       adapters as Record<string, AdapterValue | undefined>,
+      installedPlatform,
+      adapterLoadFailures,
     );
 
     // ══════════════════════════════════════════════════════════════════════
@@ -917,22 +919,19 @@ export async function initPlatform(
     // CRITICAL: ExecutionBackend is REQUIRED - all execution goes through it
     // ══════════════════════════════════════════════════════════════════════
     try {
-      if (execution.mode === 'container' && execution.container) {
-        // ── Container mode: RoutingBackend with remote dispatch via Gateway ──
-        // Dynamic imports — pyramid rule: core-runtime (L4) cannot depend on gateway-* (L7) at compile-time.
-        const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory');
-        const { GatewayDispatchTransport } = await import('@kb-labs/gateway-core');
-        const containerCfg = execution.container;
-
+      if (execution.mode === 'container') {
+        // ── Container mode: attached runtime stdio with host-served platform RPC ──
+        const { containerUnavailableError, requireAttachedEnvironmentProvider, ContainerProviderUnavailableError, createContainerExecutionSpec, createIsolatedExecutionBackend, StdioExecutionTransport } = await import('@kb-labs/plugin-execution-factory/construct');
         const strictIsolation = {
           buildTransport(ctx: { runtimeHostId: string; namespaceId: string }) {
-            return new GatewayDispatchTransport({
-              dispatchEndpoint: containerCfg.gatewayDispatchUrl,
-              internalSecret: containerCfg.gatewayInternalSecret,
-              runtimeHostId: ctx.runtimeHostId,
-              namespaceId: ctx.namespaceId,
-              retryOn503: { maxAttempts: 30, delayMs: 1000 },
-            });
+            const environmentProvider = platform.getAdapter<IEnvironmentProvider>('environment');
+            if (!environmentProvider) {
+              throw containerUnavailableError(new ContainerProviderUnavailableError('provider-missing'));
+            }
+            return new StdioExecutionTransport(
+              environmentProvider.getExecutionStream(ctx.runtimeHostId),
+              platform,
+            );
           },
           workspaceRootOnHost: cwd,
 
@@ -941,6 +940,14 @@ export async function initPlatform(
               ?? (request.context?.tenantId ? `tenant/${request.context.tenantId}` : 'default');
             const provisioningRunId = `exec-${randomUUID().slice(0, 12)}`;
 
+            const environmentProvider = platform.getAdapter<IEnvironmentProvider>('environment');
+            let attachedProvider: ReturnType<typeof requireAttachedEnvironmentProvider>;
+            try {
+              attachedProvider = requireAttachedEnvironmentProvider(environmentProvider);
+            } catch (error) {
+              throw containerUnavailableError(error);
+            }
+
             let createdWorkspaceId: string | undefined;
             let workspaceRootPath: string | undefined;
 
@@ -948,6 +955,8 @@ export async function initPlatform(
             if (workspaceProvider) {
               const workspace = await workspaceProvider.materialize({
                 namespace,
+                projectRoot: process.env.KB_PROJECT_ROOT ?? cwd,
+                platformRoot: process.env.KB_PLATFORM_ROOT,
                 sourceRef: cwd,
                 basePath: cwd,
                 metadata: {
@@ -960,37 +969,56 @@ export async function initPlatform(
               workspaceRootPath = workspace.rootPath;
             }
 
-            const environmentProvider = platform.getAdapter<IEnvironmentProvider>('environment');
-            if (!environmentProvider?.reserve || !environmentProvider?.start) {
-              throw new Error(
-                'mode=container requires an environment adapter with reserve()/start() support ' +
-                '(e.g. @kb-labs/adapters-environment-docker).'
-              );
-            }
-
-            const reservation = await environmentProvider.reserve({
-              namespace,
-              runId: provisioningRunId,
-              metadata: {
-                source: 'auto-provision',
-                executionId: request.executionId,
-              },
-            });
-
-            await environmentProvider.start(reservation.environmentId, {
-              workspacePath: workspaceRootPath ?? cwd,
-              metadata: {
-                source: 'auto-provision',
-                executionId: request.executionId,
-                namespaceId: namespace,
-              },
-            });
-
-            if (createdWorkspaceId && workspaceProvider?.attach) {
-              await workspaceProvider.attach({
-                workspaceId: createdWorkspaceId,
-                environmentId: reservation.environmentId,
+            let reservation: ReservedEnvironment | undefined;
+            try {
+              reservation = await attachedProvider.reserve({
+                namespace,
+                runId: provisioningRunId,
+                metadata: {
+                  source: 'auto-provision',
+                  executionId: request.executionId,
+                },
               });
+
+              await attachedProvider.start(reservation.environmentId, {
+                workspacePath: workspaceRootPath ?? cwd,
+                executionPolicy: createContainerExecutionSpec(request.descriptor.permissions, {
+                  environment: { ...process.env, ...request.env },
+                }),
+                metadata: {
+                  source: 'auto-provision',
+                  executionId: request.executionId,
+                  namespaceId: namespace,
+                },
+              });
+              if (createdWorkspaceId && workspaceProvider?.attach) {
+                await workspaceProvider.attach({
+                  workspaceId: createdWorkspaceId,
+                  environmentId: reservation.environmentId,
+                });
+              }
+            } catch (error) {
+              if (createdWorkspaceId && workspaceProvider) {
+                try {
+                  await workspaceProvider.release(createdWorkspaceId, reservation?.environmentId);
+                } catch (cleanupError) {
+                  platform.logger.warn('Failed to release workspace after container provisioning failure', {
+                    workspaceId: createdWorkspaceId,
+                    error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+                  });
+                }
+              }
+              if (reservation && environmentProvider) {
+                try {
+                  await environmentProvider.destroy(reservation.environmentId, 'auto-provision.failed');
+                } catch (cleanupError) {
+                  platform.logger.warn('Failed to destroy environment after container provisioning failure', {
+                    environmentId: reservation.environmentId,
+                    error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+                  });
+                }
+              }
+              throw containerUnavailableError(error);
             }
 
             platform.logger.debug('Auto-provisioned execution environment', {
@@ -1010,7 +1038,7 @@ export async function initPlatform(
                   } catch { /* best-effort */ }
                 }
                 try {
-                  await environmentProvider.destroy(reservation.environmentId, 'auto-provision.done');
+                  await attachedProvider.destroy(reservation.environmentId, 'auto-provision.done');
                 } catch { /* best-effort */ }
               },
             };
@@ -1018,24 +1046,27 @@ export async function initPlatform(
         };
 
         const backend = createIsolatedExecutionBackend({
-          localBackend: { platform, uiProvider },
+          localBackend: { platform, mode: 'in-process', uiProvider },
+          executionMode: 'container',
           strictIsolation,
         });
 
         platform.initExecutionBackend(backend);
 
         platform.logger.info('ExecutionBackend initialized: container mode via Gateway', {
-          dispatchUrl: containerCfg.gatewayDispatchUrl,
+          mode: backend.executionMode,
+          controlChannel: 'stdio',
         });
-      } else if (execution.workspaceAgent?.enabled && execution.workspaceAgent.gatewayUrl) {
+      } else if (execution.workspaceAgent?.enabled) {
         // ── Standard mode + Workspace Agent routing ──
         // Local backend (in-process/worker-pool) with workspace-agent dispatch via Gateway.
-        const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory');
+        const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory/construct');
         const { GatewayHostResolver, GatewayDispatchTransport } = await import('@kb-labs/gateway-core');
 
         const agentCfg = execution.workspaceAgent;
+        const { gatewayUrl, dispatchEndpoint } = getHostGatewayAddresses();
         const hostResolver = new GatewayHostResolver({
-          gatewayUrl: agentCfg.gatewayUrl,
+          gatewayUrl,
           internalSecret: agentCfg.internalSecret,
         });
 
@@ -1043,7 +1074,7 @@ export async function initPlatform(
           // Container transport (unused here, but required by interface)
           buildTransport(ctx: { runtimeHostId: string; namespaceId: string }) {
             return new GatewayDispatchTransport({
-              dispatchEndpoint: `${agentCfg.gatewayUrl}/internal/dispatch`,
+              dispatchEndpoint,
               internalSecret: agentCfg.internalSecret,
               runtimeHostId: ctx.runtimeHostId,
               namespaceId: ctx.namespaceId,
@@ -1052,7 +1083,7 @@ export async function initPlatform(
           hostResolver,
           buildTransportForHost(hostId: string, namespaceId: string) {
             return new GatewayDispatchTransport({
-              dispatchEndpoint: `${agentCfg.gatewayUrl}/internal/dispatch`,
+              dispatchEndpoint,
               internalSecret: agentCfg.internalSecret,
               runtimeHostId: hostId,
               namespaceId,
@@ -1061,10 +1092,11 @@ export async function initPlatform(
           fallbackPolicy: agentCfg.fallback ?? 'local' as const,
         };
 
+        const localExecutionMode = execution.mode ?? 'auto';
         const backend = createIsolatedExecutionBackend({
           localBackend: {
             platform,
-            mode: (execution.mode ?? 'auto') as 'auto' | 'in-process' | 'subprocess' | 'worker-pool',
+            mode: localExecutionMode,
             uiProvider,
             workerPool: execution.workerPool ? {
               min: execution.workerPool.min,
@@ -1080,17 +1112,18 @@ export async function initPlatform(
         platform.initExecutionBackend(backend);
 
         platform.logger.info('ExecutionBackend initialized: workspace-agent routing via Gateway', {
-          gatewayUrl: agentCfg.gatewayUrl,
+          mode: backend.executionMode,
+          gatewayUrl,
           fallback: agentCfg.fallback ?? 'local',
         });
       } else {
         // ── Standard mode: in-process | worker-pool ──
-        const { createExecutionBackend } = await import('@kb-labs/plugin-execution-factory');
+        const { createExecutionBackend } = await import('@kb-labs/plugin-execution-factory/construct');
 
-        const factoryMode = (execution.mode ?? 'auto') as 'auto' | 'in-process' | 'subprocess' | 'worker-pool';
+        const localExecutionMode = execution.mode ?? 'auto';
         const executionBackend = createExecutionBackend({
           platform: platform,
-          mode: factoryMode,
+          mode: localExecutionMode,
           uiProvider,
           workerPool: execution.workerPool ? {
             min: execution.workerPool.min,
@@ -1109,7 +1142,7 @@ export async function initPlatform(
         platform.initExecutionBackend(executionBackend);
 
         platform.logger.debug('initPlatform initialized ExecutionBackend', {
-          mode: factoryMode,
+          mode: executionBackend.executionMode,
           hasWorkerPool: !!execution.workerPool,
         });
       }
@@ -1211,8 +1244,7 @@ export async function initPlatform(
     // Initialize ResourceBroker for queue and rate limiting (optional)
     let _assemblyBroker: IResourceBroker | undefined;
     try {
-      const resourceBroker = initializeResourceBroker(platform, core.resourceBroker);
-      platform.initResourceBroker(resourceBroker);
+      initializeResourceBroker(platform, core.resourceBroker, resourceBroker);
       _assemblyBroker = resourceBroker;
       platform.logger.debug('initPlatform initialized ResourceBroker');
     } catch (error) {
@@ -1227,7 +1259,7 @@ export async function initPlatform(
     // would expose ctx.api.shell without a broker-backed executor.
     if (_assemblyBroker && !platform.processExecutor) {
       try {
-        const { ensureHostProcessExecutor } = await import('@kb-labs/plugin-execution-factory');
+        const { ensureHostProcessExecutor } = await import('@kb-labs/plugin-execution-factory/construct');
         ensureHostProcessExecutor(platform);
       } catch (error) {
         platform.logger.warn('Failed to initialize governed process executor', {
@@ -1312,73 +1344,6 @@ export async function initPlatform(
       );
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // Notifier adapter — dynamic import to avoid circular dep (adapters/* → core)
-    // Channels are resolved here (composition root) so the router stays
-    // decoupled from specific channel implementations.
-    // ══════════════════════════════════════════════════════════════════════
-    if (typeof adapters.notifier === 'string') {
-      const notifierOptions = (adapterOptions.notifier ?? {}) as NotifierAdapterOptions;
-      try {
-        // Built-in type → package map. Extend here as new channel types are added.
-        const channelTypePackages: Record<string, string> = {
-          telegram: '@kb-labs/adapters-telegram',
-        };
-
-        // Resolve and instantiate each channel by type.
-        const channels: Record<string, import('@kb-labs/core-platform').INotifierChannel> = {};
-        for (const [id, channelCfg] of Object.entries(notifierOptions.channels ?? {})) {
-          const pkg = channelTypePackages[channelCfg.type];
-          if (!pkg) {
-            platform.logger.warn('initPlatform: unknown notifier channel type, skipping', {
-              channelId: id,
-              type: channelCfg.type,
-            });
-            continue;
-          }
-          try {
-            const channelModule = await import(pkg);
-            const channelFactory = channelModule.createChannel ?? channelModule.default;
-            if (typeof channelFactory === 'function') {
-              channels[id] = channelFactory(channelCfg, id);
-            } else {
-              platform.logger.warn('initPlatform: channel package has no createChannel export', { pkg, channelId: id });
-            }
-          } catch (channelErr) {
-            platform.logger.warn('initPlatform: failed to load notifier channel', {
-              pkg,
-              channelId: id,
-              error: channelErr instanceof Error ? channelErr.message : String(channelErr),
-            });
-          }
-        }
-
-        const notifierPkg = adapters.notifier;
-        const notifierModule = await import(notifierPkg);
-        const notifierFactory = notifierModule.createAdapter ?? notifierModule.default;
-        if (typeof notifierFactory === 'function') {
-          const notifier = notifierFactory(notifierOptions, {
-            eventBus: platform.eventBus,
-            broker: platform.resourceBroker,
-            logger: platform.logger,
-            channels,
-          });
-          platform.setAdapter('notifier', notifier);
-          platform.logger.info('initPlatform initialized notifier adapter', {
-            pkg: notifierPkg,
-            channels: Object.keys(channels),
-          });
-        } else {
-          platform.logger.warn('Notifier adapter has no createAdapter export', { pkg: adapters.notifier });
-        }
-      } catch (err) {
-        platform.logger.warn('Failed to load notifier adapter', {
-          pkg: adapters.notifier,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
     // Store raw middleware declarations for execution backends to resolve at plugin run time
     if (rawMiddlewareDecls.length > 0) {
       platform.setAdapter('_middlewareDecls', rawMiddlewareDecls);
@@ -1387,25 +1352,11 @@ export async function initPlatform(
       });
     }
 
-    // Start Unix Socket server to handle adapter calls from children (critical for V3 plugins)
-    try {
-      const { createUnixSocketServer } = await import('./ipc/unix-socket-server.js');
-      const socketServer = await createUnixSocketServer(platform);
-      platform.initSocketServer(socketServer);
-      platform.logger.debug('initPlatform started Unix Socket server for child processes');
-    } catch (error) {
-      platform.logger.warn('Failed to start UnixSocketServer, V3 plugin execution will be unavailable', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-      platform.logger.debug('initPlatform parent process initialization complete');
-    }
+    platform.logger.debug('initPlatform platform initialization complete');
 
     await platform.emitLifecyclePhase('ready', {
       cwd,
-      isChildProcess,
-      metadata: {
+        metadata: {
         adapterKeys: platform.listAdapters(),
         durationMs: Date.now() - initStartedAt,
         pid: process.pid,
@@ -1416,8 +1367,7 @@ export async function initPlatform(
   } catch (error) {
     await platform.emitLifecycleError(error, 'start', {
       cwd,
-      isChildProcess,
-      metadata: {
+        metadata: {
         adapterKeys: Object.keys(adapters),
         durationMs: Date.now() - initStartedAt,
         pid: process.pid,

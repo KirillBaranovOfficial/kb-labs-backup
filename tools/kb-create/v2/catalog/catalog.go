@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/semrange"
 )
 
 const Schema = "kb.create.release-index/v2"
@@ -25,6 +26,15 @@ type Catalog struct {
 	SDKs          []Component                  `json:"sdks"`
 	Plugins       []Component                  `json:"plugins"`
 	Adapters      []Adapter                    `json:"adapters"`
+	Provenance    []ArtifactProvenance         `json:"provenance,omitempty"`
+}
+
+// ArtifactProvenance binds an immutable package version to the exact source
+// revision and dist files that were packed into its registry tarball.
+type ArtifactProvenance struct {
+	contracts.ArtifactProvenance
+	Package string `json:"package"`
+	Version string `json:"version"`
 }
 
 // CompatibilityMatrix is release-owned evidence for all currently published
@@ -79,6 +89,17 @@ func Validate(source Catalog) error {
 	if len(source.Platforms) == 0 {
 		return fmt.Errorf("release index contains no platform bundles")
 	}
+	provenanceVersions := make(map[string]struct{}, len(source.Provenance))
+	for _, provenance := range source.Provenance {
+		if provenance.Package == "" || provenance.Version == "" || provenance.SourceRevision == "" || provenance.Integrity == "" || provenance.DistSHA256 == "" {
+			return fmt.Errorf("artifact provenance must declare package, version, source revision, tarball integrity and dist digest")
+		}
+		key := provenance.Package + "@" + provenance.Version
+		if _, exists := provenanceVersions[key]; exists {
+			return fmt.Errorf("duplicate artifact provenance for %s", key)
+		}
+		provenanceVersions[key] = struct{}{}
+	}
 	if source.Compatibility != nil {
 		if err := validateCompatibility(*source.Compatibility, source); err != nil {
 			return err
@@ -111,6 +132,9 @@ func Validate(source Catalog) error {
 		if err := platform.Host.Validate(); err != nil {
 			return fmt.Errorf("platform bundle %q declares an invalid host: %w", key, err)
 		}
+		if _, err := semrange.ParseRange(platform.SDKRange); err != nil {
+			return fmt.Errorf("platform %s SDK range is invalid: %w", key, err)
+		}
 		for _, binary := range platform.Binaries {
 			if binary.ID == "" || binary.OS == "" || binary.Arch == "" || binary.URL == "" || binary.SHA256 == "" || binary.Filename == "" {
 				return fmt.Errorf("platform bundle %q has incomplete binary artifact", key)
@@ -126,10 +150,16 @@ func Validate(source Catalog) error {
 		if component.ID == "" || component.Version == "" || component.Package == "" || component.SHA256 == "" || component.Tarball == "" {
 			return fmt.Errorf("component must declare ID, version, package, tarball and sha256")
 		}
+		if err := validateComponentRanges(component); err != nil {
+			return err
+		}
 	}
 	for _, adapter := range source.Adapters {
 		if adapter.ID == "" || adapter.Version == "" || adapter.Package == "" || adapter.SHA256 == "" || adapter.Tarball == "" {
 			return fmt.Errorf("adapter must declare ID, version, package, tarball and sha256")
+		}
+		if err := validateComponentRanges(adapter.Component); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -139,7 +169,7 @@ func Validate(source Catalog) error {
 // matrix. Package ranges remain useful for plugin/provider declarations, but
 // platform, SDK and binary selection is accepted only when the candidate
 // labels are explicitly related in the sealed index.
-func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, os, arch string) error {
+func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, os, arch string, policy contracts.CompatibilityPolicy) error {
 	if source.Compatibility == nil {
 		return fmt.Errorf("release index has no compatibility matrix")
 	}
@@ -150,16 +180,75 @@ func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, o
 	}
 	if sdkVersion != "" {
 		sdkID := "sdk@" + sdkVersion
-		if _, ok := compatibilityLabel(source.Compatibility.Labels, sdkID, "sdk"); !ok || !requiresLabel(platform, sdkID) {
+		compatible, err := requiresCompatibleLabel(platform, sdkID, sdkVersion, policy)
+		if err != nil {
+			return fmt.Errorf("compatibility matrix relation for %s: %w", sdkID, err)
+		}
+		if _, ok := compatibilityLabel(source.Compatibility.Labels, sdkID, "sdk"); !ok || !compatible {
 			return fmt.Errorf("compatibility matrix does not relate %s to %s", platformID, sdkID)
 		}
 	}
 	if binaryID != "" {
-		binaryIDPrefix := "binary:" + binaryID + "@" + platformVersion + ":" + os + "/" + arch
-		binary, ok := compatibilityLabel(source.Compatibility.Labels, binaryIDPrefix, "binary")
-		if !ok || !requiresLabel(binary, platformID) || (sdkVersion != "" && !requiresLabel(binary, "sdk@"+sdkVersion)) {
+		binary, ok := compatibilityBinaryLabel(source.Compatibility.Labels, Binary{ID: binaryID, OS: os, Arch: arch}, platformID)
+		if !ok || (sdkVersion != "" && !requiresLabel(binary, "sdk@"+sdkVersion)) {
 			return fmt.Errorf("compatibility matrix does not relate binary %s to the selected platform/SDK", binaryID)
 		}
+	}
+	return nil
+}
+
+func requiresCompatibleLabel(label CompatibilityLabel, wanted, version string, policy contracts.CompatibilityPolicy) (bool, error) {
+	var candidate semrange.Version
+	candidateParsed := false
+	for _, relation := range label.Requires {
+		if relation.Label == wanted {
+			return true, nil
+		}
+		if policy == contracts.PolicyCompatible && relation.Constraint != "" {
+			rangeValue, err := semrange.ParseRange(relation.Constraint)
+			if err != nil {
+				return false, err
+			}
+			if !candidateParsed {
+				candidate, err = semrange.ParseVersion(version)
+				if err != nil {
+					return false, err
+				}
+				candidateParsed = true
+			}
+			if rangeValue.Satisfies(candidate) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// PlatformSDKVersion returns the SDK version related to platformVersion in the
+// compatibility matrix, or empty string if no exact relation exists.
+func PlatformSDKVersion(source Catalog, platformVersion string) string {
+	if source.Compatibility != nil {
+		platformLabel := "platform@" + platformVersion
+		for _, label := range source.Compatibility.Labels {
+			if label.ID != platformLabel {
+				continue
+			}
+			for _, relation := range label.Requires {
+				if strings.HasPrefix(relation.Label, "sdk@") {
+					return strings.TrimPrefix(relation.Label, "sdk@")
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func validateComponentRanges(component Component) error {
+	if _, err := semrange.ParseRange(component.PlatformRange); err != nil {
+		return fmt.Errorf("component %s platform range is invalid: %w", component.ID, err)
+	}
+	if _, err := semrange.ParseRange(component.SDKRange); err != nil {
+		return fmt.Errorf("component %s SDK range is invalid: %w", component.ID, err)
 	}
 	return nil
 }
@@ -167,6 +256,16 @@ func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, o
 func compatibilityLabel(labels []CompatibilityLabel, id, kind string) (CompatibilityLabel, bool) {
 	for _, label := range labels {
 		if label.ID == id && label.Kind == kind {
+			return label, true
+		}
+	}
+	return CompatibilityLabel{}, false
+}
+
+func compatibilityBinaryLabel(labels []CompatibilityLabel, binary Binary, platformID string) (CompatibilityLabel, bool) {
+	for _, label := range labels {
+		wantedID := fmt.Sprintf("binary:%s@%s:%s/%s", binary.ID, label.Version, binary.OS, binary.Arch)
+		if label.Kind == "binary" && label.ArtifactID == binary.ID && label.ID == wantedID && requiresLabel(label, platformID) {
 			return label, true
 		}
 	}
@@ -204,8 +303,50 @@ func validateCompatibility(matrix CompatibilityMatrix, source Catalog) error {
 	}
 	for _, label := range matrix.Labels {
 		for _, relation := range label.Requires {
+			if _, err := semrange.ParseRange(relation.Constraint); err != nil {
+				return fmt.Errorf("compatibility relation %s -> %s has invalid range: %w", label.ID, relation.Label, err)
+			}
+		}
+		for _, relation := range label.Requires {
 			if !known[relation.Label] {
 				return fmt.Errorf("compatibility label %q references absent label %q", label.ID, relation.Label)
+			}
+		}
+	}
+	sdkByVersion := make(map[string]Component, len(source.SDKs))
+	for _, sdk := range source.SDKs {
+		sdkByVersion[sdk.Version] = sdk
+	}
+	for _, platform := range source.Platforms {
+		platformID := "platform@" + platform.Version
+		platformLabel, ok := compatibilityLabel(matrix.Labels, platformID, "platform")
+		if !ok {
+			return fmt.Errorf("compatibility matrix has no platform label %q", platformID)
+		}
+		var sdks []Component
+		for _, relation := range platformLabel.Requires {
+			if !strings.HasPrefix(relation.Label, "sdk@") {
+				continue
+			}
+			version := strings.TrimPrefix(relation.Label, "sdk@")
+			sdk, exists := sdkByVersion[version]
+			if !exists {
+				return fmt.Errorf("platform %s compatibility label %q relates absent SDK version %q", platform.Version, platformID, version)
+			}
+			sdks = append(sdks, sdk)
+		}
+		if len(sdks) == 0 {
+			return fmt.Errorf("platform %s compatibility label %q has no SDK relation", platform.Version, platformID)
+		}
+		for _, shipped := range platform.Binaries {
+			binary, ok := compatibilityBinaryLabel(matrix.Labels, shipped, platformID)
+			if !ok {
+				return fmt.Errorf("compatibility matrix does not relate shipped binary %s to platform %s", shipped.ID, platform.Version)
+			}
+			for _, sdk := range sdks {
+				if !requiresLabel(binary, "sdk@"+sdk.Version) {
+					return fmt.Errorf("compatibility matrix does not relate shipped binary %s to SDK %s for platform %s", shipped.ID, sdk.Version, platform.Version)
+				}
 			}
 		}
 	}
@@ -229,7 +370,7 @@ func compatibilityArtifactExists(source Catalog, label CompatibilityLabel) bool 
 	case "binary":
 		for _, platform := range source.Platforms {
 			for _, value := range platform.Binaries {
-				if value.ID == label.ArtifactID && platform.Version == label.Version {
+				if value.ID == label.ArtifactID {
 					return true
 				}
 			}
@@ -240,7 +381,7 @@ func compatibilityArtifactExists(source Catalog, label CompatibilityLabel) bool 
 
 func Verify(source Catalog) error {
 	if source.Digest == "" {
-		return fmt.Errorf("release index digest is required")
+		return &indexGateError{gate: "digest", expected: "non-empty SHA-256 digest", actual: "missing", err: fmt.Errorf("release index digest is required")}
 	}
 	expected := source.Digest
 	source.Digest = ""
@@ -252,7 +393,9 @@ func Verify(source Catalog) error {
 		return err
 	}
 	if !strings.EqualFold(expected, actual) {
-		return contracts.NewLauncherError(contracts.CodeReleaseIndexInvalid, "The release index digest does not match its content.", indexInvalidHint, nil)
+		return &indexGateError{gate: "digest", expected: expected, actual: actual,
+			err: contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index digest does not match its content.", indexInvalidHint,
+				fmt.Errorf("release index digest mismatch"))}
 	}
 	return nil
 }
@@ -292,12 +435,14 @@ func findPlatform(values []PlatformBundle, version string) (PlatformBundle, bool
 // PlatformBundle is released atomically: core, official services, defaults and
 // compatible binaries are one platform decision, not independently guessed.
 type PlatformBundle struct {
-	ID       string `json:"id"`
-	Version  string `json:"version"`
-	Package  string `json:"package"`
-	SHA256   string `json:"sha256"`
-	Tarball  string `json:"tarball"`
-	SDKRange string `json:"sdkRange,omitempty"`
+	ID           string `json:"id"`
+	Version      string `json:"version"`
+	ReleaseNotes string `json:"releaseNotes,omitempty"`
+	Package      string `json:"package"`
+	SHA256       string `json:"sha256"`
+	Tarball      string `json:"tarball"`
+	SizeBytes    int64  `json:"sizeBytes,omitempty"`
+	SDKRange     string `json:"sdkRange,omitempty"`
 	// MinLauncherVersion is the oldest kb-create launcher allowed to install
 	// this platform. Empty means no constraint.
 	MinLauncherVersion string                            `json:"minLauncherVersion,omitempty"`
@@ -314,12 +459,13 @@ type PlatformBundle struct {
 // Binary is release-owned tooling required by a platform bundle. URLs and
 // hashes are immutable release assets, never guessed from a "latest" tag.
 type Binary struct {
-	ID       string `json:"id"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-	URL      string `json:"url"`
-	SHA256   string `json:"sha256"`
-	Filename string `json:"filename"`
+	ID        string `json:"id"`
+	OS        string `json:"os"`
+	Arch      string `json:"arch"`
+	URL       string `json:"url"`
+	SHA256    string `json:"sha256"`
+	Filename  string `json:"filename"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
 }
 
 type Component struct {
@@ -328,6 +474,7 @@ type Component struct {
 	Package       string              `json:"package"`
 	SHA256        string              `json:"sha256"`
 	Tarball       string              `json:"tarball"`
+	SizeBytes     int64               `json:"sizeBytes,omitempty"`
 	PlatformRange string              `json:"platformRange,omitempty"`
 	SDKRange      string              `json:"sdkRange,omitempty"`
 	Requires      []Requirement       `json:"requires,omitempty"`

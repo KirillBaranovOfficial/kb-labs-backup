@@ -34,7 +34,8 @@
  * const raw = await platform.call('customAdapter', 'method', arg1);
  * ```
  */
-import type { KBPlatformOptions, PlatformCallResponse, TelemetryEvent } from './types.js';
+import { decodeUxSuccessResult, isUxResult } from '@kb-labs/core-platform/ux-result';
+import type { KBPlatformOptions, TelemetryEvent } from './types.js';
 import { LLMProxy } from './adapters/llm.js';
 import { CacheProxy } from './adapters/cache.js';
 import { VectorStoreProxy } from './adapters/vector-store.js';
@@ -92,20 +93,22 @@ export class KBPlatform {
       body: JSON.stringify({ args }),
     });
 
+    const text = await response.text();
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      if (!response.ok) throw new Error(`Platform API error: ${response.status} ${text}`);
+      throw new Error('Gateway returned a response that is not a valid UX success envelope.');
+    }
+
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      let parsed: PlatformCallResponse | undefined;
-      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
-      const message = parsed?.error?.message ?? `Platform API error: ${response.status} ${text}`;
-      throw new Error(message);
+      if (isUxResult(body) && !body.ok) throw new Error(body.error.message);
+      throw new Error(`Platform API error: ${response.status} ${text}`);
     }
+    if (isUxResult(body) && !body.ok) throw new Error(body.error.message);
 
-    const body = (await response.json()) as PlatformCallResponse<T>;
-    if (!body.ok) {
-      throw new Error(body.error?.message ?? 'Unknown platform error');
-    }
-
-    return body.result as T;
+    return decodeUxSuccessResult<T>(body);
   }
 
   /**

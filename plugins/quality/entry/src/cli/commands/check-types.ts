@@ -5,7 +5,7 @@
  * Uses TypeScript Compiler API for semantic analysis.
  */
 
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { analyzeTypes } from '@kb-labs/quality-core/types';
 import { CACHE_KEYS, type TypeAnalysisResult } from '@kb-labs/quality-contracts';
 import { type CheckTypesFlags } from './flags.js';
@@ -19,7 +19,7 @@ export default defineCommand({
 
   handler: {
     async execute(
-      ctx: PluginContextV3,
+      ctx: PluginCommandContextV3,
       input: CheckTypesInput
     ): Promise<CommandResult<TypeAnalysisResult>> {
       const { ui, platform } = ctx;
@@ -37,8 +37,8 @@ export default defineCommand({
         if (cached) {
           outputTypeAnalysis({ ...cached, cached: true }, flags, ui);
           return cached.totalErrors > 0
-            ? { ok: false, error: 'Type errors found', result: cached }
-            : { ok: true, result: cached };
+            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Type errors found', hint: 'Review the package type error counts, then rerun `kb quality check-types`.', diagnostics: cached.packages.filter((pkg) => pkg.errors > 0).map((pkg) => ({ code: 'KB_QUALITY_TYPE_ERRORS', severity: 'error', path: pkg.name, message: `${pkg.errors} type error(s).` })) } }
+            : cached;
         }
       }
 
@@ -64,8 +64,8 @@ export default defineCommand({
       outputTypeAnalysis({ ...result, cached: false }, flags, ui);
 
       return result.totalErrors > 0
-        ? { ok: false, error: 'Type errors found', result, meta: { cached: false } }
-        : { ok: true, result, meta: { cached: false } };
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Type errors found', hint: 'Review the package type error counts, then rerun `kb quality check-types`.', diagnostics: result.packages.filter((pkg) => pkg.errors > 0).map((pkg) => ({ code: 'KB_QUALITY_TYPE_ERRORS', severity: 'error', path: pkg.name, message: `${pkg.errors} type error(s).` })) } }
+        : result;
     },
   },
 });
@@ -76,10 +76,9 @@ export default defineCommand({
 function outputTypeAnalysis(
   result: TypeAnalysisResult & { cached: boolean },
   flags: CheckTypesInput,
-  ui: PluginContextV3['ui']
+  ui: PluginCommandContextV3['ui']
 ): void {
   if (flags.json) {
-    ui?.json?.(result);
     return;
   }
 

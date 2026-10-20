@@ -9,12 +9,16 @@
  *
  * Security: only methods explicitly listed in ALLOWED_METHODS are callable.
  */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { platform } from '@kb-labs/core-runtime';
 import type { ILogger } from '@kb-labs/core-platform';
+import { sendAuthError } from '../auth/error-response.js';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
+import { createErrorEnvelope, toErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { createUxFailureResult, createUxSuccessResult } from '@kb-labs/core-platform/ux-result';
 import {
-  PlatformCallRequestSchema,
-  type PlatformCallResponse,
+  PlatformCallRequestJsonSchema,
+  type PlatformCallRequest,
 } from '@kb-labs/gateway-contracts';
 
 // ── Method allowlist ──────────────────────────────────────────────────────
@@ -50,6 +54,16 @@ const ALLOWED_METHODS: Record<string, Set<string>> = {
   ]),
 };
 
+const ADMIN_ONLY_ADAPTERS = new Set(['cache', 'storage', 'eventBus', 'documentDatabase', 'kvStore']);
+
+function sendPlatformFailure(
+  reply: FastifyReply,
+  statusCode: number,
+  error: Parameters<typeof createUxFailureResult>[0],
+): FastifyReply {
+  return reply.code(statusCode).send(createUxFailureResult(error));
+}
+
 // ── Adapter resolution ────────────────────────────────────────────────────
 
 function resolveAdapter(name: string): unknown | undefined {
@@ -80,71 +94,120 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
   );
 }
 
+function streamErrorEnvelope(
+  adapterName: string,
+  error: Error,
+  correlationId: string,
+  timing: 'starting' | 'streaming',
+) {
+  if (adapterName === 'llm') {
+    const providerError = error as Error & { status?: number; statusCode?: number };
+    const status = providerError.status ?? providerError.statusCode;
+    if (status === 401 || status === 403 || error.name === 'AuthenticationError') {
+      return createErrorEnvelope('KB_CONFIG_LLM_KEY_INVALID', {
+        details: { provider: 'configured LLM provider' },
+        message: 'The LLM provider rejected the configured API key.',
+        hint: "Check `platform.adapterOptions.llm.apiKey`, then run `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'` and restart the host.",
+        correlationId,
+      });
+    }
+    if (status === 429 || error.name === 'RateLimitError') {
+      return createErrorEnvelope('KB_CONFIG_LLM_QUOTA', {
+        details: { provider: 'configured LLM provider' },
+        message: 'The LLM provider quota or budget is exhausted.',
+        hint: 'Check provider quota for the configured model with `kb config get platform.adapterOptions.llm.model --scope platform --json`, then choose a model with available quota.',
+        correlationId,
+      });
+    }
+    if (status === 408 || status === 504 || error.name.includes('Timeout')) {
+      return createErrorEnvelope('KB_CONFIG_LLM_PROVIDER_TIMEOUT', {
+        hint: 'Check `platform.adapterOptions.llm.baseURL` and provider availability with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`; then retry.',
+        correlationId,
+      });
+    }
+    return createErrorEnvelope('KB_CONFIG_LLM_PROVIDER_UNAVAILABLE', {
+      hint: 'Check `platform.adapterOptions.llm.baseURL` and provider availability with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`; then retry.',
+      correlationId,
+    });
+  }
+  const owner = adapterName === 'llm' ? 'LLM provider' : `platform adapter "${adapterName}"`;
+  return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+    message: `The configured ${owner} failed while ${timing} the response.`,
+    hint: `Run "kb config show --json" and check platform.adapterOptions.${adapterName}, then retry. If it persists, report correlationId.`,
+    correlationId,
+  });
+}
+
 // ── Route registration ────────────────────────────────────────────────────
 
 export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): void {
   // hide: true — can return SSE (text/event-stream) for streaming adapter calls, incompatible with OpenAPI response schema
-  app.post<{ Params: { adapter: string; method: string } }>(
+  app.post<{ Params: { adapter: string; method: string }; Body: PlatformCallRequest }>(
     '/platform/v1/:adapter/:method',
-    { schema: { tags: ['Platform'], summary: 'Invoke a platform adapter method', hide: true } },
+    {
+      config: { uxFixture: { validResult: 'error-envelope' } },
+      schema: {
+        tags: ['Platform'],
+        summary: 'Invoke a platform adapter method',
+        hide: true,
+        params: {},
+        querystring: {},
+        body: PlatformCallRequestJsonSchema,
+        response: { 200: {} },
+      },
+    },
     async (request, reply) => {
       const auth = request.authContext;
       if (!auth) {
-        return reply.code(401).send({ error: 'Unauthorized' });
+        return sendAuthError(reply, 401);
       }
 
       const { adapter: adapterName, method: methodName } = request.params;
 
+      if (auth.type === 'user' && ADMIN_ONLY_ADAPTERS.has(adapterName) && !auth.permissions.includes(PERMISSIONS.PLATFORM_SETTINGS_READ)) {
+        return sendAuthError(reply, 403, PERMISSIONS.PLATFORM_SETTINGS_READ, undefined, undefined, { durationMs: 0 });
+      }
+
       // 1. Check adapter is in allowlist
       const allowedMethods = ALLOWED_METHODS[adapterName];
       if (!allowedMethods) {
-        return reply.code(404).send({
-          ok: false,
-          error: { message: `Unknown adapter: "${adapterName}"`, code: 'ADAPTER_NOT_FOUND' },
-          durationMs: 0,
-        } satisfies PlatformCallResponse);
+        return sendPlatformFailure(reply, 404, createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', {
+          message: `Unknown adapter: "${adapterName}".`,
+        }));
       }
 
       // 2. Check method is allowed
       if (!allowedMethods.has(methodName)) {
-        return reply.code(403).send({
-          ok: false,
-          error: { message: `Method "${methodName}" not allowed on adapter "${adapterName}"`, code: 'METHOD_NOT_ALLOWED' },
-          durationMs: 0,
-        } satisfies PlatformCallResponse);
+        return sendAuthError(reply, 403, undefined,
+          `Method "${methodName}" not allowed on adapter "${adapterName}"`, undefined, { durationMs: 0 });
       }
 
       // 3. Resolve adapter instance
       const adapter = resolveAdapter(adapterName);
       if (!adapter) {
-        return reply.code(503).send({
-          ok: false,
-          error: { message: `Adapter "${adapterName}" not configured`, code: 'ADAPTER_UNAVAILABLE' },
-          durationMs: 0,
-        } satisfies PlatformCallResponse);
+        return sendPlatformFailure(reply, 503, createErrorEnvelope('KB_ADAPTER_NOT_CONFIGURED', {
+          details: { service: adapterName, adapter: adapterName, command: `kb adapter bind ${adapterName}` },
+        }));
       }
 
       // 4. Check method exists on adapter
       const method = (adapter as Record<string, unknown>)[methodName];
       if (typeof method !== 'function') {
-        return reply.code(501).send({
-          ok: false,
-          error: { message: `Method "${methodName}" not implemented on adapter "${adapterName}"`, code: 'METHOD_NOT_IMPLEMENTED' },
-          durationMs: 0,
-        } satisfies PlatformCallResponse);
+        return sendPlatformFailure(reply, 501, createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', {
+          message: `Method "${methodName}" is not implemented on adapter "${adapterName}".`,
+        }));
       }
 
       // 5. Parse args
-      const parsed = PlatformCallRequestSchema.safeParse(request.body);
-      if (!parsed.success) {
-        return reply.code(400).send({
-          ok: false,
-          error: { message: 'Invalid request body', code: 'VALIDATION_ERROR' },
-          durationMs: 0,
-        } satisfies PlatformCallResponse);
+      const args = request.body?.args ?? [];
+      if (adapterName === 'llm' && methodName === 'stream'
+        && (typeof args[0] !== 'string' || args[0].trim().length === 0)) {
+        return sendPlatformFailure(reply, 400, createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+          message: 'An LLM stream prompt is required.',
+          hint: 'Pass a non-empty prompt as the first stream argument and retry.',
+          correlationId: request.id,
+        }));
       }
-
-      const { args } = parsed.data;
 
       logger.info('Platform API call', {
         adapter: adapterName,
@@ -164,6 +227,20 @@ export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): v
 
         // 7. Detect streaming response (e.g., llm.stream)
         if (isAsyncIterable(resolved)) {
+          const iterator = resolved[Symbol.asyncIterator]();
+          let first: IteratorResult<unknown>;
+          try {
+            first = await iterator.next();
+          } catch (err) {
+            const error = err instanceof Error ? err : new Error(String(err));
+            logger.error('Platform API stream failed before its first chunk', error, {
+              adapter: adapterName,
+              method: methodName,
+              tenantId: auth.namespaceId,
+            });
+            return sendPlatformFailure(reply, 502, streamErrorEnvelope(adapterName, error, request.id, 'starting'));
+          }
+
           reply.raw.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
@@ -171,14 +248,41 @@ export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): v
           });
           reply.raw.flushHeaders();
 
-          for await (const chunk of resolved) {
-            if (!reply.raw.writableEnded) {
+          const writeChunk = (chunk: unknown): void => {
+            if (!reply.raw.writableEnded && !reply.raw.destroyed) {
               const data = typeof chunk === 'string' ? chunk : JSON.stringify(chunk);
               reply.raw.write(`data: ${data}\n\n`);
             }
+          };
+
+          if (!first.done) {
+            writeChunk(first.value);
           }
 
-          if (!reply.raw.writableEnded) {
+          while (!first.done && !reply.raw.writableEnded && !reply.raw.destroyed) {
+            try {
+              first = await iterator.next();
+            } catch (err) {
+              const error = err instanceof Error ? err : new Error(String(err));
+              logger.error('Platform API stream failed after headers were sent', error, {
+                adapter: adapterName,
+                method: methodName,
+                tenantId: auth.namespaceId,
+              });
+              reply.raw.write(`event: error\ndata: ${JSON.stringify({
+              ok: false,
+              error: streamErrorEnvelope(adapterName, error, request.id, 'streaming'),
+              })}\n\n`);
+              reply.raw.end();
+              return reply;
+            }
+
+            if (!first.done) {
+              writeChunk(first.value);
+            }
+          }
+
+          if (!reply.raw.writableEnded && !reply.raw.destroyed) {
             reply.raw.write('data: [DONE]\n\n');
             reply.raw.end();
           }
@@ -188,24 +292,37 @@ export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): v
 
         // 8. Regular response
         const durationMs = Date.now() - startTime;
-        return reply.code(200).send({
-          ok: true,
-          result: resolved,
-          durationMs,
-        } satisfies PlatformCallResponse);
+        return reply.code(200).send(createUxSuccessResult(
+          resolved === undefined ? null : resolved,
+          { durationMs },
+        ));
       } catch (err) {
-        const durationMs = Date.now() - startTime;
         const error = err instanceof Error ? err : new Error(String(err));
+        if (reply.raw.headersSent) {
+          logger.error('Platform API stream failed after headers were sent', error, {
+            adapter: adapterName,
+            method: methodName,
+            tenantId: auth.namespaceId,
+          });
+          if (!reply.raw.writableEnded && !reply.raw.destroyed) {
+            reply.raw.write(`event: error\ndata: ${JSON.stringify({
+              ok: false,
+              error: streamErrorEnvelope(adapterName, error, request.id, 'streaming'),
+            })}\n\n`);
+            reply.raw.end();
+          }
+          return reply;
+        }
+
         logger.error('Platform API error', error, {
           adapter: adapterName,
           method: methodName,
           tenantId: auth.namespaceId,
         });
-        return reply.code(502).send({
-          ok: false,
-          error: { message: error.message, code: 'ADAPTER_ERROR' },
-          durationMs,
-        } satisfies PlatformCallResponse);
+        const envelope = adapterName === 'llm' && methodName === 'stream'
+          ? streamErrorEnvelope(adapterName, error, request.id, 'starting')
+          : toErrorEnvelope(error, { correlationId: request.id });
+        return sendPlatformFailure(reply, 502, envelope);
       }
     },
   );

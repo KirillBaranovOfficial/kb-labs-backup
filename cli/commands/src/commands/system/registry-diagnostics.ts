@@ -5,7 +5,7 @@
  * grouped by plugin, with severity, codes, and remediation hints.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import {
   createRegistry,
@@ -18,12 +18,12 @@ type DiagnosticsFlags = {
   refresh: { type: 'boolean'; description?: string };
 };
 
-type DiagnosticsResult = CommandResult & {
-  report: DiagnosticReport;
-};
+type DiagnosticsResult = DiagnosticReport & { status: 'healthy' | 'degraded' | 'unhealthy' };
 
 export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, DiagnosticsResult>({
   name: 'diagnostics',
+  scope: 'platform',
+  jsonTest: { noSafeValidPath: 'Fresh diagnostics discovery imports every installed plugin manifest.' },
   description: 'Show registry diagnostic report',
   category: 'registry',
   examples: [],
@@ -49,25 +49,15 @@ export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, Diagnos
 
     await registry.dispose();
 
-    if (report.summary.errors === 0) {
-      return { ok: true, report };
-    }
-
-    return { ok: false, error: `${report.summary.errors} diagnostic error(s) found`, report };
+    const status = report.summary.errors > 0 ? 'unhealthy' : report.summary.warnings > 0 ? 'degraded' : 'healthy';
+    return { ...report, status };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui.info(JSON.stringify(result.report, null, 2));
-      return;
-    }
-
-    const text = formatDiagnosticReport(result.report);
+    const text = formatDiagnosticReport(result);
     ctx.ui.info(text);
 
-    if (result.report.summary.errors > 0) {
-      ctx.ui.error(`${result.report.summary.errors} error(s) found — see details above`);
-    } else if (result.report.summary.warnings > 0) {
-      ctx.ui.warn(`${result.report.summary.warnings} warning(s) — no blockers`);
+    if (result.summary.errors > 0 || result.summary.warnings > 0) {
+      ctx.ui.warn(`${result.summary.warnings} warning(s) — no blockers`);
     } else {
       ctx.ui.success('Registry is healthy — no issues found');
     }

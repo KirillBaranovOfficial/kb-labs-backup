@@ -45,10 +45,10 @@ describe('workflow:defs view', () => {
       mockCLIInput({ argv: ['release-manager/create-release'], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
     expect(getWorkflow).toHaveBeenCalledWith('release-manager/create-release');
     const allText = sideBoxSpy.mock.calls
-      .flatMap(([opts]) => (opts.sections ?? []).flatMap((sec: { items: string[] }) => sec.items))
+      .flatMap(([opts]) => (opts.sections ?? []).flatMap((section) => section.items))
+      .map((item) => typeof item === 'string' ? item : item.text)
       .join('\n');
     expect(allText).toContain('Source:  manifest');
     expect(allText).toContain('Status:  active');
@@ -73,8 +73,7 @@ describe('workflow:defs view', () => {
       mockCLIInput({ argv: ['release-manager/create-release'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: sampleWorkflow });
+    expect(result).toEqual(sampleWorkflow);
   });
 
   it('DV-03: --id flag works as alias for positional argument', async () => {
@@ -90,7 +89,6 @@ describe('workflow:defs view', () => {
       mockCLIInput({ argv: [], flags: { id: 'e2e-hello' } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(getWorkflow).toHaveBeenCalledWith('e2e-hello');
   });
 
@@ -103,8 +101,8 @@ describe('workflow:defs view', () => {
     const ctx = createMockContext({ ui });
     const result = await defsViewCommand.execute(ctx, mockCLIInput({ argv: [], flags: {} }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length + captured.warnings.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('DV-05: workflow not found (404) returns exitCode 1', async () => {
@@ -122,8 +120,8 @@ describe('workflow:defs view', () => {
       mockCLIInput({ argv: ['missing-id'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('DV-06: daemon unavailable returns exitCode 1', async () => {
@@ -141,6 +139,6 @@ describe('workflow:defs view', () => {
       mockCLIInput({ argv: ['some-id'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
   });
 });

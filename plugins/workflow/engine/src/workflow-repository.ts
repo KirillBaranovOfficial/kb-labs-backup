@@ -26,7 +26,6 @@ import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type {
   WorkflowRuntime,
   WorkflowTrigger,
-  WorkflowSchedule,
   WorkflowStats,
 } from './manifest-scanner';
 
@@ -403,29 +402,6 @@ export class WorkflowRepository {
     if (spec.on.manual) {
       triggers.push({ type: 'manual' });
     }
-    if (spec.on.push) {
-      triggers.push({ type: 'push' });
-    }
-    if (spec.on.webhook) {
-      triggers.push({
-        type: 'webhook',
-        config: typeof spec.on.webhook === 'object' ? spec.on.webhook : undefined,
-      });
-    }
-
-    // Extract schedule if present
-    let schedule: WorkflowSchedule | undefined;
-    if (spec.on.schedule) {
-      triggers.push({
-        type: 'schedule',
-        config: spec.on.schedule,
-      });
-
-      schedule = {
-        cron: spec.on.schedule.cron,
-        enabled: status === 'active',
-      };
-    }
 
     // Extract tags from spec (we can use env vars or description as source)
     const tags: string[] = ['standalone'];
@@ -444,7 +420,6 @@ export class WorkflowRepository {
       description: spec.description,
       tags,
       triggers,
-      schedule,
       status,
       stats,
       // Store full spec for execution

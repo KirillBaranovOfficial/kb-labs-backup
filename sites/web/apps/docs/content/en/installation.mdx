@@ -1,7 +1,7 @@
 ---
 title: "Installation"
 description: "Install KB Labs locally or apply a release index from CI."
-updatedAt: "2026-09-30"
+updatedAt: "2026-10-11"
 order: 2
 ---
 
@@ -12,7 +12,7 @@ the platform into `~/kb-platform`, starts it, verifies its health, and adds the
 ## Prerequisites
 
 - macOS or Linux.
-- Node.js 24.x. Install it before continuing; pnpm is managed by the installer.
+- Node.js <NodePolicy />.x. Install it before continuing; pnpm is managed by the installer.
 - At least 1.20 GiB of available memory and 2 GiB of free disk space.
 - `curl` and a network connection to the KB Labs release index and package registry.
 
@@ -40,6 +40,21 @@ packages, writes configuration, starts the host, verifies the installation,
 and configures the `kb` shim. Its success output gives the next command, for
 example `cd ~/any-project && kb commit`.
 
+The default install includes a built-in local adapter pack and does not ask you
+to choose adapter providers. In a project, `kb adapter list --json` shows
+`storage` as `@kb-labs/adapters-fs` with its effective `<KB_HOME>/state/<projectId>/storage` directory;
+cache uses the platform-local StateBroker; and logging, analytics, and local
+databases use Pino, a ring buffer, and SQLite. Event delivery, plugin invoke,
+artifacts, config, and notifications use in-process implementations. No
+external adapter service is needed for these defaults. All projects use the
+platform defaults and platform-level overrides.
+
+LLM and vector-store slots remain empty until you configure providers. A
+command needing a missing capability reports a typed unavailable error with
+the next `kb adapter bind <slot> ...` action. Embeddings also require a chosen
+model provider; the installed filesystem snapshot provider is not used as the
+runtime's optional `snapshotManager`.
+
 ## Check or diagnose an installation
 
 ```bash
@@ -58,7 +73,7 @@ root. This path is non-interactive and produces machine-readable output:
 
 ```bash
 kb-create apply --json --index ./release-index.json \
-  --request-platform-root ./ci-platform --service-profile default \
+  --platform-root ./ci-platform --service-profile default \
   --scenario commit
 ```
 
@@ -69,8 +84,13 @@ Do not use a hand-built index or copy version metadata from another release.
 ## Uninstall
 
 ```bash
-kb-create uninstall
+kb-create uninstall --yes
 ```
+
+In a terminal, uninstall lists the platform root, installed services, receipt,
+and snapshots it will remove, confirms that project files are kept, and asks
+before proceeding. Non-interactive callers must pass `--yes`; without it the
+launcher returns an error with the exact command to rerun.
 
 To remove an installation outside the default location, supply the same
 `--platform-root PATH` used for install.
@@ -82,7 +102,7 @@ from the error catalog:
 
 | Error code | Meaning | Recovery |
 | --- | --- | --- |
-| `KB_INSTALL_NODE_VERSION` | Node.js is not 24.x. | Install Node 24, then run `kb-create install`; with nvm: `nvm install 24 && nvm use 24`. |
+| `KB_NODE_VERSION_UNSUPPORTED` | Node.js is on a major outside the supported policy. | Run the version-switch command shown in the diagnostic, then retry `kb-create install`. |
 | `KB_INSTALL_MEMORY_INSUFFICIENT` | Available memory is below 1.20 GiB. | Close memory-heavy applications or increase machine memory, then run `kb-create install` again. |
 | `KB_INSTALL_NO_DISK_SPACE` | There is not enough free disk space. | Free disk space or choose another writable directory with `kb-create install --platform-root PATH`. The preflight minimum is 2 GiB. |
 | `KB_INSTALL_PACKAGE_MANAGER_KILLED` | The package manager was killed, likely because memory ran out. | Free memory, then rerun `kb-create install`. |
@@ -95,8 +115,8 @@ OpenAI-backed generation, configure the adapter and keep the key in an
 environment variable:
 
 ```bash
-kb config set platform.adapters.llm @kb-labs/adapters-openai
-kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'
+kb config set --scope platform platform.adapters.llm @kb-labs/adapters-openai
+kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'
 export OPENAI_API_KEY=your-openai-api-key
 ```
 

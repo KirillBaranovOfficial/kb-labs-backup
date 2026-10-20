@@ -36,7 +36,7 @@
  * ```
  */
 
-import type { LogRecord, LogQuery } from "./logger";
+import type { LogRecord, LogQuery } from "./logger.js";
 
 /**
  * Query options for log retrieval.

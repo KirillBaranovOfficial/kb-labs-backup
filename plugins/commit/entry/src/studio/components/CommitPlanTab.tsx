@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { theme } from 'antd';
 import {
   useData, useMutateData, useNotification, useTheme, useElapsedTimer,
-  UICard, UIButton, UIEmptyState, UISpin, UIAlert, UITag,
+  UICard, UIButton, UIEmptyState, UISpin, UISkeleton, UIAlert, UITag,
   UITooltip, UIIcon, UISpace, UICheckbox, UIInput, UIDropdown,
   UIPopconfirm, UITypographyText, UIModalConfirm, UIModalError, UIFlex,
   UISkeletonText, UIShimmerText,
@@ -70,6 +70,7 @@ export function CommitPlanTab({ scope }: CommitPlanTabProps) {
   const [allowSecrets, setAllowSecrets] = useState(false);
   const [genStartedAt, setGenStartedAt] = useState<string | undefined>(undefined);
   const [phraseIdx, setPhraseIdx] = useState(0);
+  const [llmAdapterMissing, setLlmAdapterMissing] = useState(false);
 
   const { data: statusData, isLoading: statusLoading, refetch: refetchStatus } = useData<StatusData>(
     '/v1/plugins/commit/status', { params: { scope }, enabled: !!scope },
@@ -108,6 +109,7 @@ export function CommitPlanTab({ scope }: CommitPlanTabProps) {
   const isAnyLoading = generate.isLoading || apply.isLoading || push.isLoading || reset.isLoading;
 
   const handleGenerate = () => {
+    setLlmAdapterMissing(false);
     if (allowSecrets) {
       UIModalConfirm({
         title: 'Allow Secrets?',
@@ -142,6 +144,13 @@ export function CommitPlanTab({ scope }: CommitPlanTabProps) {
               ),
             });
           }
+        },
+        onError: (error: Error) => {
+          if (/(llm|adapter)/i.test(error.message) && /(not configured|required|unavailable)/i.test(error.message)) {
+            setLlmAdapterMissing(true);
+            return;
+          }
+          notify.error(`Plan generation failed: ${error.message}`);
         },
       });
     }
@@ -216,7 +225,7 @@ export function CommitPlanTab({ scope }: CommitPlanTabProps) {
     return <UIEmptyState description="Select a repository to continue" />;
   }
   if (statusLoading) {
-    return <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />;
+    return <UISkeleton active lines={6} />;
   }
 
   const statusDot: Record<string, string> = {
@@ -336,6 +345,14 @@ export function CommitPlanTab({ scope }: CommitPlanTabProps) {
       </UICard>
 
       {/* Generating — skeleton with a rotating status line on top of it */}
+      {llmAdapterMissing && (
+        <UIAlert
+          variant="error"
+          showIcon
+          message="LLM adapter required"
+          description="Commit plan generation needs an LLM adapter. Install and bind one with: kb marketplace install @kb-labs/adapters-openai --scope platform; kb adapter bind llm @kb-labs/adapters-openai"
+        />
+      )}
       {generate.isLoading && (
         <UICard style={{ padding: '20px 24px' }}>
           <UISkeletonText width={['100%', '85%', '65%']} height="16px" gap={12} />

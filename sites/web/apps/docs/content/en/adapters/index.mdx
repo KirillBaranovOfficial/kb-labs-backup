@@ -94,7 +94,7 @@ You choose adapters by listing their packages in `platform.adapters`:
     },
     "adapterOptions": {
       "cache":   { "url": "redis://localhost:6379" },
-      "storage": { "basePath": ".kb/storage" }
+      "storage": { "baseDir": "storage" }
     }
   }
 }
@@ -328,10 +328,10 @@ See [Writing a Custom Adapter](/adapters/custom-adapter) for the step-by-step. T
 2. Create an npm package that depends on `@kb-labs/core-platform`.
 3. Export `manifest: AdapterManifest` and `createAdapter: AdapterFactory`.
 4. Implement the interface in the factory return value.
-5. Publish the package (or link it locally with `kb marketplace link`).
+5. Publish the package (or link it locally with `kb marketplace plugins add`).
 6. Add it to `platform.adapters[token]` in `kb.config.json`.
 
-The platform doesn't care whether the package comes from npm, a local monorepo, or `kb marketplace link`. As long as it exports the two contract symbols and the factory returns an object that quacks like the interface, it works.
+The platform doesn't care whether the package comes from npm, a local monorepo, or `kb marketplace plugins add`. As long as it exports the two contract symbols and the factory returns an object that quacks like the interface, it works.
 
 ## What's NOT in an adapter
 

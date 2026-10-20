@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { renderUIOutputText, uiOutputContractCases } from '@kb-labs/plugin-contracts';
 import { createBufferedUI } from '../mcp/ui.js';
 
 describe('createBufferedUI', () => {
@@ -18,6 +19,14 @@ describe('createBufferedUI', () => {
     expect(getOutput()).toBe('[error] kaboom');
   });
 
+  it('includes structured success sections in captured tool output', () => {
+    const { ui, getOutput } = createBufferedUI();
+    ui.success('Commits applied successfully', {
+      sections: [{ header: 'Applied Commits', items: ['abc1234 feat: add feature'] }],
+    });
+    expect(getOutput()).toContain('abc1234 feat: add feature');
+  });
+
   it('captures raw write and json', () => {
     const { ui, getOutput } = createBufferedUI();
     ui.write('raw');
@@ -33,18 +42,30 @@ describe('createBufferedUI', () => {
     expect(getOutput()).toBe('[spinner] working\n[spinner] still working\n[ok] finished');
   });
 
-  it('returns non-interactive defaults without blocking', async () => {
+  for (const [kind, contract] of Object.entries(uiOutputContractCases)) {
+    it(`preserves the shared ${kind} output model and readable text`, () => {
+      const { ui, getOutput, getStructuredOutput } = createBufferedUI();
+      contract.invoke(ui);
+      expect(getStructuredOutput()).toEqual([contract.output]);
+      expect(getOutput()).toBe(renderUIOutputText(contract.output));
+    });
+  }
+
+  // case: S-215.1
+  it('rejects unanswered prompts instead of returning defaults', async () => {
     const { ui } = createBufferedUI();
-    expect(await ui.confirm('ok?')).toBe(true);
-    expect(await ui.confirm('ok?', { defaultValue: false })).toBe(false);
-    expect(await ui.prompt('name?')).toBe('');
-    expect(await ui.prompt('name?', { default: 'x' })).toBe('x');
-    expect(await ui.select('pick', [{ label: 'A', value: 'a' }])).toBe('a');
-    expect(
-      await ui.multiSelect('pick', [
-        { label: 'A', value: 'a', checked: true },
-        { label: 'B', value: 'b' },
-      ]),
-    ).toEqual(['a']);
+    const prompts = [
+      ui.confirm('ok?', { defaultValue: true }),
+      ui.prompt('name?', { default: 'x' }),
+      ui.select('pick', [{ label: 'A', value: 'a' }]),
+      ui.multiSelect('pick', [{ label: 'A', value: 'a', checked: true }]),
+    ];
+    for (const prompt of prompts) {
+      await expect(prompt).rejects.toMatchObject({
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        hint: 'Provide the value as an explicit tool argument, then retry the tool call.',
+        cause: expect.stringContaining('cannot be answered during an MCP tool call'),
+      });
+    }
   });
 });

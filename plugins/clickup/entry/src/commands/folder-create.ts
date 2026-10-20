@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, createFolder } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 
@@ -14,7 +14,7 @@ export default defineCommand({
   description: 'Create a new folder in a space',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<FolderCreateFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<FolderCreateFlags>) {
       const { space, name } = input.flags;
       return {
         summary: `Create folder "${name ?? '(unnamed)'}" in space ${space ?? '(unknown)'}`,
@@ -22,32 +22,29 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<FolderCreateFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<FolderCreateFlags>) {
       const { space, name, json, full } = input.flags;
       if (!space) {
-        validationError(ctx, '--space is required', 'Use `kb clickup workspace` to find the space ID', json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('--space is required', 'Use `kb clickup workspace` to find the space ID');
       }
       if (!name) {
-        validationError(ctx, '--name is required', undefined, json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('--name is required');
       }
 
       try {
         const folder = await createFolder(requireApiKey(), space, { name });
 
         if (json) {
-          ctx.ui?.json?.(full ? folder : { id: folder.id, name: folder.name });
+          return full ? folder : { id: folder.id, name: folder.name };
         } else {
           ctx.ui?.success?.('Folder created', {
             sections: [{ items: [`id: ${folder.id}`, `name: ${folder.name}`] }],
           });
         }
 
-        return { ok: true, result: folder };
+        return folder;
       } catch (err) {
-        handleError(ctx, err, json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

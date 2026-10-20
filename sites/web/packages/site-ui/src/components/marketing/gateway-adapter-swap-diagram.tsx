@@ -33,8 +33,7 @@ const ADAPTERS: {
     name: 'eventBus',
     providers: [
       { label: 'Redis',    color: 'red'   },
-      { label: 'Kafka',    color: 'amber' },
-      { label: 'RabbitMQ', color: 'amber' },
+      { label: 'Custom adapter', color: 'amber' },
     ],
     interval: 3200,
     offset: 950,
@@ -188,7 +187,7 @@ export function GatewayAdapterSwapDiagram({ className }: GatewayAdapterSwapDiagr
 
       {/* Caption */}
       <p style={fad(visible)} className="mt-3 text-center font-mono text-[0.72rem] text-muted/60 dark:text-muted/30">
-        потребители не меняются · провайдер меняется в конфиге
+        контракт задаёт интерфейс · адаптер реализует его
       </p>
     </div>
   );

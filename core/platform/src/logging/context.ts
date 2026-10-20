@@ -10,6 +10,7 @@ export interface PlatformLogContext {
 
 /** Correlation supplied by the active operation, such as an HTTP request. */
 export interface LogCorrelationContext {
+  correlationId?: string;
   requestId?: string;
   traceId?: string;
   spanId?: string;
@@ -67,6 +68,10 @@ export interface IContextLogger extends ILogger {
     correlation?: LogCorrelationContext,
   ): IContextLogger;
   forPlugin(context: PluginLogContext): IContextLogger;
+  /** Register process-sensitive values for redaction in this logger tree. */
+  registerSensitiveValues(values: readonly string[]): void;
+  /** Redact values owned by the process before values leave the logging boundary. */
+  redactSensitiveValues<T>(value: T): T;
   event(level: LogLevel, event: LogEvent): void;
 }
 
@@ -75,6 +80,7 @@ const INHERITED_FIELDS = new Set<keyof LogContext>([
   "serviceId",
   "instanceId",
   "layer",
+  "correlationId",
   "requestId",
   "traceId",
   "spanId",
@@ -143,20 +149,54 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+class SensitiveValueRegistry {
+  private current: readonly string[] = Object.freeze([]);
+
+  public get values(): readonly string[] {
+    return this.current;
+  }
+
+  public register(values: readonly string[]): void {
+    this.current = Object.freeze([...new Set([...this.current, ...values.filter(Boolean)])]);
+  }
+
+  public redactString(value: string): string {
+    return [...this.current]
+      .sort((left, right) => right.length - left.length)
+      .reduce((redacted, sensitive) => redacted.split(sensitive).join('[REDACTED]'), value);
+  }
+}
+
+let processSensitiveValues: SensitiveValueRegistry | undefined;
+let processRootContext: PlatformLogContext | undefined;
+const loggerRegistries = new WeakMap<object, SensitiveValueRegistry>();
+const contextRegistries = new WeakMap<object, SensitiveValueRegistry>();
+
+function getProcessSensitiveValues(): SensitiveValueRegistry {
+  processSensitiveValues ??= new SensitiveValueRegistry();
+  return processSensitiveValues;
+}
+
 class ContextLogger implements IContextLogger {
   public readonly context: Readonly<LogContext>;
 
   public constructor(
     private readonly base: ILogger,
     context: LogContext,
+    private readonly sensitiveValues: SensitiveValueRegistry = getProcessSensitiveValues(),
   ) {
     this.context = Object.freeze({ ...context });
+    loggerRegistries.set(this, sensitiveValues);
   }
 
   public with(
     context: Partial<LogContext> & Record<string, unknown>,
   ): IContextLogger {
-    return new ContextLogger(this.base, mergeContext(this.context, context));
+    return new ContextLogger(
+      this.base,
+      mergeContext(this.context, context),
+      this.sensitiveValues,
+    );
   }
 
   public forComponent(component: string): IContextLogger {
@@ -174,6 +214,14 @@ class ContextLogger implements IContextLogger {
     return this.with({ ...context });
   }
 
+  public registerSensitiveValues(values: readonly string[]): void {
+    this.sensitiveValues.register(values);
+  }
+
+  public redactSensitiveValues<T>(value: T): T {
+    return this.redactValue(value) as T;
+  }
+
   public event(level: LogLevel, event: LogEvent): void {
     const fields = {
       event: event.event,
@@ -189,29 +237,29 @@ class ContextLogger implements IContextLogger {
   public trace(message: string, meta?: Record<string, unknown>): void {
     const normalized = this.normalizeMessage(message, meta);
     this.base.trace(
-      normalized.message,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public debug(message: string, meta?: Record<string, unknown>): void {
     const normalized = this.normalizeMessage(message, meta);
     this.base.debug(
-      normalized.message,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public info(message: string, meta?: Record<string, unknown>): void {
     const normalized = this.normalizeMessage(message, meta);
     this.base.info(
-      normalized.message,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public warn(message: string, meta?: Record<string, unknown>): void {
     const normalized = this.normalizeMessage(message, meta);
     this.base.warn(
-      normalized.message,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public error(
@@ -221,9 +269,9 @@ class ContextLogger implements IContextLogger {
   ): void {
     const normalized = this.normalizeError(message, error, meta);
     this.base.error(
-      normalized.message,
-      normalized.error,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactError(normalized.error),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public fatal(
@@ -233,9 +281,9 @@ class ContextLogger implements IContextLogger {
   ): void {
     const normalized = this.normalizeError(message, error, meta);
     this.base.fatal(
-      normalized.message,
-      normalized.error,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactError(normalized.error),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
 
@@ -249,6 +297,10 @@ class ContextLogger implements IContextLogger {
 
   public onLog(callback: Parameters<NonNullable<ILogger["onLog"]>>[0]) {
     return this.base.onLog?.(callback) ?? (() => {});
+  }
+
+  public flush(): Promise<void> {
+    return this.base.flush();
   }
 
   /**
@@ -318,6 +370,40 @@ class ContextLogger implements IContextLogger {
         return this.fatal(message, error, fields);
     }
   }
+
+  private redactString(value: string): string {
+    return this.sensitiveValues.redactString(value);
+  }
+
+  private redactError(error?: Error): Error | undefined {
+    if (!error || this.sensitiveValues.values.length === 0) return error;
+    const redacted = new Error(this.redactString(error.message), {
+      cause: this.redactValue(error.cause),
+    });
+    redacted.name = this.redactString(error.name);
+    if (error.stack) redacted.stack = this.redactString(error.stack);
+    return redacted;
+  }
+
+  private redactRecord(record: Record<string, unknown>): Record<string, unknown> {
+    if (this.sensitiveValues.values.length === 0) return record;
+    return this.redactValue(record) as Record<string, unknown>;
+  }
+
+  private redactValue(value: unknown): unknown {
+    if (typeof value === 'string') return this.redactString(value);
+    if (Array.isArray(value)) return value.map((nested) => this.redactValue(nested));
+    if (value instanceof Error) return this.redactError(value);
+    if (isRecord(value)) {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => [
+          this.redactString(key),
+          this.redactValue(nested),
+        ]),
+      );
+    }
+    return value;
+  }
 }
 
 /** Create the root logger for one platform application. */
@@ -325,5 +411,25 @@ export function createContextLogger(
   base: ILogger,
   context: PlatformLogContext,
 ): IContextLogger {
-  return new ContextLogger(base, context);
+  const registry = loggerRegistries.get(base) ?? contextRegistries.get(context) ?? getProcessSensitiveValues();
+  return new ContextLogger(base, context, registry);
+}
+
+/** Create the process root log context before resolving runtime configuration. */
+export function createProcessRootLogContext(context: PlatformLogContext): PlatformLogContext {
+  if (processRootContext) return processRootContext;
+  processRootContext = Object.freeze({ ...context });
+  const registry = getProcessSensitiveValues();
+  contextRegistries.set(processRootContext, registry);
+  return processRootContext;
+}
+
+/** Register resolved values in the launcher-owned process root registry. */
+export function registerProcessSensitiveValues(values: readonly string[]): void {
+  getProcessSensitiveValues().register(values);
+}
+
+/** Redact a rendered diagnostic string through the process-owned secret registry. */
+export function redactProcessSensitiveString(value: string): string {
+  return getProcessSensitiveValues().redactString(value);
 }

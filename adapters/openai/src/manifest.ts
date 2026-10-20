@@ -9,6 +9,7 @@ import type { AdapterManifest } from "@kb-labs/sdk/adapters";
  * Adapter manifest for OpenAI LLM.
  */
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "openai-llm",
   name: "OpenAI LLM",
@@ -18,7 +19,8 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "ILLM",
-  defaultFor: ["llm"],
+  networkRequired: true,
+  defaultFor: { llm: ["llm"] },
   capabilities: {
     streaming: true,
     custom: {
@@ -28,7 +30,18 @@ export const manifest: AdapterManifest = {
   configSchema: {
     apiKey: {
       type: "string",
+      required: true,
+      secret: true,
+      env: "OPENAI_API_KEY",
       description: "OpenAI API key (defaults to OPENAI_API_KEY env var)",
+      doctor: {
+        id: "openai.apiKey",
+        optional: true,
+        severity: "warning",
+        services: ["gateway"],
+        action: "set OPENAI_API_KEY to enable LLM features",
+        hint: "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env",
+      },
     },
     model: {
       type: "string",

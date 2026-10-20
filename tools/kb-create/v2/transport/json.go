@@ -5,9 +5,10 @@ package transport
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"strings"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/resolve"
@@ -16,7 +17,7 @@ import (
 type PlanResponse struct {
 	OK    bool                           `json:"ok"`
 	Plan  *contracts.ResolvedInstallPlan `json:"plan,omitempty"`
-	Error *contracts.LauncherError       `json:"error,omitempty"`
+	Error *diag.Diag                     `json:"error,omitempty"`
 }
 
 func DecodeRequest(data []byte) (contracts.InstallRequest, error) {
@@ -36,29 +37,40 @@ func DecodeRequest(data []byte) (contracts.InstallRequest, error) {
 }
 
 func Plan(data []byte, source catalog.Catalog) PlanResponse {
-	return PlanWith(data, source, resolve.Options{})
+	return PlanWith(data, source, resolve.Options{ProjectRootSelection: true})
 }
 
 // PlanWith is Plan for a launcher of a known version and target.
 func PlanWith(data []byte, source catalog.Catalog, options resolve.Options) PlanResponse {
 	request, err := DecodeRequest(data)
 	if err != nil {
-		code := contracts.CodeIncompatibleComponents
-		if strings.Contains(err.Error(), "platform root is required") {
-			code = contracts.CodeInputRequired
+		var validation *contracts.RequestValidationError
+		if errors.As(err, &validation) {
+			return PlanResponse{OK: false, Error: validation.Diagnostic()}
 		}
-		return failure(code, contracts.StageResolve, err)
+		return failure(contracts.CodeIncompatibleComponents, err)
+	}
+	if options.ProjectRootSelection && request.ProjectRoot != "" {
+		projectRoot, validationErr := contracts.ValidateProjectSelection(request.ProjectRoot)
+		if validationErr != nil {
+			var validation *contracts.RequestValidationError
+			if errors.As(validationErr, &validation) {
+				return PlanResponse{OK: false, Error: validation.Diagnostic()}
+			}
+			return failure(contracts.CodeIncompatibleComponents, validationErr)
+		}
+		request.ProjectRoot = projectRoot
 	}
 	resolved, err := resolve.PlanWith(request, source, options)
 	if err != nil {
-		if typed, ok := err.(*contracts.LauncherError); ok {
+		if typed, ok := err.(*diag.Diag); ok {
 			return PlanResponse{OK: false, Error: typed}
 		}
-		return failure(contracts.CodeIncompatibleComponents, contracts.StageResolve, err)
+		return failure(contracts.CodeIncompatibleComponents, err)
 	}
 	return PlanResponse{OK: true, Plan: &resolved}
 }
 
-func failure(code string, stage contracts.ErrorStage, err error) PlanResponse {
-	return PlanResponse{OK: false, Error: &contracts.LauncherError{Code: code, Stage: stage, Message: "V2 installation plan could not be resolved", Cause: err.Error(), Hint: "correct the request or choose a compatible release set"}}
+func failure(code string, err error) PlanResponse {
+	return PlanResponse{OK: false, Error: contracts.NewDiag(code, "V2 installation plan could not be resolved", "correct the request or choose a compatible release set", err)}
 }

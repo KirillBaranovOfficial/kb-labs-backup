@@ -45,8 +45,8 @@ async function publishToRegistry(
 }
 
 function skipOnRegistryNotConfigured(status: number) {
-  test.skip(status === 503, 'marketplace registry not configured — set marketplace.registry.url in kb.config.json')
-  test.skip(status === 500, 'internal error — check registry daemon is running on :5071')
+  expect(status, 'marketplace registry must be configured for the nightly install journey').not.toBe(503)
+  expect(status, 'marketplace registry request must not fail internally').not.toBe(500)
 }
 
 // ── Public kb: install ────────────────────────────────────────────────────────

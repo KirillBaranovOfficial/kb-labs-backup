@@ -8,6 +8,8 @@ import { deriveProjectId } from '../project-id.js';
 import {
   PROJECT_REGISTRY_SCHEMA_VERSION,
   createProjectRegistry,
+  findProjectContainingPath,
+  findRegisteredProjectContainingPathSync,
   projectStateDir,
   resolveKbHome,
 } from '../registry.js';
@@ -48,6 +50,29 @@ describe('resolveKbHome', () => {
 });
 
 describe('add / list / get / remove', () => {
+  // case: S-204.7
+  it('resolves the deepest registered project containing cwd', async () => {
+    const outer = makeProject('outer');
+    const inner = join(outer, 'nested-project');
+    const cwd = join(inner, 'packages', 'app');
+    mkdirSync(cwd, { recursive: true });
+    const registry = createProjectRegistry({ root });
+    await registry.add(outer);
+    const { project: innerProject } = await registry.add(inner);
+
+    const match = await findProjectContainingPath(registry, cwd);
+
+    expect(match?.project.id).toBe(innerProject.id);
+    expect(readdirSync(cwd)).toEqual([]);
+  });
+
+  it('does not infer synchronous project identity from repository files', () => {
+    const project = makeProject('only-repository-markers', true);
+    writeFileSync(join(project, '.kb', 'kb.config.json'), '{}');
+
+    expect(findRegisteredProjectContainingPathSync(project, { root })).toBeUndefined();
+  });
+
   it('registers a project, persists it and reports the declaration state', async () => {
     const dir = makeProject('alpha', true);
     const registry = createProjectRegistry({ root, now: () => new Date('2026-09-26T10:00:00.000Z') });
@@ -82,11 +107,16 @@ describe('add / list / get / remove', () => {
     expect(registry.stateDir(project.id)).toBe(join(root, 'state', project.id));
   });
 
-  it('rejects a duplicate registration, including via a trailing slash', async () => {
+  // case: S-124.14
+  it('returns an existing record for the same canonical path, including via a trailing slash', async () => {
     const dir = makeProject('dup');
     const registry = createProjectRegistry({ root });
-    await registry.add(dir);
-    await expect(registry.add(`${dir}/`)).rejects.toMatchObject({ code: 'KB_PROJECT_ALREADY_REGISTERED' });
+    const first = await registry.add(dir);
+    const duplicate = await registry.add(`${dir}/`);
+    expect(duplicate.project).toEqual(first.project);
+    expect(duplicate.alreadyExisted).toBe(true);
+    expect(await registry.list()).toHaveLength(1);
+    await expect(registry.add(dir, { name: 'different' })).rejects.toMatchObject({ code: 'KB_PROJECT_ALREADY_REGISTERED' });
   });
 
   it('deduplicates default names and rejects an explicit name that is taken', async () => {
@@ -113,10 +143,8 @@ describe('add / list / get / remove', () => {
     expect(await registry.list()).toEqual([]);
     expect(readdirSync(sandbox)).not.toContain('kb-home');
 
-    await registry.add(dir);
-    await expect(registry.add(dir, { dryRun: true })).rejects.toMatchObject({
-      code: 'KB_PROJECT_ALREADY_REGISTERED',
-    });
+    const committed = await registry.add(dir);
+    expect(await registry.add(dir, { dryRun: true })).toMatchObject({ alreadyExisted: true, project: committed.project });
   });
 
   it('rejects an invalid explicit name', async () => {
@@ -220,17 +248,13 @@ describe('concurrent writes', () => {
     expect(listed.map((v) => v.project.path).sort()).toEqual([...keep].sort());
   });
 
-  it('serializes concurrent duplicate adds: exactly one wins', async () => {
+  it('serializes concurrent duplicate adds and returns the single canonical record', async () => {
     const dir = makeProject('race');
     const results = await Promise.allSettled(
       Array.from({ length: 8 }, () => createProjectRegistry({ root }).add(dir)),
     );
-    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    for (const r of results) {
-      if (r.status === 'rejected') {
-        expect((r.reason as ProjectRegistryError).code).toBe('KB_PROJECT_ALREADY_REGISTERED');
-      }
-    }
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(8);
+    expect(results.filter((r) => r.status === 'fulfilled' && r.value.alreadyExisted)).toHaveLength(7);
     expect(await createProjectRegistry({ root }).list()).toHaveLength(1);
   });
 });

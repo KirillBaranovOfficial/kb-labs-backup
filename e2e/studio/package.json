@@ -8,6 +8,7 @@
   "devDependencies": {
     "@kb-labs/e2e-shared": "workspace:*",
     "@kb-labs/gateway-app": "workspace:*",
+    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/rest-api-app": "workspace:*",
     "@playwright/test": "^1.52.0",
     "typescript": "^5.4.0"

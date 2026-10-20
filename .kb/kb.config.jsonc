@@ -1,23 +1,23 @@
 {
   "platform": {
+    "mode": "development",
     "adapters": {
-      "storage": "@kb-labs/data-store",
+      "storage": "@kb-labs/adapters-fs",
+      "cache": "@kb-labs/adapters-state-broker",
+      "eventBus": "@kb-labs/adapters-eventbus-cache",
       "documentDatabase": "@kb-labs/adapters-sqlite",
       "kvStore": "@kb-labs/adapters-sqlite/kv",
       "logger": "@kb-labs/adapters-pino",
       "logRingBuffer": "@kb-labs/adapters-log-ringbuffer",
       "logPersistence": "@kb-labs/adapters-log-document",
       "analytics": "@kb-labs/adapters-analytics-sqlite",
-      "vectorStore": "@kb-labs/adapters-qdrant",
-      "embeddings": "@kb-labs/adapters-openai/embeddings",
-      "llm": "@kb-labs/adapters-openai",
-      "cache": "@kb-labs/adapters-redis",
-      "eventBus": "@kb-labs/adapters-eventbus-cache",
-      "workspace": "@kb-labs/adapters-workspace-worktree",
-      "environment": "@kb-labs/adapters-environment-docker",
       "serviceTransport": "@kb-labs/adapters-service-transport-http"
     },
     "adapterOptions": {
+      "cache": {
+        "url": "http://127.0.0.1:7777",
+        "namespace": "kb:"
+      },
       "serviceTransport": {
         "services": {
           "rest": {
@@ -37,84 +37,17 @@
           }
         }
       },
-      "voyage-ai-embeddings": {
-        "model": "voyage-code-3",
-        "apiKey": "${VOYAGE_API_KEY}"
-      },
-      "llm": {
-        "defaultTier": "small",
-        "tierMapping": {
-          "small": [
-            {
-              "adapter": "@kb-labs/adapters-openai",
-              "model": "gpt-4o-mini",
-              "priority": 1,
-              "capabilities": [
-                "fast"
-              ]
-            }
-          ],
-          "medium": [
-            {
-              "adapter": "@kb-labs/adapters-vibeproxy",
-              "model": "claude-sonnet-4-6",
-              "priority": 1,
-              "capabilities": [
-                "coding",
-                "reasoning",
-                "vision"
-              ]
-            },
-            {
-              "adapter": "@kb-labs/adapters-vibeproxy",
-              "model": "gpt-5-codex",
-              "priority": 2,
-              "capabilities": [
-                "coding"
-              ]
-            }
-          ],
-          "large": [
-            {
-              "adapter": "@kb-labs/adapters-vibeproxy",
-              "model": "gpt-5.1-codex-max",
-              "priority": 1,
-              "capabilities": [
-                "reasoning",
-                "coding"
-              ]
-            },
-            {
-              "adapter": "@kb-labs/adapters-vibeproxy",
-              "model": "claude-opus-4-6",
-              "priority": 2,
-              "capabilities": [
-                "reasoning",
-                "coding",
-                "vision"
-              ]
-            }
-          ]
-        }
-      },
       "storage": {
-        "basePath": ".kb/storage"
+        "baseDir": "storage"
       },
       "documentDatabase": {
-        "filename": ".kb/database/kb.sqlite"
+        "filename": "database/kb.sqlite"
       },
       "kvStore": {
-        "filename": ".kb/database/kb.sqlite"
-      },
-      "vectorStore": {
-        "url": "http://localhost:6333",
-        "dimension": 1536
-      },
-      "cache": {
-        "url": "redis://localhost:6379"
+        "filename": "database/kb.sqlite"
       },
       "analytics": {
-        "filename": ".kb/analytics/analytics.sqlite"
+        "dbPath": "analytics/analytics.sqlite"
       },
       "logger": {
         "level": "info",
@@ -140,33 +73,6 @@
           "cleanupIntervalMs": 300000
         }
       },
-      "workspace": {
-        "worktreeDir": "/tmp/kb-worktrees",
-        "gatewayUrl": "http://localhost:4000",
-        "namespaceId": "default",
-        "cacheDir": ".kb/runtime/workspaces",
-        "branch": "master"
-      },
-      "environment": {
-        "defaultImage": "kb-runtime-server:local",
-        "autoRemove": true,
-        "mountWorkspace": true,
-        "workspaceMountPath": "/workspace",
-        "network": "kb-labs",
-        "extraHosts": [
-          "host.docker.internal:host-gateway"
-        ],
-        "runtimeCommand": [
-          "node",
-          "/app/dist/cli.cjs"
-        ],
-        "gateway": {
-          "wsUrl": "ws://host.docker.internal:4000",
-          "jwtSecret": "${GATEWAY_JWT_SECRET}",
-          "dispatchSecret": "${GATEWAY_INTERNAL_SECRET}",
-          "dispatchUrl": "http://host.docker.internal:4000/internal/dispatch"
-        }
-      }
     },
     "execution": {
       "mode": "worker-pool"
@@ -239,15 +145,14 @@
           "flows": {
             "platform": {
               "versioningStrategy": "lockstep",
+              "platformRequires": [
+                "llm"
+              ],
               "platformMembers": [
                 "@kb-labs/cli-bin",
                 "@kb-labs/scaffold",
                 "@kb-labs/workflow-entry",
-                "@kb-labs/marketplace-entry",
-                "@kb-labs/release-manager-cli",
-                "@kb-labs/quality-entry",
-                "@kb-labs/review-entry",
-                "@kb-labs/commit-entry"
+                "@kb-labs/marketplace-entry"
               ],
               "packages": {
                 "exclude": [
@@ -256,8 +161,7 @@
                   "@product-name/*",
                   "tmp/notifier-test",
                   "tmp/notifier-test/*",
-                  "tmp/notifier-test/packages/*",
-                  "@kb-labs/adapters-fs"
+                  "tmp/notifier-test/packages/*"
                 ]
               },
               "checks": [
@@ -342,6 +246,7 @@
                 "emoji": "🔌",
                 "scopes": [
                   "adapters",
+                  "adapters-fs",
                   "adapters-openai",
                   "adapters-redis",
                   "adapters-mongodb",
@@ -697,6 +602,7 @@
       "include": [
         "plugins/*/entry",
         "plugins/*/core",
+        "plugins/release/manager-cli",
         "adapters/*"
       ]
     },

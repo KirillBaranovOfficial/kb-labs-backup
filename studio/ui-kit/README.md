@@ -42,19 +42,94 @@ function MyComponent() {
 }
 ```
 
+## Typed form builder
+
+Use `UIFormBuilder` for common forms whose fields, validation, and visibility rules can be described as data. Keep `UIForm` for bespoke layouts. Pair the builder with `UIModal` by placing a submit button in the modal footer and linking it to the form with its `id`.
+
+```tsx
+import * as React from 'react';
+import {
+  UIButton,
+  UIFormBuilder,
+  type UIFormDefinition,
+  UIModal,
+} from '@kb-labs/studio-ui-kit';
+
+type ProjectValues = {
+  name: string;
+  scope: 'user' | 'workspace';
+  path?: string;
+};
+
+const projectForm: UIFormDefinition<ProjectValues> = {
+  sections: [{
+    title: 'Project',
+    fields: [
+      { name: 'name', type: 'text', label: 'Name', required: true },
+      {
+        name: 'scope',
+        type: 'select',
+        label: 'Scope',
+        required: true,
+        options: [
+          { label: 'Personal', value: 'user' },
+          { label: 'Workspace', value: 'workspace' },
+        ],
+      },
+      {
+        name: 'path',
+        type: 'text',
+        label: 'Workspace path',
+        visibleWhen: { field: 'scope', op: 'equals', value: 'workspace' },
+        requiredWhen: { field: 'scope', op: 'equals', value: 'workspace' },
+      },
+    ],
+  }],
+};
+
+export function CreateProjectDialog() {
+  const [open, setOpen] = React.useState(true);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  return (
+    <UIModal
+      open={open}
+      title="Create project"
+      description="Choose where the project belongs."
+      onCancel={() => setOpen(false)}
+      footer={(
+        <>
+          <UIButton onClick={() => setOpen(false)}>Cancel</UIButton>
+          <UIButton form="project-form" htmlType="submit" loading={submitting} variant="primary">Create project</UIButton>
+        </>
+      )}
+    >
+      <UIFormBuilder
+        id="project-form"
+        definition={projectForm}
+        onSubmittingChange={setSubmitting}
+        onSubmit={(values) => console.info('Project values', values)}
+      />
+    </UIModal>
+  );
+}
+```
+
+Field rules use Ant Design Form validation rules. `visibleWhen`, `disabledWhen`, and `requiredWhen` support `equals`, `notEquals`, `in`, `notIn`, `truthy`, and `falsy` conditions. Use a `custom` field when a control needs its own React rendering.
+
 <!-- AUTO-GENERATED:START -->
 
 ## 📊 Component Stats
 
-- **Total Components:** 52
-- **With Tests:** 6/52 (12%)
+- **Total Components:** 50
+- **With Tests:** 6/50 (12%)
 
 **By Category:**
 
 - Primitives: 4
 - Core: 9
-- Layout: 4
-- Form: 10
+- Layout: 1
+- Form: 11
 - Navigation: 7
 - Composite: 4
 - Feedback: 6
@@ -97,9 +172,6 @@ Layout and container components
 | Component | Description | Tests |
 |-----------|-------------|-------|
 | **UIDivider** | UIDivider component - Visual separator | ❌ |
-| **UIGrid** | UIRow / UICol components - Grid layout | ❌ |
-| **UISpace** | UISpace component - Spacing container | ❌ |
-| **UIStack** | UIStack component - Vertical/horizontal spacing layout | ❌ |
 
 ### Form
 
@@ -110,6 +182,7 @@ Form controls and inputs
 | **UICheckbox** | UICheckbox component - Checkbox input | ❌ |
 | **UIDatePicker** | UIDatePicker component - Date/time picker | ❌ |
 | **UIForm** | UIForm component - Form wrapper with validation | ❌ |
+| **UIFormBuilder** | UIFormBuilder - typed declarative forms for common Studio workflows. | ❌ |
 | **UIInput** | UIInput component - Text input with variants | ✅ |
 | **UIInputNumber** | UIInputNumber component - Numeric input | ❌ |
 | **UIRadio** | UIRadio component - Radio button | ❌ |
@@ -154,7 +227,7 @@ Feedback and notification components
 | **UIErrorState** | UIErrorState component - Error state display | ❌ |
 | **UIResult** | UIResult component - Result page | ❌ |
 | **UISkeleton** | UISkeleton component - Loading skeleton | ✅ |
-| **UISpin** | UISpin component - Loading spinner | ❌ |
+| **UISpin** | UISpin | ❌ |
 
 ### Overlay
 
@@ -176,11 +249,32 @@ Content display components
 |-----------|-------------|-------|
 | **UIDiffViewer** | UIDiffViewer | ❌ |
 | **UIJsonViewer** | UIJsonViewer component - JSON content viewer | ❌ |
-| **UIMarkdownViewer** | UIMarkdownViewer | ❌ |
+| **UIMarkdownViewer** | @demoArgs {"content":"# Architecture note\n\nThe **gateway** validates access tokens before routing requests.\n\n- REST API\n- MCP API"} | ❌ |
 
 <!-- AUTO-GENERATED:END -->
 
 ## 🎨 Design Tokens
+
+### Component sizing
+
+Common controls, tables, accordions, and tabs use the shared `sm` / `md` / `lg` size scale. Existing Ant Design names (`small`, `middle`, `large`; plus `default` where supported) remain valid during migration. Text and icon sizes keep their finer typographic scales; controls with a native two-size limit retain that limit.
+
+```tsx
+<UIButton size="sm">Compact</UIButton>
+<UIInput size="md" placeholder="Standard control" />
+<UISelect size="lg" options={options} />
+<UICard size="lg" title="Roomier panel">...</UICard>
+```
+
+### Tabs and segmented choices
+
+Use `UITabs` for page or panel navigation. `variant="underline"` is the default section-navigation style; `variant="card"` gives each tab a framed surface. Use `UISegmented` when the user is choosing one of a few short modes, such as a time range.
+
+```tsx
+<UITabs variant="underline" size="md" items={pageTabs} />
+<UITabs variant="card" size="sm" items={panelTabs} />
+<UISegmented size="sm" options={['1 min', '5 min', '30 min']} />
+```
 
 All components use design tokens from `@kb-labs/studio-ui-core`:
 
@@ -188,6 +282,7 @@ All components use design tokens from `@kb-labs/studio-ui-core`:
 ```tsx
 <UIText size="xs">Extra small text</UIText>
 <UIText size="sm">Small text</UIText>
+<UIText size="md">Base text</UIText>
 <UIText size="base">Base text</UIText>
 <UIText size="lg">Large text</UIText>
 <UIText size="xl">Extra large text</UIText>

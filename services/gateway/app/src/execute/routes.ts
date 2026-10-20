@@ -16,23 +16,25 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { ExecuteRequestSchema, type ExecutionEventMessage } from '@kb-labs/gateway-contracts';
-import { logDiagnosticEvent, type ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, logDiagnosticEvent, type ILogger } from '@kb-labs/core-platform';
 import type { CancellationReason } from '@kb-labs/core-contracts';
 import { globalDispatcher } from '../hosts/dispatcher.js';
 import { executionRegistry } from './execution-registry.js';
 import { subscriptionRegistry } from '../clients/subscription-registry.js';
 import { executeWithRetry } from './retry-executor.js';
 import { CancelledError } from './errors.js';
+import { sendAuthError } from '../auth/error-response.js';
+import { uxErrorResponses } from '../route-schema.js';
 
 export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): void {
   /**
    * POST /api/v1/execute
    * hide: true — uses ndjson chunked streaming via reply.raw, incompatible with OpenAPI response schema
    */
-  app.post('/api/v1/execute', { schema: { tags: ['Execute'], summary: 'Execute a plugin handler', hide: true } }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/execute', { config: { ux: 'raw' }, schema: { tags: ['Execute'], summary: 'Execute a plugin handler', hide: true } }, async (request: FastifyRequest, reply: FastifyReply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     const parsed = ExecuteRequestSchema.safeParse(request.body);
@@ -154,33 +156,15 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
           durationMs: Date.now() - startTime,
         });
       } else {
-        const message = err instanceof Error ? err.message : String(err);
-        logDiagnosticEvent(logger, {
-          domain: 'service',
-          event: 'gateway.execution.dispatch',
-          level: 'error',
-          reasonCode: 'execution_dispatch_failed',
-          message: 'Gateway execution dispatch failed',
-          outcome: 'failed',
-          error: err instanceof Error ? err : new Error(String(err)),
-          serviceId: 'gateway',
-          evidence: {
-            namespaceId: auth.namespaceId,
-            executionId,
-            requestId,
-            pluginId,
-            handlerRef,
-            hostId,
-          },
-        });
+        const envelope = err instanceof ErrorEnvelopeError
+          ? err.envelope
+          : createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId: requestId });
 
         writeEvent({
           type: 'execution:error',
           requestId,
           executionId,
-          code: 'EXECUTION_FAILED',
-          message,
-          retryable: false,
+          error: envelope,
         });
 
         writeEvent({
@@ -202,10 +186,10 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
   /**
    * POST /api/v1/execute/:executionId/cancel
    */
-  app.post('/api/v1/execute/:executionId/cancel', { schema: { tags: ['Execute'], summary: 'Cancel an active execution' } }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/execute/:executionId/cancel', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Execute'], summary: 'Cancel an active execution', params: { type: 'object', properties: { executionId: { type: 'string', minLength: 1 } }, required: ['executionId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { reason: { type: 'string', enum: ['user', 'timeout', 'disconnect', 'system'] } }, additionalProperties: false }, response: { 200: { type: 'object', properties: { executionId: { type: 'string' }, status: { type: 'string', enum: ['cancelled', 'already_cancelled'] }, reason: { type: 'string' } }, required: ['executionId', 'status', 'reason'] }, ...uxErrorResponses([401, 403, 404, 409]) } } }, async (request: FastifyRequest, reply: FastifyReply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     const { executionId } = request.params as { executionId: string };
@@ -218,7 +202,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
     }
 
     if (execution.namespaceId !== auth.namespaceId) {
-      return reply.code(403).send({ error: 'Forbidden — execution belongs to another namespace' });
+      return sendAuthError(reply, 403, undefined, 'Execution belongs to another namespace');
     }
 
     const cancelled = executionRegistry.cancel(executionId, reason);

@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, updateSpace } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 
@@ -15,7 +15,7 @@ export default defineCommand({
   description: 'Update a space',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<SpaceUpdateFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<SpaceUpdateFlags>) {
       const [spaceId] = input.argv;
       const skipKeys = new Set(['json', 'full', 'dry-run']);
       const changes = Object.entries(input.flags)
@@ -27,11 +27,10 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<SpaceUpdateFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<SpaceUpdateFlags>) {
       const spaceId = input.argv[0] as string | undefined;
       if (!spaceId) {
-        validationError(ctx, 'spaceId is required', 'Usage: kb clickup space update <spaceId> --name "new name"', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('spaceId is required', 'Usage: kb clickup space update <spaceId> --name "new name"');
       }
 
       const { name, color, json, full } = input.flags;
@@ -40,17 +39,16 @@ export default defineCommand({
         const space = await updateSpace(requireApiKey(), spaceId, { name, color });
 
         if (json) {
-          ctx.ui?.json?.(full ? space : { id: space.id, name: space.name });
+          return full ? space : { id: space.id, name: space.name };
         } else {
           ctx.ui?.success?.('Space updated', {
             sections: [{ items: [`id: ${space.id}`, `name: ${space.name}`] }],
           });
         }
 
-        return { ok: true, result: space };
+        return space;
       } catch (err) {
-        handleError(ctx, err, json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

@@ -195,9 +195,13 @@ describe('Commit Type Accuracy Benchmarks', () => {
       'test-run'
     );
 
-    // Save results
-    const resultsPath = join(RESULTS_DIR, 'latest-results.json');
-    writeFileSync(resultsPath, JSON.stringify(benchmarkResults, null, 2));
+    // Save results only on an explicit benchmark run (`pnpm test:benchmarks`):
+    // ordinary test runs must not rewrite the tracked results file.
+    if (process.env.KB_COMMIT_BENCHMARK_SAVE === '1') {
+      const resultsPath = join(RESULTS_DIR, 'latest-results.json');
+      writeFileSync(resultsPath, JSON.stringify(benchmarkResults, null, 2));
+      console.log(`\n💾 Results saved to: ${resultsPath}\n`);
+    }
 
     // Print summary
     console.log('\n📊 Benchmark Results:');
@@ -217,8 +221,6 @@ describe('Commit Type Accuracy Benchmarks', () => {
         console.log(`  ${type}: F1=${(metrics.f1Score * 100).toFixed(1)}% precision=${(metrics.precision * 100).toFixed(1)}% recall=${(metrics.recall * 100).toFixed(1)}%`);
       }
     }
-
-    console.log(`\n💾 Results saved to: ${resultsPath}\n`);
 
     // NOTE: We expect this to fail initially (baseline)
     // After implementing pattern detection, accuracy should improve

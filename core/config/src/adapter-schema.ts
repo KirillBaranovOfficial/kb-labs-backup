@@ -1,6 +1,6 @@
 /**
- * Validation of `platform.adapterOptions.<adapter>` against the adapter's
- * manifest `configSchema` (ADR-0047: adapters already declare their options).
+ * Validation of platform adapter bindings and `platform.adapterOptions.<adapter>`
+ * against the adapter's installed manifest.
  *
  * Shared by `kb config set` (`cli/commands`) and the host's `/api/v1/adapters`
  * API (`services/host`, stage 6 second slice) so both write through the same
@@ -10,14 +10,18 @@
  * is not guaranteed to list every option an adapter accepts, so the check is
  * deliberately narrow: only options the manifest DECLARES are type/enum
  * checked, unknown options pass, and `required` is not enforced (a project
- * layer may set only some of the options). When the adapter package or its
- * manifest cannot be found the check is skipped and the write is validated by
- * the platform schema alone.
+ * layer may set only some of the options). Adapter binding writes also require
+ * an installed package manifest that declares the requested slot.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import {
+  adapterManifestProvidesSlot,
+  loadAdapterManifest,
+  resolveInstalledAdapterPackageRoot,
+  type AdapterManifestLoadResult,
+} from '@kb-labs/core-platform';
 
 import { isEnvReference } from './user-config/secrets.js';
 import type { ConfigIssue } from './user-config/write-user-config.js';
@@ -25,14 +29,14 @@ import type { ConfigIssue } from './user-config/write-user-config.js';
 export interface ManifestFieldSchema {
   type?: string;
   enum?: unknown[];
+  integer?: boolean;
+  minimum?: number;
+  maximum?: number;
+  minimumMessage?: string;
+  hint?: string;
 }
 
 export type ManifestConfigSchema = Record<string, ManifestFieldSchema>;
-
-interface PackageJson {
-  main?: string;
-  exports?: unknown;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -47,73 +51,8 @@ export function splitPackageSpecifier(spec: string): { name: string; subpath: st
   return { name, subpath: rest ? `./${rest}` : '.' };
 }
 
-function exportTarget(entry: unknown): string | undefined {
-  if (typeof entry === 'string') {
-    return entry;
-  }
-  if (isRecord(entry)) {
-    for (const condition of ['import', 'default', 'node', 'require']) {
-      const target = exportTarget(entry[condition]);
-      if (target) {
-        return target;
-      }
-    }
-  }
-  return undefined;
-}
-
-/** Absolute path of the module a package specifier resolves to, looked up under the given roots. */
-export function resolveAdapterModule(spec: string, roots: readonly string[]): string | undefined {
-  const { name, subpath } = splitPackageSpecifier(spec);
-  for (const root of roots) {
-    const pkgDir = path.join(root, 'node_modules', name);
-    const pkgJsonPath = path.join(pkgDir, 'package.json');
-    if (!existsSync(pkgJsonPath)) {
-      continue;
-    }
-    let pkg: PackageJson;
-    try {
-      pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as PackageJson;
-    } catch {
-      continue;
-    }
-    const exportsField = pkg.exports;
-    let target: string | undefined;
-    if (isRecord(exportsField) && Object.keys(exportsField).some((key) => key.startsWith('.'))) {
-      target = exportTarget(exportsField[subpath]);
-    } else if (subpath === '.') {
-      target = exportTarget(exportsField) ?? pkg.main ?? 'index.js';
-    }
-    if (target) {
-      const full = path.resolve(pkgDir, target);
-      if (existsSync(full)) {
-        return full;
-      }
-    }
-  }
-  return undefined;
-}
-
-/** The manifest `configSchema` of an adapter package, or `undefined` when unavailable. */
-export async function loadAdapterConfigSchema(
-  spec: string,
-  roots: readonly string[],
-): Promise<ManifestConfigSchema | undefined> {
-  const modulePath = resolveAdapterModule(spec, roots);
-  if (!modulePath) {
-    return undefined;
-  }
-  try {
-    const mod = (await import(pathToFileURL(modulePath).href)) as Record<string, unknown>;
-    const fromDefault = isRecord(mod.default) ? mod.default.manifest : undefined;
-    const manifest = mod.manifest ?? fromDefault;
-    if (isRecord(manifest) && isRecord(manifest.configSchema)) {
-      return manifest.configSchema as ManifestConfigSchema;
-    }
-  } catch {
-    // The adapter cannot be imported here; fall back to the platform schema.
-  }
-  return undefined;
+function adapterPackageInstalled(spec: string, platformRoot: string): boolean {
+  return existsSync(path.join(resolveInstalledAdapterPackageRoot(spec, platformRoot), 'package.json'));
 }
 
 function matchesType(type: string, value: unknown): boolean {
@@ -154,6 +93,55 @@ export function validateAdapterOptions(
       issues.push({ path: fieldPath, message: `Expected ${field.type}` });
     } else if (field.enum && !field.enum.includes(value)) {
       issues.push({ path: fieldPath, message: `Expected one of: ${field.enum.map(String).join(', ')}` });
+    } else if (field.integer && typeof value === 'number' && !Number.isInteger(value)) {
+      issues.push({ path: fieldPath, message: 'Expected an integer', hint: field.hint });
+    } else if (field.minimum !== undefined && typeof value === 'number' && value < field.minimum) {
+      issues.push({ path: fieldPath, message: field.minimumMessage ?? `Must be at least ${field.minimum}`, hint: field.hint });
+    } else if (field.maximum !== undefined && typeof value === 'number' && value > field.maximum) {
+      issues.push({ path: fieldPath, message: `Must be at most ${field.maximum}`, hint: field.hint });
+    }
+  }
+  return issues;
+}
+
+/** Validate every bound platform adapter option set before the host starts. */
+export async function validatePlatformAdapterOptions(
+  platformRoot: string,
+  platformConfig: Record<string, unknown>,
+): Promise<ConfigIssue[]> {
+  const adapters = isRecord(platformConfig.adapters) ? platformConfig.adapters : {};
+  const options = isRecord(platformConfig.adapterOptions) ? platformConfig.adapterOptions : {};
+  const issues: ConfigIssue[] = [];
+
+  for (const [slot, binding] of Object.entries(adapters)) {
+    const slotOptions = options[slot];
+    if (!isRecord(slotOptions)) {
+      continue;
+    }
+    const specs = typeof binding === 'string'
+      ? [binding]
+      : Array.isArray(binding) ? binding.filter((entry): entry is string => typeof entry === 'string') : [];
+    if (specs.length === 0) {
+      issues.push({
+        path: `platform.adapterOptions.${slot}`,
+        message: `Cannot validate adapter options because no package is bound for ${slot}.`,
+        hint: `Run \`kb adapter bind ${slot} <package>\` with an installed adapter, then retry.`,
+      });
+      continue;
+    }
+    for (const spec of specs) {
+      const result = await loadAdapterManifest({ spec, platformRoot });
+      if (result.kind !== 'adapter' || !result.manifest.configSchema) {
+        issues.push({
+          path: `platform.adapterOptions.${slot}`,
+          message: result.kind === 'failed'
+            ? `Cannot load configured adapter ${spec}: ${result.reason}`
+            : `Cannot load a configSchema for configured adapter ${spec}.`,
+          hint: `Repair the installed adapter manifest for ${spec}, then run \`kb-create start\` again.`,
+        });
+        continue;
+      }
+      issues.push(...validateAdapterOptions(`platform.adapterOptions.${slot}`, slotOptions, result.manifest.configSchema));
     }
   }
   return issues;
@@ -185,8 +173,8 @@ function optionsHolder(keyPath: readonly string[]): { name: string; basePath: st
 }
 
 export interface AdapterOptionsValidatorInput {
-  /** Roots searched for `node_modules/<adapter>` (platform first, then project). */
-  roots: readonly string[];
+  /** Platform root containing installed adapter packages. */
+  platformRoot: string;
   /** `platform.adapters` of the effective config, used when the edited file does not bind the adapter itself. */
   effectiveAdapters?: unknown;
 }
@@ -201,14 +189,52 @@ export function createAdapterOptionsValidator(
   input: AdapterOptionsValidatorInput,
 ): ((document: Record<string, unknown>) => Promise<ConfigIssue[]>) | undefined {
   const target = optionsHolder(keyPath);
-  if (!target) {
+  const bindingSlot = keyPath[0] === 'platform' && keyPath[1] === 'adapters' && keyPath.length === 3
+    ? keyPath[2]
+    : undefined;
+  if (!target && !bindingSlot) {
     return undefined;
   }
-  const { name, basePath } = target;
-  let cachedSchema: Promise<ManifestConfigSchema | undefined> | undefined;
+  const { name, basePath } = target ?? { name: bindingSlot!, basePath: keyPath.slice(0, 3).join('.') };
+  const cachedManifests = new Map<string, Promise<AdapterManifestLoadResult>>();
 
   return async (document) => {
     const platform = isRecord(document.platform) ? document.platform : undefined;
+    if (bindingSlot) {
+      const adapters = isRecord(platform?.adapters) ? platform.adapters : undefined;
+      const value = adapters?.[bindingSlot];
+      if (value === null) {return [];}
+      const specs = typeof value === 'string'
+        ? [value]
+        : Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+      const issues: ConfigIssue[] = [];
+      for (const spec of specs) {
+        const result = await getManifest(spec);
+        if (result.kind !== 'adapter') {
+          issues.push(adapterPackageInstalled(spec, input.platformRoot)
+            ? {
+                path: basePath,
+                message: result.kind === 'failed'
+                  ? `Installed adapter package "${spec}" failed to load its manifest: ${result.reason}`
+                  : `Installed adapter package "${spec}" does not expose an adapter manifest for slot "${bindingSlot}".`,
+                hint: `Repair the installed package manifest for ${spec}, then retry the binding.`,
+              }
+            : notInstalledIssue(spec, bindingSlot, basePath));
+          continue;
+        }
+        if (!adapterManifestProvidesSlot(result.manifest, bindingSlot)) {
+          issues.push({
+            path: basePath,
+            code: 'KB_ADAPTER_SLOT_MISMATCH',
+            details: { package: splitPackageSpecifier(spec).name, slot: bindingSlot },
+            message: `Adapter package ${splitPackageSpecifier(spec).name} does not declare platform slot ${bindingSlot}.`,
+            hint: `Install a provider that declares ${bindingSlot} with \`kb marketplace install <pkg> --scope platform\`, then retry.`,
+          });
+        }
+      }
+      return issues;
+    }
+
     const optionsRoot = keyPath[0] === 'platform' ? platform?.adapterOptions : document.adapterOptions;
     const options = isRecord(optionsRoot) ? optionsRoot[name] : undefined;
     if (!isRecord(options)) {
@@ -216,10 +242,52 @@ export function createAdapterOptionsValidator(
     }
     const spec = adapterSpecFor(name, platform?.adapters, input.effectiveAdapters);
     if (!spec) {
-      return [];
+      return [{
+        path: basePath,
+        message: `Cannot validate adapter options because no package is bound for ${name}. Bind an installed adapter before setting its options.`,
+        hint: `Run \`kb adapter bind ${name} <package>\` with an installed adapter, then retry.`,
+      }];
     }
-    cachedSchema ??= loadAdapterConfigSchema(spec, input.roots);
-    const schema = await cachedSchema;
-    return schema ? validateAdapterOptions(basePath, options, schema) : [];
+    const result = await getManifest(spec);
+    if (result.kind !== 'adapter' && !adapterPackageInstalled(spec, input.platformRoot)) {
+      return [notInstalledIssue(spec, name, basePath)];
+    }
+    if (result.kind !== 'adapter') {
+      return [{
+        path: basePath,
+        message: result.kind === 'failed'
+          ? `Cannot load the installed manifest for adapter ${spec}: ${result.reason}`
+          : `Installed package ${spec} does not declare an adapter manifest.`,
+        hint: `Repair the installed package manifest for ${spec}, then retry the option write.`,
+      }];
+    }
+    if (!result.manifest.configSchema) {
+      return [{
+        path: basePath,
+        message: `Installed adapter ${spec} does not declare configSchema for ${basePath}.`,
+        hint: `Run \`kb adapter bind ${name} <package>\` with a provider that declares configSchema, then retry.`,
+      }];
+    }
+    return validateAdapterOptions(basePath, options, result.manifest.configSchema);
+  };
+
+  function getManifest(spec: string): Promise<AdapterManifestLoadResult> {
+    let pending = cachedManifests.get(spec);
+    if (!pending) {
+      pending = loadAdapterManifest({ spec, platformRoot: input.platformRoot });
+      cachedManifests.set(spec, pending);
+    }
+    return pending;
+  }
+}
+
+function notInstalledIssue(spec: string, slot: string, basePath: string): ConfigIssue {
+  const packageName = splitPackageSpecifier(spec).name;
+  return {
+    path: basePath,
+    code: 'KB_ADAPTER_NOT_INSTALLED',
+    details: { package: packageName, slot },
+    message: `Adapter package ${packageName} is not installed on this platform.`,
+    hint: `kb marketplace install ${packageName} --scope platform`,
   };
 }

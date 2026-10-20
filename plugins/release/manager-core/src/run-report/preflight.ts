@@ -9,10 +9,11 @@
  */
 
 import type { ReleaseShell } from '../types';
+import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import type { DetailsOptionFor } from '@kb-labs/core-platform/error-envelope';
 import {
   createReleaseError,
   type ReleaseErrorCode,
-  type ReleaseErrorEnvelope,
 } from './error-codes';
 
 export type PreflightCheckId =
@@ -33,7 +34,7 @@ export interface PreflightCheckResult {
   /** Non-blocking observations on a passed check. */
   warnings?: string[];
   /** Present when status is `failed`. */
-  error?: ReleaseErrorEnvelope;
+  error?: ErrorEnvelope;
 }
 
 export interface PreflightResult {
@@ -121,9 +122,17 @@ export function preflightCommand(flow?: string): string {
   return flow ? `pnpm kb release doctor --flow ${flow}` : 'pnpm kb release doctor';
 }
 
+type FailedOutcome<C extends ReleaseErrorCode> = {
+  ok: false;
+  message: string;
+  code: C;
+  cause: string;
+  hint: string;
+} & DetailsOptionFor<C>;
+
 type Outcome =
   | { ok: true; message: string; warnings?: string[] }
-  | { ok: false; message: string; code: ReleaseErrorCode; cause: string; hint: string; details?: Record<string, string> }
+  | { [C in ReleaseErrorCode]: FailedOutcome<C> }[ReleaseErrorCode]
   | { skipped: true; message: string };
 
 export async function runReleasePreflight(opts: PreflightOptions): Promise<PreflightResult> {

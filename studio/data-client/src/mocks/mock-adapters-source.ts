@@ -7,9 +7,6 @@ import type { AdaptersDataSource, DateRangeOptions, DailyStats } from '../source
 import type {
   LLMUsageStats,
   EmbeddingsUsageStats,
-  VectorStoreUsageStats,
-  CacheUsageStats,
-  StorageUsageStats,
 } from '../contracts/adapters';
 
 /**
@@ -89,43 +86,6 @@ export class MockAdaptersSource implements AdaptersDataSource {
     };
   }
 
-  async getVectorStoreUsage(_options?: DateRangeOptions): Promise<VectorStoreUsageStats> {
-    return {
-      searchQueries: 2345,
-      upsertOperations: 567,
-      deleteOperations: 89,
-      avgSearchDuration: 45.6,
-      avgSearchScore: 0.87,
-      avgResultsCount: 12.4,
-      totalVectorsUpserted: 45_678,
-      totalVectorsDeleted: 1234,
-    };
-  }
-
-  async getCacheUsage(_options?: DateRangeOptions): Promise<CacheUsageStats> {
-    return {
-      totalGets: 15_678,
-      hits: 13_456,
-      misses: 2222,
-      hitRate: 85.8,
-      sets: 3456,
-      avgGetDuration: 2.3,
-      avgSetDuration: 5.7,
-    };
-  }
-
-  async getStorageUsage(_options?: DateRangeOptions): Promise<StorageUsageStats> {
-    return {
-      readOperations: 8765,
-      writeOperations: 2345,
-      deleteOperations: 234,
-      totalBytesRead: 123_456_789,
-      totalBytesWritten: 45_678_901,
-      avgReadDuration: 12.4,
-      avgWriteDuration: 34.5,
-    };
-  }
-
   async getLLMDailyStats(_options?: DateRangeOptions): Promise<DailyStats[]> {
     return this.generateMockDailyStats({
       totalTokens: [10000, 60000],
@@ -139,32 +99,6 @@ export class MockAdaptersSource implements AdaptersDataSource {
       totalTokens: [5000, 30000],
       totalCost: [0.1, 0.5],
       avgDurationMs: [100, 500],
-    });
-  }
-
-  async getVectorStoreDailyStats(_options?: DateRangeOptions): Promise<DailyStats[]> {
-    return this.generateMockDailyStats({
-      totalSearches: [100, 500],
-      totalUpserts: [50, 200],
-      totalDeletes: [10, 50],
-      avgDurationMs: [30, 150],
-    });
-  }
-
-  async getCacheDailyStats(_options?: DateRangeOptions): Promise<DailyStats[]> {
-    return this.generateMockDailyStats({
-      totalHits: [500, 2000],
-      totalMisses: [100, 500],
-      totalSets: [200, 800],
-      hitRate: [70, 95],
-    });
-  }
-
-  async getStorageDailyStats(_options?: DateRangeOptions): Promise<DailyStats[]> {
-    return this.generateMockDailyStats({
-      totalBytesRead: [1000000, 10000000],
-      totalBytesWritten: [500000, 5000000],
-      avgDurationMs: [10, 50],
     });
   }
 

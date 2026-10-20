@@ -212,7 +212,7 @@ If the service is up but installs fail, the issue is downstream — npm registry
 ```bash
 mv .kb/marketplace.lock .kb/marketplace.lock.broken
 # Re-link each local plugin:
-pnpm kb marketplace link /path/to/plugin
+pnpm kb marketplace plugins add /path/to/plugin
 ```
 
 ---
@@ -276,7 +276,7 @@ Don't restart yet — the new service would also fail on the corrupted file.
 
 ```bash
 # Integrity check:
-sqlite3 .kb/database/kb.sqlite "PRAGMA integrity_check;"
+sqlite3 .kb/data/database/kb.sqlite "PRAGMA integrity_check;"
 ```
 
 If it reports errors, the file is corrupted and needs recovery or restoration.

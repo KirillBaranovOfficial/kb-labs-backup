@@ -100,7 +100,7 @@ func runDiagnose(cmd *cobra.Command, _ []string) error {
 	}
 
 	if !result.OK {
-		result.Hint = "Inspect services with failed state and the referenced log files"
+		return commandFailure("kb-dev diagnose")
 	}
 	return JSONOut(result)
 }

@@ -39,7 +39,6 @@ export {
 
 // Canonical command result and retry contracts for plugin authors.
 export type {
-  CommandSuccess,
   CommandFailure,
   CommandError,
   ClassifiedFailure,
@@ -63,7 +62,15 @@ export {
 // Per-project runtime state location (ADR-0044). Adapters and plugins resolve
 // caches, traces and other runtime files here instead of writing into the
 // project's `.kb/` directory.
-export { resolveRuntimeStatePath } from "@kb-labs/core-project-registry";
+export {
+  deriveProjectId,
+  findRegisteredProjectContainingPathSync,
+  requireProjectContext,
+  resolveRuntimeStatePath,
+} from "@kb-labs/core-project-registry";
+export { createErrorEnvelope } from "@kb-labs/core-platform";
+export type { ProjectEntry } from "@kb-labs/core-contracts";
+export { parseJsonc } from "@kb-labs/core-config";
 
 // Test utilities (legacy — prefer `@kb-labs/sdk/testing` for full mock builders)
 export {
@@ -151,7 +158,6 @@ export {
 
 // Re-export new flags system from shared-command-kit
 export {
-  defineFlags,
   type FlagSchemaWithInfer,
   type InferFlags,
   type FlagSchemaDefinition,
@@ -165,6 +171,7 @@ export {
   type ValidationResult,
   type SafeValidationResult,
 } from "@kb-labs/shared-command-kit";
+export { defineFlags } from './manifest/flags.js';
 
 // Re-export job definition helpers from shared-command-kit — same
 // PluginContextV3 + composable-hook pattern as CLI commands, so handlers
@@ -178,6 +185,8 @@ export {
 } from "@kb-labs/shared-command-kit";
 
 // Re-export platform adapter types from core-platform
+export { getHostServiceAddress, HostServiceAddressError } from '@kb-labs/core-platform';
+export type { HostServiceEnvironment, HostServiceId } from '@kb-labs/core-platform';
 export type {
   ILLM,
   LLMOptions,
@@ -224,6 +233,7 @@ export type {
   // Service transport adapter contract (for adapter authors)
   IServiceTransport,
   ServiceConnectionInfo,
+  ProjectServiceConnectionInfo,
   ServiceListenAddress,
   ServiceTransportRequest,
   ServiceTransportResponse,
@@ -256,7 +266,14 @@ export {
 // AdapterUnavailableError — catch-able typed error thrown by NoOp adapters
 // when a slot is not configured. Plugins should catch this to degrade
 // gracefully when an optional capability is absent.
-export { AdapterUnavailableError } from "@kb-labs/core-platform";
+export {
+  AdapterUnavailableError,
+  AdapterCredentialsMissingError,
+  AdapterOperationError,
+  AdapterConfigError,
+  PlatformConfigError,
+  toErrorEnvelope,
+} from "@kb-labs/core-platform";
 
 // Re-export learning stores from platform
 export type {
@@ -306,11 +323,13 @@ export {
 // Re-export contracts for convenience
 export type {
   PluginContextV3,
+  PluginCommandContextV3,
   PluginContextDescriptor,
   HostContext,
   HostType,
   PermissionSpec,
   UIFacade,
+  PluginHandlerUIFacade,
   Colors,
   ColorFunction,
   SideBoxOptions,

@@ -3,7 +3,7 @@
  * Atomic step: reads plan, runs npm pack checks, emits output marker for workflow.
  */
 
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3, useLoader, useConfig } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3, useLoader, useConfig } from '@kb-labs/sdk';
 import {
   planRelease,
   verifyPackages,
@@ -52,7 +52,7 @@ export default defineCommand({
   description: 'Verify built package artifacts via npm pack (checks exports, test leaks, syntax)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<PackFlags>): Promise<ReleasePackResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<PackFlags>): Promise<ReleasePackResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -67,10 +67,9 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         const msg = `No packages found${flags.scope ? ` matching scope: ${flags.scope}` : ''}`;
-        if (flags.json) { ctx.ui?.json?.({ ok: true, issues: [], results: [], message: msg }); }
+        if (flags.json) { return { issues: [], results: [], message: msg }; }
         else { ctx.ui?.write?.(msg); }
-        console.log('::kb-output::' + JSON.stringify({ ok: true, issues: [] }));
-        return { ok: true, result: { ok: true, issues: [], results: [] } };
+        return { ok: true, issues: [], results: [] };
       }
 
       const verifyLoader = useLoader(`Verifying ${plan.packages.length} package(s)...`);
@@ -92,11 +91,24 @@ export default defineCommand({
         verifyLoader.fail(`${results.filter(r => !r.success).length} package(s) have issues`);
       }
 
-      console.log('::kb-output::' + JSON.stringify({ ok, issues }));
+      const outcome = ok
+        ? { ok: true, issues, results }
+        : {
+            ok: false as const,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: `Package verification failed with ${issues.length} issue(s).`,
+              hint: 'Review the listed package verification issues, resolve them, then rerun `kb release pack`.',
+              diagnostics: results.flatMap((result) => result.issues.map((issue) => ({
+                code: 'RELEASE_PACKAGE_VERIFY_FAILED',
+                severity: 'error' as const,
+                message: `${result.name}: ${issue}`,
+              }))),
+            },
+          };
 
       if (flags.json) {
-        ctx.ui?.json?.({ ok, issues, results });
-        return ok ? { ok: true, result: { ok, issues, results } } : { ok: false, error: 'Command failed', result: { ok, issues, results } };
+        return outcome;
       }
 
       ctx.ui?.sideBox?.({
@@ -105,7 +117,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok: true, result: { ok, issues, results } } : { ok: false, error: 'Command failed', result: { ok, issues, results } };
+      return outcome;
     },
   },
 });

@@ -5,7 +5,8 @@
  *
  * Regression: better-sqlite3 does not create parent directories.
  * acquireHandle() must call mkdirSync({ recursive: true }) before opening
- * a new file so that "filename": ".kb/data/platform.db" works even when
+ * a new file for an absolute platform data-root path such as
+ * "filename": "/platform/state/data/platform.db" works even when
  * the .kb/data/ directory does not yet exist.
  */
 

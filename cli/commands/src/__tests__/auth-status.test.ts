@@ -13,15 +13,10 @@ const mockCredLoad = vi.fn();
 const mockCredIsExpired = vi.fn();
 const mockSessionLoad = vi.fn();
 const mockSessionIsExpired = vi.fn();
+const mockSessionPath = vi.fn(() => '/tmp/test-home/.kb/session.json');
+const mockInspect = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: class {
-    load = mockCredLoad;
-    isExpired = mockCredIsExpired;
-  },
-  SessionManager: class {
-    load = mockSessionLoad;
-    isExpired = mockSessionIsExpired;
-  },
+  AuthSessionOwner: class { inspect = mockInspect; },
 }));
 
 import { authStatus } from '../commands/system/auth/auth-status.js';
@@ -48,15 +43,27 @@ function makeCtx(captured: { errors: string[]; output: string[]; json: unknown[]
     } as any,
     runtime: { fs: {} as any, fetch: vi.fn(), env: vi.fn() },
     api: {} as any,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
 }
 
+function expectSuccessEnvelope(captured: { json: unknown[] }, data: object): void {
+  expect(captured.json[0]).toMatchObject({ ok: true, data });
+  expect(Object.keys(captured.json[0] as object).sort()).toEqual(['data', 'ok']);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockInspect.mockImplementation(async () => {
+    const [machine, session] = await Promise.all([mockCredLoad(), mockSessionLoad()]);
+    return { machine, session, sessionPath: mockSessionPath(),
+      machineExpired: machine ? mockCredIsExpired(machine) : false,
+      sessionExpired: session ? mockSessionIsExpired(session) : false };
+  });
 });
 
+// case: S-041.5, S-041.6, S-041.8, S-100.1
 describe('kb auth status', () => {
   it('ST-01: neither store — authenticated false, session.authenticated false', async () => {
     mockCredLoad.mockResolvedValueOnce(null);
@@ -66,7 +73,8 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({ authenticated: false, session: { authenticated: false } });
+    expect(mockInspect).toHaveBeenCalledOnce();
+    expectSuccessEnvelope(captured, { authenticated: false, session: { authenticated: false, path: '/tmp/test-home/.kb/session.json' } });
   });
 
   it('ST-02: machine only — top-level authenticated true, session.authenticated false', async () => {
@@ -78,10 +86,10 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({
+    expectSuccessEnvelope(captured, {
       authenticated: true,
       gatewayUrl: 'http://localhost:4000',
-      session: { authenticated: false },
+      session: { authenticated: false, path: '/tmp/test-home/.kb/session.json' },
     });
   });
 
@@ -94,9 +102,9 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({
+    expectSuccessEnvelope(captured, {
       authenticated: false,
-      session: { authenticated: true, email: 'admin@bootstrap.local', tokenExpired: false },
+      session: { authenticated: true, path: '/tmp/test-home/.kb/session.json', email: 'admin@bootstrap.local', tokenExpired: false },
     });
   });
 
@@ -110,9 +118,12 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({
+    expectSuccessEnvelope(captured, {
       authenticated: true,
-      session: { authenticated: true, tokenExpired: true },
+      gatewayUrl: 'http://localhost:4000',
+      tokenExpired: false,
+      expiresAt: expect.any(String),
+      session: { authenticated: true, path: '/tmp/test-home/.kb/session.json', tokenExpired: true },
     });
   });
 });

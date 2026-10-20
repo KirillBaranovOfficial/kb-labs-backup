@@ -196,6 +196,13 @@ export class TrieRouter {
         }
         aliasNode = aliasNode.children.get(alias)!;
         aliasNode.systemCommand = cmd;
+
+        let rootAliasNode = this.root;
+        if (!rootAliasNode.children.has(alias)) {
+          rootAliasNode.children.set(alias, makeNode());
+        }
+        rootAliasNode = rootAliasNode.children.get(alias)!;
+        rootAliasNode.systemCommand = cmd;
       }
     }
 
@@ -368,6 +375,26 @@ export class TrieRouter {
       }
     }
     return results;
+  }
+
+  listSystemCommands(): SystemCommand[] {
+    const commands = new Set<SystemCommand>();
+    const visit = (node: TrieNode): void => {
+      if (node.systemCommand) { commands.add(node.systemCommand); }
+      for (const child of node.children.values()) { visit(child); }
+    };
+    visit(this.root);
+    return [...commands];
+  }
+
+  listSystemCommandEntries(): Array<{ command: SystemCommand; path: string[] }> {
+    const entries: Array<{ command: SystemCommand; path: string[] }> = [];
+    const visit = (node: TrieNode, path: string[]): void => {
+      if (node.systemCommand) entries.push({ command: node.systemCommand, path });
+      for (const [segment, child] of node.children) visit(child, [...path, segment]);
+    };
+    visit(this.root, []);
+    return entries;
   }
 
   /**

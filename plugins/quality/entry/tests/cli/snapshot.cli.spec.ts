@@ -5,9 +5,9 @@ vi.mock('@kb-labs/quality-core', () => ({
   analyzeCoupling: vi.fn().mockReturnValue({ packages: [], avgInstability: 0 }),
   runKnip: vi.fn().mockResolvedValue({ unusedFiles: [], unusedExports: [], unusedDependencies: [], unlistedDependencies: [], totalIssues: 0 }),
   analyzeTypes: vi.fn().mockResolvedValue({ packages: [] }),
-  QualitySnapshotStore: vi.fn().mockImplementation(() => ({
-    save: vi.fn().mockReturnValue({ score: 90, grade: 'A', dimensions: {}, git: {} }),
-  })),
+  QualitySnapshotStore: vi.fn().mockImplementation(class {
+    save = vi.fn().mockReturnValue({ score: 90, grade: 'A', dimensions: {}, git: {} });
+  }),
   calculateHealth: vi.fn().mockReturnValue({
     score: 90,
     grade: 'A',
@@ -41,9 +41,9 @@ beforeEach(() => {
   vi.mocked(runKnip).mockResolvedValue({ unusedFiles: [], unusedExports: [], unusedDependencies: [], unlistedDependencies: [], totalIssues: 0 });
   vi.mocked(analyzeTypes).mockResolvedValue({ packages: [] } as never);
   vi.mocked(calculateHealth).mockReturnValue({ score: 90, grade: 'A', dimensions: {} } as never);
-  vi.mocked(QualitySnapshotStore).mockImplementation(() => ({
-    save: vi.fn().mockReturnValue(mockSnap),
-  }) as never);
+  vi.mocked(QualitySnapshotStore).mockImplementation(class {
+    save = vi.fn().mockReturnValue(mockSnap);
+  } as never);
 });
 
 describe('quality:snapshot', () => {
@@ -53,7 +53,7 @@ describe('quality:snapshot', () => {
 
     const result = await snapshotCommand.execute(ctx as never, mockCLIInput<SnapshotFlags>());
 
-    expect(result.exitCode).toBe(0);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -63,9 +63,8 @@ describe('quality:snapshot', () => {
 
     const result = await snapshotCommand.execute(ctx as never, mockCLIInput<SnapshotFlags>({ flags: { json: true } }));
 
-    expect(result.exitCode).toBe(0);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect((captured.json[0] as Record<string, unknown>).score).toBe(90);
+    expect((result as typeof mockSnap).score).toBe(90);
+    expect(captured.json).toHaveLength(0);
   });
 
   it('QSNAP-03: --dry-run shows intent, no metrics collected', async () => {
@@ -74,7 +73,7 @@ describe('quality:snapshot', () => {
 
     const result = await snapshotCommand.execute(ctx as never, mockCLIInput<SnapshotFlags>({ flags: { 'dry-run': true } }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result).not.toHaveProperty('ok');
     expect(QualitySnapshotStore).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

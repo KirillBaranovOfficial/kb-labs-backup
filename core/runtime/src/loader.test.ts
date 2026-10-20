@@ -49,12 +49,14 @@ describe('initPlatform - Manifest-based Context Injection', () => {
   describe('Context Injection based on Manifest', () => {
     it('should inject only requested contexts from manifest', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'test-adapter',
         name: 'Test Adapter',
         version: '1.0.0',
         type: 'core',
         implements: 'ITestAdapter',
+        networkRequired: false,
         contexts: ['workspace', 'analytics'], // Request both contexts
       };
 
@@ -86,12 +88,14 @@ describe('initPlatform - Manifest-based Context Injection', () => {
 
     it('should inject only workspace context when adapter requests only workspace', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'file-adapter',
         name: 'File Adapter',
         version: '1.0.0',
         type: 'core',
         implements: 'IFileAdapter',
+        networkRequired: false,
         contexts: ['workspace'], // Only workspace
       };
 
@@ -119,12 +123,14 @@ describe('initPlatform - Manifest-based Context Injection', () => {
 
     it('should inject no contexts when manifest does not request any', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'simple-adapter',
         name: 'Simple Adapter',
         version: '1.0.0',
         type: 'core',
         implements: 'ISimpleAdapter',
+        networkRequired: false,
         // No contexts field
       };
 
@@ -149,12 +155,14 @@ describe('initPlatform - Manifest-based Context Injection', () => {
 
     it('should handle unknown context names gracefully', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'test-adapter',
         name: 'Test Adapter',
         version: '1.0.0',
         type: 'core',
         implements: 'ITestAdapter',
+        networkRequired: false,
         contexts: ['workspace', 'unknown-context', 'analytics'], // unknown-context not in registry
       };
 
@@ -247,12 +255,14 @@ describe('initPlatform - Manifest-based Context Injection', () => {
   describe('FileAnalytics Integration', () => {
     it('should pass workspace and analytics contexts to FileAnalytics via config', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'analytics-file',
         name: 'File Analytics',
         version: '1.0.0',
         type: 'core',
         implements: 'IAnalytics',
+        networkRequired: false,
         contexts: ['workspace', 'analytics'],
       };
 
@@ -267,7 +277,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
       };
 
       const baseOptions = {
-        baseDir: '.kb/analytics/buffer',
+        baseDir: 'analytics/buffer',
         filenamePattern: 'events-YYYYMMDD',
       };
 
@@ -288,7 +298,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
           source: { product: '@kb-labs/workspace-root' },
           runId: 'f8cb323c-54a4-45bb-afa1-8f17b5cf497e',
         },
-        baseDir: '.kb/analytics/buffer',
+        baseDir: 'analytics/buffer',
         filenamePattern: 'events-YYYYMMDD',
       });
     });
@@ -297,12 +307,14 @@ describe('initPlatform - Manifest-based Context Injection', () => {
   describe('Backward Compatibility', () => {
     it('should handle adapters without contexts field in manifest', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'legacy-adapter',
         name: 'Legacy Adapter',
         version: '1.0.0',
         type: 'core',
         implements: 'ILegacyAdapter',
+        networkRequired: false,
         // No contexts field - legacy adapter
       };
 

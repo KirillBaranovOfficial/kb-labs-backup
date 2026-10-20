@@ -8,6 +8,7 @@
 
 import type { PluginContextV3 as PluginContext } from '@kb-labs/plugin-runtime';
 import type {
+  DetailsFor,
   ILLM,
   IEmbeddings,
   IVectorStore,
@@ -25,12 +26,20 @@ import type {
  * Error thrown when required platform service is not configured.
  */
 export class ServiceNotConfiguredError extends Error {
+  readonly code: 'KB_ADAPTER_NOT_CONFIGURED' = 'KB_ADAPTER_NOT_CONFIGURED';
+  readonly details: DetailsFor<'KB_ADAPTER_NOT_CONFIGURED'>;
+
   constructor(
     public readonly service: string,
     public readonly requiredAdapter: string
   ) {
     super(`Service '${service}' is not configured. Add "${requiredAdapter}" to kb.config.json adapters.`);
     this.name = 'ServiceNotConfiguredError';
+    this.details = {
+      service,
+      adapter: `platform.adapters.${service}`,
+      command: `kb adapter bind ${service} ${requiredAdapter}`,
+    };
   }
 }
 

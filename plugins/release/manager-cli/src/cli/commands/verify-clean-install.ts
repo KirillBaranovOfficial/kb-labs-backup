@@ -10,7 +10,7 @@
  * unhandled rejection and prints nothing beyond "npm error, see log file").
  */
 
-import { defineCommand, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { verifyCleanInstall, type CleanInstallResult } from '@kb-labs/release-manager-core';
 
 interface VerifyCleanInstallFlags {
@@ -25,30 +25,26 @@ export default defineCommand({
   description: 'Install a packed tarball into a throwaway consumer and confirm it imports cleanly',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<VerifyCleanInstallFlags>): Promise<CommandResult<CleanInstallResult>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<VerifyCleanInstallFlags>): Promise<CommandResult<CleanInstallResult>> {
       const { flags } = input;
 
       if (!flags.tarball || !flags.name) {
         const msg = 'release:clean-install requires --tarball <path> and --name <package-name>';
-        if (flags.json) { ctx.ui?.json?.({ error: msg }); } else { ctx.ui?.error?.(msg); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Provide `--tarball <path>` and `--name <package-name>`, then retry.' } };
       }
 
       const result = await verifyCleanInstall(flags.tarball, flags.name, [], 'npm', flags.registry);
 
       if (!result.ok) {
-        if (flags.json) { ctx.ui?.json?.({ ok: false, result }); } else { ctx.ui?.error?.(result.error ?? 'clean install verification failed'); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: result.error ?? 'Clean install verification failed', hint: 'Inspect the npm install failure, fix the tarball or registry issue, then retry.' } };
       }
 
       if (flags.json) {
-        const response = { ok: true as const, result };
-        ctx.ui?.json?.(response);
-        return response;
+        return result;
       }
 
       ctx.ui?.write?.(`OK: ${flags.name} installs and imports cleanly`);
-      return { ok: true, result };
+      return result;
     },
   },
 });

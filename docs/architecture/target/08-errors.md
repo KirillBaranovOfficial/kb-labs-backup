@@ -20,7 +20,7 @@
 ```jsonc
 {
   "code": "KB_INSTALL_PORT_IN_USE",       // стабильный, никогда не переиспользуется
-  "area": "install",                    // install | host | auth | project | config | plugin | update | runtime | product
+  "area": "install",                    // install | host | auth | project | config | plugin | update | runtime | product | release (publisher tooling)
   "stage": "preflight",                 // момент пути пользователя (см. §3)
   "severity": "error",                  // error | warning
   "retryable": false,
@@ -87,7 +87,7 @@
 | `KB_INSTALL_NETWORK_UNREACHABLE` | нет доступа к релиз-индексу/реестру | проверить сеть/прокси, `retry` | L |
 | `KB_INSTALL_RELEASE_INDEX_INVALID` | индекс повреждён/подпись не сходится | повторить; сообщить (виновник — мы) | L |
 | `KB_INSTALL_NODE_MISSING` | нет нужной версии Node/менеджера пакетов | ссылка на установку или установить встроенный | L |
-| `KB_INSTALL_NODE_VERSION` | Node.js не 24.x | установить Node.js 24; для nvm: `nvm install 24 && nvm use 24` | L |
+| `KB_NODE_VERSION_UNSUPPORTED` | Node.js запущен на неподдерживаемой major-версии | выполнить команду смены версии из диагностического сообщения | L |
 | `KB_INSTALL_MEMORY_INSUFFICIENT` | доступной памяти меньше 1.20 GiB | освободить память или увеличить её объём, затем `kb-create install` | L |
 | `KB_INSTALL_PORT_IN_USE` | порт, требуемый установкой, занят | остановить процесс с портом и снова `kb-create install` | L |
 | `KB_INSTALL_INCOMPATIBLE_COMPONENTS` | (есть) компоненты несовместимы | какие и с какими версиями | L |
@@ -98,7 +98,7 @@
 | `KB_INSTALL_INTERRUPTED` | установка прервана | `kb-create apply` продолжит с места | L |
 | `KB_INSTALL_TOOLCHAIN_UNSUPPORTED` | (есть) версия Node/pnpm не подходит | нужные версии | L |
 | `KB_INSTALL_APPLY_FAILED` | (есть) установка не дошла до проверенного состояния | лог и досье, `doctor --fix` | L |
-| `KB_INSTALL_OPERATION_INVALID` / `_OPERATION_FAILED` | (есть) неизвестная операция / операция не дошла до проверенной установки | список операций; лог и досье | L |
+| `KB_INSTALL_OPERATION_FAILED` | (есть) операция не дошла до проверенной установки | лог и досье | L |
 | `KB_INSTALL_SCENARIO_INVALID` / `_WIZARD_INPUT_INVALID` / `_SECRET_INPUT_INVALID` / `_DOCTOR_INPUT_INVALID` | (есть) ответы сценария/мастера, секрет или вход doctor не приняты | что поправить | L |
 | `KB_INSTALL_RECOVERY_FAILED` / `_RECEIPT_UNAVAILABLE` / `_STATUS_UNHEALTHY` | (есть) восстановление не дошло до проверенного состояния / нет активного receipt / граф сервисов не готов | `doctor --fix`, снимок | L |
 | `KB_INSTALL_LOG_UNAVAILABLE` / `_DIAGNOSTIC_UNAVAILABLE` | (есть) нельзя записать лог/досье | права на каталог | L |

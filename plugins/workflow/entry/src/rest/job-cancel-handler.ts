@@ -4,7 +4,7 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
 
 interface JobCancelParams {
   jobId: string;
@@ -32,11 +32,11 @@ export default defineHandler({
       throw new Error('Missing jobId parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/jobs/${jobId}/cancel`;
+    const url = `${daemonUrl}/jobs/${jobId}/cancel`;
     ctx.platform.logger.info(`[job-cancel-handler] Cancelling job ${jobId} at ${url}`);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWorkflowApi(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

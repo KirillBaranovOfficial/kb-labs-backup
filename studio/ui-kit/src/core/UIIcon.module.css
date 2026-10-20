@@ -18,8 +18,6 @@
  */
 .uiIcon svg {
   color: currentColor;
-  stroke: currentColor;
-  fill: none; /* Most icon libraries use stroke, not fill */
   display: block; /* Remove inline spacing */
 }
 

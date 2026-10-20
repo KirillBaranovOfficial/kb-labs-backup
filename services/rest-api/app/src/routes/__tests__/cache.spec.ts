@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
+import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
 import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerCacheRoutes } from '../cache';
+import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 
 const BASE_CONFIG: RestApiConfig = {
   port: 3000,
@@ -16,6 +19,12 @@ const BASE_CONFIG: RestApiConfig = {
   plugins: [],
   mockMode: false,
 };
+
+const internalSecret = 'cache-route-test-internal-secret';
+const operatorHeaders = forwardedIdentityHeaders({
+  type: 'user', userId: 'operator-test', namespaceId: 'tenant-test', tier: 'enterprise',
+  permissions: Object.values(PERMISSIONS),
+}, internalSecret);
 
 function createMockSnapshot(rev: number): RegistrySnapshot {
   return {
@@ -41,7 +50,9 @@ describe('registerCacheRoutes', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.stubEnv('GATEWAY_INTERNAL_SECRET', internalSecret);
     app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
 
     mockCliApi = {
       snapshot: vi.fn(),
@@ -54,6 +65,7 @@ describe('registerCacheRoutes', () => {
 
   afterEach(async () => {
     await app.close();
+    vi.unstubAllEnvs();
   });
 
   describe('POST /api/v1/cache/invalidate', () => {
@@ -74,6 +86,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -107,6 +120,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -130,6 +144,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -147,16 +162,19 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(500);
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('CACHE_INVALIDATION_FAILED');
-      expect(payload.error.message).toBe('Registry refresh failed');
-      expect(payload.meta.requestId).toBeDefined();
-      expect(payload.meta.durationMs).toBeGreaterThanOrEqual(0);
+      expect(payload.error).toMatchObject({
+        code: 'KB_RUNTIME_UNEXPECTED',
+        hint: expect.any(String),
+        correlationId: expect.any(String),
+      });
+      expect(JSON.stringify(payload)).not.toContain('Registry refresh failed');
 
       expect(mockCliApi.refresh).toHaveBeenCalledTimes(1);
       expect(mockCliApi.listPlugins).not.toHaveBeenCalled();
@@ -171,14 +189,15 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(500);
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('CACHE_INVALIDATION_FAILED');
-      expect(payload.error.message).toBe('Cache invalidation failed');
+      expect(payload.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(payload.error.hint).toEqual(expect.any(String));
     });
 
     it('handles snapshot() errors', async () => {
@@ -189,12 +208,14 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(500);
       const payload = response.json();
       expect(payload.ok).toBe(false);
-      expect(payload.error.message).toBe('Registry snapshot unavailable');
+      expect(payload.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(payload.error.correlationId).toEqual(expect.any(String));
     });
 
     it('tracks request timing in metadata', async () => {
@@ -217,6 +238,7 @@ describe('registerCacheRoutes', () => {
         const responsePromise = app.inject({
           method: 'POST',
           url: '/api/v1/cache/invalidate',
+          headers: operatorHeaders,
         });
 
         // Drain any pending microtasks so the mock refresh runs and the clock advance
@@ -244,6 +266,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
       const after = new Date();
 
@@ -269,6 +292,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(200);

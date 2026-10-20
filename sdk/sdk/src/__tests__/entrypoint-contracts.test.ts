@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 import * as SDK from "../index.js";
 import * as Command from "../command/index.js";
@@ -18,6 +21,14 @@ function expectRequiredExports(
 }
 
 describe("SDK Entrypoint Contracts", () => {
+  // case: S-003.1
+  it("keeps runtime peer packages external for the platform install", async () => {
+    const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+    const runtime = await readFile(path.join(packageRoot, "dist", "index.js"), "utf8");
+    expect(runtime).toContain("@kb-labs/shared-tool-kit");
+    expect(runtime).toContain("@kb-labs/shared-command-kit");
+  });
+
   it("keeps required root exports", () => {
     expectRequiredExports("@kb-labs/sdk", SDK, [
       "defineCommand",

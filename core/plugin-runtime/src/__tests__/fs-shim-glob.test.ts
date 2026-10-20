@@ -22,11 +22,7 @@ describe('fs-shim glob pattern matching', () => {
   let testDir: string;
 
   beforeEach(async () => {
-    // Create temporary test directory in user's home dir
-    const homeDir = os.homedir();
-    const testRoot = path.join(homeDir, '.kb-glob-test');
-    await fs.mkdir(testRoot, { recursive: true });
-    testDir = await fs.mkdtemp(path.join(testRoot, 'test-'));
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-glob-test-'));
 
     // Create test directory structure
     await fs.mkdir(path.join(testDir, '.kb', 'release'), { recursive: true });
@@ -36,11 +32,23 @@ describe('fs-shim glob pattern matching', () => {
   });
 
   afterEach(async () => {
-    try {
-      await fs.rm(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  // case: S-210.1
+  it('allows the plugin cwd and outdir inside the user temp directory through /var symlinks', async () => {
+    const expected = 'plugin temp fs ok';
+    const outdir = path.join(testDir, '.kb', 'output');
+    const outputFile = path.join(outdir, 'runtime-temp-probe.txt');
+    const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin', permissions: {}, cwd: testDir, outdir });
+
+    await runtime.fs.writeFile(outputFile, expected);
+
+    await expect(fs.readFile(outputFile, 'utf-8')).resolves.toBe(expected);
+    await expect(runtime.fs.readFile(await fs.realpath(outputFile))).resolves.toBe(expected);
+    await expect(runtime.fs.readFile('/var/log/system.log')).rejects.toThrow(PermissionError);
+    await expect(runtime.fs.readFile('/private/var/log/system.log')).rejects.toThrow(PermissionError);
   });
 
   describe('read permissions with glob patterns', () => {
@@ -55,6 +63,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -74,6 +83,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -93,6 +103,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -103,11 +114,11 @@ describe('fs-shim glob pattern matching', () => {
 
     it('should reject reading from non-matching glob pattern outside cwd', async () => {
       // Note: cwd is always readable by default, so we test with a path outside cwd
-      const otherDir = await fs.mkdtemp(path.join(os.homedir(), '.kb-glob-other-'));
-      const testFile = path.join(otherDir, 'secret.ts');
-      await fs.writeFile(testFile, 'secret data');
-
+      const otherDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-glob-other-'));
       try {
+        const testFile = path.join(otherDir, 'secret.ts');
+        await fs.writeFile(testFile, 'secret data');
+
         const permissions: PermissionSpec = {
           fs: {
             read: ['config/**'],
@@ -115,6 +126,7 @@ describe('fs-shim glob pattern matching', () => {
         };
 
         const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
           permissions,
           cwd: testDir,
         });
@@ -136,6 +148,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -154,6 +167,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -172,6 +186,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -190,6 +205,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -203,6 +219,7 @@ describe('fs-shim glob pattern matching', () => {
       const permissions: PermissionSpec = {};
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir: path.join(testDir, '.kb', 'output'),
@@ -226,6 +243,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -243,6 +261,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -258,6 +277,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -277,6 +297,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -298,6 +319,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -320,6 +342,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -346,6 +369,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -365,6 +389,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -385,6 +410,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -403,6 +429,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -421,6 +448,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -444,6 +472,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -466,6 +495,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });

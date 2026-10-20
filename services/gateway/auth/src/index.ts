@@ -5,17 +5,21 @@ export {
   signRefreshToken,
   verifyAccessToken,
   verifyRefreshToken,
+  verifyRefreshTokenKind,
   // User-token flow (ADR-0020, Phase 1.13).
   signUserAccessToken,
   signUserRefreshToken,
   verifyUserAccessToken,
   verifyUserRefreshToken,
+  KB_JWT_ISSUER,
 } from './jwt.js';
 export type {
   JwtConfig,
+  TokenVerification,
   UserAccessPayload,
   UserRefreshPayload,
   SignUserTokenOptions,
+  RefreshTokenKind,
 } from './jwt.js';
 export {
   saveClient,
@@ -49,6 +53,10 @@ export type {
   CreateInviteInput,
   CreateInviteResult,
 } from './invites-store.js';
+export { PasswordResetStore } from './password-reset-store.js';
+export type { PasswordResetRecord } from './password-reset-store.js';
+export { ApiTokensStore } from './api-tokens-store.js';
+export type { ApiTokenRecord } from './api-tokens-store.js';
 export {
   SessionsStore,
   RefreshNotFoundError,
@@ -126,5 +134,6 @@ export type {
   DeviceCtx,
   ChangePasswordInput,
   ActivateInput,
+  CompletePasswordResetInput,
   AuthErrorCode,
 } from './user-auth-service.js';

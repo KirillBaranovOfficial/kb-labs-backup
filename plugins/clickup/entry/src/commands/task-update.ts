@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, updateTask } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 
@@ -7,8 +7,8 @@ type TaskUpdateFlags = {
   desc?: string;
   status?: string;
   priority?: number;
-  assignee_add?: string;
-  assignee_rem?: string;
+  'assignee-add'?: string;
+  'assignee-rem'?: string;
   due?: string;
   json?: boolean;
   full?: boolean;
@@ -29,7 +29,7 @@ export default defineCommand({
   description: 'Update an existing task',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<TaskUpdateFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<TaskUpdateFlags>) {
       const [taskId] = input.argv;
       const skipKeys = new Set(['json', 'full', 'dry-run', 'yes', 'output']);
       const changes = Object.entries(input.flags)
@@ -45,14 +45,15 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<TaskUpdateFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<TaskUpdateFlags>) {
       const [taskId] = input.argv;
       if (!taskId) {
-        validationError(ctx, 'Task ID is required', 'Usage: kb clickup task update <taskId> [--name ...] [--status ...]', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError('Task ID is required', 'Usage: kb clickup task update <taskId> [--name ...] [--status ...]');
       }
 
-      const { name, desc, status, priority, assignee_add, assignee_rem, due, json, full } = input.flags;
+      const { name, desc, status, priority, due, json, full } = input.flags;
+      const assigneeAdd = input.flags['assignee-add'];
+      const assigneeRem = input.flags['assignee-rem'];
 
       const body: Record<string, unknown> = {};
       if (name !== undefined) body.name = name;
@@ -60,10 +61,10 @@ export default defineCommand({
       if (status !== undefined) body.status = status;
       if (priority !== undefined) body.priority = priority;
       if (due !== undefined) body.due_date = parseDue(due);
-      if (assignee_add || assignee_rem) {
+      if (assigneeAdd || assigneeRem) {
         body.assignees = {
-          add: assignee_add ? assignee_add.split(',').map(Number) : [],
-          rem: assignee_rem ? assignee_rem.split(',').map(Number) : [],
+          add: assigneeAdd ? assigneeAdd.split(',').map(Number) : [],
+          rem: assigneeRem ? assigneeRem.split(',').map(Number) : [],
         };
       }
 
@@ -71,7 +72,7 @@ export default defineCommand({
         const task = await updateTask(requireApiKey(), taskId, body);
 
         if (json) {
-          ctx.ui?.json?.(full ? task : { id: task.id, name: task.name, status: task.status.status, url: task.url });
+          return full ? task : { id: task.id, name: task.name, status: task.status.status, url: task.url };
         } else {
           ctx.ui?.success?.('Task updated', {
             sections: [{
@@ -85,10 +86,9 @@ export default defineCommand({
           });
         }
 
-        return { ok: true, result: task };
+        return task;
       } catch (err) {
-        handleError(ctx, err, json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(err);
       }
     },
   },

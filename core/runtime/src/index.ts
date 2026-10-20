@@ -33,6 +33,8 @@ export type {
 
 // Loader
 export { initPlatform, resetPlatform } from "./loader.js";
+export { requireProjectContext } from "./project-context.js";
+export { resolveInstalledAdapterDefaults, resolveDiscoveredAdapterDefaults } from "./default-adapters.js";
 
 // Canonical platform launch path (all process surfaces).
 export {
@@ -125,6 +127,7 @@ export type {
   NotifierChannelConfig,
   NotifierRoutingRule,
 } from "./config.js";
+export { ADAPTER_CONFIG_KEYS } from "./config.js";
 
 // Analytics context
 export { createAnalyticsContext } from "./analytics-context.js";
@@ -141,29 +144,8 @@ export {
 // IPC & TRANSPORT (Re-exported from @kb-labs/core-ipc)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// IPC Servers (Parent Process Side)
-export {
-  UnixSocketServer,
-  type UnixSocketServerConfig,
-  IPCServer,
-  createIPCServer,
-} from "@kb-labs/core-ipc";
-
-// Transport Layer (Child Process Side)
-export {
-  type ITransport,
-  type TransportConfig,
-  type PendingRequest,
-  TransportError,
-  TimeoutError,
-  CircuitOpenError,
-  isRetryableError,
-  IPCTransport,
-  createIPCTransport,
-  UnixSocketTransport,
-  createUnixSocketTransport,
-  type UnixSocketConfig,
-} from "@kb-labs/core-ipc";
+// Transport abstraction used by platform proxy adapters.
+export type { ITransport } from "./transport/transport.js";
 
 // Bulk Transfer (Large Message Optimization)
 export {
@@ -245,3 +227,4 @@ export type { StartFullCycleRequest } from "./run-orchestrator.js";
 
 // Use-cases
 export { startFullCycle } from "./use-cases/start-full-cycle.js";
+export { isWorkspaceDevelopmentMode, type PlatformModeSource } from "./platform-mode.js";

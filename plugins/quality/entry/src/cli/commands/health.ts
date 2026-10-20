@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -20,7 +20,7 @@ export default defineCommand<unknown, CLIInput<HealthFlags>, unknown>({
   description: 'Multidimensional health score: architecture, TypeScript, dead code, dependencies',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<HealthFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<HealthFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QualityPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -31,8 +31,8 @@ export default defineCommand<unknown, CLIInput<HealthFlags>, unknown>({
         const health = cached as HealthScore;
         outputHealth(health, flags, ctx);
         return health.score < cfg.thresholds.health
-          ? { ok: false, error: 'Health score is below threshold', result: health }
-          : { ok: true, result: health };
+          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Health score is below threshold', hint: 'Review the health report, then rerun `kb quality health`.', diagnostics: Object.entries(health.dimensions).filter(([, dimension]) => dimension.score < cfg.thresholds.health).map(([name, dimension]) => ({ code: 'KB_QUALITY_HEALTH_BELOW_THRESHOLD', severity: 'warning', message: `${name} score ${dimension.score} is below threshold ${cfg.thresholds.health}.` })) } }
+          : health;
       }
 
       const [layering, types] = await Promise.all([
@@ -60,17 +60,16 @@ export default defineCommand<unknown, CLIInput<HealthFlags>, unknown>({
       await ctx.platform.cache.set(CACHE_KEYS.HEALTH, health, CACHE_TTLS.FAST);
 
       outputHealth(health, flags, ctx);
-        return health.score < cfg.thresholds.health
-          ? { ok: false, error: 'Health score is below threshold', result: health }
-          : { ok: true, result: health };
+      return health.score < cfg.thresholds.health
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Health score is below threshold', hint: 'Review the health report, then rerun `kb quality health`.', diagnostics: Object.entries(health.dimensions).filter(([, dimension]) => dimension.score < cfg.thresholds.health).map(([name, dimension]) => ({ code: 'KB_QUALITY_HEALTH_BELOW_THRESHOLD', severity: 'warning', message: `${name} score ${dimension.score} is below threshold ${cfg.thresholds.health}.` })) } }
+        : health;
     },
   },
 });
 
-function outputHealth(health: Awaited<ReturnType<typeof calculateHealth>>, flags: { json?: boolean; detailed?: boolean }, ctx: PluginContextV3) {
+function outputHealth(health: Awaited<ReturnType<typeof calculateHealth>>, flags: { json?: boolean; detailed?: boolean }, ctx: PluginCommandContextV3) {
   if (flags.json) {
-    ctx.ui?.json?.(health);
-    return;
+    return health;
   }
 
   const dimItems = Object.entries(health.dimensions).map(([key, dim]) => {

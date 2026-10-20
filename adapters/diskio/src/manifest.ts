@@ -1,6 +1,7 @@
 import type { AdapterManifest } from "@kb-labs/sdk/adapters";
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "disk-io-storage",
   name: "Disk I/O Storage",
@@ -10,7 +11,8 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "IStorage",
-  defaultFor: ["storage"],
+  networkRequired: false,
+  contexts: ["platformData"],
   capabilities: {
     streaming: true,
     custom: {
@@ -20,8 +22,9 @@ export const manifest: AdapterManifest = {
   configSchema: {
     baseDir: {
       type: "string",
-      default: "process.cwd()",
+      default: "storage",
       description: "Directory used as the storage root",
+      pathBase: "platformData",
     },
   },
 };

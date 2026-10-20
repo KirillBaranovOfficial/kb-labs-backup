@@ -4,7 +4,7 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client.js';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client.js';
 
 interface RunCancelParams {
   runId: string;
@@ -33,11 +33,11 @@ export default defineHandler({
       throw new Error('Missing runId parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/runs/${encodeURIComponent(runId)}/cancel`;
+    const url = `${daemonUrl}/runs/${encodeURIComponent(runId)}/cancel`;
     ctx.platform.logger.info(`[workflow-run-cancel-handler] Cancelling run ${runId} at ${url}`);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWorkflowApi(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });

@@ -8,7 +8,7 @@
  */
 
 // Context
-export type { PluginContextV3, ExtractConfig } from "./context.js";
+export type { PluginContextV3, PluginCommandContextV3, ExtractConfig } from "./context.js";
 
 // Host Context
 export type {
@@ -28,6 +28,8 @@ export type {
   WSSender,
   WSLifecycleEvent,
   WSInput,
+  WSConnectionReference,
+  WSInputReference,
 } from "./ws-types.js";
 export type {
   EventStreamSender,
@@ -41,6 +43,11 @@ export { getLoggerMetadataFromHost } from "./logger-metadata.js";
 // Permissions
 export type { PermissionSpec } from "./permissions.js";
 export { DEFAULT_PERMISSIONS } from "./permissions.js";
+export { matchesPermissionPattern } from "./permission-pattern.js";
+
+// CLI manifest declarations
+export { CliCommandDeclSchema, CliFlagDeclSchema } from './cli-schema.js';
+export type { CliFlagDecl } from './cli-schema.js';
 
 // Execution
 export type { ExecutionMeta, RunResult } from "./execution.js";
@@ -67,8 +74,11 @@ export type {
   OutputSectionItem,
   RichOutputSectionItem,
   MessageOptions,
+  UIOutput,
+  PluginHandlerUIFacade,
 } from "./ui.js";
-export { noopUI } from "./ui.js";
+export { InteractiveInputRequiredError, noopUI, renderUIOutputText } from "./ui.js";
+export { uiMessageLevelDefaultTitleCases, uiOutputContractCases } from "./ui-output-contract.js";
 
 // Trace
 export type {
@@ -82,6 +92,7 @@ export { noopTraceContext } from "./trace.js";
 // Errors
 export {
   PluginError,
+  ProductPluginError,
   PermissionError,
   TimeoutError,
   AbortError,
@@ -90,12 +101,9 @@ export {
   NotFoundError,
   RateLimitError,
   PlatformError,
-  ErrorCode,
   isPluginError,
-  wrapError,
 } from "./errors.js";
-export type { SerializedError, ErrorCodeType } from "./errors.js";
-export { pluginErrorToEnvelope, toPluginErrorEnvelope } from "./error-envelope.js";
+export { toErrorEnvelope } from "@kb-labs/core-platform/error-envelope";
 
 // Runtime
 export type {
@@ -224,7 +232,6 @@ export type {
   CommandHandler,
   CommandDefinition,
   CommandResult,
-  CommandSuccess,
   CommandFailure,
   CommandError,
   CommandResultWithMeta,
@@ -259,13 +266,14 @@ export { createExecutionMeta } from "./runner.js";
 export type {
   ManifestV3,
   ServiceManifest,
+  ProjectServiceApiDeclaration,
+  ProjectServiceDeclaration,
   ServiceRuntime,
   ServiceEnvVar,
   SchemaRef,
   DisplayMetadata,
   PluginDependency,
   PlatformRequirements,
-  CliFlagDecl,
   CliCommandDecl,
   CliGroupMeta,
   RestRouteDecl,
@@ -289,11 +297,18 @@ export type {
   ErrorSpec,
 } from "./manifest.js";
 export {
+  collectProjectServiceDeclarations,
+  validateProjectServiceDeclarations,
+  ProjectServiceManifestError,
+} from "./project-service-manifest.js";
+export {
   isManifestV3,
   isServiceManifest,
   getHandlerPath,
   getHandlerPermissions,
+  resolvePluginBasePath,
 } from "./manifest.js";
+export type { PluginBasePathManifest, PluginRouteSurface } from "./manifest.js";
 export {
   parseManifest,
   validateManifest,

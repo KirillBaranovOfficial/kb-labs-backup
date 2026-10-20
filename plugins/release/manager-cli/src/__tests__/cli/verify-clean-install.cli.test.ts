@@ -23,7 +23,7 @@ describe('release:clean-install', () => {
       mockCLIInput({ flags: { tarball: '/tmp/pkg.tgz', name: '@kb-labs/sdk' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     expect(vi.mocked(verifyCleanInstall)).toHaveBeenCalledWith('/tmp/pkg.tgz', '@kb-labs/sdk', [], 'npm', undefined);
   });
 
@@ -53,9 +53,8 @@ describe('release:clean-install', () => {
       mockCLIInput({ flags: { tarball: '/tmp/pkg.tgz', name: '@kb-labs/sdk' } }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors[0]).toContain('EUNSUPPORTEDPROTOCOL');
-    expect(captured.errors[0]).toContain('workspace:*');
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('EUNSUPPORTEDPROTOCOL') } });
+    expect(result).toMatchObject({ error: { message: expect.stringContaining('workspace:*') } });
   });
 
   it('VCI-03: missing --tarball or --name fails before calling verifyCleanInstall', async () => {
@@ -64,7 +63,7 @@ describe('release:clean-install', () => {
 
     const result = await verifyCleanInstallCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
     expect(vi.mocked(verifyCleanInstall)).not.toHaveBeenCalled();
   });
 
@@ -78,8 +77,7 @@ describe('release:clean-install', () => {
       mockCLIInput({ flags: { tarball: '/tmp/pkg.tgz', name: '@kb-labs/sdk', json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const out = captured.json[0] as Record<string, unknown>;
-    expect(out.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
+    expect(result).not.toHaveProperty('result');
   });
 });

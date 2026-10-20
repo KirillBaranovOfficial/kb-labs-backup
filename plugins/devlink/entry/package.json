@@ -13,8 +13,7 @@
     "./plugin-manifest": {
       "types": "./dist/manifest.d.ts",
       "import": "./dist/manifest.js"
-    },
-    "./dist/*": "./dist/*"
+    }
   },
   "files": [
     "dist",
@@ -46,7 +45,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "kb": {

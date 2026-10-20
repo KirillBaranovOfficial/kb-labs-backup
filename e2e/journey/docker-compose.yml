@@ -14,33 +14,89 @@ services:
       retries: 30
     networks: [journey]
 
+  mock-llm:
+    image: python:3.12.12-alpine
+    command: ["python3", "/fixture/mock_llm_server.py"]
+    volumes:
+      - ./journey/mock_llm_server.py:/fixture/mock_llm_server.py:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8317/healthz', timeout=2)"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    networks: [journey]
+
   runner:
+    user: "${KB_JOURNEY_RUNNER_UID:-0}:${KB_JOURNEY_RUNNER_GID:-0}"
     build:
       context: ..
       dockerfile: e2e/journey/Dockerfile.runner
+      args:
+        KB_JOURNEY_GIT_REVISION: ${KB_JOURNEY_GIT_REVISION:-unknown}
     image: ${KB_JOURNEY_RUNNER_IMAGE:-kb-installer-journey:local}
     depends_on:
       origin:
         condition: service_healthy
       verdaccio:
         condition: service_healthy
+      idp-stub:
+        condition: service_healthy
+      mock-llm:
+        condition: service_healthy
     environment:
       KB_CREATE_DOWNLOAD_BASE_URL: http://origin:8080
-      KB_JOURNEY_REGISTRY: http://verdaccio:4873
+      KB_JOURNEY_REGISTRY: &journey-registry http://verdaccio:4873
+      NPM_CONFIG_REGISTRY: *journey-registry
       KB_JOURNEY_SCENARIO: ${KB_JOURNEY_SCENARIO:-commit}
       KB_JOURNEY_FRONT_DOOR: ${KB_JOURNEY_FRONT_DOOR:-agent}
       KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}
+      KB_JOURNEY_SERVICE_PROFILE: ${KB_JOURNEY_SERVICE_PROFILE:-fast}
+      KB_JOURNEY_WORKSPACE_ROOT: /opt/kb-workspace
+      OIDC_CORP_CLIENT_SECRET: journey-oidc-client-secret
+      OIDC_CORP_ISSUER: https://idp-stub:9443
+      NODE_EXTRA_CA_CERTS: /e2e-oidc-certs/ca.crt
+      OPENAI_API_KEY: journey-fake-openai-key
+      VIBEPROXY_API_KEY: journey-fake-vibeproxy-key
+      KB_JOURNEY_LLM_MOCK_BASE_URL: http://mock-llm:8317
+      DEBUG: ${DEBUG:-}
       GITHUB_STEP_SUMMARY: /tmp/journey-summary.md
       KB_JOURNEY_SUMMARY: /summary/journey-summary.md
     volumes:
       - ../.journey/reports:/summary
+      - ${KB_JOURNEY_WORKSPACE_SOURCE:?run e2e/journey/run.sh to set the workspace source}:/opt/kb-workspace:ro
+      - ./oidc-idp/certs:/e2e-oidc-certs:ro
     networks: [journey]
     init: true
 
+  idp-stub:
+    image: kb-e2e-oidc-idp:1.0.0
+    build:
+      context: ./oidc-idp
+      dockerfile: Dockerfile
+    environment:
+      IDP_ISSUER: https://idp-stub:9443
+      IDP_CLIENT_ID: kb-gateway
+      IDP_CLIENT_SECRET: journey-oidc-client-secret
+      IDP_PORT: "9443"
+      IDP_HOST: 0.0.0.0
+      IDP_TLS_KEY: /certs/server.key
+      IDP_TLS_CERT: /certs/server.crt
+      IDP_ALLOWED_REDIRECT_PREFIXES: http://127.0.0.1:4000/
+    volumes:
+      - ./oidc-idp/certs:/certs:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - require('https').get({host:'127.0.0.1',port:9443,path:'/.well-known/openid-configuration',rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks: [journey]
+
   verdaccio:
-    extends:
-      file: docker-compose.yml
-      service: verdaccio
     networks: [journey]
 
 networks:

@@ -1,216 +1,166 @@
 package contracts
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
-	"reflect"
-	"regexp"
-	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
-	"github.com/kb-labs/create/v2/contracts/internal/catalogen"
+	"github.com/kb-labs/clikit/diag"
 )
 
-// The envelope schema, the error catalog and the shared fixtures live next to
-// the TS implementation (core/platform); both sides test against the same
-// files so a drift on either side fails a test.
-const sharedDir = "../../../../core/platform/src/error-envelope"
-
-type catalogFile struct {
-	Codes []struct {
-		Code      string        `json:"code"`
-		Area      ErrorArea     `json:"area"`
-		Stage     ErrorStage    `json:"stage"`
-		Severity  ErrorSeverity `json:"severity"`
-		Retryable bool          `json:"retryable"`
-		Message   string        `json:"message"`
-		Hint      string        `json:"hint"`
-	} `json:"codes"`
-}
-
-func loadCatalog(t *testing.T) catalogFile {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(sharedDir, "errors.catalog.json"))
-	if err != nil {
-		t.Fatalf("read shared catalog: %v", err)
+func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
+	cause := errors.New("invalid config: token=top-secret-value")
+	value := (&RequestValidationError{Code: CodeInputRequired, Field: "platformRoot", Cause: cause}).Diagnostic()
+	if value.Code != CodeInputRequired || value.Unwrap() != cause {
+		t.Fatalf("diag = %#v; cause was not kept internal", value)
 	}
-	var catalog catalogFile
-	if err := json.Unmarshal(data, &catalog); err != nil {
-		t.Fatalf("decode catalog: %v", err)
-	}
-	return catalog
-}
-
-func fixtureFiles(t *testing.T, kind string) []string {
-	t.Helper()
-	files, err := filepath.Glob(filepath.Join(sharedDir, "fixtures", kind, "*.json"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no %s fixtures found (err=%v)", kind, err)
-	}
-	sort.Strings(files)
-	return files
-}
-
-func decodeStrict(data []byte) (*LauncherError, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	var value LauncherError
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
-	}
-	return &value, nil
-}
-
-func TestValidFixturesRoundTripThroughLauncherError(t *testing.T) {
-	for _, file := range fixtureFiles(t, "valid") {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		value, err := decodeStrict(data)
-		if err != nil {
-			t.Fatalf("%s: strict decode: %v", file, err)
-		}
-		if problems := value.Validate(); len(problems) != 0 {
-			t.Fatalf("%s: invalid: %v", file, problems)
-		}
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var want, got map[string]any
-		if err := json.Unmarshal(data, &want); err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Unmarshal(encoded, &got); err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(want, got) {
-			t.Fatalf("%s: round trip changed the envelope\nwant %v\ngot  %v", file, want, got)
-		}
-	}
-}
-
-func TestInvalidFixturesAreRejected(t *testing.T) {
-	for _, file := range fixtureFiles(t, "invalid") {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		value, err := decodeStrict(data)
-		if err != nil {
-			continue // rejected at decode time (unknown field)
-		}
-		if len(value.Validate()) == 0 {
-			t.Fatalf("%s: expected the envelope to be rejected", file)
-		}
-	}
-}
-
-func TestLauncherErrorSerialisesCompleteEnvelope(t *testing.T) {
-	err := NewLauncherError(CodeInputRequired, "required input is missing", "pass --input", errors.New("no file"))
-	err.Actions = []ErrorAction{{ID: "retry", Label: "Retry", Command: "kb-create apply"}}
-	err.Details = map[string]string{"requirement": "openai.key"}
-	data, marshalErr := json.Marshal(err)
-	if marshalErr != nil {
-		t.Fatal(marshalErr)
-	}
-	var got map[string]any
-	if unmarshalErr := json.Unmarshal(data, &got); unmarshalErr != nil {
-		t.Fatal(unmarshalErr)
-	}
-	for key, want := range map[string]any{"code": "KB_INSTALL_INPUT_REQUIRED", "area": "install", "stage": "resolve", "severity": "error", "retryable": false, "cause": "no file"} {
-		if got[key] != want {
-			t.Fatalf("%s = %v, want %v", key, got[key], want)
-		}
-	}
-	if problems := err.Validate(); len(problems) != 0 {
-		t.Fatalf("Validate: %v", problems)
-	}
-	// A value (not pointer) serialises identically, so embedding is safe.
-	byValue, _ := json.Marshal(*err)
-	if !bytes.Equal(byValue, data) {
-		t.Fatalf("value and pointer encodings differ")
-	}
-}
-
-func TestLauncherErrorDerivesAreaWithoutExplicitField(t *testing.T) {
-	data, _ := json.Marshal(&LauncherError{Code: CodeServiceGraphMismatch, Stage: StageVerify, Message: "m", Hint: "h"})
-	var got map[string]any
-	_ = json.Unmarshal(data, &got)
-	if got["area"] != "install" || got["severity"] != "error" {
-		t.Fatalf("area/severity not derived: %v", got)
-	}
-	if AreaForCode("KB_ADAPTER_NOT_CONFIGURED") != AreaPlugin || AreaForCode("COMMIT_NOTHING_STAGED") != AreaProduct {
-		t.Fatal("unexpected area for adapter/product codes")
-	}
-}
-
-// TestGeneratedCodeTableIsFresh fails when codes_gen.go was not regenerated
-// after errors.catalog.json changed (run `go generate ./contracts`).
-func TestGeneratedCodeTableIsFresh(t *testing.T) {
-	data, err := os.ReadFile(catalogen.CatalogPath)
+	envelope, err := diag.ToEnvelope(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := catalogen.Render(data)
+	entry, ok := diag.LookupCatalog(CodeInputRequired)
+	if !ok {
+		t.Fatal("input-required code is absent from the generated shared catalog")
+	}
+	if envelope.Message != entry.Message || envelope.Hint != entry.Hint || envelope.Area != entry.Area || envelope.Stage != entry.Stage || envelope.Severity != entry.Severity || envelope.Retryable != entry.Retryable {
+		t.Fatalf("envelope = %+v; shared catalog entry = %+v", envelope, entry)
+	}
+	if envelope.Details["field"] != "platformRoot" {
+		t.Fatalf("envelope omitted producer field: %+v", envelope.Details)
+	}
+	data, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	have, err := os.ReadFile("codes_gen.go")
-	if err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(want, have) {
-		t.Fatal("codes_gen.go is stale: run `go generate ./contracts` from tools/kb-create/v2")
+	if fields["cause"] == nil || value.Reason == "" {
+		t.Fatalf("sanitized cause must be visible in JSON and human diagnostics: %s / %#v", data, value)
 	}
-	if len(launcherCodes) != len(loadCatalog(t).Codes) {
-		t.Fatal("launcherCodes does not cover the catalog")
+	if strings.Contains(string(data), "top-secret-value") || strings.Contains(value.Reason, "top-secret-value") {
+		t.Fatalf("secret leaked through diagnostic cause: %s / %q", data, value.Reason)
 	}
-}
-
-func TestCatalogCodesAreUniqueAndHaveHints(t *testing.T) {
-	catalog := loadCatalog(t)
-	seen := map[string]bool{}
-	for _, entry := range catalog.Codes {
-		if seen[entry.Code] {
-			t.Fatalf("duplicate catalog code %s", entry.Code)
-		}
-		seen[entry.Code] = true
-		if entry.Hint == "" || entry.Message == "" {
-			t.Fatalf("%s needs a message and a hint", entry.Code)
-		}
-		sample := &LauncherError{Code: entry.Code, Stage: entry.Stage, Message: entry.Message, Hint: entry.Hint}
-		if problems := sample.Validate(); len(problems) != 0 {
-			t.Fatalf("%s: %v", entry.Code, problems)
-		}
-		if AreaForCode(entry.Code) != entry.Area {
-			t.Fatalf("%s: area %s does not match its code prefix", entry.Code, entry.Area)
+	if !strings.Contains(string(data), "[REDACTED]") || !strings.Contains(value.Reason, "[REDACTED]") {
+		t.Fatalf("cause redaction marker missing: %s / %q", data, value.Reason)
+	}
+	for _, field := range []string{"area", "stage", "severity", "retryable", "message", "hint"} {
+		if _, exists := fields[field]; !exists {
+			t.Fatalf("canonical field %q missing: %s", field, data)
 		}
 	}
 }
 
-// TestEmittedCodesAreKnown makes sure no launcher source uses a KB_INSTALL_
-// literal that the code table (and therefore the catalog) does not know.
+func TestNewDiagRejectsMissingCauseForCauseRequiredInstallCodes(t *testing.T) {
+	for _, code := range []string{
+		CodeProjectRegistrationFailed,
+		CodeReleaseIndexInvalid,
+		CodeReleaseIndexUnreadable,
+		CodeReleaseIndexSealFailed,
+	} {
+		for _, missing := range []struct {
+			name  string
+			cause error
+		}{{name: "nil"}, {name: "empty", cause: errors.New("")}} {
+			t.Run(code+"/"+missing.name, func(t *testing.T) {
+				defer func() {
+					if recovered := recover(); recovered == nil {
+						t.Fatalf("NewDiag(%q, %v) did not reject a missing required cause", code, missing.cause)
+					}
+				}()
+				NewDiag(code, "failure", "retry", missing.cause)
+			})
+		}
+	}
+}
+
+func TestNewProjectRegistrationFailureBuildsCauseFromLocalContext(t *testing.T) {
+	status := 502
+	failure := NewProjectRegistrationFailure("login", "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", &status,
+		"0123456789abcdef0123456789abcdef", "retry with the administrator credentials")
+	if failure.Code != CodeProjectRegistrationFailed ||
+		failure.Cause != "Project registration failed during login: KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE (HTTP 502); Gateway correlation ID 0123456789abcdef0123456789abcdef" ||
+		failure.Meta["causeCode"] != "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE" ||
+		failure.Meta["requestStage"] != "login" || failure.Meta["httpStatus"] != status ||
+		failure.Meta["remoteCorrelationId"] != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("registration failure = %#v", failure)
+	}
+}
+
 func TestEmittedCodesAreKnown(t *testing.T) {
-	literal := regexp.MustCompile(`"(KB_INSTALL_[A-Z_]+)"`)
-	for _, source := range []string{"../cmd/kb-create-v2/main.go", "../cmd/kb-create-release-index/main.go"} {
-		data, err := os.ReadFile(source)
+	root := ".."
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
-		for _, match := range literal.FindAllSubmatch(data, -1) {
-			if _, ok := LookupCode(string(match[1])); !ok {
-				t.Fatalf("%s uses unknown code %s; add it to the catalog and launcherCodes", source, match[1])
+		if entry.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if filepath.Ext(path) != ".go" || len(base) >= len("_test.go") && base[len(base)-len("_test.go"):] == "_test.go" {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		check := func(code string) {
+			if _, ok := diag.LookupCatalog(code); !ok {
+				t.Errorf("%s emits code %s missing from the generated shared catalog", path, code)
 			}
 		}
-	}
-	for _, code := range []string{CodeIncompatibleComponents, CodeProviderUnresolved, CodeProviderAmbiguous, CodeInputRequired, CodeConfigRequired, CodeArtifactMismatch, CodeServiceGraphMismatch} {
-		if _, ok := LookupCode(code); !ok {
-			t.Fatalf("%s missing from launcher table", code)
-		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch value := node.(type) {
+			case *ast.ValueSpec:
+				for index, name := range value.Names {
+					if len(name.Name) <= len("Code") || name.Name[:len("Code")] != "Code" || index >= len(value.Values) {
+						continue
+					}
+					literal, ok := value.Values[index].(*ast.BasicLit)
+					if !ok || literal.Kind != token.STRING {
+						continue
+					}
+					code, err := strconv.Unquote(literal.Value)
+					if err == nil {
+						check(code)
+					}
+				}
+			case *ast.CallExpr:
+				if len(value.Args) == 0 {
+					break
+				}
+				name := ""
+				switch function := value.Fun.(type) {
+				case *ast.Ident:
+					name = function.Name
+				case *ast.SelectorExpr:
+					name = function.Sel.Name
+				}
+				if name != "NewDiag" && name != "New" && name != "Wrap" && name != "hostError" {
+					break
+				}
+				literal, ok := value.Args[0].(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					break
+				}
+				code, err := strconv.Unquote(literal.Value)
+				if err == nil && len(code) > len("KB_") && code[:len("KB_")] == "KB_" {
+					check(code)
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

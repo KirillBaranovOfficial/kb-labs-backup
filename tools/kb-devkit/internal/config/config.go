@@ -183,6 +183,11 @@ type DepsRules struct {
 	// ForbiddenKbDeps is a denylist of @kb-labs/* dependencies. Reported even
 	// if AllowedKbDeps would otherwise permit them — denylist wins.
 	ForbiddenKbDeps []string `yaml:"forbidden_kb_deps"`
+
+	// AllowedKbImports and ForbiddenKbImports constrain complete import specifiers.
+	// Unlike dependency patterns, these match one exact package subpath.
+	AllowedKbImports   []string `yaml:"allowed_kb_imports"`
+	ForbiddenKbImports []string `yaml:"forbidden_kb_imports"`
 }
 
 // GoRules defines rules for Go packages.
@@ -246,11 +251,13 @@ type RunConfig struct {
 
 // CustomCheck is an escape-hatch checker executed as a shell command.
 type CustomCheck struct {
-	Name     string   `yaml:"name"`
-	Run      string   `yaml:"run"`
-	Fix      string   `yaml:"fix"`
-	On       []string `yaml:"on"`       // check | gate
-	Language string   `yaml:"language"` // any | typescript | go
+	Name       string   `yaml:"name"`
+	Run        string   `yaml:"run"`
+	Fix        string   `yaml:"fix"`
+	On         []string `yaml:"on"`       // check | gate
+	Language   string   `yaml:"language"` // any | typescript | go
+	Categories []string `yaml:"categories"`
+	Scope      string   `yaml:"scope"` // package | workspace
 }
 
 type ChecksConfig struct {

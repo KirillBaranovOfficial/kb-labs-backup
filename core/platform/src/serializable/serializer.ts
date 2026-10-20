@@ -35,6 +35,8 @@ import {
   SerializationError,
   DeserializationError,
 } from './types';
+import { ErrorEnvelopeError, type ErrorEnvelope } from '../error-envelope/types.js';
+import { validateErrorEnvelope, isErrorEnvelope } from '../error-envelope/validate.js';
 
 /**
  * Serialize value for IPC transmission.
@@ -110,6 +112,17 @@ function serializeValue(value: unknown, seen: WeakSet<object>): SerializableValu
 
   // Error → structured
   if (value instanceof Error) {
+    const envelope = 'envelope' in value ? value.envelope : undefined;
+    if (isErrorEnvelope(envelope)) {
+      return {
+        __type: 'Error',
+        name: value.name,
+        message: value.message,
+        stack: value.stack,
+        code: envelope.code,
+        envelope,
+      } as SerializableError;
+    }
     return {
       __type: 'Error',
       name: value.name,
@@ -183,7 +196,7 @@ export function deserialize(value: SerializableValue): unknown {
   }
 
   // Check for special types
-  type SpecialObject = { __type?: string; data?: unknown; iso?: unknown; message?: unknown; name?: unknown; stack?: unknown; code?: unknown };
+  type SpecialObject = { __type?: string; data?: unknown; iso?: unknown; message?: unknown; name?: unknown; stack?: unknown; code?: unknown; envelope?: unknown };
   const obj = value as SpecialObject;
 
   // Buffer
@@ -214,6 +227,12 @@ export function deserialize(value: SerializableValue): unknown {
   if (obj.__type === 'Error') {
     if (typeof obj.message !== 'string') {
       throw new DeserializationError('Invalid SerializableError: missing or invalid message field');
+    }
+    if (obj.envelope !== undefined) {
+      if (validateErrorEnvelope(obj.envelope).length > 0) {
+        throw new DeserializationError('Invalid SerializableError: invalid error envelope');
+      }
+      return new ErrorEnvelopeError(obj.envelope as ErrorEnvelope);
     }
     const error = new Error(obj.message);
     if (typeof obj.name === 'string') {

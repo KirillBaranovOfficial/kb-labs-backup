@@ -13,6 +13,9 @@ type VersionResult = CommandResult & {
 
 export const version = defineSystemCommand<VersionFlags, VersionResult>({
   name: 'version',
+  scope: 'platform',
+  authProtection: 'public',
+  jsonTest: { safeArgs: [] },
   description: 'Show CLI version',
   longDescription: 'Displays the current version of the KB Labs CLI',
   category: 'info',
@@ -46,16 +49,10 @@ export const version = defineSystemCommand<VersionFlags, VersionResult>({
       ctx.ui?.write(`KB Labs CLI v${cliVersion}\n`);
       ctx.ui?.write(`Node: ${nodeVersion}\n`);
       ctx.ui?.write(`Platform: ${platform}\n`);
-    } else {
-      ctx.ui?.json({
-        version: cliVersion,
-        nodeVersion,
-        platform,
-      });
     }
 
     return {
-      ok: true,
+
       version: cliVersion,
       nodeVersion,
       platform,

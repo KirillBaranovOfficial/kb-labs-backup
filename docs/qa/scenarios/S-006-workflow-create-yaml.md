@@ -1,47 +1,31 @@
 ---
 id: S-006
-title: Workflow — Create from YAML
+title: Workflow — Create and validate the starter YAML definition
 persona: solo-developer
+area: workflow
 priority: P0
-automation: e2e-todo
-e2e: e2e/workflows/scenarios/default/cases/basic.spec.ts
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer writes a workflow YAML file, KB Labs discovers it, and it appears in the workflow list ready to run.
+
+A developer creates the supported local workflow example, validates its YAML definition, and discovers it in the selected project's workflow catalog.
 
 ## Prerequisites
-- [ ] Platform installed, `kb-dev start` done
-- [ ] Services healthy (gateway :4000, workflow :7778)
 
----
+- [ ] Run commands from a registered project directory with the host running.
+- [ ] The installed platform includes the enabled `@kb-labs/workflow-entry` package in its platform marketplace lock.
+- [ ] In secured mode, an authenticated gateway session is available.
 
 ## Steps
 
-### Phase 1 — Write workflow
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Create `.kb/workflows/hello.yaml` with minimal workflow definition | File created | | ⬜ |
-| 2 | `curl http://localhost:7778/api/v1/workflows` | `hello` appears in list | | ⬜ |
-| 3 | `kb workflow list` | Shows `hello` workflow | | ⬜ |
-
-### Phase 2 — Workflow structure validation
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 4 | Workflow has `id`, `name`, at least one `job` | Parsed correctly, no errors in logs | | ⬜ |
-| 5 | Write workflow with syntax error (missing required field) | Error surfaced clearly — not silent fail | | ⬜ |
-
-### Phase 3 — Hot reload
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 6 | Edit `.kb/workflows/hello.yaml` while services running | Change picked up without restart | | ⬜ |
-| 7 | `kb workflow list` after edit | Shows updated definition | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-006.1 | Run `kb workflow create` | CLI creates `.kb/workflows/hello.yml` with `name: hello`, `version: 1.0.0`, `on.manual: true`, and a `hello` job using `builtin:shell` with `with.command: echo hello-workflow`. |
+| S-006.2 | Run `kb workflow lint` | The starter definition is reported valid; command exits 0. |
+| S-006.3 | Run `kb workflow defs list --json` | The installed platform discovers the workflow plugin from its platform marketplace lock, and JSON includes the definition whose ID is `hello`. |
+| S-006.4 | Run `kb workflow create` again without changing the existing file | CLI reports `Workflow file already exists: .kb/workflows/hello.yml` and advises choosing another project or renaming the file; the existing file contents remain unchanged. |
+| S-006.5 | Change the `hello` step's `with.command` field to an invalid value by removing it, then run `kb workflow lint` | Lint exits non-zero and identifies `.kb/workflows/hello.yml` and the missing `command` field. |

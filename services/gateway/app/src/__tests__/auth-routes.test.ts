@@ -9,11 +9,12 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { ICache } from '@kb-labs/core-platform';
+import { createErrorEnvelope, type ICache } from '@kb-labs/core-platform';
 import { signAccessToken, type JwtConfig } from '@kb-labs/gateway-auth';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import { createAuthMiddleware } from '../auth/middleware.js';
 import { registerAuthRoutes } from '../auth/routes.js';
+import { registerGatewayUxErrorResponses } from '../ux-boundary.js';
 
 // ── Minimal stub cache (no pre-seeded static tokens) ─────────────────────────
 
@@ -34,7 +35,7 @@ const testJwtConfig: JwtConfig = { secret: 'test-secret' };
 /** Signs a machine JWT with the given permissions using the test JWT secret. */
 async function makeMachineJwt(permissions: string[]): Promise<string> {
   const { token } = await signAccessToken(
-    { hostId: 'test-admin-host', namespaceId: 'test-ns', tier: 'free', type: 'machine', permissions },
+    { hostId: 'test-admin-host', namespaceId: 'test-ns', tier: 'free', type: 'machine_access', permissions },
     testJwtConfig,
   );
   return token;
@@ -67,9 +68,10 @@ beforeAll(async () => {
 
   authService = makeAuthService();
   app = Fastify({ logger: false });
+  registerGatewayUxErrorResponses(app);
 
   const cache = makeCache();
-  app.addHook('preHandler', createAuthMiddleware(cache, testJwtConfig));
+  app.addHook('onRequest', createAuthMiddleware(cache, testJwtConfig));
 
   // We inject the mocked authService via cast — same interface
   registerAuthRoutes(app, authService as never);
@@ -87,6 +89,25 @@ afterAll(async () => {
 // without the permission get 403 from the handler.
 
 describe('POST /auth/register', () => {
+  it('denies an authenticated machine without machine:register before registration', async () => {
+    authService.register.mockClear();
+    const token = await makeMachineJwt([]);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      headers: { Authorization: `Bearer ${token}` },
+      payload: { name: 'Unauthorized Agent' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_FORBIDDEN',
+      message: 'Permission denied: machine:register',
+		details: { permission: 'machine:register' },
+    } });
+    expect(authService.register).not.toHaveBeenCalled();
+  });
+
   it('returns 200 with clientId, clientSecret, hostId, namespaceId on success (admin Bearer)', async () => {
     authService.register.mockResolvedValue({
       clientId: 'client-abc',
@@ -139,8 +160,7 @@ describe('POST /auth/register', () => {
       payload: {},
     });
     expect(res.statusCode).toBe(400);
-    const body = res.json() as { error: string };
-    expect(body.error).toBe('Bad Request');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', correlationId: expect.any(String) } });
   });
 
   it('returns 400 when body is empty (authenticated admin)', async () => {
@@ -173,14 +193,35 @@ describe('POST /auth/register', () => {
     );
   });
 
-  it('returns 401 for anonymous (no Authorization header)', async () => {
+  // case: S-104.6
+  it('refuses anonymous machine registration at the global auth gate', async () => {
+    authService.register.mockClear();
     const res = await app.inject({
       method: 'POST',
       url: '/auth/register',
       payload: { name: 'x' },
-      // No Authorization header — middleware blocks with 401
+      // No Authorization header — the global auth gate rejects before route dispatch.
     });
     expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', {
+      details: { gatewayUrl: 'http://localhost:80' },
+    }) });
+    expect(res.json().error.correlationId).toEqual(expect.any(String));
+    expect(authService.register).not.toHaveBeenCalled();
+  });
+
+  // case: S-104.6
+  it('refuses an anonymous human signup body before machine request validation', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { name: 'new-member', email: 'new-member@example.test', password: 'HumanPass123!' },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', {
+      details: { gatewayUrl: 'http://localhost:80' },
+    }) });
   });
 });
 
@@ -218,9 +259,9 @@ describe('POST /auth/token', () => {
     });
 
     expect(res.statusCode).toBe(401);
-    const body = res.json() as { error: string; message: string };
-    expect(body.error).toBe('Unauthorized');
-    expect(body.message).toContain('Invalid credentials');
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_INVALID_CREDENTIALS', message: 'The credentials are invalid.',
+    } });
   });
 
   it('returns 400 when clientId is missing', async () => {
@@ -256,10 +297,13 @@ describe('POST /auth/token', () => {
 describe('POST /auth/refresh', () => {
   it('returns 200 with new token pair on valid refresh token', async () => {
     authService.refreshTokens.mockResolvedValue({
+      ok: true,
+      payload: {
       accessToken: 'new.access.token',
       refreshToken: 'new.refresh.token',
       expiresIn: 3600,
       tokenType: 'Bearer',
+      },
     });
 
     const res = await app.inject({
@@ -275,8 +319,9 @@ describe('POST /auth/refresh', () => {
     expect(authService.refreshTokens).toHaveBeenCalledWith('valid.refresh.token');
   });
 
-  it('returns 401 when refresh token is invalid (refreshTokens returns null)', async () => {
-    authService.refreshTokens.mockResolvedValue(null);
+  // case: S-203.20
+  it('returns 401 with the catalogued expired-token code', async () => {
+    authService.refreshTokens.mockResolvedValue({ ok: false, reason: 'expired' });
 
     const res = await app.inject({
       method: 'POST',
@@ -285,9 +330,7 @@ describe('POST /auth/refresh', () => {
     });
 
     expect(res.statusCode).toBe(401);
-    const body = res.json() as { error: string; message: string };
-    expect(body.error).toBe('Unauthorized');
-    expect(body.message).toContain('Invalid or expired');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_TOKEN_EXPIRED', details: { gatewayUrl: 'http://localhost:80', reason: 'expired' } } });
   });
 
   it('returns 400 when refreshToken field is missing', async () => {
@@ -325,7 +368,59 @@ describe('Auth middleware — public routes', () => {
 
     // 401 from the handler (bad credentials) — not from middleware
     expect(res.statusCode).toBe(401);
-    const body = res.json() as { error: string };
-    expect(body.error).toBe('Unauthorized');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
+  });
+});
+
+describe('POST /auth/logout/cli token-kind routing', () => {
+  it.each([
+    { kind: { kind: 'machine', hostId: 'host-1' }, revokeMachine: true, revokeUser: false },
+    { kind: { kind: 'user', userId: 'user-1', tenantId: 'tenant-1', familyId: 'family-1' }, revokeMachine: false, revokeUser: true },
+  ])('revokes only the verified $kind.kind token kind', async ({ kind, revokeMachine, revokeUser }) => {
+    const routeApp = Fastify({ logger: false });
+    registerGatewayUxErrorResponses(routeApp);
+    const routeAuthService = {
+      classifyRefreshToken: vi.fn().mockResolvedValue({ ok: true, payload: kind }),
+      revokeRefreshToken: vi.fn().mockResolvedValue(true),
+    };
+    const userLogoutFn = vi.fn().mockResolvedValue(undefined);
+    registerAuthRoutes(routeApp, routeAuthService as never, {
+      userRefreshFn: vi.fn().mockResolvedValue(false),
+      userLogoutFn,
+      pdp: {} as never,
+    });
+    await routeApp.ready();
+
+    const response = await routeApp.inject({
+      method: 'POST', url: '/auth/logout/cli', payload: { refreshToken: 'verified-refresh-token' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true });
+    expect(routeAuthService.classifyRefreshToken).toHaveBeenCalledWith('verified-refresh-token');
+    expect(routeAuthService.revokeRefreshToken).toHaveBeenCalledTimes(revokeMachine ? 1 : 0);
+    expect(userLogoutFn).toHaveBeenCalledTimes(revokeUser ? 1 : 0);
+    await routeApp.close();
+  });
+
+  it('does not route an unrecognized refresh token to either revoker', async () => {
+    const routeApp = Fastify({ logger: false });
+    registerGatewayUxErrorResponses(routeApp);
+    const routeAuthService = {
+      classifyRefreshToken: vi.fn().mockResolvedValue({ ok: false, reason: 'invalid' }),
+      revokeRefreshToken: vi.fn(),
+    };
+    const userLogoutFn = vi.fn();
+    registerAuthRoutes(routeApp, routeAuthService as never, {
+      userRefreshFn: vi.fn().mockResolvedValue(false), userLogoutFn, pdp: {} as never,
+    });
+    await routeApp.ready();
+    const response = await routeApp.inject({
+      method: 'POST', url: '/auth/logout/cli', payload: { refreshToken: 'unrecognized-token' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(routeAuthService.revokeRefreshToken).not.toHaveBeenCalled();
+    expect(userLogoutFn).not.toHaveBeenCalled();
+    await routeApp.close();
   });
 });

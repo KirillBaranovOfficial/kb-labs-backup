@@ -8,6 +8,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createContextLogger, createErrorEnvelope, createProductErrorEnvelope, toErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
+import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
+import type { CommandResult } from '@kb-labs/plugin-contracts';
 import { defineSystemCommand, defineSystemCommandGroup } from '../define-system-command';
 
 describe('defineSystemCommand', () => {
@@ -46,6 +49,7 @@ describe('defineSystemCommand', () => {
       requestId: 'test-request-id',
       pluginId: '@kb-labs/system',
       cwd: '/test',
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       ui: mockUI,
       platform: {
         logger: mockLogger as unknown as any,
@@ -70,9 +74,324 @@ describe('defineSystemCommand', () => {
   });
 
   describe('Basic Command Creation', () => {
+    it.each(['returned', 'thrown'] as const)('%s product failure preserves its contract in human and JSON output', async (failureKind) => {
+      const productEnvelope = createProductErrorEnvelope({
+        code: 'COMMIT_NOTHING_STAGED',
+        message: 'Nothing is staged.',
+        hint: 'Stage the intended changes, then retry.',
+        retryable: false,
+      });
+      const productError = Object.assign(new Error(productEnvelope.message), {
+        code: productEnvelope.code,
+        hint: productEnvelope.hint,
+        details: productEnvelope.details,
+      });
+      const returnedFailure = {
+        ok: false as const,
+        error: {
+          code: productEnvelope.code,
+          message: productEnvelope.message,
+          hint: productEnvelope.hint,
+          ...(productEnvelope.details ? { details: productEnvelope.details } : {}),
+        },
+      };
+      const command = defineSystemCommand({
+        name: 'product-error-contract',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'Product error contract fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => failureKind === 'returned'
+          ? returnedFailure
+          : Promise.reject(productError),
+      });
+
+      for (const jsonMode of [false, true]) {
+        mockUI.json.mockClear();
+        mockUI.error.mockClear();
+        const exitCode = await command.run(mockCtx, [], { json: jsonMode });
+        expect(exitCode).toBe(1);
+        if (jsonMode) {
+          expect(mockUI.json).toHaveBeenCalledWith({
+            ok: false,
+            error: expect.objectContaining({
+              code: 'COMMIT_NOTHING_STAGED',
+              message: 'Nothing is staged.',
+              hint: 'Stage the intended changes, then retry.',
+            }),
+          });
+        } else {
+          expect(mockUI.error).toHaveBeenCalledWith(
+            expect.stringContaining('COMMIT_NOTHING_STAGED'),
+            { hint: 'Stage the intended changes, then retry.' },
+          );
+          expect(mockUI.error.mock.calls[0]?.[0]).toContain('Nothing is staged.');
+        }
+      }
+    });
+
+    it('turns a top-level product failure without a hint into a contract violation', async () => {
+      const malformed = {
+        ok: false,
+        error: { code: 'COMMIT_NOTHING_STAGED', message: 'Nothing is staged.' },
+      } as unknown as CommandResult;
+      const command = defineSystemCommand({
+        name: 'product-error-without-hint',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'Malformed product error fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => malformed,
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledWith({
+        ok: false,
+        error: expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }),
+      });
+    });
+
+    it('uses the usage exit code for catalogued invalid input', async () => {
+      const command = defineSystemCommand({
+        name: 'system-input-error',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System input error fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => { throw new InteractiveInputRequiredError('kb command --required-input', 'This test prompt cannot be answered.'); },
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(2);
+      expect(mockUI.json).toHaveBeenCalledWith({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'KB_RUNTIME_INPUT_INVALID',
+          message: 'The provided input is invalid.',
+          cause: 'This test prompt cannot be answered.',
+          hint: 'kb command --required-input',
+        }),
+      });
+    });
+
+    it.each([
+      ['catalogued', Object.assign(new Error('Catalogued failure.'), {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        hint: 'Fix the failure and retry.',
+        details: { command: 'kb system-error-normalizer' },
+      })],
+      ['plain Error', new Error('Unexpected failure.')],
+      ['string', 'Unexpected string failure'],
+      ['invalid details', Object.assign(new Error('Bad details.'), {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        details: { report: '{"errors":[]}' },
+      })],
+      ['non-string details', Object.assign(new Error('Bad detail type.'), {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        details: { report: 42 },
+      })],
+    ])('uses the platform normalizer for %s across system and plugin JSON paths', async (_name, thrown) => {
+      const command = defineSystemCommand({
+        name: 'system-error-normalizer',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System error normalizer fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => { throw thrown; },
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+      const systemOutput = mockUI.json.mock.calls[0]?.[0] as { error: unknown };
+      expect(exitCode).toBe(1);
+      expect(systemOutput.error).toEqual(toErrorEnvelope(thrown, { correlationId: 'test-request-id', binary: 'kb' }));
+    });
+
+    it('serializes returned system command data through the shared CLI result serializer', async () => {
+      const command = defineSystemCommand({
+        name: 'system-result',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System result fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => ({ ok: true as const, version: '1.2.3' }),
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(0);
+      expect(mockUI.json).toHaveBeenCalledOnce();
+      expect(mockUI.json).toHaveBeenCalledWith({ ok: true, data: { ok: true, version: '1.2.3' } });
+    });
+
+    // case: S-203.1
+    it('rejects an ADR-0049-shaped object returned by a system handler', async () => {
+      const command = defineSystemCommand({
+        name: 'system-envelope-violation',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System envelope violation fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => ({ ok: true as const, data: { value: 'already wrapped' } }),
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }),
+      }));
+    });
+
+    it('keeps a domain value with ok and data fields when the shared validator says it is not an envelope', async () => {
+      const domainValue = { ok: true as const, data: 'domain data', status: 'healthy' };
+      const command = defineSystemCommand({
+        name: 'system-domain-result',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System domain result fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => domainValue,
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(0);
+      expect(mockUI.json).toHaveBeenCalledWith({ ok: true, data: domainValue });
+    });
+
+    it('rejects handler JSON writes with the catalogued contract violation', async () => {
+      const command = defineSystemCommand({
+        name: 'system-json-violation',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System JSON violation fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async (ctx) => {
+          ctx.ui?.json({ ok: true, data: 'bypass' });
+          return { ok: true as const };
+        },
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledOnce();
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }),
+      }));
+    });
+
+    it('rejects handler error writes with the catalogued contract violation', async () => {
+      const command = defineSystemCommand({
+        name: 'system-error-violation',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System error violation fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async (ctx) => {
+          ctx.ui?.error('bypass');
+          return { ok: true as const };
+        },
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledOnce();
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }),
+      }));
+    });
+
+    it('normalizes unknown throws and preserves catalogued error details', async () => {
+      const unexpected = defineSystemCommand({
+        name: 'system-unexpected',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System unexpected fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => { throw new Error('sensitive internal cause'); },
+      });
+      const unexpectedExit = await unexpected.run(mockCtx, [], { json: true });
+      const unexpectedEnvelope = mockUI.json.mock.calls.at(-1)?.[0];
+      expect(unexpectedExit).toBe(1);
+      const error = (unexpectedEnvelope as { error: { correlationId: string; hint: string } }).error;
+      expect(unexpectedEnvelope).toMatchObject({
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_UNEXPECTED',
+          correlationId: expect.any(String),
+          hint: createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+            correlationId: error.correlationId,
+          }).hint,
+        },
+      });
+      expect(JSON.stringify(unexpectedEnvelope)).not.toContain('sensitive internal cause');
+
+      mockUI.json.mockClear();
+      const catalogued = defineSystemCommand({
+        name: 'system-catalogued',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System catalogued failure fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => {
+          throw Object.assign(new Error('Invalid configuration value.'), {
+            code: 'KB_CONFIG_INVALID',
+            hint: 'Run `kb config validate`.',
+            details: { path: 'llm.model', nextCommand: 'kb config validate' },
+            correlationId: 'corr-system-catalogued',
+          });
+        },
+      });
+
+      expect(await catalogued.run(mockCtx, [], { json: true })).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'KB_CONFIG_INVALID',
+          message: 'Invalid configuration value.',
+          hint: 'Run `kb config validate`.',
+          details: { path: 'llm.model', nextCommand: 'kb config validate' },
+          correlationId: 'corr-system-catalogued',
+        }),
+      }));
+    });
+
+    it('rejects undeclared flags through the JSON error presenter', async () => {
+      const handler = vi.fn(async () => ({ ok: true as const }));
+      const command = defineSystemCommand({
+        name: 'strict-flags',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
+        description: 'Strict flag validation fixture',
+        flags: { json: { type: 'boolean' } },
+        handler,
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true, unexpected: true });
+
+      expect(exitCode).toBe(2);
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'KB_RUNTIME_INPUT_INVALID',
+          hint: expect.any(String),
+        }),
+      }));
+    });
     it('should create a command with correct metadata', () => {
       const command = defineSystemCommand({
         name: 'test-cmd',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test command',
         longDescription: 'Long description',
         category: 'testing',
@@ -99,6 +418,8 @@ describe('defineSystemCommand', () => {
     it('should default category to "system"', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -110,6 +431,8 @@ describe('defineSystemCommand', () => {
     it('should default aliases to empty array', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -121,6 +444,8 @@ describe('defineSystemCommand', () => {
     it('should default examples to empty array', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -134,6 +459,8 @@ describe('defineSystemCommand', () => {
     it('should convert flag schema to FlagDefinition[]', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           name: { type: 'string', description: 'Name', required: true },
@@ -179,6 +506,8 @@ describe('defineSystemCommand', () => {
     it('should handle choices for string flags', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           mode: { type: 'string', choices: ['dev', 'prod'] as const },
@@ -197,6 +526,8 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler,
@@ -208,7 +539,11 @@ describe('defineSystemCommand', () => {
         expect.objectContaining({
           host: 'cli',
           pluginId: '@kb-labs/system',
-          ui: mockUI,
+          ui: expect.objectContaining({
+            ...mockUI,
+            json: expect.any(Function),
+            error: expect.any(Function),
+          }),
           platform: expect.objectContaining({ logger: mockLogger }),
           runtime: expect.any(Object),
           trace: expect.objectContaining({ traceId: 'test-trace-id' }),
@@ -219,33 +554,76 @@ describe('defineSystemCommand', () => {
       );
     });
 
-    it('should return 0 for successful CommandResult', async () => {
+    it('serializes plain successful command data', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
-        handler: async () => ({ ok: true, data: 'success' }),
+        handler: async () => 'success',
       });
 
       const exitCode = await command.run(mockCtx, [], {});
       expect(exitCode).toBe(0);
     });
 
-    it('should return 1 for failed CommandResult', async () => {
+    it('accepts the shared typed CommandFailure from system handlers', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
-        handler: async () => ({ ok: false, error: 'failed' }),
+        handler: async () => ({
+          ok: false,
+          error: {
+            code: 'KB_RUNTIME_COMMAND_FAILED',
+            message: 'The command failed.',
+            hint: 'Run `kb <command> --help` to review required inputs, then rerun the command.',
+          },
+        }),
       });
 
       const exitCode = await command.run(mockCtx, [], {});
       expect(exitCode).toBe(1);
+      expect(mockUI.error).toHaveBeenCalledWith(expect.stringContaining('KB_RUNTIME_COMMAND_FAILED'), expect.anything());
+    });
+
+    it.each([
+      ['input failure', 'KB_RUNTIME_INPUT_INVALID', 2],
+      ['operation failure', 'KB_RUNTIME_COMMAND_FAILED', 1],
+    ] as const)('maps a returned CommandFailure for %s to its catalogued exit code', async (_label, code, expectedExitCode) => {
+      const command = defineSystemCommand({
+        name: 'test-returned-failure-exit-code',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
+        description: 'Test returned failure exit code',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => ({
+          ok: false,
+          error: {
+            code,
+            message: 'The command failed.',
+            hint: 'Correct the input or retry the operation.',
+          },
+        }),
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(expectedExitCode);
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code }),
+      }));
     });
 
     it('should return numeric exit code directly', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => 42,
@@ -258,6 +636,8 @@ describe('defineSystemCommand', () => {
     it('should handle synchronous handlers', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: () => ({ ok: true }),
@@ -274,6 +654,8 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           name: { type: 'string', required: true },
@@ -292,6 +674,8 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           name: { type: 'string', required: true },
@@ -314,6 +698,8 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           count: { type: 'number', default: 10 },
@@ -336,6 +722,8 @@ describe('defineSystemCommand', () => {
     it('should handle handler errors', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => {
@@ -352,6 +740,8 @@ describe('defineSystemCommand', () => {
     it('should log errors to platform logger', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => {
@@ -365,21 +755,53 @@ describe('defineSystemCommand', () => {
     });
 
     it('should output error in JSON mode', async () => {
+      const logger = createContextLogger(mockLogger as unknown as ILogger, {
+        applicationId: 'kb',
+        serviceId: 'kb',
+        instanceId: 'test',
+        layer: 'cli',
+      });
+      logger.registerSensitiveValues(['diagnostic-secret']);
+      mockCtx.platform.logger = logger;
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => {
-          throw new Error('Handler error');
+          throw new TypeError('Handler error: diagnostic-secret');
         },
       });
 
       await command.run(mockCtx, [], { json: true });
 
       expect(mockUI.json).toHaveBeenCalled();
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'CLI command failed unexpectedly',
+        expect.objectContaining({
+          name: 'TypeError',
+          message: 'Handler error: [REDACTED]',
+          stack: expect.stringContaining('[REDACTED]'),
+        }),
+        expect.objectContaining({
+          event: 'cli.unexpected_error',
+          correlationId: 'test-request-id',
+          operation: 'cli.command.failed',
+          errorClass: 'TypeError',
+          errorMessage: 'Handler error: [REDACTED]',
+          causeChain: [expect.objectContaining({ name: 'TypeError', message: 'Handler error: [REDACTED]' })],
+          stack: expect.stringContaining('[REDACTED]'),
+        }),
+      );
+      expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('diagnostic-secret');
       const jsonCall = mockUI.json.mock.calls[0]?.[0];
       expect(jsonCall.ok).toBe(false);
-      expect(jsonCall.error).toBe('Handler error');
+      expect(jsonCall.error).toMatchObject({
+        code: 'KB_RUNTIME_UNEXPECTED',
+        message: 'An unexpected error occurred.',
+        correlationId: expect.any(String),
+      });
     });
   });
 
@@ -387,6 +809,8 @@ describe('defineSystemCommand', () => {
     it('should accept analytics config (legacy)', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         analytics: {
@@ -410,6 +834,8 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           name: { type: 'string' },
@@ -436,6 +862,8 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler,
@@ -451,6 +879,8 @@ describe('defineSystemCommand', () => {
     it('should log command execution', async () => {
       const command = defineSystemCommand({
         name: 'test-cmd',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -471,6 +901,8 @@ describe('defineSystemCommandGroup', () => {
   it('should create a command group', () => {
     const cmd1 = defineSystemCommand({
       name: 'cmd1',
+      scope: 'project',
+      jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
       description: 'Command 1',
       flags: {},
       handler: async () => ({ ok: true }),
@@ -478,6 +910,8 @@ describe('defineSystemCommandGroup', () => {
 
     const cmd2 = defineSystemCommand({
       name: 'cmd2',
+      scope: 'project',
+      jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
       description: 'Command 2',
       flags: {},
       handler: async () => ({ ok: true }),

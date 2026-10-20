@@ -52,7 +52,7 @@
       {
         "step": "1",
         "title": "Scaffold",
-        "desc": "Run kb-create plugin my-plugin. Manifest, handlers, and tsconfig in place."
+        "desc": "Run kb scaffold run plugin my-plugin --yes. Manifest, handlers, and tsconfig in place."
       },
       {
         "step": "2",
@@ -62,7 +62,7 @@
       {
         "step": "3",
         "title": "Register",
-        "desc": "Install locally or publish to the marketplace. kb plugins list shows it immediately."
+        "desc": "Install locally or publish to the marketplace. kb marketplace plugins list shows it immediately."
       }
     ],
     "surfaceTitle": "One manifest — three surfaces",

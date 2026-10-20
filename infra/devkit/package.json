@@ -159,12 +159,12 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.11.0"
   },
   "packageManager": "pnpm@11.4.0",
   "peerDependencies": {
-    "@playwright/test": "*",
+    "@playwright/test": "^1.52.0",
     "eslint": "^9.35.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.2",

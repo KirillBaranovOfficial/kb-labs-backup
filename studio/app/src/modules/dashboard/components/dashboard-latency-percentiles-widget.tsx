@@ -1,4 +1,4 @@
-import { UICard } from '@kb-labs/studio-ui-kit';
+import { UICard, UIEmptyState, UISkeletonChart } from '@kb-labs/studio-ui-kit';
 import { HolderOutlined } from '@ant-design/icons';
 import { Column } from '@ant-design/plots';
 import { usePrometheusMetrics } from '@kb-labs/studio-data-client';
@@ -6,7 +6,7 @@ import { useDataSources } from '../../../providers/data-sources-provider';
 
 export function DashboardLatencyPercentilesWidget() {
   const sources = useDataSources();
-  const { data: metrics } = usePrometheusMetrics(sources.observability);
+  const { data: metrics, isLoading } = usePrometheusMetrics(sources.observability);
 
   const min = metrics?.latency?.min ?? 0;
   const average = metrics?.latency?.average ?? 0;
@@ -74,12 +74,9 @@ export function DashboardLatencyPercentilesWidget() {
       style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
       styles={{ body: { flex: 1, padding: '16px', display: 'flex', flexDirection: 'column' } }}
     >
-      {metrics && <Column {...config} />}
-      {!metrics && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-          Loading...
-        </div>
-      )}
+      {isLoading ? <UISkeletonChart height={280} series={1} bars={6} label="Loading latency metrics" /> : null}
+      {!isLoading && metrics ? <Column {...config} /> : null}
+      {!isLoading && !metrics ? <UIEmptyState description="No latency metrics available" /> : null}
     </UICard>
   );
 }

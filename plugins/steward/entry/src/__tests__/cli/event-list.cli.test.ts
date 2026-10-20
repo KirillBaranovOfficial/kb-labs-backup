@@ -36,7 +36,7 @@ describe('steward:event.list', () => {
       mockCLIInput({ flags: { 'subject-type': 'project', 'subject-id': 'prj_1' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedListEvents).toHaveBeenCalledWith({
       subjectType: 'project',
       subjectId: 'prj_1',

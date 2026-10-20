@@ -57,7 +57,7 @@ export const manifest = {
 
         flags: defineCommandFlags(switchFlags),
 
-        examples: generateExamples('switch', 'devlink', [
+        examples: generateExamples('devlink switch', 'kb', [
           { description: 'Switch to npm mode (CI/CD)', flags: { mode: 'npm' } },
           { description: 'Switch to local mode (development)', flags: { mode: 'local' } },
           { description: 'Preview changes without applying', flags: { mode: 'local', 'dry-run': true } },
@@ -79,7 +79,7 @@ export const manifest = {
 
         flags: defineCommandFlags(statusFlags),
 
-        examples: generateExamples('status', 'devlink', [
+        examples: generateExamples('devlink status', 'kb', [
           { description: 'Show summary status', flags: {} },
           { description: 'Verbose output with all deps', flags: { verbose: true } },
           { description: 'JSON output for scripting', flags: { json: true } },
@@ -100,7 +100,7 @@ export const manifest = {
 
         flags: defineCommandFlags(planFlags),
 
-        examples: generateExamples('plan', 'devlink', [
+        examples: generateExamples('devlink plan', 'kb', [
           { description: 'Plan switch to local mode', flags: { mode: 'local' } },
           { description: 'Plan switch to npm mode', flags: { mode: 'npm' } },
           { description: 'JSON output for scripting', flags: { mode: 'npm', json: true } },
@@ -121,7 +121,7 @@ export const manifest = {
 
         flags: defineCommandFlags(freezeFlags),
 
-        examples: generateExamples('freeze', 'devlink', [
+        examples: generateExamples('devlink freeze', 'kb', [
           { description: 'Freeze current state', flags: {} },
           { description: 'JSON output', flags: { json: true } },
         ]),
@@ -141,7 +141,7 @@ export const manifest = {
 
         flags: defineCommandFlags(undoFlags),
 
-        examples: generateExamples('undo', 'devlink', [
+        examples: generateExamples('devlink undo', 'kb', [
           { description: 'Undo last switch', flags: {} },
           { description: 'JSON output', flags: { json: true } },
         ]),
@@ -160,7 +160,7 @@ export const manifest = {
 
         flags: defineCommandFlags(backupsFlags),
 
-        examples: generateExamples('backups', 'devlink', [
+        examples: generateExamples('devlink backups', 'kb', [
           { description: 'List all backups', flags: {} },
           { description: 'JSON output', flags: { json: true } },
           { description: 'Restore specific backup', flags: { restore: '<backup-id>' } },
@@ -173,5 +173,3 @@ export const manifest = {
 
   permissions: pluginPermissions,
 };
-
-export default manifest;

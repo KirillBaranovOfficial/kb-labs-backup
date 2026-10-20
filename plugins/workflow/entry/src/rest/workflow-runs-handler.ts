@@ -5,7 +5,7 @@
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import type { WorkflowRunHistoryResponse } from '@kb-labs/workflow-contracts';
-import { getWorkflowDaemonUrl } from '../http-client.js';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client.js';
 
 export default defineHandler({
   async execute(
@@ -19,7 +19,7 @@ export default defineHandler({
     // Validate query parameters
     const validatedLimit = limit ? Math.min(Math.max(parseInt(limit, 10) || 50, 1), 1000) : 50;
     const validatedOffset = offset ? Math.max(parseInt(offset, 10) || 0, 0) : 0;
-    const validStatuses = ['queued', 'running', 'completed', 'failed', 'cancelled'];
+    const validStatuses = ['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'dlq'];
     const validatedStatus = status && validStatuses.includes(status) ? status : undefined;
 
     const params = new URLSearchParams();
@@ -29,12 +29,12 @@ export default defineHandler({
       params.append('status', validatedStatus);
     }
 
-    const url = `${daemonUrl}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs?${params}`;
+    const url = `${daemonUrl}/workflows/${encodeURIComponent(workflowId)}/runs?${params}`;
 
     ctx.platform.logger.info(`[workflow-runs-handler] Fetching run history from ${url}`);
 
     try {
-      const response = await fetch(url);
+      const response = await fetchWorkflowApi(url);
 
       if (!response.ok) {
         if (response.status === 404) {

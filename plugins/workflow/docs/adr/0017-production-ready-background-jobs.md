@@ -150,8 +150,7 @@ WS /jobs/:id/logs/stream
 
 **CLI:**
 ```bash
-pnpm kb workflow logs --job-id=xxx            # Last 100 logs
-pnpm kb workflow logs --job-id=xxx --follow   # Real-time stream
+pnpm kb workflow job logs xxx                 # Job logs
 ```
 
 #### 2.2. Progress Reporting
@@ -194,7 +193,7 @@ Cache updated + event emitted
 
 **CLI output:**
 ```bash
-pnpm kb workflow status --job-id=xxx
+pnpm kb workflow job status xxx
 # Status: running (65% - Indexed 65/100 files)
 ```
 
@@ -355,7 +354,7 @@ async nextJob() {
 - [ ] Update StateStore with progress
 
 **Day 5: CLI improvements**
-- [ ] Show progress in `workflow status`
+- [ ] Show progress in `workflow job status`
 - [ ] Progress bar for `--follow`
 - [ ] Test with rag-index handler
 

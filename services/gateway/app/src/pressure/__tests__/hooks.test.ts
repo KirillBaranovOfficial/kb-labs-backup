@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { ResourceBroker, InMemoryRateLimitBackend } from '@kb-labs/core-resource-broker';
 import type { ILogger } from '@kb-labs/core-platform';
-import type { GatewayConfig } from '@kb-labs/gateway-contracts';
+import { GatewayConfigSchema, resolveGatewayPressureConfig, type GatewayConfig } from '@kb-labs/gateway-contracts';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
   createPressureOnRequest,
@@ -202,6 +202,54 @@ describe('createPressurePreHandler (per-tenant)', () => {
     const reply = makeReply();
     await hook.call(undefined as never, makeRequest({ authContext: bAuth } as Partial<FastifyRequest>), reply, () => {});
     expect(reply._sent).toBe(false);
+  });
+
+  it('enforces the Gateway default tenant limit for secured config', async () => {
+    const b = broker();
+    const registerLimit = vi.spyOn(b, 'registerLimit');
+    const tryAcquire = vi.spyOn(b, 'tryAcquire');
+    const parsedConfig = GatewayConfigSchema.parse({ access: { mode: 'secured' } });
+    const config = {
+      ...parsedConfig,
+      pressure: resolveGatewayPressureConfig(parsedConfig, true),
+    };
+    const hook = createPressurePreHandler({ broker: b, logger: log, config });
+    const tenantA = { type: 'cli', userId: 'u', namespaceId: 'tenant-a', tier: 'free', permissions: [] };
+    const tenantB = { type: 'cli', userId: 'other', namespaceId: 'tenant-b', tier: 'free', permissions: [] };
+
+    for (let request = 0; request < 600; request++) {
+      const reply = makeReply();
+      await hook.call(undefined as never, makeRequest({ authContext: tenantA } as Partial<FastifyRequest>), reply, () => {});
+      expect(reply._sent).toBe(false);
+    }
+
+    const tenantADenied = makeReply();
+    await hook.call(undefined as never, makeRequest({ authContext: tenantA } as Partial<FastifyRequest>), tenantADenied, () => {});
+    const tenantBAllowed = makeReply();
+    await hook.call(undefined as never, makeRequest({ authContext: tenantB } as Partial<FastifyRequest>), tenantBAllowed, () => {});
+
+    expect(tryAcquire).toHaveBeenCalledWith('gateway:tenant:tenant-a');
+    expect(tryAcquire).toHaveBeenCalledWith('gateway:tenant:tenant-b');
+    expect(registerLimit).toHaveBeenCalledWith('gateway:tenant:tenant-a', { requestsPerMinute: 600, safetyMargin: 1 });
+    expect(registerLimit).toHaveBeenCalledWith('gateway:tenant:tenant-b', { requestsPerMinute: 600, safetyMargin: 1 });
+    expect(tenantADenied._code).toBe(429);
+    expect(tenantADenied._body).toMatchObject({ error: 'rate_limited', resource: 'gateway:tenant:tenant-a' });
+    expect(tenantBAllowed._sent).toBe(false);
+  });
+
+  it('does not add the secured default tenant budget to local config', () => {
+    const config = GatewayConfigSchema.parse({ access: { mode: 'local' } });
+
+    expect(resolveGatewayPressureConfig(config, false)).toBeUndefined();
+  });
+
+  it('preserves an explicit tenant pressure opt-out in secured config', () => {
+    const config = GatewayConfigSchema.parse({
+      access: { mode: 'secured' },
+      pressure: { perTenant: { enabled: false, limits: { requestsPerMinute: 60 } } },
+    });
+
+    expect(resolveGatewayPressureConfig(config, true)?.perTenant?.enabled).toBe(false);
   });
 });
 

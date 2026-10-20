@@ -14,8 +14,14 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { DiscoveryManager } from '@kb-labs/core-discovery';
+import { createExtensionStore } from '@kb-labs/core-extension-store';
+import { NoOpLogger } from '@kb-labs/core-platform/noop';
 import type { PackageSource, InstalledPackage, ResolvedPackage } from '@kb-labs/marketplace-contracts';
-import { MarketplaceService } from '../marketplace-service.js';
+import { MarketplaceService, type MarketplaceServiceOptions } from '../marketplace-service.js';
+
+function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger'>): MarketplaceService {
+  return new MarketplaceService({ ...options, logger: new NoOpLogger() });
+}
 
 describe('Marketplace → Discovery Integration', () => {
   let tmpDir: string;
@@ -53,24 +59,40 @@ describe('Marketplace → Discovery Integration', () => {
   }
 
   it('install → discover: plugin is available after marketplace install', async () => {
-    const { dir, integrity } = await createPluginOnDisk('review', '@kb-labs/review', '2.0.0');
+    const { dir, integrity } = await createPluginOnDisk('commit', '@kb-labs/commit-entry', '2.0.0');
+    await fs.writeFile(
+      path.join(dir, 'kb.plugin.json'),
+      JSON.stringify({
+        schema: 'kb.plugin/3',
+        id: '@kb-labs/commit',
+        version: '2.0.0',
+        display: { name: 'commit', description: 'commit plugin' },
+        cli: { commands: [{ path: 'commit run', describe: 'Run commit', handler: './dist/h.js' }] },
+      }),
+    );
 
     // Step 1: Install via MarketplaceService
+    const removedPackages: string[] = [];
     const source: PackageSource = {
       async resolve(spec: string): Promise<ResolvedPackage> {
-        return { id: spec, version: '2.0.0', integrity, source: 'marketplace' };
+        return { id: spec, version: '2.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
       },
       async install(pkg: ResolvedPackage): Promise<InstalledPackage> {
         return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity: pkg.integrity };
       },
-      async remove() {},
+      async remove(packageName: string) {
+        removedPackages.push(packageName);
+        await fs.rm(dir, { recursive: true, force: true });
+      },
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
 
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source });
-    const installResult = await marketplace.install({ scope: "platform" }, ['@kb-labs/review']);
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
+    const installResult = await marketplace.install({ scope: "platform" }, ['@kb-labs/commit-entry']);
 
     expect(installResult.installed).toHaveLength(1);
-    expect(installResult.installed[0]!.id).toBe('@kb-labs/review');
+    expect(installResult.installed[0]!.id).toBe('@kb-labs/commit');
     expect(installResult.installed[0]!.provides).toContain('cli-command');
 
     // Step 2: Discover via DiscoveryManager
@@ -78,15 +100,151 @@ describe('Marketplace → Discovery Integration', () => {
     const discoverResult = await dm.discover();
 
     expect(discoverResult.plugins).toHaveLength(1);
-    expect(discoverResult.plugins[0]!.id).toBe('@kb-labs/review');
+    expect(discoverResult.plugins[0]!.id).toBe('@kb-labs/commit');
     expect(discoverResult.plugins[0]!.version).toBe('2.0.0');
     expect(discoverResult.plugins[0]!.provides).toContain('cli-command');
+    const lock = JSON.parse(await fs.readFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'utf8')) as { plugins: Record<string, unknown> };
+    expect(lock.plugins).toHaveProperty('@kb-labs/commit');
+    expect(lock.plugins).not.toHaveProperty('@kb-labs/commit-entry');
+    expect(lock.plugins['@kb-labs/commit']).toMatchObject({ package: '@kb-labs/commit-entry' });
+    const listed = await marketplace.list({ scope: 'platform' }, { kind: 'plugin' });
+    expect(listed.map(entry => entry.id)).toEqual(['@kb-labs/commit']);
 
     // Manifest should be fully loaded
-    const manifest = discoverResult.manifests.get('@kb-labs/review');
+    const manifest = discoverResult.manifests.get('@kb-labs/commit');
     expect(manifest).toBeDefined();
     expect(manifest!.cli?.commands).toHaveLength(1);
-    expect(manifest!.cli?.commands?.[0]?.path).toBe('review run');
+    expect(manifest!.cli?.commands?.[0]?.path).toBe('commit run');
+
+    await marketplace.uninstall({ scope: 'platform' }, ['@kb-labs/commit']);
+    expect(removedPackages).toEqual(['@kb-labs/commit-entry']);
+    expect(await marketplace.list({ scope: 'platform' })).toEqual([]);
+    expect((await new DiscoveryManager({ root: tmpDir, verifyIntegrity: false }).discover()).plugins).toEqual([]);
+  });
+
+  it('link → discover: a linked entry package uses its manifest identity', async () => {
+    const projectRoot = path.join(tmpDir, 'project');
+    await fs.mkdir(projectRoot, { recursive: true });
+    const dir = path.join(projectRoot, 'packages', 'demo-entry');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
+      name: '@kb-labs/demo-entry',
+      version: '0.1.0',
+      kb: { manifest: './kb.plugin.json' },
+    }));
+    await fs.writeFile(path.join(dir, 'kb.plugin.json'), JSON.stringify({
+      schema: 'kb.plugin/3',
+      id: '@kb-labs/demo',
+      version: '0.1.0',
+      display: { name: 'demo', description: 'Demo plugin' },
+      cli: { commands: [{ path: 'demo hello', describe: 'Say hello', handler: './dist/hello.js' }] },
+    }));
+
+    const source: PackageSource = {
+      async resolve(): Promise<ResolvedPackage> { throw new Error('link does not resolve packages'); },
+      async install(): Promise<InstalledPackage> { throw new Error('link does not install packages'); },
+      async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
+    };
+    const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+    const result = await service.link({ scope: 'project', projectRoot }, 'packages/demo-entry');
+    const lock = JSON.parse(await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8')) as {
+      plugins: Record<string, { resolvedPath?: string }>;
+    };
+
+    expect(result.id).toBe('@kb-labs/demo');
+    expect(lock.plugins).toHaveProperty('@kb-labs/demo');
+    expect(lock.plugins).not.toHaveProperty('@kb-labs/demo-entry');
+    const discovered = await new DiscoveryManager({ root: projectRoot, verifyIntegrity: false }).discover();
+    expect(discovered.plugins.map(plugin => plugin.id)).toContain('@kb-labs/demo');
+  });
+
+  it('writes a portable v3 pin and resolves it from two independent machine stores', async () => {
+    const projectRoot = path.join(tmpDir, 'project');
+    const storeOneRoot = path.join(tmpDir, 'machine-one');
+    const storeTwoRoot = path.join(tmpDir, 'machine-two');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+    const { dir } = await createPluginOnDisk('portable', '@kb-labs/portable', '1.0.0');
+    const integrity = 'sha512-cG9ydGFibGU=';
+    const installer = {
+      async install(options: { name: string; version: string; projectDir: string }): Promise<{ packageRoot: string; integrity: string }> {
+        const packageRoot = path.join(options.projectDir, 'node_modules', ...options.name.split('/'));
+        await fs.mkdir(path.dirname(packageRoot), { recursive: true });
+        await fs.cp(dir, packageRoot, { recursive: true });
+        return { packageRoot, integrity };
+      },
+    };
+    const source: PackageSource = {
+      async resolve(spec: string): Promise<ResolvedPackage> {
+        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin', downloadUrl: `file:${dir}` };
+      },
+      async install(): Promise<InstalledPackage> { throw new Error('store install should be used'); },
+      async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
+    };
+    const storeOne = createExtensionStore({ root: storeOneRoot, installer });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source, extensionStore: storeOne });
+    await marketplace.install({ scope: 'project' }, ['@kb-labs/portable']);
+
+    const lockFile = path.join(projectRoot, '.kb', 'marketplace.lock');
+    const lockText = await fs.readFile(lockFile, 'utf8');
+    const lock = JSON.parse(lockText);
+    expect(lock.schema).toBe('kb.marketplace/3');
+    expect(lock.plugins['@kb-labs/portable']).toMatchObject({ source: 'marketplace', version: '1.0.0', enabled: true });
+    expect(lock.plugins['@kb-labs/portable'].integrity).toMatch(/^sha(256|512)-/);
+    expect(lockText).not.toMatch(/resolvedPath|installedAt|machine-one|\/Users\/|[A-Z]:\\/);
+
+    const pin = lock.plugins['@kb-labs/portable'];
+    const storeTwo = createExtensionStore({ root: storeTwoRoot, installer });
+    await storeTwo.resolve({ name: '@kb-labs/portable', version: pin.version, kind: 'plugin', spec: `file:${dir}`, expectedIntegrity: pin.integrity });
+    const first = await new DiscoveryManager({ root: projectRoot, platformRoot: tmpDir, extensionStore: storeOne, workspace: false }).discover();
+    const second = await new DiscoveryManager({ root: projectRoot, platformRoot: tmpDir, extensionStore: storeTwo, workspace: false }).discover();
+    expect(first.plugins.map((plugin) => plugin.id)).toEqual(['@kb-labs/portable']);
+    expect(second.plugins.map((plugin) => plugin.id)).toEqual(['@kb-labs/portable']);
+    expect(first.plugins[0]?.packageRoot).not.toBe(second.plugins[0]?.packageRoot);
+  }, 60_000);
+
+  it('installs platform plugin entries into the shared store and discovers them without a platform graph install', async () => {
+    const { dir, integrity } = await createPluginOnDisk('platform-entry', '@kb-labs/platform-entry', '1.0.0');
+    const installer = {
+      async install(options: { name: string; projectDir: string }): Promise<{ packageRoot: string; integrity: string }> {
+        const packageRoot = path.join(options.projectDir, 'node_modules', ...options.name.split('/'));
+        await fs.mkdir(path.dirname(packageRoot), { recursive: true });
+        await fs.cp(dir, packageRoot, { recursive: true });
+        return { packageRoot, integrity };
+      },
+    };
+    const source: PackageSource = {
+      async resolve(spec: string): Promise<ResolvedPackage> {
+        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
+      },
+      async install(): Promise<InstalledPackage> { throw new Error('platform plugin must use the extension store'); },
+      async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
+    };
+    const store = createExtensionStore({ root: path.join(tmpDir, 'machine-store'), installer });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+
+    await marketplace.install({ scope: 'platform' }, ['@kb-labs/platform-entry']);
+
+    const lock = JSON.parse(await fs.readFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'utf8'));
+    expect(lock.plugins['@kb-labs/platform-entry']).toMatchObject({
+      source: 'marketplace',
+      version: '1.0.0',
+      enabled: true,
+    });
+    await expect(fs.access(path.join(tmpDir, 'node_modules', '@kb-labs', 'platform-entry'))).rejects.toThrow();
+    const discovered = await new DiscoveryManager({
+      root: tmpDir,
+      extensionStore: store,
+      workspace: false,
+      verifyIntegrity: false,
+    }).discover();
+    expect(discovered.plugins.map((plugin) => plugin.id)).toEqual(['@kb-labs/platform-entry']);
   });
 
   it('install → uninstall → discover: plugin is gone after uninstall', async () => {
@@ -94,15 +252,17 @@ describe('Marketplace → Discovery Integration', () => {
 
     const source: PackageSource = {
       async resolve(spec: string): Promise<ResolvedPackage> {
-        return { id: spec, version: '1.0.0', integrity, source: 'marketplace' };
+        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
       },
       async install(pkg: ResolvedPackage): Promise<InstalledPackage> {
         return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity: pkg.integrity };
       },
       async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
 
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
     await marketplace.install({ scope: "platform" }, ['@kb-labs/temp']);
 
     // Verify installed
@@ -124,15 +284,17 @@ describe('Marketplace → Discovery Integration', () => {
 
     const source: PackageSource = {
       async resolve(spec: string): Promise<ResolvedPackage> {
-        return { id: spec, version: '1.0.0', integrity, source: 'marketplace' };
+        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
       },
       async install(pkg: ResolvedPackage): Promise<InstalledPackage> {
         return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity: pkg.integrity };
       },
       async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
 
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
     await marketplace.install({ scope: "platform" }, ['@kb-labs/optional']);
 
     // Disable
@@ -160,9 +322,11 @@ describe('Marketplace → Discovery Integration', () => {
       async resolve(): Promise<ResolvedPackage> { throw new Error('unused'); },
       async install(): Promise<InstalledPackage> { throw new Error('unused'); },
       async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
 
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
     const linkResult = await marketplace.link({ scope: "platform" }, 'packages/local-dev');
 
     expect(linkResult.id).toBe('@kb-labs/local-dev');

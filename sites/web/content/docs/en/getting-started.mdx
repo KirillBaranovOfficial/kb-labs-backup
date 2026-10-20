@@ -7,8 +7,10 @@ slug: getting-started
 
 ## Install and run your first command
 
-Requirements: Node.js 24.x, at least 1.20 GiB available memory, and 2 GiB free
-disk space. The installer manages pnpm.
+Requirements: the Node.js major declared by the root `package.json`
+`engines.node`, at least 1.20 GiB available memory, and 2 GiB free disk space.
+The installer manages pnpm and prints the exact switch command if the current
+Node.js major is unsupported.
 
 ```bash
 curl -fsSL https://kblabs.ru/install.sh | sh
@@ -26,7 +28,18 @@ kb commit
 ```
 
 `kb commit` works without an LLM through its heuristic path. To enable OpenAI
-generation, configure it with `kb config set platform.adapters.llm
+generation, configure it with `kb config set --scope platform platform.adapters.llm
 @kb-labs/adapters-openai` and
-`kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'`, then
+`kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'`, then
 export `OPENAI_API_KEY` in your shell.
+
+## Open Studio
+
+Open Studio at the Gateway address shown by your install. Local access opens
+without a login and is reachable only from the same computer. Secured access
+shows a sign-in page; use the administrator account created during installation.
+
+Use **Projects** to register a project folder. The active-project selector in
+the Studio shell is shared by project plugins, adapters, analytics, logs, and
+events. The dashboard's health card reports the Gateway's current health and
+readiness.

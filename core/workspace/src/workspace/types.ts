@@ -10,15 +10,12 @@
  *   place from which plugin discovery should scan `node_modules`, and where
  *   cloud/CI deployments may place per-installation platform defaults.
  *
- * - **projectRoot** — the directory that contains the user's `.kb/` folder,
- *   including `.kb/kb.config.json` and any runtime state written by plugins
- *   (`.kb/qa`, `.kb/mind`, `.kb/release`, `.kb/marketplace.lock`, etc.).
- *   This is *where the user is working*.
+ * - **projectRoot** — the registered project directory containing the user's
+ *   current working directory. Membership comes from the platform registry;
+ *   repository config files do not establish project identity.
  *
- * In development (monorepo workspace) mode these two roots typically resolve
- * to the same directory. In installed mode they are different — the platform
- * lives under e.g. `/opt/kb-labs` while the project lives under
- * `~/work/my-app`.
+ * A development workspace is a project only after registration. In installed
+ * mode the platform and project roots are usually different.
  */
 
 /**
@@ -34,29 +31,24 @@ export interface WorkspaceFs {
 // ──────────────────────────────────────────────────────────────────────────
 
 export type ProjectRootSource =
-  | 'explicit'
-  | 'env'
-  | 'config'
-  | 'repo'
-  | 'fallback'
+  | 'registry'
+  | 'worktree'
 
 export interface ProjectRootResolution {
   rootDir: string
   source: ProjectRootSource
+  /** Canonical directory used for discovery; may be a worktree of rootDir. */
+  cwdDir: string
 }
 
 export interface ResolveProjectRootOptions {
-  /**
-   * Explicit root directory to use (e.g. from CLI flag). Highest priority.
-   */
+  /** Current working directory used to find its registered project. */
   cwd?: string
   /**
    * Starting directory for discovery. Defaults to process.cwd().
    */
   startDir?: string
-  /**
-   * Environment variables map. Defaults to process.env.
-   */
+  /** Environment variables used to select KB_HOME for the project registry. */
   env?: Record<string, string | undefined>
   /**
    * Optionally inject custom filesystem helpers for testing.
@@ -133,13 +125,18 @@ export interface ResolvePlatformRootOptions {
 
 export interface ResolveRootsOptions
   extends ResolvePlatformRootOptions,
-    ResolveProjectRootOptions {}
+    ResolveProjectRootOptions {
+  /** Resolve platform identity without requiring a registered project. */
+  projectScope?: 'required' | 'platform'
+}
 
 export interface RootsResolution {
   /** Where `node_modules/@kb-labs/*` lives. */
   platformRoot: string
-  /** Where `.kb/kb.config.json` and per-project state live. */
-  projectRoot: string
+  /** Registered project containing the start directory, when one exists. */
+  projectRoot?: string
+  /** Directory used to discover the registered project, including a worktree path. */
+  projectStartDir: string
   /**
    * `true` when both roots resolve to the same physical directory — this is
    * the normal case in the KB Labs monorepo dev mode.
@@ -148,6 +145,7 @@ export interface RootsResolution {
   /** How each root was resolved (for diagnostics). */
   sources: {
     platform: PlatformRootSource
-    project: ProjectRootSource
+    project?: ProjectRootSource
+    projectStartDir: string
   }
 }

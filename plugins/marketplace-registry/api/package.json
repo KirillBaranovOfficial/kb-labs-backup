@@ -27,7 +27,6 @@
     "@fastify/multipart": "^9.0.3",
     "@kb-labs/core-contracts": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
-    "@kb-labs/gateway-auth": "workspace:*",
     "@kb-labs/gateway-contracts": "workspace:*",
     "@kb-labs/marketplace-registry-contracts": "workspace:*",
     "@kb-labs/marketplace-registry-core": "workspace:*",
@@ -41,7 +40,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "sideEffects": false

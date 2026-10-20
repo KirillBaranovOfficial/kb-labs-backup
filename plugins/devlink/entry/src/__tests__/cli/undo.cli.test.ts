@@ -17,7 +17,7 @@ vi.mock('@kb-labs/sdk', async (importOriginal) => {
       succeed: vi.fn(),
       fail: vi.fn(),
     })),
-    validationError: vi.fn(),
+    validationError: vi.fn(() => ({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No backups found.', hint: 'Run switch first to create a backup.' } })),
   };
 });
 
@@ -51,7 +51,7 @@ describe('devlink:undo', () => {
 
     const result = await undoCommand.execute(ctx as never, mockCLIInput<UndoFlags>());
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ restored: 5, backupId: 'backup-abc123', errors: [] });
     expect(restoreBackup).toHaveBeenCalledOnce();
     expect(captured.success.length).toBeGreaterThan(0);
   });
@@ -63,7 +63,7 @@ describe('devlink:undo', () => {
 
     const result = await undoCommand.execute(ctx as never, mockCLIInput<UndoFlags>());
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', hint: 'Run switch first to create a backup.' } });
     expect(restoreBackup).not.toHaveBeenCalled();
   });
 
@@ -73,8 +73,7 @@ describe('devlink:undo', () => {
 
     const result = await undoCommand.execute(ctx as never, mockCLIInput<UndoFlags>({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect((captured.json[0] as Record<string, unknown>)?.backupId).toBe('backup-abc123');
+    expect(result).toMatchObject({ backupId: 'backup-abc123' });
   });
 
   it('UNDO-04: --dry-run shows intent, restoreBackup is NOT called', async () => {
@@ -83,7 +82,7 @@ describe('devlink:undo', () => {
 
     const result = await undoCommand.execute(ctx as never, mockCLIInput<UndoFlags>({ flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ summary: expect.stringContaining('Restore previous dependency state'), operations: expect.any(Array) });
     expect(restoreBackup).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

@@ -49,12 +49,12 @@ export const manifest: ManifestV3 = {
         describe: 'Materialize workspace, optional environment, and optional snapshot.',
         handler: './cli/commands/prepare-infra.js#default',
         flags: defineCommandFlags({
-          sourceRef: { type: 'string', description: 'Workspace source reference (repo/branch/etc)' },
-          basePath: { type: 'string', description: 'Workspace base path' },
-          createEnvironment: { type: 'boolean', default: false, description: 'Provision environment after workspace materialize' },
-          templateId: { type: 'string', description: 'Environment template ID' },
-          ttlMs: { type: 'number', description: 'Environment lease TTL in milliseconds' },
-          captureSnapshot: { type: 'boolean', default: false, description: 'Capture snapshot after prepare' },
+          'source-ref': { type: 'string', description: 'Workspace source reference (repo/branch/etc)' },
+          'base-path': { type: 'string', description: 'Workspace base path' },
+          'create-environment': { type: 'boolean', default: false, description: 'Provision environment after workspace materialize' },
+          'template-id': { type: 'string', description: 'Environment template ID' },
+          'ttl-ms': { type: 'number', description: 'Environment lease TTL in milliseconds' },
+          'capture-snapshot': { type: 'boolean', default: false, description: 'Capture snapshot after prepare' },
           namespace: { type: 'string', description: 'Snapshot namespace' },
         }),
       },
@@ -64,10 +64,10 @@ export const manifest: ManifestV3 = {
         describe: 'Capture snapshot for workspace/environment.',
         handler: './cli/commands/capture-snapshot.js#default',
         flags: defineCommandFlags({
-          workspaceId: { type: 'string', description: 'Workspace ID' },
-          environmentId: { type: 'string', description: 'Environment ID' },
+          'workspace-id': { type: 'string', description: 'Workspace ID' },
+          'environment-id': { type: 'string', description: 'Environment ID' },
           namespace: { type: 'string', description: 'Snapshot namespace' },
-          sourcePath: { type: 'string', description: 'Source path for snapshot' },
+          'source-path': { type: 'string', description: 'Source path for snapshot' },
         }),
       },
       {
@@ -76,15 +76,13 @@ export const manifest: ManifestV3 = {
         describe: 'Restore snapshot to workspace/environment target.',
         handler: './cli/commands/restore-snapshot.js#default',
         flags: defineCommandFlags({
-          snapshotId: { type: 'string', required: true, description: 'Snapshot ID to restore' },
-          workspaceId: { type: 'string', description: 'Workspace ID target' },
-          environmentId: { type: 'string', description: 'Environment ID target' },
-          targetPath: { type: 'string', description: 'Restore target path' },
+          'snapshot-id': { type: 'string', required: true, description: 'Snapshot ID to restore' },
+          'workspace-id': { type: 'string', description: 'Workspace ID target' },
+          'environment-id': { type: 'string', description: 'Environment ID target' },
+          'target-path': { type: 'string', description: 'Restore target path' },
           overwrite: { type: 'boolean', default: false, description: 'Overwrite existing files' },
         }),
       },
     ],
   },
 };
-
-export default manifest;

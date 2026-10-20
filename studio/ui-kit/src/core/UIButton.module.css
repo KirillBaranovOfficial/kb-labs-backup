@@ -14,15 +14,11 @@
 }
 
 /*
- * CRITICAL: SVG icon color inheritance
- *
- * Force all SVG icons to inherit button text color automatically
- * Works for lucide-react, heroicons, and any other icon libraries
+ * Inherit the button color through currentColor without overriding authored
+ * SVG fills and strokes. This supports both outline and filled icon sets.
  */
 .uiButton svg {
   color: inherit !important;
-  stroke: currentColor !important;
-  fill: currentColor !important;
 }
 
 /*

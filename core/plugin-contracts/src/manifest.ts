@@ -8,6 +8,8 @@
 import type { PermissionSpec } from "./permissions.js";
 import type { HostType } from "./host-context.js";
 import type { PluginServices } from "./platform.js";
+import type { CliFlagDecl } from './cli-schema.js';
+
 // ─── Studio V2 (Module Federation Pages) ───────────────────────────
 
 /**
@@ -130,23 +132,6 @@ export interface PlatformRequirements {
 /**
  * CLI command flag definition
  */
-export interface CliFlagDecl {
-  /** Flag name (e.g., 'verbose') */
-  name: string;
-  /** Flag type */
-  type: "string" | "boolean" | "number" | "array";
-  /** Short alias (e.g., 'v' for '--verbose') */
-  alias?: string;
-  /** Default value */
-  default?: unknown;
-  /** Description */
-  description?: string;
-  /** Allowed values (enum) */
-  choices?: string[];
-  /** Required flag */
-  required?: boolean;
-}
-
 /**
  * CLI command declaration.
  *
@@ -170,6 +155,7 @@ export interface CliCommandDecl {
   handler: string;
   /** Command-specific permissions (overrides plugin defaults) */
   permissions?: PermissionSpec;
+  /** Require an authenticated platform session before this command is dispatched. */
   /** Display-only category label (does not affect routing) */
   category?: string;
   /** Alternative full paths for this command (e.g., ['cu task search']) */
@@ -684,12 +670,27 @@ export interface ManifestV3 {
   /** Plugin version (semver) */
   version: string;
 
+  /** Release compatibility constraints copied into the sealed platform index. */
+  compatibility?: {
+    platformRange?: string;
+    sdkRange?: string;
+  };
+
   /**
    * Config section identifier in kb.config.json
    * Used by runtime to load plugin-specific config
    * @example 'mind' maps to kb.config.json → profiles[].products.mind
    */
   configSection?: string;
+
+  /**
+   * Optional schema and defaults for values stored under `plugins.<configSection>`.
+   * `schema` may be an inline JSON Schema or a SchemaRef resolved by the host.
+   */
+  settings?: {
+    schema: Record<string, unknown> | SchemaRef;
+    defaults?: Record<string, unknown>;
+  };
 
   /** Display metadata */
   display?: DisplayMetadata;
@@ -780,6 +781,36 @@ export interface ManifestV3 {
       ops?: Array<"read" | "write">;
     }>;
   };
+}
+
+export type PluginRouteSurface = "rest" | "sse" | "ws";
+
+/** The manifest fields needed to resolve a plugin transport's shared base-path convention. */
+export type PluginBasePathManifest = Pick<ManifestV3, "id"> & {
+  rest?: { basePath?: string };
+  sse?: { basePath?: string };
+  ws?: { basePath?: string };
+};
+
+/** Resolve the effective mount prefix for one declared plugin transport. */
+export function resolvePluginBasePath(
+  manifest: PluginBasePathManifest,
+  surface: PluginRouteSurface,
+  configBasePath: string,
+): string {
+  const configBase = configBasePath.replace(/\/$/, "");
+  const declaredBasePath = manifest[surface]?.basePath;
+
+  if (surface === "sse" && !declaredBasePath) {
+    return resolvePluginBasePath(manifest, "rest", configBase);
+  }
+
+  const basePath = declaredBasePath || (surface === "ws"
+    ? `/v1/ws/plugins/${manifest.id}`
+    : `/plugins/${manifest.id}`);
+  if (basePath.startsWith("/api/")) return basePath;
+  if (basePath.startsWith("/v1/")) return basePath.replace(/^\/v1/, configBase);
+  return `${configBase}${basePath.startsWith("/") ? "" : "/"}${basePath}`;
 }
 
 /**
@@ -925,8 +956,23 @@ export interface ServiceManifest {
   /** Service IDs this service depends on (for startup ordering) */
   dependsOn?: string[];
 
+  /** Public URL identity and internal mount for a project-scoped service. */
+  projectApi?: ProjectServiceApiDeclaration;
+
   /** Environment variables required/supported */
   env?: Record<string, ServiceEnvVar>;
+}
+
+export interface ProjectServiceApiDeclaration {
+  /** Unique URL segment after `/api/v1/projects/{projectId}`. */
+  serviceId: string;
+  /** Internal service mount prefix removed from its public project URL. */
+  rewritePrefix: string;
+}
+
+/** Routing declaration enriched with the one health endpoint from the service runtime manifest. */
+export interface ProjectServiceDeclaration extends ProjectServiceApiDeclaration {
+  healthCheck: string;
 }
 
 /** Describes how kb-dev should start and monitor the service. */
@@ -934,8 +980,8 @@ export interface ServiceRuntime {
   /** Entrypoint relative to package root (e.g. "dist/index.js") */
   entry: string;
 
-  /** TCP port the service listens on */
-  port: number;
+  /** Optional standalone TCP port; host-managed services receive an allocated address. */
+  port?: number;
 
   /** Health check path (appended to http://localhost:<port>) */
   healthCheck: string;

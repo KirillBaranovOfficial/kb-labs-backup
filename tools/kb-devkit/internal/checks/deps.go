@@ -19,7 +19,7 @@ func (r *DepsRule) Name() string { return "deps" }
 
 func (r *DepsRule) Check(pkg workspace.Package, preset config.Preset) []Issue {
 	rules := preset.Deps
-	hasBoundaryRules := len(rules.AllowedKbDeps) > 0 || len(rules.ForbiddenKbDeps) > 0
+	hasBoundaryRules := len(rules.AllowedKbDeps) > 0 || len(rules.ForbiddenKbDeps) > 0 || len(rules.AllowedKbImports) > 0 || len(rules.ForbiddenKbImports) > 0
 	if !rules.CheckLinks && !rules.CheckVersionConsistency && !hasBoundaryRules {
 		return nil
 	}
@@ -193,6 +193,16 @@ func checkBoundaryImports(pkg workspace.Package, pkgName string, rules config.De
 			if len(rules.AllowedKbDeps) > 0 && matchAny(spec, rules.AllowedKbDeps) {
 				continue
 			}
+			if containsExact(rules.AllowedKbImports, spec) {
+				continue
+			}
+			if containsExact(rules.ForbiddenKbImports, spec) {
+				issues = append(issues, Issue{
+					Check: checkName, Severity: SeverityError,
+					Message: fmt.Sprintf("forbidden import %q", spec), File: path,
+				})
+				continue
+			}
 			if matchAny(spec, rules.ForbiddenKbDeps) {
 				issues = append(issues, Issue{
 					Check:    checkName,
@@ -220,6 +230,15 @@ func checkBoundaryImports(pkg workspace.Package, pkgName string, rules config.De
 		return nil
 	})
 	return issues
+}
+
+func containsExact(values []string, candidate string) bool {
+	for _, value := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 // findKbFromImports extracts package specifiers from static `from "..."`

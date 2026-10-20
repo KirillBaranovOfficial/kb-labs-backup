@@ -1,21 +1,19 @@
 /**
  * @module @kb-labs/marketplace-entry/scope
  *
- * Client-side scope resolution for marketplace CLI commands. Uses the
- * canonical `findProjectConfigRoot` helper from `@kb-labs/core-workspace`
- * so the detection rules (which filenames count, how walk-up stops) match
- * what the config loader and the marketplace daemon enforce.
+ * Client-side scope resolution for marketplace CLI commands. Project scope
+ * is resolved from the platform registry; repository files do not establish
+ * project membership.
  *
  * Rules:
- *  - `project` is the default if cwd (or any ancestor up to the filesystem
- *    root) contains `.kb/kb.config.{json,jsonc}`.
+ *  - `project` is the default when cwd is inside a registered project.
  *  - Otherwise the default is `platform`.
  *  - `--scope` always overrides detection.
  *  - For scope="project" we return the absolute projectRoot so the daemon
  *    doesn't need to re-discover it.
  */
 
-import { findProjectConfigRoot } from '@kb-labs/core-workspace';
+import { findRegisteredProjectRoot, resolveProjectRoot } from '@kb-labs/core-workspace';
 import type { MarketplaceScope, MarketplaceQueryScope } from '@kb-labs/marketplace-contracts';
 
 export const SCOPE_FLAG_CHOICES: readonly MarketplaceScope[] = ['platform', 'project'];
@@ -45,19 +43,13 @@ export async function resolveCliScope(
   if (flag) {
     assertMutatingScope(flag);
     if (flag === 'project') {
-      const projectRoot = await findProjectConfigRoot(cwd);
-      if (!projectRoot) {
-        throw new CliScopeError(
-          'SCOPE_PROJECT_ROOT_NOT_FOUND',
-          `--scope=project requires a .kb/kb.config.{json,jsonc} ancestor of ${cwd} — none found.`,
-        );
-      }
+      const { rootDir: projectRoot } = await resolveProjectRoot({ cwd });
       return { scope: 'project', projectRoot, reason: 'flag' };
     }
     return { scope: 'platform', reason: 'flag' };
   }
 
-  const projectRoot = await findProjectConfigRoot(cwd);
+  const projectRoot = await findRegisteredProjectRoot(cwd);
   if (projectRoot) {
     return { scope: 'project', projectRoot, reason: 'auto-detect' };
   }
@@ -73,7 +65,7 @@ export async function resolveCliQueryScope(
   flag: string | undefined,
 ): Promise<ResolvedCliQueryScope> {
   if (flag === 'all') {
-    const projectRoot = await findProjectConfigRoot(cwd);
+    const projectRoot = await findRegisteredProjectRoot(cwd);
     return { scope: 'all', projectRoot, reason: 'flag' };
   }
   const base = await resolveCliScope(cwd, flag);

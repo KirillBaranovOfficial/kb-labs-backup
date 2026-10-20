@@ -194,27 +194,11 @@ export const JobSpecSchema = z.object({
 export const WorkflowTriggerSchema = z
   .object({
     manual: z.boolean().optional(),
-    push: z.boolean().optional(),
-    webhook: z
-      .union([
-        z.boolean(),
-        z.object({
-          secret: z.string().min(1).optional(),
-          path: z.string().min(1).optional(),
-          headers: z.record(z.string(), z.string()).optional(),
-        }),
-      ])
-      .optional(),
-    schedule: z
-      .object({
-        cron: z.string().min(1),
-        timezone: z.string().min(1).optional(),
-      })
-      .optional(),
   })
+  .strict()
   .refine(
     (value) =>
-      value.manual || value.push || !!value.webhook || !!value.schedule,
+      value.manual,
     {
       message: 'At least one trigger must be defined',
       path: ['manual'],
@@ -322,6 +306,7 @@ export const JobRunSchema = z.object({
   error: StepRunErrorSchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   secrets: z.array(z.string().min(1)).optional(),
+  hooks: JobHooksSchema,
   needs: z.array(z.string().min(1)).optional(),
   pendingDependencies: z.array(z.string().min(1)).optional(),
   blocked: z.boolean().optional(),
@@ -346,6 +331,7 @@ export const RunMetadataSchema = z.object({
   target: ExecutionTargetSchema.optional(),
   isolation: IsolationProfileSchema.optional(),
   workflowId: z.string().optional(),
+  cronId: z.string().optional(),
   workflowDepth: z.number().int().nonnegative().optional(),
   parentRunId: z.string().optional(),
   parentJobId: z.string().optional(),
@@ -412,4 +398,10 @@ export const RunSchema = z.object({
   artifacts: z.array(z.string()).optional(),
   metadata: RunMetadataSchema.optional(),
   result: ExecutionResultSchema.optional(),
+  diagnostics: z.array(z.object({
+    operation: z.string().min(1),
+    jobId: z.string().optional(),
+    message: z.string(),
+    recordedAt: z.string().datetime(),
+  })).optional(),
 })

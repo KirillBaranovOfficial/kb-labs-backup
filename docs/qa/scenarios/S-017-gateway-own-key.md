@@ -1,56 +1,32 @@
 ---
 id: S-017
-title: Gateway — Connect own LLM key
+title: Configure the platform LLM adapter with the user's own key
 persona: solo-developer
-priority: P0
-automation: manual
-e2e: —
+area: gateway
+priority: P1
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer configures their own OpenAI (or other provider) API key instead of using KB Labs Gateway.
-All AI commands use the configured key.
+
+A developer stores an LLM adapter selection and secret reference at platform scope so LLM-backed project features can use the developer's provider.
 
 ## Prerequisites
-- [ ] KB Labs installed
-- [ ] Own OpenAI API key available
 
----
+- [ ] The LLM adapter package is installed at platform scope.
+- [ ] `OPENAI_API_KEY` is available to the platform process through the local secret environment.
 
 ## Steps
 
-### Phase 1 — Configure
+| # | Action | Expected |
+|---|---|---|
+| S-017.1 | Run `kb config set --scope platform platform.adapters.llm @kb-labs/adapters-openai` | The platform user config records `@kb-labs/adapters-openai` at `platform.adapters.llm`. |
+| S-017.2 | Run `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'` | The platform user config stores the literal environment reference, not the key value. |
+| S-017.3 | Run an LLM-backed command in a project using the platform config | The request uses the configured LLM adapter. |
+| S-017.4 | Inspect the platform config and command output | Neither contains the resolved API key. |
+| S-017.5 | From inside a registered project, run `kb config set --scope platform platform.adapterOptions.llm.baseURL 'https://llm.example.test/v1' --json` | The JSON `file` field names the installed platform's `.kb/kb.config.jsonc`; that file contains the value, the registered project's `.kb/kb.config.jsonc` is unchanged, and the result gives the exact `kb-create restart --platform-root <platform-root>` command needed to activate adapter changes. |
 
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Add `OPENAI_API_KEY=sk-...` to `.env` | Key present in env | | ⬜ |
-| 2 | Edit `.kb/kb.config.json` to set `adapters.llm` to `openai` | Config updated | | ⬜ |
-| 3 | `kb-dev restart` or restart services | Services pick up new config | | ⬜ |
-
-### Phase 2 — Verify LLM works
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 4 | `curl http://localhost:4000/health` | `adapters.llm.available: true` | | ⬜ |
-| 5 | `kb commit commit --dry-run` | `LLM: Phase` in output — real LLM, not heuristic | | ⬜ |
-| 6 | `kb review run` | Review uses LLM | | ⬜ |
-
-### Phase 3 — Switch back to KB Labs Gateway
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 7 | Remove `OPENAI_API_KEY`, restore gateway config | Gateway adapter active | | ⬜ |
-| 8 | `kb commit commit --dry-run` | Uses gateway LLM | | ⬜ |
-
-### Phase 4 — Invalid key
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 9 | Set invalid `OPENAI_API_KEY=sk-fake` | Clear error on first LLM call — not silent | | ⬜ |
-| 10 | Gateway health shows llm unavailable | `adapters.llm.available: false` | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+LLM configuration is optional for platform onboarding, so this case is not a core release gate.

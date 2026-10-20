@@ -24,13 +24,12 @@ describe('infra-worker commands', () => {
     const result = await prepareInfraCommand.execute(ctx, {
       argv: [],
       flags: {
-        sourceRef: 'repo://main',
-        basePath: '/workspace/main',
+        'source-ref': 'repo://main',
+        'base-path': '/workspace/main',
       },
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toEqual({
+    expect(result).toEqual({
       workspaceId: 'ws_custom_1',
       environmentId: undefined,
       snapshotId: undefined,
@@ -57,18 +56,17 @@ describe('infra-worker commands', () => {
     const result = await prepareInfraCommand.execute(ctx, {
       argv: [],
       flags: {
-        createEnvironment: true,
-        templateId: 'node20',
-        ttlMs: 600000,
-        captureSnapshot: true,
+        'create-environment': true,
+        'template-id': 'node20',
+        'ttl-ms': 600000,
+        'capture-snapshot': true,
         namespace: 'runs/main',
       },
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.result?.workspaceId).toBeDefined();
-    expect(result.result?.environmentId).toBeDefined();
-    expect(result.result?.snapshotId).toBeDefined();
+    expect(result.workspaceId).toBeDefined();
+    expect(result.environmentId).toBeDefined();
+    expect(result.snapshotId).toBeDefined();
     expect(ctx.api.environment.create).toHaveBeenCalled();
     expect(ctx.api.workspace.attach).toHaveBeenCalled();
     expect(ctx.api.snapshot.capture).toHaveBeenCalledWith(
@@ -85,8 +83,8 @@ describe('infra-worker commands', () => {
   it('capture-snapshot should run through sdk/testing harness', async () => {
     const result = await testCommand(captureSnapshotCommand, {
       flags: {
-        workspaceId: 'ws_123',
-        environmentId: 'env_456',
+        'workspace-id': 'ws_123',
+        'environment-id': 'env_456',
         namespace: 'ns/demo',
       },
     });
@@ -111,7 +109,7 @@ describe('infra-worker commands', () => {
         argv: [],
         flags: {},
       })
-    ).rejects.toThrow('Missing required flag: snapshotId');
+    ).rejects.toThrow('Missing required flag: --snapshot-id');
 
     cleanup();
   });

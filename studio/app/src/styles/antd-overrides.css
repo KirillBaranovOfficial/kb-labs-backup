@@ -67,6 +67,21 @@
   border-radius: 8px !important;
 }
 
+/* Ant Empty's simple SVG computes colors from Ant tokens in JavaScript.
+   Our tokens are CSS var() references, which FastColor cannot resolve and
+   can turn into black fills in dark mode. Bind the illustration to theme vars. */
+.ant-empty .ant-empty-image > svg[viewBox='0 0 64 41'] ellipse {
+  fill: var(--border-primary) !important;
+}
+
+.ant-empty .ant-empty-image > svg[viewBox='0 0 64 41'] > g > g {
+  stroke: var(--border-secondary) !important;
+}
+
+.ant-empty .ant-empty-image > svg[viewBox='0 0 64 41'] > g > g path:last-child {
+  fill: var(--bg-tertiary) !important;
+}
+
 /* Layout frame background — matches sidebar; the content panel paints its own bg on top */
 .ant-layout {
   background: var(--bg-sidebar) !important;

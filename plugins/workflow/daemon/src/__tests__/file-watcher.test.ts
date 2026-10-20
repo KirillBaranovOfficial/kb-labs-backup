@@ -146,11 +146,11 @@ describe('WorkflowFileWatcher', () => {
     expect(workflowService.refreshManifests).not.toHaveBeenCalled();
   });
 
-  it('skips watching a directory that does not exist', async () => {
+  it('attaches when a watched directory is created after startup', async () => {
     const { access } = await import('node:fs/promises');
     vi.mocked(access).mockRejectedValueOnce(new Error('ENOENT'));
 
-    const { logger } = makeWatcher();
+    const { workflowService, logger } = makeWatcher();
 
     await vi.runAllTimersAsync();
 
@@ -159,7 +159,25 @@ describe('WorkflowFileWatcher', () => {
       expect.any(Object),
     );
 
-    // watch() should NOT have been called for a non-existent dir.
-    expect(vi.mocked(watch)).not.toHaveBeenCalled();
+    expect(vi.mocked(watch)).toHaveBeenCalledWith(
+      '/project/.kb',
+      { persistent: false },
+      expect.any(Function),
+    );
+
+    // Creating .kb/workflows causes the child watcher to attach; later YAML
+    // edits then refresh manifests and cron discovery as usual.
+    const parentCallback = getWatchCallback();
+    parentCallback('rename', 'workflows');
+    await vi.runAllTimersAsync();
+    expect(vi.mocked(watch)).toHaveBeenCalledWith(
+      '/project/.kb/workflows',
+      { persistent: false },
+      expect.any(Function),
+    );
+
+    getWatchCallback(1)('change', 'hello.yml');
+    await vi.runAllTimersAsync();
+    expect(workflowService.refreshManifests).toHaveBeenCalledTimes(1);
   });
 });

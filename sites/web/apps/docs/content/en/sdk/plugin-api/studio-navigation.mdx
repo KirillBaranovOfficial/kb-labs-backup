@@ -1,0 +1,29 @@
+---
+title: "Studio UI kit: navigation"
+description: "Tabs, segmented controls, breadcrumbs, and in-page navigation."
+updatedAt: "2026-10-04"
+order: 5
+---
+
+Choose underline tabs for page-level sections and card tabs for contained work areas. `UISegmented` is best for a small set of mutually exclusive views or filters.
+
+<UiKitPreview name="tabs" />
+
+```tsx
+import { UITabs } from '@kb-labs/sdk/studio';
+
+<UITabs variant="underline" size="md" items={[
+  { key: 'overview', label: 'Overview', children: <Overview /> },
+  { key: 'settings', label: 'Settings', children: <Settings /> },
+]} />
+```
+
+<UiKitPreview name="segmented" />
+
+```tsx
+import { UISegmented } from '@kb-labs/sdk/studio';
+
+<UISegmented size="md" defaultValue="Design" options={['Design', 'Build', 'Ship']} />
+```
+
+<UiKitCatalog category="navigation" />

@@ -1,7 +1,7 @@
 ---
 title: "Architecture"
 description: "Internal components, bootstrap sequence, and request lifecycle."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-01"
 order: 2
 ---
 
@@ -51,14 +51,14 @@ From [`bootstrap.ts`](plugins/gateway/app/src/bootstrap.ts):
 
 1. **Launch service.** `runService({ appId: 'gateway', startDir, platform: { assemblyHook }, setup })` resolves roots, loads layered `.env`, and initializes the platform singleton (logger, cache, storage, optionally a SQL adapter).
 2. **Build a correlated logger** with `serviceId: 'gateway'` bindings.
-3. **Load gateway config** via `loadGatewayConfig(repoRoot)` — this parses the `gateway` section of `kb.config.json` through `GatewayConfigSchema`. Missing config or missing `gateway` key means the gateway starts with defaults (`port: 4000`, empty upstreams).
+3. **Load gateway config** via `loadGatewayConfig(repoRoot)` — this parses the `gateway` section of `kb.config.json` through `GatewayConfigSchema`. Missing config or missing `gateway` key means the gateway starts with default Gateway settings and empty upstreams. The listener port is resolved by `runService` from service transport, `GATEWAY_PORT`, or the service default, with the network offset applied once.
 4. **Create the host store.** If `platform.sqlDatabase` is registered, construct a `SqliteHostStore` for persistence. Otherwise log a warning and fall back to cache-only — hosts will be lost on restart.
 5. **Create the `HostRegistry`**, combining `platform.cache` (for fast lookup) with the optional SQL store (for durability).
 6. **Restore persisted hosts** from the store into the cache. If restore fails, log a diagnostic event and abort bootstrap.
 7. **Seed static tokens.** For each entry in `gateway.staticTokens`, write `host:token:<token>` → `{ hostId, namespaceId }` into the cache so the auth middleware recognizes them.
 8. **Build JWT config.** Read `GATEWAY_JWT_SECRET` from env. Required in production; warns and falls back to an insecure default if missing.
 9. **Create the Fastify server** with the injected registry, JWT config, and upstreams.
-10. **Start listening** on the configured port.
+10. **Start listening** on the port resolved by `runService`.
 11. **Wire graceful shutdown** on `SIGTERM` / `SIGINT`.
 
 ## Persistent host store
@@ -126,7 +126,7 @@ The host agent WS is the more interesting one — it's bidirectional, survives f
 
 ## Internal dispatch endpoint
 
-[`/internal/dispatch`](plugins/gateway/app/src/execute/routes.ts) is a gateway-internal endpoint used by the container execution backend. When `platform.execution.mode === 'container'`, the REST API (or workflow daemon) forwards execution requests through this endpoint to a container environment.
+[`/internal/dispatch`](plugins/gateway/app/src/execute/routes.ts) is a gateway-internal endpoint used by the container execution backend. The gateway and internal upstream services also use the shared secret for their service-to-service requests in every execution mode. When `platform.execution.mode === 'container'`, the REST API (or workflow daemon) forwards execution requests through this endpoint to a container environment.
 
 It's not exposed publicly — auth is via a separate shared secret (`GATEWAY_INTERNAL_SECRET`), not via the public token system. The endpoint accepts a handler reference plus inputs and returns the execution result.
 

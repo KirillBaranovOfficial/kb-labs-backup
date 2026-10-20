@@ -19,14 +19,22 @@ import { executeCommandV3 } from '@kb-labs/cli-runtime';
 import { noopUI } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
+import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { callOutput } from './output-capture.js';
+import type { UIOutput } from '@kb-labs/plugin-contracts';
 import type { McpTool } from './tool-builder.js';
 
-export interface ToolCallResult {
-  success: boolean;
+export type ToolCallResult = {
+  success: true;
+  output: string;
+  structured: UIOutput[];
+  exitCode: 0;
+} | {
+  success: false;
   output: string;
   exitCode: number;
-}
+  error: ErrorEnvelope;
+};
 
 /** Tenant → platform container. Default returns the global container; platform overrides for isolation. */
 export type PlatformResolver = (tenantId: string) => PlatformContainer;
@@ -77,13 +85,17 @@ export async function callTool(
   tenantId: string,
   resolvePlatform: PlatformResolver,
 ): Promise<ToolCallResult> {
-  const lines: string[] = [];
+  const output = { text: [] as string[], structured: [] as UIOutput[] };
   const container = resolvePlatform(tenantId);
+  let error: ErrorEnvelope | undefined;
 
-  const exitCode = await callOutput.run(lines, () =>
+  const exitCode = await callOutput.run(output, () =>
     executeCommandV3({
+      binaryName: 'kb',
       pluginId: tool.pluginId,
       pluginVersion: tool.version,
+      commandPath: tool.name,
+      onError: (envelope) => { error = envelope; },
       pluginRoot: tool.pluginRoot,
       handlerPath: resolveHandlerPath(tool.pluginRoot, tool.handlerPath),
       argv: [],
@@ -94,11 +106,18 @@ export async function callTool(
       ui: noopUI,
       platform: createPlatformServices(container),
       platformContainer: container,
-      socketPath: container.getSocketPath(),
       permissions: tool.permissions,
       quotas: tool.permissions?.quotas,
     }),
   );
 
-  return { success: exitCode === 0, output: lines.join('\n'), exitCode };
+  const text = output.text.join('\n');
+  if (exitCode === 0) return { success: true, output: text, structured: output.structured, exitCode: 0 };
+  if (!error) throw new Error(`MCP tool ${tool.name} exited ${exitCode} without a normalized error envelope.`);
+  return {
+    success: false,
+    output: text,
+    exitCode,
+    error,
+  };
 }

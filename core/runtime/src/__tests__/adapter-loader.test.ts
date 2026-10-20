@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { AdapterLoader, DependencyGraph } from '../adapter-loader.js';
-import type { AdapterManifest } from '@kb-labs/core-platform';
+import type { AdapterManifest, ILogger } from '@kb-labs/core-platform';
 import type { LoadedAdapterModule, AdapterConfig } from '../adapter-loader.js';
 
 describe('DependencyGraph', () => {
@@ -14,7 +14,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'logger',
-      manifest: { manifestVersion: '1.0.0', id: 'logger', name: 'Logger', version: '1.0.0', type: 'core', implements: 'ILogger' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'logger', name: 'Logger', version: '1.0.0', type: 'core', implements: 'ILogger', networkRequired: false },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -24,7 +24,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'cache',
-      manifest: { manifestVersion: '1.0.0', id: 'cache', name: 'Cache', version: '1.0.0', type: 'core', implements: 'ICache' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'cache', name: 'Cache', version: '1.0.0', type: 'core', implements: 'ICache', networkRequired: false },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -44,7 +44,7 @@ describe('DependencyGraph', () => {
     // logger -> logBuffer -> logPersistence
     graph.addNode({
       name: 'logger',
-      manifest: { manifestVersion: '1.0.0', id: 'logger', name: 'Logger', version: '1.0.0', type: 'core', implements: 'ILogger' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'logger', name: 'Logger', version: '1.0.0', type: 'core', implements: 'ILogger', networkRequired: false },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -54,7 +54,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'logBuffer',
-      manifest: { manifestVersion: '1.0.0', id: 'logBuffer', name: 'Log Buffer', version: '1.0.0', type: 'extension', implements: 'ILogBuffer' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'logBuffer', name: 'Log Buffer', version: '1.0.0', type: 'extension', implements: 'ILogBuffer', networkRequired: false },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -64,7 +64,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'logPersistence',
-      manifest: { manifestVersion: '1.0.0', id: 'logPersistence', name: 'Log Persistence', version: '1.0.0', type: 'extension', implements: 'ILogPersistence' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'logPersistence', name: 'Log Persistence', version: '1.0.0', type: 'extension', implements: 'ILogPersistence', networkRequired: false },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: ['db'],
@@ -74,7 +74,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'db',
-      manifest: { manifestVersion: '1.0.0', id: 'db', name: 'Database', version: '1.0.0', type: 'core', implements: 'ISQLDatabase' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'db', name: 'Database', version: '1.0.0', type: 'core', implements: 'ISQLDatabase', networkRequired: false },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -99,7 +99,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'a',
-      manifest: { manifestVersion: '1.0.0', id: 'a', name: 'A', version: '1.0.0', type: 'core', implements: 'IA' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'a', name: 'A', version: '1.0.0', type: 'core', implements: 'IA', networkRequired: false },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: ['b'],
@@ -109,7 +109,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'b',
-      manifest: { manifestVersion: '1.0.0', id: 'b', name: 'B', version: '1.0.0', type: 'core', implements: 'IB' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'b', name: 'B', version: '1.0.0', type: 'core', implements: 'IB', networkRequired: false },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: ['a'],
@@ -129,6 +129,97 @@ describe('DependencyGraph', () => {
 });
 
 describe('AdapterLoader', () => {
+  // case: S-211.6
+  it('isolates an adapter factory failure and continues loading other slots when requested', async () => {
+    const failedFactory = vi.fn(() => { throw new Error('bad adapter configuration'); });
+    const healthyFactory = vi.fn(() => ({ ready: true }));
+    const failures: Array<{ slot: string; packageName: string; message: string }> = [];
+    const loader = new AdapterLoader();
+    const loaded = await loader.loadAdapters({
+      broken: { module: '@example/broken', config: {} },
+      healthy: { module: '@example/healthy', config: {} },
+    }, async (modulePath) => ({
+      manifest: {
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
+        id: modulePath.includes('broken') ? 'broken' : 'healthy',
+        name: modulePath,
+        version: '1.0.0',
+        type: 'core',
+        implements: 'ITest', networkRequired: false,
+      },
+      createAdapter: modulePath.includes('broken') ? failedFactory : healthyFactory,
+    }), {
+      onAdapterLoadFailure: (slot, packageName, error) => {
+        failures.push({ slot, packageName, message: error instanceof Error ? error.message : String(error) });
+      },
+    });
+
+    expect(failures).toEqual([{ slot: 'broken', packageName: '@example/broken', message: 'bad adapter configuration' }]);
+    expect(loaded.has('broken')).toBe(false);
+    expect(loaded.get('healthy')).toEqual({ ready: true });
+  });
+
+  it('provides the platform logger to adapter factories through shared dependencies', async () => {
+    let logger: ILogger;
+    logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn(), debug: vi.fn(), trace: vi.fn(),
+      child: vi.fn(() => logger),
+      flush: vi.fn().mockResolvedValue(undefined),
+    };
+    const createAdapter = vi.fn((_config, deps) => {
+      expect(deps.logger).toBe(logger);
+      return {};
+    });
+    const loader = new AdapterLoader();
+    const configs = { cache: { module: '@example/cache', config: {} } };
+    const loadModule = vi.fn(async (): Promise<LoadedAdapterModule> => ({
+      manifest: {
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'cache', name: 'Cache', version: '1.0.0', type: 'core', implements: 'ICache', networkRequired: false,
+      },
+      createAdapter,
+    }));
+
+    await loader.loadAdapters(configs, loadModule, { logger });
+
+    expect(createAdapter).toHaveBeenCalledTimes(1);
+  });
+
+  it('injects declared platform services and external adapter dependencies through the generic loader', async () => {
+    const loader = new AdapterLoader();
+    const eventBus = { publish: vi.fn() };
+    const broker = { register: vi.fn() };
+    const channels = vi.fn();
+    const createAdapter = vi.fn((_config: unknown, deps: Record<string, unknown>) => deps);
+    const loadModule = vi.fn(async (): Promise<LoadedAdapterModule> => ({
+      manifest: {
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'notifier', name: 'Notifier', version: '1.0.0', type: 'core',
+        implements: 'INotifier', networkRequired: false, requires: {
+          adapters: ['eventBus'],
+          platformServices: [
+            { id: 'resourceBroker', alias: 'broker' },
+            { id: 'notifierChannels', alias: 'channels' },
+          ],
+        },
+      },
+      createAdapter,
+    }));
+
+    const loaded = await loader.loadAdapters(
+      { notifier: { module: '@kb-labs/notifier-router', config: {} } },
+      loadModule,
+      {
+        adapters: new Map([['eventBus', eventBus]]),
+        platformServices: {
+          resourceBroker: () => broker,
+          notifierChannels: async () => channels,
+        },
+      },
+    );
+
+    expect(loaded.get('notifier')).toEqual({ eventBus, broker, channels });
+    expect((loaded.get('notifier') as Record<string, unknown>).channels).toBe(channels);
+  });
+
   it('should build dependency graph from configs', async () => {
     const loader = new AdapterLoader();
 
@@ -141,12 +232,12 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-pino') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'pino-logger',
             name: 'Pino Logger',
             version: '1.0.0',
             type: 'core',
-            implements: 'ILogger',
+            implements: 'ILogger', networkRequired: false,
           } as AdapterManifest,
           createAdapter: vi.fn(),
         };
@@ -154,12 +245,12 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-sqlite') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'sqlite-db',
             name: 'SQLite Database',
             version: '1.0.0',
             type: 'core',
-            implements: 'ISQLDatabase',
+            implements: 'ISQLDatabase', networkRequired: false,
           } as AdapterManifest,
           createAdapter: vi.fn(),
         };
@@ -185,12 +276,12 @@ describe('AdapterLoader', () => {
     const loadModule = vi.fn(async () => {
       return {
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'log-persistence',
           name: 'Log Persistence',
           version: '1.0.0',
           type: 'extension',
-          implements: 'ILogPersistence',
+          implements: 'ILogPersistence', networkRequired: false,
           requires: { adapters: ['documentDatabase'] },
         } as AdapterManifest,
         createAdapter: vi.fn(),
@@ -214,12 +305,12 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-redis') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'redis-cache',
             name: 'Redis Cache',
             version: '1.0.0',
             type: 'core',
-            implements: 'ICache',
+            implements: 'ICache', networkRequired: false,
           } as AdapterManifest,
           createAdapter: vi.fn(),
         };
@@ -228,12 +319,12 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-eventbus-cache') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'eventbus-cache',
             name: 'EventBus Cache',
             version: '1.0.0',
             type: 'core',
-            implements: 'IEventBus',
+            implements: 'IEventBus', networkRequired: false,
             // Intentionally wrong: uses manifest.id instead of runtime token "cache"
             requires: { adapters: ['redis-cache'] },
           } as AdapterManifest,
@@ -260,12 +351,12 @@ describe('AdapterLoader', () => {
     const loadModule = vi.fn(async () => {
       return {
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'pino-logger',
           name: 'Pino Logger',
           version: '1.0.0',
           type: 'core',
-          implements: 'ILogger',
+          implements: 'ILogger', networkRequired: false,
           optional: { adapters: ['analytics'] },
         } as AdapterManifest,
         createAdapter: vi.fn(),
@@ -292,12 +383,12 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-sqlite') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'sqlite-stores',
             name: 'SQLite',
             version: '1.0.0',
             type: 'core',
-            implements: 'IDocumentDatabase',
+            implements: 'IDocumentDatabase', networkRequired: false,
           } as AdapterManifest,
           createAdapter: vi.fn(() => mockDB),
         };
@@ -305,12 +396,12 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-log-document') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'log-document',
             name: 'Log Persistence',
             version: '1.0.0',
             type: 'extension',
-            implements: 'ILogPersistence',
+            implements: 'ILogPersistence', networkRequired: false,
             requires: { adapters: [{ id: 'documentDatabase', alias: 'documentDatabase' }] },
           } as AdapterManifest,
           createAdapter: vi.fn((config, deps) => {
@@ -347,12 +438,12 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'logger',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'logger',
         name: 'Logger',
         version: '1.0.0',
         type: 'core',
-        implements: 'ILogger',
+        implements: 'ILogger', networkRequired: false,
       },
       module: {} as LoadedAdapterModule,
       config: {},
@@ -364,12 +455,12 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'logRingBuffer',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'logRingBuffer',
         name: 'Log Ring Buffer',
         version: '1.0.0',
         type: 'extension',
-        implements: 'ILogRingBuffer',
+        implements: 'ILogRingBuffer', networkRequired: false,
         extends: {
           adapter: 'logger',
           hook: 'onLog',
@@ -407,12 +498,12 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'logger',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'logger',
         name: 'Logger',
         version: '1.0.0',
         type: 'core',
-        implements: 'ILogger',
+        implements: 'ILogger', networkRequired: false,
       },
       module: {} as LoadedAdapterModule,
       config: {},
@@ -425,12 +516,12 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'ext1',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'ext1',
         name: 'Extension 1',
         version: '1.0.0',
         type: 'extension',
-        implements: 'IExt',
+        implements: 'IExt', networkRequired: false,
         extends: { adapter: 'logger', hook: 'onLog', method: 'method', priority: 10 },
       },
       module: {} as LoadedAdapterModule,
@@ -443,12 +534,12 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'ext2',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'ext2',
         name: 'Extension 2',
         version: '1.0.0',
         type: 'extension',
-        implements: 'IExt',
+        implements: 'IExt', networkRequired: false,
         extends: { adapter: 'logger', hook: 'onLog', method: 'method', priority: 5 },
       },
       module: {} as LoadedAdapterModule,
@@ -461,12 +552,12 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'ext3',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'ext3',
         name: 'Extension 3',
         version: '1.0.0',
         type: 'extension',
-        implements: 'IExt',
+        implements: 'IExt', networkRequired: false,
         extends: { adapter: 'logger', hook: 'onLog', method: 'method' }, // priority: 0 (default)
       },
       module: {} as LoadedAdapterModule,
@@ -497,12 +588,12 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'ext1',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'ext1',
           name: 'Extension 1',
           version: '1.0.0',
           type: 'extension',
-          implements: 'IExt',
+          implements: 'IExt', networkRequired: false,
           extends: { adapter: 'missing-adapter', hook: 'onLog', method: 'handle' },
         },
         module: {} as LoadedAdapterModule,
@@ -535,12 +626,12 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'ext1',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'ext1',
           name: 'Extension 1',
           version: '1.0.0',
           type: 'extension',
-          implements: 'IExt',
+          implements: 'IExt', networkRequired: false,
           extends: { adapter: 'logger', hook: 'nonExistentHook', method: 'handle' },
         },
         module: {} as LoadedAdapterModule,
@@ -574,12 +665,12 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'ext1',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'ext1',
           name: 'Extension 1',
           version: '1.0.0',
           type: 'extension',
-          implements: 'IExt',
+          implements: 'IExt', networkRequired: false,
           extends: { adapter: 'logger', hook: 'onLog', method: 'nonExistentMethod' },
         },
         module: {} as LoadedAdapterModule,
@@ -615,12 +706,12 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'bad-ext',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'bad-ext',
           name: 'Bad Extension',
           version: '1.0.0',
           type: 'extension',
-          implements: 'IExt',
+          implements: 'IExt', networkRequired: false,
           extends: { adapter: 'missing', hook: 'onLog', method: 'handle' },
         },
         module: {} as LoadedAdapterModule,
@@ -634,12 +725,12 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'good-ext',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'good-ext',
           name: 'Good Extension',
           version: '1.0.0',
           type: 'extension',
-          implements: 'IExt',
+          implements: 'IExt', networkRequired: false,
           extends: { adapter: 'logger', hook: 'onLog', method: 'handle' },
         },
         module: {} as LoadedAdapterModule,

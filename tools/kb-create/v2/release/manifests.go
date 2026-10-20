@@ -15,6 +15,15 @@ import (
 	"github.com/kb-labs/create/v2/installed"
 )
 
+// ManifestRuleError identifies a publish-time manifest rule and its specific
+// remediation. The sealer preserves both when constructing its diagnostic.
+type ManifestRuleError struct {
+	Rule string
+	Hint string
+}
+
+func (err *ManifestRuleError) Error() string { return err.Rule }
+
 // EnrichWithManifests reads each package exactly once and replaces any
 // hand-written configuration projection in the release export. Package,
 // component id and version must match, otherwise publishing fails closed.
@@ -77,19 +86,28 @@ func requirements(items []doctor.Requirement) ([]catalog.ConfigRequirement, erro
 	result := make([]catalog.ConfigRequirement, 0, len(items))
 	for _, item := range items {
 		if item.Secret && (item.Env == "" || len(item.Services) == 0) {
-			return nil, fmt.Errorf("secret manifest requirement %s must declare env and services", item.ID)
+			return nil, &ManifestRuleError{
+				Rule: fmt.Sprintf("secret manifest requirement %s must declare env and services", item.ID),
+				Hint: fmt.Sprintf("Declare env and services for secret requirement %s, then rerun release-index preparation.", item.ID),
+			}
 		}
 		if item.Secret && len(item.Default) != 0 {
-			return nil, fmt.Errorf("secret manifest requirement %s must not declare a default", item.ID)
+			return nil, &ManifestRuleError{
+				Rule: fmt.Sprintf("secret manifest requirement %s must not declare a default", item.ID),
+				Hint: fmt.Sprintf("Remove the default from secret requirement %s, then rerun release-index preparation.", item.ID),
+			}
 		}
 		defaultValue := ""
 		if len(item.Default) != 0 {
 			if !json.Valid(item.Default) {
-				return nil, fmt.Errorf("manifest requirement %s has invalid JSON default", item.ID)
+				return nil, &ManifestRuleError{
+					Rule: fmt.Sprintf("manifest requirement %s has invalid JSON default", item.ID),
+					Hint: fmt.Sprintf("Correct the JSON default for manifest requirement %s, then rerun release-index preparation.", item.ID),
+				}
 			}
 			defaultValue = string(item.Default)
 		}
-		result = append(result, catalog.ConfigRequirement{ID: item.ID, Path: item.Path, Required: item.Required, Secret: item.Secret, Generate: item.Generate, Default: defaultValue, Env: item.Env, Services: append([]string(nil), item.Services...), Hint: item.Hint})
+		result = append(result, catalog.ConfigRequirement{ID: item.ID, Path: item.Path, Required: item.Required, Optional: item.Optional, Severity: item.Severity, Secret: item.Secret, Generate: item.Generate, Default: defaultValue, Env: item.Env, Services: append([]string(nil), item.Services...), Hint: item.Hint, Action: item.Action})
 	}
 	return result, nil
 }

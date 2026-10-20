@@ -18,7 +18,11 @@ diagnose a platform from logs alone.
 
 The platform owns one typed context logger. Its mandatory identity is
 `applicationId`, `serviceId`, `instanceId`, and `layer`. Operation context adds
-`component`, `operation`, `requestId`, `traceId`, `spanId`, and `tenantId`.
+`component`, `operation`, `requestId`, `correlationId`, `traceId`, `spanId`, and
+`tenantId`. `correlationId` identifies a catalogued failure and is the key
+named in its envelope and `kb logs query --correlation-id`; `requestId` remains
+the HTTP/request lifecycle identifier. A failure log uses `correlationId`
+without duplicating that value as `requestId`.
 Plugin execution adds `pluginId`, `pluginVersion`, and `pluginKind`.
 
 Context is inherited parent-first. A child may add absent identity or domain

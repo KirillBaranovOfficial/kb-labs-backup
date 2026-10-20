@@ -11,6 +11,13 @@ export type { CiProvider } from './ci/index.js';
 // Snapshot store
 export { SnapshotStore } from './snapshot/snapshot-store.js';
 
+// Case-first QA catalog and coverage
+export { parseQACatalog } from './cases/catalog.js';
+export type { QACatalogDiagnostic, QACatalogResult } from './cases/catalog.js';
+export { scanQACaseClaims } from './cases/claims.js';
+export { RELEASE_CASE_CLAIM_BASELINE, validateReleaseCaseClaims } from './cases/release-claim-baseline.js';
+export { computeQACaseCoverage } from './cases/coverage.js';
+
 // Analysis
 export { analyzeTrends } from './analysis/trend-analyzer.js';
 export { detectRegressions } from './analysis/regression-detector.js';

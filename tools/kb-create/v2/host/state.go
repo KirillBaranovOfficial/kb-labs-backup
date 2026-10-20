@@ -8,7 +8,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/operationlock"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // KBHomeEnv overrides the machine-level KB Labs home (default ~/.kb). It is the
@@ -16,12 +19,21 @@ import (
 // isolates every per-user file in tests and sandboxes.
 const KBHomeEnv = "KB_HOME"
 
-// State names the files the launcher owns in its per-user state home
-// (<KB_HOME>/launcher). There is one launcher per user: the platform is a
-// per-user install (ADR-0044), so pid files, the control channel and the
-// operation lock are not keyed by platform root. There is no package-level
-// state: every component receives a State value.
+// State names the per-installation host lifecycle files.
 type State struct{ Dir string }
+
+// StateForRoot returns lifecycle files inside the installation container so
+// the running host record survives a switch between immutable version roots.
+func StateForRoot(platformRoot string) (State, error) {
+	if strings.TrimSpace(platformRoot) == "" {
+		return State{}, fmt.Errorf("platform root is empty")
+	}
+	layout, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return State{}, fmt.Errorf("resolve platform root for lifecycle state: %w", err)
+	}
+	return State{Dir: layout.HostStateDir()}, nil
+}
 
 // KBHome resolves the machine-level KB Labs home: $KB_HOME when set, else ~/.kb.
 func KBHome() (string, error) {
@@ -39,76 +51,61 @@ func KBHome() (string, error) {
 func StateHome() (State, error) {
 	root, err := KBHome()
 	if err != nil {
-		return State{}, contracts.NewLauncherError(contracts.CodeHostStateDirUnwritable, "Cannot resolve the launcher state directory.", "Set KB_HOME to a writable directory.", err)
+		return State{}, contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "Cannot resolve the launcher state directory.", "Set KB_HOME to a writable directory.", err)
 	}
 	return State{Dir: filepath.Join(root, "launcher")}, nil
 }
 
 func (s State) HostPID() string        { return filepath.Join(s.Dir, "host.pid") }
 func (s State) HostLog() string        { return filepath.Join(s.Dir, "host.log") }
+func (s State) LauncherLog() string    { return filepath.Join(s.Dir, "launcher.log") }
 func (s State) SupervisorPID() string  { return filepath.Join(s.Dir, "supervisor.pid") }
 func (s State) SupervisorLog() string  { return filepath.Join(s.Dir, "supervisor.log") }
 func (s State) Control() string        { return filepath.Join(s.Dir, "control.json") }
 func (s State) UpdateRequests() string { return filepath.Join(s.Dir, "update-requests.json") }
-func (s State) OperationLock() string  { return filepath.Join(s.Dir, "operation.lock") }
+func (s State) OperationLock() string  { return operationlock.Path(s.Dir) }
 
 // Ensure creates the state directory with owner-only permissions.
 func (s State) Ensure() error { return os.MkdirAll(s.Dir, 0o700) }
 
-func (s State) unwritable(cause error) *contracts.LauncherError {
-	return contracts.NewLauncherError(contracts.CodeHostStateDirUnwritable, "Cannot write to the state directory "+s.Dir+".", "Fix the directory permissions or free disk space.", cause)
+func (s State) unwritable(cause error) *diag.Diag {
+	return contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "Cannot write to the state directory "+s.Dir+".", "Fix the directory permissions or free disk space.", cause)
 }
 
-// AcquireOperation takes the per-user lifecycle lock so two launchers never
-// swap the same installation at once. The lock records the holder's pid; a lock
-// whose holder is gone is stale and is replaced. The returned function releases
-// it and is safe to call more than once.
+// AcquireOperation takes the kernel-owned per-installation lifecycle lock so two
+// launchers never mutate the same installation at once. Its persistent file is
+// only descriptive metadata; process exit releases the descriptor lock. The
+// returned function releases it and is safe to call more than once.
 func (s State) AcquireOperation(operation string) (func(), error) {
 	if err := s.Ensure(); err != nil {
 		return nil, s.unwritable(err)
 	}
 	path := s.OperationLock()
-	for attempt := 0; attempt < 2; attempt++ {
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			_, writeErr := fmt.Fprintf(file, "%d %s\n", os.Getpid(), operation)
-			if err := errors.Join(writeErr, file.Close()); err != nil {
-				_ = os.Remove(path)
-				return nil, s.unwritable(err)
-			}
-			released := false
-			return func() {
-				if !released {
-					released = true
-					_ = os.Remove(path)
-				}
-			}, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, s.unwritable(err)
-		}
-		if holder, alive := s.lockHolder(); alive {
-			failure := contracts.NewLauncherError(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %d).", holder), "Wait for it to finish; if no launcher is running, remove the stale lock file "+path+".", nil)
-			failure.Details = map[string]string{"pid": strconv.Itoa(holder), "path": path}
-			return nil, failure
-		}
-		_ = os.Remove(path)
+	lease, err := operationlock.Acquire(path, operation)
+	if err == nil {
+		return lease.Release, nil
 	}
-	return nil, contracts.NewLauncherError(contracts.CodeOperationInProgress, "Another launcher operation is already running.", "Wait for it to finish; if no launcher is running, remove the stale lock file "+path+".", nil)
+	return nil, operationLockFailure(s, path, err)
 }
 
-func (s State) lockHolder() (int, bool) {
-	data, err := os.ReadFile(s.OperationLock())
-	if err != nil {
-		return 0, false
+func operationLockFailure(state State, path string, cause error) *diag.Diag {
+	switch {
+	case errors.Is(cause, operationlock.ErrInProgress):
+		holder, hasHolder := operationlock.Holder(path)
+		process := "unknown"
+		if hasHolder {
+			process = strconv.Itoa(holder)
+		}
+		failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %s).", process), "Wait for it to finish, then rerun the command.", nil)
+		failure.Meta = map[string]any{"pid": process, "path": path}
+		return failure
+	case errors.Is(cause, operationlock.ErrUnsupportedPlatform):
+		return contracts.NewDiag(contracts.CodeOperationLockUnsupported,
+			"Installation operation locks are supported only on Linux and macOS.",
+			"Run this command on a Linux or macOS host.", cause)
+	case errors.Is(cause, operationlock.ErrIO):
+		return state.unwritable(cause)
+	default:
+		return diag.Wrap(cause, "KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", diag.WithHint("Re-run with --debug and include the correlationId in a report."))
 	}
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return 0, false
-	}
-	pid, err := strconv.Atoi(fields[0])
-	if err != nil || !processAlive(pid) {
-		return 0, false
-	}
-	return pid, true
 }

@@ -37,9 +37,8 @@ var configCmd = &cobra.Command{
 		// Hot-swap only works when the running env has the same plugin set;
 		// changing plugins needs a reinstall (`up`), not a config switch.
 		if cur, _ := tb.Get(meta.Profile); !samePlugins(cur.Plugins, profile.Plugins) {
-			return diag.New("ERR_PROFILE_MISMATCH", "config switch needs the same plugin set",
-				diag.WithReason(fmt.Sprintf("live=%v requested=%v", cur.Plugins, profile.Plugins)),
-				diag.WithHint("run `kb-env up "+args[0]+" --fresh` to change plugins"))
+			return diag.New("KB_ENV_PROFILE_MISMATCH", "config switch needs the same plugin set",
+				diag.WithReason(fmt.Sprintf("live=%v requested=%v", cur.Plugins, profile.Plugins)))
 		}
 
 		ws, err := orchestrator.WorkspaceRoot()

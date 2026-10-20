@@ -39,7 +39,7 @@
 | `release`         | @kb-labs/release-manager-cli      | plan · run · publish · rollback · report · changelog · verify · checks · build · pack · version · git         | Release pipeline |
 | `review`          | @kb-labs/review-entry             | run                                                                                                            | AI code review |
 | `scaffold`        | @kb-labs/scaffold                 | run · doctor                                                                                                   | Entity scaffolding |
-| `workflow`        | @kb-labs/workflow-entry           | health · metrics · status · logs · list · run · job-run · runs:list/view/watch/rerun                          | Workflow engine |
+| `workflow`        | @kb-labs/workflow-entry           | health · metrics · job status/logs/run · run · runs:list/view/watch/rerun                                      | Workflow engine |
 
 ---
 
@@ -80,7 +80,7 @@ uses kebab-case at top level, inconsistent with everything else.
 Several commands break word-boundary convention inside paths:
 - `quality check-layers`, `quality fix-deps`, `quality dead-code`, `quality check-types`, `quality check-builds`, `quality check-tests`
 - `infra-worker capture-snapshot`, `infra-worker restore-snapshot`
-- `workflow job-run`, `workflow runs-list`, `workflow runs-view`, `workflow runs-watch`, `workflow runs-rerun`
+- `workflow job run`, `workflow runs list`, `workflow runs view`, `workflow runs watch`, `workflow runs rerun`
 - `clickup task comment-list`, `clickup task comment-add`
 - `mind rag-index`, `mind rag-query`, `mind sync-add`, `mind sync-update`, `mind sync-delete`, `mind sync-list`, `mind sync-status`
 
@@ -217,7 +217,7 @@ Ordered by impact and effort.
 
 | # | What | Problem | Proposed fix |
 |---|------|---------|--------------|
-| R3 | `registry` (system) | P3: prime name for 1 internal cmd | Move under `info diag` or `platform diag` |
+| R3 | `registry` (system) | P3: prime name for 1 internal cmd | Keep top-level diagnostics at `kb diag`; assess registry command separately |
 | R4 | `quality` kebab subcommands | P5 | Restructure as proper subgroups |
 | R5 | `workflow` kebab subcommands (`runs-list` etc.) | P5 | `workflow runs list/view/watch/rerun` |
 | R6 | `mind` subcommand names (`rag-index`, `rag-query`, `sync-add`) | P5 + P8 | `mind index`, `mind search`, `mind sync add` |

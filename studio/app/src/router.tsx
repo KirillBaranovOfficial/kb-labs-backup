@@ -13,8 +13,10 @@ import { LoginPage } from './pages/login-page';
 import { ActivatePage } from './pages/activate-page';
 import { SessionsPage } from './pages/sessions-page';
 import { ChangePasswordPage } from './pages/change-password-page';
+import { ApiTokensPage } from './pages/api-tokens-page';
 import { AdminUsersPage } from './pages/admin-users-page';
 import { AdminInvitesPage } from './pages/admin-invites-page';
+import { ResetPasswordPage } from './pages/reset-password-page';
 import { PluginPageV2 } from './routes/plugin-page-v2';
 import { PageTransition } from './components/page-transition';
 import { createStudioLogger } from './utils/logger';
@@ -23,6 +25,7 @@ import { useSettings } from './providers/settings-provider';
 import type { StudioRegistryV2 } from '@kb-labs/studio-federation';
 import { NavigationItemsProvider } from './providers/navigation-items-provider';
 import { applyNavigationCategories } from './utils/apply-navigation-categories';
+import { ProjectContextSelector } from './components/project-context-selector';
 import { AVAILABLE_ICONS, KBPageLayout, KBStatusBar, type NavigationItem, StatusBarItem, StatusBarPresets } from '@/components/ui';
 
 // Module routes
@@ -31,7 +34,6 @@ import { dashboardRoutes, dashboardNavigation } from './modules/dashboard/routes
 import { projectsRoutes, projectsNavigation } from './modules/projects/routes';
 import { pluginsRoutes, pluginsNavigation } from './modules/plugins/routes';
 import { projectPluginsRoutes, projectPluginsNavigation } from './modules/project-plugins/routes';
-import { projectAdaptersRoutes, projectAdaptersNavigation } from './modules/project-adapters/routes';
 import { analyticsRoutes, analyticsNavigation } from './modules/analytics/routes';
 import { observabilityRoutes, observabilityNavigation } from './modules/observability/routes';
 import { settingsRoutes, settingsNavigation } from './modules/settings/routes';
@@ -71,7 +73,6 @@ const systemNavigation: NavigationItem[] = [
   dashboardNavigation,
   projectsNavigation,
   projectPluginsNavigation,
-  projectAdaptersNavigation,
   pluginsNavigation,
   analyticsNavigation,
   observabilityNavigation,
@@ -137,17 +138,20 @@ function LayoutContent() {
             key: route.key,
             label: route.label,
             path: route.path,
-            icon: renderPluginIcon(route.icon),
           })),
         });
       }
     }
 
-    // Settings always at the bottom
-    items.push(settingsNavigation);
+    if (auth.permissions.has('users:read')) {
+      items.push({ key: 'admin-users', label: 'Users', path: '/admin/users' });
+    }
+
+    // Platform settings are administrator-only.
+    if (auth.permissions.has('platform-settings:read')) items.push(settingsNavigation);
 
     return items;
-  }, [pluginNavModel]);
+  }, [pluginNavModel, auth.permissions]);
 
   // Available items for NavigationSettings UI (top-level items except settings)
   const availableNavItems = React.useMemo(
@@ -221,6 +225,9 @@ function LayoutContent() {
           />
         }
       >
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 0' }}>
+          <ProjectContextSelector />
+        </div>
         <HealthBanner />
         <PageTransition>
           <div style={{ paddingBottom: '20px' }}>
@@ -252,6 +259,11 @@ export const router = createBrowserRouter([
     element: <ActivatePage />,
     errorElement: <ErrorBoundary />,
   },
+  {
+    path: '/reset-password/:token',
+    element: <ResetPasswordPage />,
+    errorElement: <ErrorBoundary />,
+  },
   // Protected routes (RequireAuth gate before Layout renders)
   {
     element: <RequireAuth><Layout /></RequireAuth>,
@@ -260,7 +272,6 @@ export const router = createBrowserRouter([
       ...dashboardRoutes,
       ...projectsRoutes,
       ...projectPluginsRoutes,
-      ...projectAdaptersRoutes,
       ...pluginsRoutes,
       ...analyticsRoutes,
       ...observabilityRoutes,
@@ -274,6 +285,11 @@ export const router = createBrowserRouter([
       {
         path: '/account/password',
         element: <ChangePasswordPage />,
+        errorElement: <ErrorBoundary />,
+      },
+      {
+        path: '/account/tokens',
+        element: <ApiTokensPage />,
         errorElement: <ErrorBoundary />,
       },
       // Admin pages (permission checks are inside the components)

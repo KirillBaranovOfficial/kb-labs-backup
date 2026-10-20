@@ -10,6 +10,7 @@ import {
   UITimeline,
   UIBadge,
   UIIcon,
+  UISkeleton,
 } from '@kb-labs/studio-ui-kit';
 import { usePrometheusMetrics } from '@kb-labs/studio-data-client';
 import { useDataSources } from '../../../providers/data-sources-provider';
@@ -105,9 +106,7 @@ export function PrometheusMetricsPage() {
           title="Prometheus Metrics"
           description="REST API performance and health metrics"
         />
-        <div style={{ padding: '24px 0', textAlign: 'center' }}>
-          Loading...
-        </div>
+        <UISkeleton active lines={8} />
       </UIPage>
     );
   }

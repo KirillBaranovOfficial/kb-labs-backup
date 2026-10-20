@@ -2,7 +2,7 @@
  * workflow:run command - Run workflow by workflow ID
  */
 
-import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { createErrorEnvelope, defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import type { WorkflowRunRequest } from '@kb-labs/workflow-contracts';
 import { WorkflowDaemonClient } from '../http-client.js';
 
@@ -10,7 +10,6 @@ interface WorkflowRunFlagsInput {
   json?: boolean;
   'workflow-id'?: string;
   input?: string;
-  inputs?: string;
   isolation?: string;
   'trigger-type'?: string;
   'trigger-user'?: string;
@@ -24,7 +23,17 @@ function parseJsonInput(value: string | undefined): unknown {
   if (!value) {
     return undefined;
   }
-  return JSON.parse(value);
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw inputError('The --input value is not valid JSON.', 'Pass valid JSON with `--input`, then retry `kb workflow run`.');
+  }
+}
+
+function inputError(message: string, hint: string): Error & { envelope: ReturnType<typeof createErrorEnvelope> } {
+  const error = new Error(message) as Error & { envelope: ReturnType<typeof createErrorEnvelope> };
+  error.envelope = createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', { message, hint });
+  return error;
 }
 
 function parseIsolation(value: string | undefined): WorkflowRunRequest['isolation'] {
@@ -34,41 +43,36 @@ function parseIsolation(value: string | undefined): WorkflowRunRequest['isolatio
   if (value === 'strict' || value === 'balanced' || value === 'relaxed') {
     return value;
   }
-  throw new Error(`Invalid isolation value: ${value}. Expected strict|balanced|relaxed`);
+  throw inputError(`Invalid isolation value: ${value}. Expected strict|balanced|relaxed.`, 'Use `--isolation=strict`, `--isolation=balanced`, or `--isolation=relaxed`.');
 }
 
 function parseTriggerType(value: string | undefined): WorkflowRunRequest['trigger'] {
   if (!value) {
     return undefined;
   }
-  if (value === 'manual' || value === 'api' || value === 'cron') {
+  if (value === 'manual') {
     return { type: value };
   }
-  throw new Error(`Invalid trigger type: ${value}. Expected manual|api|cron`);
+  throw inputError(`Invalid trigger type: ${value}. Expected manual.`, 'Use `--trigger-type=manual`; schedules are created with `kb workflow cron`.');
 }
 
 export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>({
   id: 'workflow:run',
-  description: 'Run workflow by ID with optional target/isolation overrides. Pass JSON payload via --input (not --inputs).',
+  description: 'Run workflow by ID with optional target/isolation overrides and a JSON payload via --input.',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<WorkflowRunFlagsInput>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<WorkflowRunFlagsInput>): Promise<CommandResult> {
       const outputJson = input.flags.json ?? false;
       const workflowId = input.flags['workflow-id'];
 
       if (!workflowId) {
-        validationError(ctx, 'Missing required flag: --workflow-id', 'Usage: kb workflow:run --workflow-id <id>', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(inputError('Missing required flag: --workflow-id.', 'Run `kb workflow run --help` to see the required flags.'));
       }
 
       try {
         const request: WorkflowRunRequest = {};
 
-        if (input.flags.inputs && !input.flags.input) {
-          ctx.ui?.warn?.('--inputs is deprecated; use --input instead');
-        }
-        const rawInput = input.flags.input ?? input.flags.inputs;
-        const inputPayload = parseJsonInput(rawInput);
+        const inputPayload = parseJsonInput(input.flags.input);
         if (inputPayload !== undefined) {
           request.input = inputPayload;
         }
@@ -105,7 +109,7 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
         const result = await client.runWorkflow(workflowId, request);
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: result });
+          return result;
         } else {
           ctx.ui?.success?.('Workflow run submitted', {
             title: 'Workflow Engine',
@@ -124,10 +128,9 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(error);
       }
     },
   },

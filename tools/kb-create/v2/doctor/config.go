@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // ApplyDefaults writes only manifest-declared safe defaults into V2's
@@ -30,11 +32,7 @@ func ApplyDefaults(platformRoot string, plan RepairPlan) error {
 	if err != nil {
 		return fmt.Errorf("encode repaired config: %w", err)
 	}
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, append(encoded, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temporary, path)
+	return versionroot.AtomicWriteFile(path, append(encoded, '\n'), 0o600)
 }
 
 func setPointer(config map[string]any, pointer string, raw json.RawMessage) error {

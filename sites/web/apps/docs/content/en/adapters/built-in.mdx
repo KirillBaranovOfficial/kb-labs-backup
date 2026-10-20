@@ -1,11 +1,16 @@
 ---
 title: "Built-in Adapters"
 description: "Catalog of adapters shipped in the monorepo with their interface and use case."
-updatedAt: "2026-04-16"
+updatedAt: "2026-10-11"
 order: 2
 ---
 
-Every adapter in the table below lives under [`adapters/`](adapters/) and is published to npm under `@kb-labs/adapters-<name>`. Pick by interface (the contract the runtime sees) and runtime characteristics (what backend, what tradeoffs).
+The platform release includes a local default adapter pack. Filesystem storage,
+SQLite data stores, Pino logging, and log buffering are installed with the
+platform; the runtime also supplies honest in-process defaults for event bus,
+invoke, config, artifacts, analytics buffering, and notifications. Packages
+listed below can be selected as overrides. Pick by interface (the contract the
+runtime sees) and runtime characteristics (what backend, what tradeoffs).
 
 To swap an adapter, change one line in `kb.config.jsonc` under `platform.adapters`. See [Adapters → Overview](/adapters) for the swap mechanics, and [Guides → LLM Setup](/guides/llm-setup) for an end-to-end walkthrough.
 
@@ -13,7 +18,7 @@ To swap an adapter, change one line in `kb.config.jsonc` under `platform.adapter
 
 | Package | Implements | Use when |
 |---|---|---|
-| `@kb-labs/adapters-kblabs-gateway` | `ILLM` | Default. Bootstrap-friendly free tier through a hosted proxy. Good for onboarding, demos, light dev use. |
+| `@kb-labs/adapters-kblabs-gateway` | `ILLM` | Hosted proxy, configured explicitly when you choose this provider. |
 | `@kb-labs/adapters-openai` | `ILLM` | You have your own OpenAI-compatible key. Supports `baseURL` so it also works against self-hosted inference servers (vLLM, Ollama with OpenAI-compat shim, custom proxies). |
 | `@kb-labs/adapters-vibeproxy` | `ILLM` | Internal routing proxy. Niche; most teams won't reach for this. |
 
@@ -21,7 +26,7 @@ To swap an adapter, change one line in `kb.config.jsonc` under `platform.adapter
 
 | Package | Implements | Use when |
 |---|---|---|
-| `@kb-labs/adapters-openai/embeddings` | `IEmbeddings` | OpenAI text-embedding models (`text-embedding-3-small`, `-large`, etc.). Default for RAG flows. |
+| `@kb-labs/adapters-openai/embeddings` | `IEmbeddings` | OpenAI text-embedding models (`text-embedding-3-small`, `-large`, etc.). Requires an explicit provider configuration. |
 
 ## Vector store (`IVectorStore`)
 
@@ -33,6 +38,7 @@ To swap an adapter, change one line in `kb.config.jsonc` under `platform.adapter
 
 | Package | Implements | Use when |
 |---|---|---|
+| `@kb-labs/adapters-state-broker` | `ICache` | Built-in platform-local cache backed by the StateBroker included with the platform; no Redis service is required. |
 | `@kb-labs/adapters-redis` | `ICache` | Shared cache across worker processes / hosts. Standard production choice. |
 | `@kb-labs/adapters-eventbus-cache` | `ICache` | Cache that publishes invalidations on the platform event bus. Use when multiple plugins share cached state and need notification of changes. |
 
@@ -40,23 +46,26 @@ To swap an adapter, change one line in `kb.config.jsonc` under `platform.adapter
 
 | Package | Implements | Use when |
 |---|---|---|
-| `@kb-labs/adapters-fs` | `IStorage` | Default. Local filesystem under `.kb/storage/`. Zero deps, perfect for single-host dev and small deployments. |
+| `@kb-labs/adapters-fs` | `IStorage` | Built-in platform default. Stores project workflow records and artifacts under `<KB_HOME>/state/<projectId>/storage/` by default; no external service is required. |
 
 ## Logger (`ILogger`)
 
 | Package | Implements | Use when |
 |---|---|---|
 | `@kb-labs/adapters-pino` | `ILogger` | Default. Structured JSON logs to stdout. Standard production choice when something else (Loki, CloudWatch, journald) tails stdout. |
-| `@kb-labs/adapters-pino-http` | `ILogger` | Pino with HTTP request enrichment. Use inside HTTP services that want auto-attached `req`/`res` fields. |
-| `@kb-labs/adapters-log-ringbuffer` | `ILogger` | In-memory ring buffer queryable from the platform. Use alongside Pino when you want recent logs accessible via API without parsing files. |
-| `@kb-labs/adapters-log-sqlite` | `ILogger` | Persists structured logs to a local SQLite file. Searchable with SQL, survives restarts. |
+| `@kb-labs/adapters-log-ringbuffer` | `ILogRingBuffer` | In-memory log buffer for live log streaming. |
+| `@kb-labs/adapters-log-document` | `ILogPersistence` | Persistent log storage backed by the configured document database. |
+
+The default log reader combines the local logger ring buffer with SQLite log
+persistence when that persistence adapter is installed. `kb adapter list
+--json` reports it as `HybridLogReader`.
 
 ## Analytics (`IAnalytics`)
 
 | Package | Implements | Use when |
 |---|---|---|
-| `@kb-labs/adapters-analytics-file` | `IAnalytics` | Default. JSONL file at `.kb/analytics/events.jsonl`. Zero deps, append-only, easy to grep. |
-| `@kb-labs/adapters-analytics-sqlite` | `IAnalytics` | SQLite database. Query events with SQL, build aggregations. |
+| `@kb-labs/adapters-analytics-file` | `IAnalytics` | JSONL files under `<KB_HOME>/state/<projectId>/analytics/buffer` by default. Zero deps, append-only, easy to grep. |
+| `@kb-labs/adapters-analytics-sqlite` | `IAnalytics` | Built-in platform default. SQLite database; query events with SQL and build aggregations. |
 | `@kb-labs/adapters-analytics-duckdb` | `IAnalytics` | DuckDB embedded analytical database. Same single-file convenience as SQLite, much faster for analytical queries over millions of events. |
 
 ## SQL database (`ISQLDatabase`)
@@ -69,6 +78,7 @@ To swap an adapter, change one line in `kb.config.jsonc` under `platform.adapter
 
 | Package | Implements | Use when |
 |---|---|---|
+| `@kb-labs/adapters-sqlite` | `IDocumentDatabase` | Built-in local document database default. Embedded SQLite database under `<KB_HOME>/state/<projectId>/database/kb.sqlite` by default. |
 | `@kb-labs/adapters-mongodb` | `IDocumentDatabase` | MongoDB-backed document store. |
 
 ## Workspace (`IWorkspaceProvider`)
@@ -91,9 +101,13 @@ To swap an adapter, change one line in `kb.config.jsonc` under `platform.adapter
 |---|---|---|
 | `@kb-labs/adapters-snapshot-localfs` | `ISnapshotProvider` | Local filesystem snapshots used by workflow rollback and recovery. |
 
-## Transport
+This provider implements the workspace snapshot-provider contract. It does not
+fill the plugin-visible `snapshotManager` slot, which currently has no runtime
+adapter implementation.
 
-`@kb-labs/adapters-transport` is a base package consumed by other adapters — not selected directly via `kb.config.jsonc`. Don't worry about it unless you're writing a custom adapter that needs the same HTTP/WebSocket primitives.
+## Execution transport
+
+Local execution uses `LocalBackend` and does not require a transport adapter. Remote execution receives the `IExecutionTransport` contract through `core/plugin-execution-factory`; the gateway builds `GatewayDispatchTransport`. There is no `executionTransport` key in platform configuration.
 
 ## Retry classification
 
@@ -118,7 +132,7 @@ Infrastructure adapters can import the same facade from `@kb-labs/sdk/adapters/i
 
 The roadmap-but-not-shipped list (don't try to use these via `kb.config.jsonc` — they 404):
 
-- **Cache:** Memcached, in-memory standalone (today the platform falls back to NoOp when no cache adapter is configured).
+- **Cache:** Memcached and standalone cache services beyond the platform-local StateBroker.
 - **Vector store:** Pinecone, Chroma, pgvector.
 - **Storage:** S3, MinIO, GCS, Azure Blob.
 - **LLM:** Anthropic native, Cohere, local Llama.cpp adapter.

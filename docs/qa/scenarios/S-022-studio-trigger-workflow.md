@@ -1,48 +1,30 @@
 ---
 id: S-022
-title: Studio — Trigger workflow from UI
+title: Studio — Trigger a workflow with declared inputs
 persona: solo-developer
+area: studio
 priority: P1
-automation: manual
-e2e: —
+status: active
+release: true
+modes: [local, secured]
+surfaces: [studio]
 ---
 
 ## Goal
-Developer triggers a workflow from Studio UI with custom inputs and monitors it to completion.
+
+A project user starts an enabled workflow from Studio, supplies its required inputs, and finds the resulting run in project history.
 
 ## Prerequisites
-- [ ] Studio accessible, logged in (S-020 passed)
-- [ ] At least one workflow with defined inputs exists
 
----
+- [ ] Host running, registered project selected, and Studio access available.
+- [ ] The project has an enabled manual workflow `greet` with required string input `name`.
+- [ ] In secured mode, the user is logged in and authorized to run workflows in the selected project.
 
 ## Steps
 
-### Phase 1 — Trigger
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Navigate to workflow detail page | Shows workflow info + "Run" button | | ⬜ |
-| 2 | Click "Run" | Input form appears with fields from workflow `inputs` schema | | ⬜ |
-| 3 | Fill inputs, click "Start run" | Run created, redirects to run detail | | ⬜ |
-
-### Phase 2 — Monitor
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 4 | Run detail shows live status | Status updates without page refresh | | ⬜ |
-| 5 | Jobs appear as they start/complete | Real-time job updates | | ⬜ |
-| 6 | Run completes, final status shown | `completed` or `failed` with clear UI | | ⬜ |
-
-### Phase 3 — Cancel from UI
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 7 | While run is running, click "Cancel" | Confirmation dialog appears | | ⬜ |
-| 8 | Confirm cancel | Run stops, status = `cancelled` | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-022.1 | Open **Workflows → Definitions**, select `greet`, and choose **Run** | The run form identifies required input `name` and marks it required. |
+| S-022.2 | Submit `name` with value `Ada` | Studio creates a run and shows its run ID and initial status within 30 seconds. |
+| S-022.3 | Open the created run from **Workflows → Runs** | The detail page shows the same run ID, workflow ID `greet`, and submitted input `name: Ada`; within 60 seconds its status is `success` and the step output contains `Ada`. |
+| S-022.4 | Start `greet` again and submit the form with `name` empty | Studio keeps the form open, marks `name` as required, and does not create a run. |

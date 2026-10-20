@@ -6,7 +6,11 @@ import {
   type PlatformRuntime,
   type PlatformUiProvider,
 } from "@kb-labs/core-runtime";
-import type { IContextLogger, IServiceTransport } from "@kb-labs/core-platform";
+import {
+  resolveServiceListenAddress,
+  type IContextLogger,
+  type IServiceTransport,
+} from "@kb-labs/core-platform";
 
 export interface ServiceContext {
   platform: PlatformContainer;
@@ -20,7 +24,8 @@ export interface ServiceContext {
   netOffset: number;
   runtime: PlatformRuntime;
   platformRoot: string;
-  projectRoot: string;
+  projectRoot?: string;
+  projectId?: string;
 }
 
 type ServiceSetup = (
@@ -34,8 +39,8 @@ interface NetworkServiceConfig {
    * Edge services that are not in the map use defaultPort + KB_NET_OFFSET.
    */
   serviceId?: string;
-  defaultPort: number;
-  portEnvVar: string;
+  defaultPort?: number;
+  portEnvVar?: string;
   defaultHost?: string;
   hostEnvVar?: string;
 }
@@ -46,11 +51,16 @@ interface PlatformLaunchOptions {
   loadEnv?: boolean;
   storeRawConfig?: boolean;
   uiProvider?: PlatformUiProvider;
+  hostServiceEnvironment?: import('@kb-labs/core-platform').HostServiceEnvironment;
 }
 
 export interface ServiceConfig extends NetworkServiceConfig {
   /** Starting directory for project/platform root resolution. */
   startDir?: string;
+  /** Project identity scope owned by this process entry point. */
+  projectScope: "required" | "platform";
+  /** Registry identity required when projectScope is `required`. */
+  projectId?: string;
   /** Entrypoint import.meta.url for installed-mode platform discovery. */
   moduleUrl?: string;
   platform: PlatformLaunchOptions;
@@ -89,6 +99,10 @@ export interface HostConfig {
   serviceId?: string;
   /** Starting directory for project/platform root resolution. */
   startDir?: string;
+  /** Project identity scope owned by this process entry point. */
+  projectScope: "required" | "platform";
+  /** Registry identity required when projectScope is `required`. */
+  projectId?: string;
   /** Entrypoint import.meta.url for installed-mode platform discovery. */
   moduleUrl?: string;
   platform: PlatformLaunchOptions;
@@ -101,23 +115,19 @@ function resolveNetwork(
   platform: PlatformContainer,
   netOffset: number,
 ): { port: number; host: string } {
-  const serviceId = module.serviceId ?? module.id;
   const transport = platform.getAdapter<IServiceTransport>("serviceTransport");
-  const address = transport?.listenAddress?.(serviceId);
-  const port =
-    address && "port" in address
-      ? address.port
-      : (process.env[module.portEnvVar]
-          ? parseInt(process.env[module.portEnvVar]!, 10)
-          : module.defaultPort) + netOffset;
-
-  const transportHost = address && "host" in address ? address.host : undefined;
-  const host =
-    module.hostEnvVar && process.env[module.hostEnvVar]
-      ? process.env[module.hostEnvVar]!
-      : (transportHost ?? module.defaultHost ?? "0.0.0.0");
-
-  return { port, host };
+  return resolveServiceListenAddress(
+    transport,
+    {
+      serviceId: module.serviceId ?? module.id,
+      ...(module.portEnvVar ? { portEnvVar: module.portEnvVar } : {}),
+      ...(module.portEnvVar ? { portEnvValue: process.env[module.portEnvVar] } : {}),
+      ...(module.defaultPort !== undefined ? { defaultPort: module.defaultPort } : {}),
+      ...(module.hostEnvVar ? { hostEnvValue: process.env[module.hostEnvVar] } : {}),
+      ...(module.defaultHost ? { defaultHost: module.defaultHost } : {}),
+    },
+    netOffset,
+  );
 }
 
 interface StartedModule {
@@ -169,12 +179,15 @@ export async function runHost(config: HostConfig): Promise<void> {
     serviceId: config.serviceId ?? config.appId,
     kind: "service",
     startDir: config.startDir,
+    projectScope: config.projectScope,
+    projectId: config.projectId,
     moduleUrl: config.moduleUrl,
     assemblyHook: config.platform.assemblyHook,
     failurePolicy: config.platform.failurePolicy,
     loadEnv: config.platform.loadEnv,
     storeRawConfig: config.platform.storeRawConfig,
     uiProvider: config.platform.uiProvider,
+    hostServiceEnvironment: config.platform.hostServiceEnvironment,
   });
 
   const logger = runtime.logger.forComponent("service-bootstrap");
@@ -202,6 +215,7 @@ export async function runHost(config: HostConfig): Promise<void> {
         netOffset,
         projectRoot: runtime.roots.projectRoot,
         platformRoot: runtime.roots.platformRoot,
+        projectId: config.projectId,
       });
       started.push({ id: module.id, teardown });
     } catch (error) {
@@ -280,11 +294,13 @@ export async function runHost(config: HostConfig): Promise<void> {
  * one-module case of {@link runHost}.
  */
 export async function runService(config: ServiceConfig): Promise<void> {
-  const { appId, startDir, moduleUrl, platform, setup, ...network } = config;
+  const { appId, startDir, moduleUrl, projectScope, projectId, platform, setup, ...network } = config;
   await runHost({
     appId,
     serviceId: network.serviceId ?? appId,
     startDir,
+    projectScope,
+    projectId,
     moduleUrl,
     platform,
     modules: [{ ...network, id: appId, setup }],

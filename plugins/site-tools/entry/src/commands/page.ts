@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve, normalize } from 'node:path';
-import { defineCommand, type PluginContextV3, type CLIInput, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CLIInput, type CommandResult } from '@kb-labs/sdk';
 
 interface PageFlags {
   badge?: string;
@@ -97,24 +97,24 @@ export default async function OpengraphImage({
 }
 
 async function runPage(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   input: CLIInput<PageFlags>,
 ): Promise<CommandResult<PageResult>> {
   const argv = input.argv ?? [];
   const segment = argv.find((a) => !a.startsWith('-'));
 
   if (!segment) {
-    ctx.ui.error('Usage: kb site page <segment> [--badge <text>] [--dry-run]');
+
     ctx.ui.write(
       'Examples:\n  kb site page pricing\n  kb site page solutions/my-solution --badge Solutions\n',
     );
-    return { ok: false, error: 'A page segment is required' };
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'A page segment is required', hint: 'Provide a lowercase route segment, for example `kb site page pricing`.' } };
   }
 
   // Reject path traversal — only forward slashes and alphanumeric/hyphen segments allowed
   if (!/^[a-z0-9][a-z0-9/-]*$/.test(segment) || segment.includes('..') || normalize(segment) !== segment) {
-    ctx.ui.error(`Invalid segment '${segment}' — use only lowercase letters, digits, hyphens, and forward slashes`);
-    return { ok: false, error: `Invalid segment '${segment}'` };
+
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Invalid segment '${segment}'`, hint: 'Use lowercase letters, numbers, hyphens, and forward slashes without path traversal, then rerun `kb site page <segment>`.' } };
   }
 
   const badge = input.flags?.badge ?? '';
@@ -127,8 +127,8 @@ async function runPage(
 
   // Double-check the resolved path is still inside localeDir (defense in depth)
   if (!segmentDir.startsWith(resolve(localeDir) + '/') && segmentDir !== resolve(localeDir)) {
-    ctx.ui.error(`Segment '${segment}' resolves outside app/[locale]/ — aborting`);
-    return { ok: false, error: `Segment '${segment}' resolves outside app/[locale]/` };
+
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Segment '${segment}' resolves outside app/[locale]/`, hint: "Run `kb site page --help` to review its inputs and recovery steps, then retry." } };
   }
 
   const namespace = segment
@@ -144,13 +144,13 @@ async function runPage(
   const ruJsonPath = join(siteRoot, 'messages', 'ru.json');
 
   if (existsSync(pagePath)) {
-    ctx.ui.error(`page.tsx already exists at app/[locale]/${segment}/`);
-    return { ok: false, error: `page.tsx already exists at app/[locale]/${segment}/` };
+
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `page.tsx already exists at app/[locale]/${segment}/`, hint: "Run `kb site page --help` to review its inputs and recovery steps, then retry." } };
   }
 
   if (existsSync(ogPath)) {
-    ctx.ui.error(`opengraph-image.tsx already exists at app/[locale]/${segment}/ — remove it first or use a different segment`);
-    return { ok: false, error: `opengraph-image.tsx already exists at app/[locale]/${segment}/` };
+
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `opengraph-image.tsx already exists at app/[locale]/${segment}/`, hint: "Run `kb site page --help` to review its inputs and recovery steps, then retry." } };
   }
 
   const pageContent = pageTemplate(segment, namespace);
@@ -196,7 +196,7 @@ async function runPage(
     ],
   });
 
-  return { ok: true };
+  return {};
 }
 
 export default defineCommand({

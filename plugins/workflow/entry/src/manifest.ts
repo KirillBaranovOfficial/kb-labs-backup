@@ -4,13 +4,10 @@
  * Provides CLI commands for interacting with Workflow Daemon via HTTP API.
  */
 
-import { defineCommandFlags, combinePermissions } from '@kb-labs/sdk';
+import { defineCommandFlags, combinePermissions, kbPlatformPreset } from '@kb-labs/sdk';
 import {
   healthFlags,
   metricsFlags,
-  statusFlags,
-  logsFlags,
-  listFlags,
   runFlags,
   workflowRunFlags,
   runsListFlags,
@@ -37,7 +34,9 @@ import {
  * No file system or git access needed
  */
 const pluginPermissions = combinePermissions()
-  .withEnv(['WORKFLOW_DAEMON_URL'])
+  .with(kbPlatformPreset)
+  .withFs({ mode: 'readWrite', allow: ['.kb/workflows/**'] })
+  .withEnv(['KB_PROJECT_ID', 'KB_GATEWAY_URL', 'HOME', 'KB_HOME'])
   .withNetwork({
     fetch: ['http://localhost:*', 'http://127.0.0.1:*'],
   })
@@ -70,8 +69,18 @@ export const manifest = {
       { path: 'workflow runs', describe: 'Workflow run management (list, view, watch, rerun)' },
       { path: 'workflow job', describe: 'Raw job execution' },
       { path: 'workflow defs', describe: 'Workflow definition discovery (list, view)' },
+      { path: 'workflow crons', describe: 'Workflow schedule management' },
     ],
     commands: [
+      {
+        path: 'workflow create',
+        category: 'Workflows',
+        operationType: 'mutate' as const,
+        describe: 'Create a runnable local workflow example.',
+        handler: './commands/create.js#default',
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow create'],
+      },
       {
         path: 'workflow health',
         category: 'Daemon',
@@ -115,51 +124,70 @@ export const manifest = {
         ],
       },
       {
-        path: 'workflow status',
+        path: 'workflow job status',
         category: 'Jobs',
         operationType: 'read' as const,
-        describe: '(Deprecated) Get job status. Use: kb workflow runs status <runId>',
+        describe: 'Get raw job status.',
         longDescription:
-          'Retrieves detailed status information for a specific job by ID, including current state, ' +
-          'start time, and completion time if finished. ' +
-          'DEPRECATED: use "kb workflow runs status <runId>" for run-level status.',
+          'Retrieves detailed status information for a raw job by ID, including current state, ' +
+          'start time, and completion time if finished.',
         handler: './commands/status.js#default',
-        flags: defineCommandFlags(statusFlags),
-        examples: ['kb workflow status --job-id=abc123', 'kb workflow status --job-id=abc123 --json'],
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow job status abc123', 'kb workflow job status abc123 --json'],
       },
       {
-        path: 'workflow logs',
+        path: 'workflow log show',
         category: 'Jobs',
         operationType: 'read' as const,
-        describe: '(Deprecated) Get job/run logs. Use: kb workflow runs logs <runId>',
+        describe: 'Get raw job logs.',
         longDescription:
-          'Fetches execution logs for a specific job or run by ID. ' +
-          'DEPRECATED: use "kb workflow runs logs <runId>" for run-level logs.',
-        handler: './commands/logs.js#default',
-        flags: defineCommandFlags(logsFlags),
+          'Fetches execution logs for a specific raw job by ID.',
+        handler: './commands/log-show.js#default',
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
         examples: [
-          'kb workflow logs --job-id=abc123',
-          'kb workflow logs --job-id=abc123 --json',
-          'kb workflow logs --job-id=abc123 --follow',
+          'kb workflow log show abc123',
+          'kb workflow log show abc123 --json',
         ],
       },
       {
-        path: 'workflow list',
+        path: 'workflow job list',
         category: 'Jobs',
         operationType: 'read' as const,
-        describe: '(Deprecated) List active executions. Use: kb workflow runs list',
-        longDescription:
-          'Lists all currently active workflow executions or cron jobs. Can be filtered by status (running, queued, ' +
-          'completed, failed, cancelled) or type (runs, cron). ' +
-          'DEPRECATED: use "kb workflow runs list" for run listing.',
-        handler: './commands/list.js#default',
-        flags: defineCommandFlags(listFlags),
-        examples: [
-          'kb workflow list',
-          'kb workflow list --status=running',
-          'kb workflow list --type=cron',
-          'kb workflow list --json',
-        ],
+        describe: 'List active raw jobs.',
+        longDescription: 'Lists active raw jobs and can filter them by status.',
+        handler: './commands/job-list.js#default',
+        flags: defineCommandFlags({
+          json: { type: 'boolean', description: 'Output result as JSON' },
+          status: { type: 'string', description: 'Filter by status' },
+        }),
+        examples: ['kb workflow job list', 'kb workflow job list --status=running', 'kb workflow job list --json'],
+      },
+      {
+        path: 'workflow crons list',
+        category: 'Workflows',
+        operationType: 'read' as const,
+        describe: 'List user and plugin workflow crons.',
+        handler: './commands/crons-list.js#default',
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow crons list', 'kb workflow crons list --json'],
+      },
+      {
+        path: 'workflow crons enable',
+        category: 'Workflows',
+        operationType: 'mutate' as const,
+        describe: 'Enable a user workflow cron.',
+        handler: './commands/crons-enable.js#default',
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow crons enable nightly-release'],
+      },
+      {
+        path: 'workflow crons disable',
+        category: 'Workflows',
+        operationType: 'mutate' as const,
+        describe: 'Disable a user workflow cron.',
+        handler: './commands/crons-disable.js#default',
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow crons disable nightly-release'],
       },
       {
         path: 'workflow job run',
@@ -534,29 +562,6 @@ export const manifest = {
         path: WORKFLOW_ROUTES.RESOLVE_APPROVAL,
         handler: './rest/resolve-approval-handler.js#default',
         describe: 'Approve or reject a pending approval step',
-      },
-    ],
-  },
-
-  // WebSocket channels for real-time updates
-  ws: {
-    basePath: '/v1/ws/plugins/workflow',
-    defaults: {
-      timeoutMs: 600000, // 10 minutes
-      maxMessageSize: 1048576, // 1MB
-      auth: 'none',
-      idleTimeoutMs: 300000, // 5 minutes
-    },
-    channels: [
-      {
-        path: '/logs/:runId',
-        handler: './ws/logs-channel.js#default',
-        description: 'Real-time job logs streaming',
-      },
-      {
-        path: '/progress/:jobId',
-        handler: './ws/progress-channel.js#default',
-        description: 'Real-time job progress updates',
       },
     ],
   },

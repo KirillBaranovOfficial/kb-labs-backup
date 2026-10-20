@@ -18,12 +18,12 @@ Plugin Handler → HTTP Client → Workflow Service REST API → JobBroker/CronS
 
 2. **REST API Routes** (`workflow-daemon/src/api/`)
    - `/api/v1/jobs` - Job management endpoints
-   - `/api/v1/cron` - Cron schedule management endpoints
+   - `/api/v1/crons` - List plugin and project cron schedules; enable or disable project crons
    - Uses Fastify with CORS support
 
 3. **REST API Contracts** (`workflow-contracts/src/rest-api.ts`)
    - Request/response types shared between client and server
-   - JobSubmissionRequest, JobStatusInfo, CronRegistrationRequest, CronInfo
+   - JobSubmissionRequest, JobStatusInfo, CronInfo, CronListResponse
 
 ## Configuration
 
@@ -78,7 +78,7 @@ If not set, Jobs/Cron APIs will use noop implementations (throw "not available" 
 {
   "id": "run_abc123",
   "type": "pluginId:jobId",
-  "status": "completed",
+  "status": "success",
   "tenantId": "default",
   "createdAt": "2025-01-21T10:00:00Z",
   "startedAt": "2025-01-21T10:00:01Z",
@@ -88,11 +88,13 @@ If not set, Jobs/Cron APIs will use noop implementations (throw "not available" 
 ```
 
 **Status Values:**
-- `pending` - Job queued, not started yet
+- `queued` - Run queued, not started yet
 - `running` - Job currently executing
-- `completed` - Job finished successfully
-- `failed` - Job failed with error
-- `cancelled` - Job was cancelled
+- `success` - Run finished successfully
+- `failed` - Run failed with error
+- `cancelled` - Run was cancelled
+- `skipped` - Run was skipped
+- `dlq` - Run moved to the dead-letter queue
 
 ### Cancel Job
 
@@ -117,7 +119,7 @@ If not set, Jobs/Cron APIs will use noop implementations (throw "not available" 
 
 **Query Parameters:**
 - `type` (optional): Job type pattern (e.g., "plugin:*", "analytics:export")
-- `status` (optional): Filter by status ("pending", "running", "completed", "failed", "cancelled")
+- `status` (optional): Filter by run status ("queued", "running", "success", "failed", "cancelled", "skipped", "dlq")
 - `limit` (optional): Max number of results (default: no limit)
 - `offset` (optional): Pagination offset (default: 0)
 
@@ -128,7 +130,7 @@ If not set, Jobs/Cron APIs will use noop implementations (throw "not available" 
     {
       "id": "run_abc123",
       "type": "pluginId:jobId",
-      "status": "completed",
+      "status": "success",
       "tenantId": "default",
       "createdAt": "2025-01-21T10:00:00Z",
       "startedAt": "2025-01-21T10:00:01Z",
@@ -140,126 +142,50 @@ If not set, Jobs/Cron APIs will use noop implementations (throw "not available" 
 
 ## Cron API
 
-### Register Cron Job
+The workflow daemon lists plugin manifest crons and project crons from `.kb/crons/<id>.yml`. A project cron targets an existing workflow and can pass workflow inputs:
 
-**Endpoint:** `POST /api/v1/cron`
-
-**Headers:**
-- `X-Tenant-ID`: Tenant identifier
-- `Content-Type`: application/json
-
-**Request Body:**
-```json
-{
-  "id": "daily-cleanup",
-  "schedule": "0 2 * * *",
-  "jobType": "cleanup:expired-data",
-  "payload": { "maxAge": "30d" },
-  "timezone": "UTC",
-  "enabled": true
-}
+```yaml
+schedule: "0 2 * * *"
+timezone: "UTC"
+workflow: nightly-release
+input:
+  channel: stable
+enabled: true
 ```
 
-**Response:**
+### List crons
+
+**Endpoint:** `GET /api/v1/crons`
+
+The response includes each cron's `id`, `source`, `schedule`, `timezone`, `target`, `input`, `enabled`, `lastRun`, and `nextFireAt`. Invalid project files are returned in `errors` with their path and reason.
+
 ```json
 {
-  "ok": true
-}
-```
-
-**Schedule Format:**
-- Standard cron expression (5 or 6 fields)
-- Examples:
-  - `0 * * * *` - Every hour at minute 0
-  - `0 2 * * *` - Every day at 02:00
-  - `*/15 * * * *` - Every 15 minutes
-  - `0 9 * * 1-5` - Weekdays at 09:00
-
-### Unregister Cron Job
-
-**Endpoint:** `DELETE /api/v1/cron/{id}`
-
-**Headers:**
-- `X-Tenant-ID`: Tenant identifier
-
-**Response:**
-```json
-{
-  "ok": true
-}
-```
-
-### List Cron Jobs
-
-**Endpoint:** `GET /api/v1/cron`
-
-**Headers:**
-- `X-Tenant-ID`: Tenant identifier
-
-**Response:**
-```json
-{
-  "crons": [
-    {
-      "id": "daily-cleanup",
+  "ok": true,
+  "data": {
+    "crons": [{
+      "id": "nightly",
+      "source": "user",
       "schedule": "0 2 * * *",
-      "jobType": "cleanup:expired-data",
       "timezone": "UTC",
+      "target": { "workflow": "nightly-release" },
+      "input": { "channel": "stable" },
       "enabled": true,
-      "lastRun": "2025-01-21T02:00:00Z",
-      "nextRun": "2025-01-22T02:00:00Z"
-    }
-  ]
+      "nextFireAt": "2026-10-02T02:00:00.000Z"
+    }],
+    "errors": []
+  }
 }
 ```
 
-### Trigger Cron Job (Manual)
+Plugin crons use `source: "plugin"` and a handler target. They appear in the same listing and are read-only.
 
-**Endpoint:** `POST /api/v1/cron/{id}/trigger`
+### Enable or disable a project cron
 
-**Headers:**
-- `X-Tenant-ID`: Tenant identifier
+- `POST /api/v1/crons/{id}/enable`
+- `POST /api/v1/crons/{id}/disable`
 
-**Response:**
-```json
-{
-  "ok": true
-}
-```
-
-Executes cron job immediately, regardless of schedule.
-
-### Pause Cron Job
-
-**Endpoint:** `POST /api/v1/cron/{id}/pause`
-
-**Headers:**
-- `X-Tenant-ID`: Tenant identifier
-
-**Response:**
-```json
-{
-  "ok": true
-}
-```
-
-Stops cron job from running on schedule. Job registration is kept.
-
-### Resume Cron Job
-
-**Endpoint:** `POST /api/v1/cron/{id}/resume`
-
-**Headers:**
-- `X-Tenant-ID`: Tenant identifier
-
-**Response:**
-```json
-{
-  "ok": true
-}
-```
-
-Resumes paused cron job. Job will run on next scheduled time.
+These operations persist `enabled` to the project cron file and reload the schedule. A plugin cron returns HTTP `409` with `code: "KB_RUNTIME_CRON_PLUGIN_READ_ONLY"`.
 
 ## Error Responses
 

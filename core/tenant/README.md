@@ -500,7 +500,7 @@ try {
 kb-state-daemon
 
 # Configure apps to use HTTP backend
-KB_STATE_BROKER_URL=http://localhost:7777 node app.js
+KB_STATE_BROKER_URL="$STATE_DAEMON_URL" node app.js
 ```
 
 ### 2. Set Custom Quotas for Special Tenants

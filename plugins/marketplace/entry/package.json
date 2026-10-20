@@ -39,14 +39,18 @@
     "@types/node": "^24.3.3",
     "tsup": "^8.5.0",
     "typescript": "^5",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@kb-labs/shared-cli-ui": "workspace:*"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "kb": {
     "manifest": "./dist/manifest.js"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "peerDependencies": {
+    "@kb-labs/shared-cli-ui": "workspace:*"
+  }
 }

@@ -1,0 +1,5 @@
+flowchart LR
+  core["Core runtime"] --> sdk["SDK and contracts"]
+  sdk --> cli["CLI and adapters"]
+  cli --> plugins["Plugins"]
+  cli --> gateway["Gateway"]

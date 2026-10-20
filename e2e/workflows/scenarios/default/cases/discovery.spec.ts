@@ -46,7 +46,7 @@ test('WFD-04: workflow found by name from .kb/workflows is runnable', async ({ r
   const listBody = await listRes.json()
   const workflows: { id?: string; name?: string }[] = listBody.data?.workflows ?? listBody.data ?? listBody.workflows ?? []
   const first = Array.isArray(workflows) ? workflows[0] : undefined
-  test.skip(!first, 'No workflows discovered — check .kb/workflows directory')
+  expect(!first, 'No workflows discovered — check .kb/workflows directory').toBe(false)
 
   const id = first!.id ?? first!.name
   const run = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(id)}/runs`, { data: {} })

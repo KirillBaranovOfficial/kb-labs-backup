@@ -3,9 +3,23 @@
  * Response envelope wrapper middleware — single source of truth for error formatting.
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { errorEnvelopeSchema, type PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { createUxFailureResult, createUxSuccessResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
+import { codeForHttpFailure, normalizeHttpFailure, statusForHttpFailure, toErrorEnvelope } from '@kb-labs/core-platform';
+import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { platform } from '@kb-labs/core-runtime';
+import { createHttpLogger } from '@kb-labs/shared-http';
+import { ZodError } from 'zod';
+
+function requestFailureOptions(request: FastifyRequest, statusCode: number) {
+  const limitBytes = request.routeOptions.bodyLimit;
+  return {
+    correlationId: String(request.id || ''),
+    statusCode,
+    ...(statusCode === 413 && limitBytes !== undefined ? { limitBytes } : {}),
+  };
+}
 
 function isPluginErrorEnvelope(err: unknown): err is PluginErrorEnvelope {
   return (
@@ -22,27 +36,22 @@ function isPluginErrorEnvelope(err: unknown): err is PluginErrorEnvelope {
 /**
  * Register envelope middleware
  */
-export function registerEnvelopeMiddleware(
-  server: FastifyInstance,
+export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
+  server: Server,
   config: RestApiConfig
 ): void {
-  // Add response schema version header and wrap in envelope
-  // Use 'onSend' hook to modify payload after Fastify serializes it but before sending
-  // This ensures we get the serialized JSON string and can wrap it properly
-  server.addHook('onSend', async (request, reply, payload) => {
-    // Set header with try-catch to prevent ERR_HTTP_HEADERS_SENT
-    try {
-      if (!reply.raw.headersSent) {
-        reply.header('x-schema-version', config.apiVersion);
-      }
-    } catch (err) {
-      // Headers already sent, ignore
-    }
+  // Keep error payloads intact for onSend; response schemas may otherwise strip
+  // raw handler replies before the single normalization phase.
+  server.addHook('preSerialization', async (_request, reply, payload) => {
+    if (reply.statusCode >= 400) reply.serializer((value) => JSON.stringify(value));
+    return payload;
+  });
 
-    // Skip envelope wrapping for streaming responses
-    if (reply.getHeader('content-type') === 'text/event-stream') {
-      return payload;
-    }
+  // onSend is the only response normalization phase.
+  server.addHook('onSend', async (request, reply, payload) => {
+    // Preserve the response metadata for raw routes; only envelope shaping is skipped.
+    if (!reply.raw.headersSent) reply.header('x-schema-version', config.apiVersion);
+    if (request.routeOptions.config.ux === 'raw' && reply.statusCode < 400) return payload;
 
     // Serialize plain objects that reached onSend without going through
     // Fastify's serializer (happens with non-JSON content-type or in error
@@ -61,6 +70,13 @@ export function registerEnvelopeMiddleware(
       try {
         return JSON.stringify(payload);
       } catch {
+        if (reply.statusCode >= 400) {
+          const result = normalizeHttpFailure(payload, {
+            ...requestFailureOptions(request, reply.statusCode),
+          });
+          reply.code(statusForHttpFailure(payload, reply.statusCode));
+          return JSON.stringify(result);
+        }
         return payload;
       }
     }
@@ -70,13 +86,34 @@ export function registerEnvelopeMiddleware(
     try {
       parsedPayload = JSON.parse(payload);
     } catch {
-      // If not JSON, return as is
+      if (reply.statusCode >= 400) {
+        const result = normalizeHttpFailure(undefined, {
+          ...requestFailureOptions(request, reply.statusCode),
+        });
+        reply.code(statusForHttpFailure(undefined, reply.statusCode));
+        return JSON.stringify(result);
+      }
       return payload;
     }
 
-    // If payload is already an envelope (has 'ok' field), return as is
-    if (parsedPayload && typeof parsedPayload === 'object' && 'ok' in parsedPayload) {
+    // Validate claimed failure codes at the shared error-envelope boundary even
+    // when a route incorrectly returns a failure result with HTTP success.
+    if (reply.statusCode < 400 && isUxResultCandidate(parsedPayload) && parsedPayload.ok === false) {
+      const error = 'error' in parsedPayload ? parsedPayload.error : undefined;
+      return JSON.stringify(createUxFailureResult(toErrorEnvelope(error, { correlationId: String(request.id || '') })));
+    }
+
+    // Pass through a valid UX success result on a successful HTTP response.
+    if (reply.statusCode < 400 && isUxResult(parsedPayload)) {
       return payload;
+    }
+
+    if (reply.statusCode >= 400) {
+      const result = normalizeHttpFailure(parsedPayload, {
+        ...requestFailureOptions(request, reply.statusCode),
+      });
+      reply.code(statusForHttpFailure(parsedPayload, reply.statusCode));
+      return JSON.stringify(result);
     }
 
     // Skip raw OpenAPI spec — marked by x-openapi-spec header set in shared-http
@@ -84,9 +121,7 @@ export function registerEnvelopeMiddleware(
       return payload;
     }
 
-    // Wrap all non-streaming responses in envelope
-    // Note: Even 4xx/5xx responses with data should be wrapped with ok: true
-    // (e.g., 503 for health/ready still contains useful data)
+    // Wrap all successful non-streaming responses in the shared envelope.
 
     // Handle empty payloads
     let dataToWrap = parsedPayload;
@@ -96,87 +131,50 @@ export function registerEnvelopeMiddleware(
       dataToWrap = null;
     }
 
-    // For responses with data (including 4xx/5xx with payload), wrap with ok: true
-    // The HTTP status code indicates the result, but envelope.ok indicates successful request processing
-    // Only responses without payload (handled by error handler) should have ok: false
-    const envelope = {
-      ok: true as const,
-      data: dataToWrap,
-      meta: {
+    // Wrap successful route payloads at the final response boundary.
+    const envelope = createUxSuccessResult(dataToWrap, {
         requestId: request.id || '',
         durationMs: reply.elapsedTime || 0,
         apiVersion: config.apiVersion,
-      },
-    };
+      });
 
     // Set Content-Type header if not set
     if (!reply.getHeader('content-type')) {
-      try {
-        if (!reply.raw.headersSent) {
-          reply.header('content-type', 'application/json');
-        }
-      } catch (err) {
-        // Headers already sent, ignore
-      }
+      if (!reply.raw.headersSent) reply.header('content-type', 'application/json');
     }
 
     // Serialize and return envelope as string
     return JSON.stringify(envelope);
   });
 
-  // Single error handler: normalises both PluginErrorEnvelope (from plugin runtime)
-  // and plain Errors into the canonical ErrorEnvelope { ok: false, error, meta }.
+  // Preserve status and typed error fields here; onSend owns the single normalization.
   server.setErrorHandler(async (error: unknown, request, reply) => {
     let statusCode: number;
-    let errorCode: string;
-    let message: string;
-    let details: Record<string, unknown>;
-    let cause: unknown;
-    let traceId: string | undefined;
 
     if (isPluginErrorEnvelope(error)) {
       statusCode = error.http || 500;
-      errorCode = error.code || 'E_PLUGIN';
-      message = error.message || 'Plugin error';
-      details = {
-        ...(error.details ?? {}),
-        pluginId: error.meta.pluginId,
-        pluginVersion: error.meta.pluginVersion,
-        routeOrCommand: error.meta.routeOrCommand,
-        ...(error.trace ? { trace: error.trace } : {}),
-      };
-      cause = undefined;
-      traceId = undefined;
     } else {
-      const err = error as Error & { statusCode?: number; code?: string; details?: unknown; cause?: unknown; traceId?: string };
-      statusCode = err.statusCode || 500;
-      errorCode = err.code || 'E_INTERNAL';
-      message = err.message || 'Internal server error';
-      details = (err.details as Record<string, unknown>) || {};
-      cause = err.cause;
-      traceId = err.traceId;
+      const err = error instanceof Error ? error as Error & { statusCode?: number; code?: string } : undefined;
+      statusCode = err?.statusCode || (error instanceof ZodError ? 400 : 500);
     }
 
-    reply.errorCode = errorCode;
+    const correlationId = String(request.id || '');
+    reply.errorCode = codeForHttpFailure(error, statusCode);
 
-    if (request.kbLogger) {
-      request.kbLogger.error('Request error', error instanceof Error ? error : new Error(String(error)), {
-        errorCode,
-        statusCode,
-      });
-    }
+    createHttpLogger(platform.logger, {
+      serviceId: 'rest',
+      layer: 'service',
+      component: 'http-error',
+      operation: 'http.request.error',
+      method: request.method,
+      url: request.routeOptions.url,
+    }).forOperation('http.request.error', { correlationId }).error(
+      'Request error',
+      error instanceof Error ? error : new Error(String(error)),
+      { errorCode: reply.errorCode, statusCode },
+    );
 
-    const errorEnvelope = errorEnvelopeSchema.parse({
-      ok: false,
-      error: { code: errorCode, message, details, cause, traceId },
-      meta: {
-        requestId: request.id,
-        durationMs: reply.elapsedTime || 0,
-        apiVersion: config.apiVersion,
-      },
-    });
-
-    reply.status(statusCode).send(errorEnvelope);
+    reply.serializer((payload) => JSON.stringify(payload));
+    reply.status(statusCode).send({ error });
   });
 }
-

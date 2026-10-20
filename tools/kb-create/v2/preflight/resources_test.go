@@ -2,23 +2,40 @@ package preflight
 
 import (
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
 )
 
 func TestValidateResourcesReportsAvailableMemoryAndMinimum(t *testing.T) {
+	available := MinimumAvailableMemory - 8*(1<<20)
+	err := validateResources(available, MinimumFreeDisk)
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodeMemoryInsufficient ||
+		failure.Meta["minimum"] != "1228.80 MiB (1288490188 bytes)" || failure.Meta["available"] != "1220.80 MiB (1280101580 bytes)" ||
+		failure.Meta["minimumBytes"] != "1288490188" || failure.Meta["availableBytes"] != "1280101580" {
+		t.Fatalf("error = %#v", err)
+	}
+	if failure.Message == "" || !strings.Contains(failure.Message, "1228.80 MiB (1288490188 bytes)") || !strings.Contains(failure.Message, "1220.80 MiB (1280101580 bytes)") ||
+		!strings.Contains(failure.Hint, "Close memory-heavy applications") || !strings.Contains(failure.Hint, "kb-create install") {
+		t.Fatalf("message/hint = %q / %q", failure.Message, failure.Hint)
+	}
+}
+
+func TestValidateResourcesComparesAvailableMemoryAtBytePrecision(t *testing.T) {
 	err := validateResources(MinimumAvailableMemory-1, MinimumFreeDisk)
-	failure, ok := err.(*contracts.LauncherError)
-	if !ok || failure.Code != contracts.CodeMemoryInsufficient || failure.Details["minimum"] != "1.20 GiB" {
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodeMemoryInsufficient || failure.Meta["availableBytes"] != "1288490187" {
 		t.Fatalf("error = %#v", err)
 	}
 }
 
 func TestValidateResourcesReportsFreeDiskAndMinimum(t *testing.T) {
 	err := validateResources(MinimumAvailableMemory, MinimumFreeDisk-1)
-	failure, ok := err.(*contracts.LauncherError)
-	if !ok || failure.Code != "KB_INSTALL_NO_DISK_SPACE" || failure.Details["minimum"] != "2.00 GiB" {
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != "KB_INSTALL_NO_DISK_SPACE" || failure.Meta["minimum"] != "2.00 GiB" {
 		t.Fatalf("error = %#v", err)
 	}
 }

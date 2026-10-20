@@ -57,13 +57,13 @@ const NOOP_LIFECYCLE: AdapterLifecycle = {
  *
  * Applies four factory stages from ADAPTER_REGISTRY in order, for each adapter:
  *   1. resourceBrokerFactory — innermost: rate limiting / queuing (e.g. QueuedLLM)
- *   2. analyticsFactory      — wraps queue so tracking fires before enqueue
+ *   2. analyticsFactory      — records product usage for LLM and embeddings
  *   3. routerFactory         — outermost routing layer (e.g. LLMRouter with tier dispatch)
  *   4. postAssemblyFactory   — outermost wrap (e.g. PII redaction)
  *
  * Stage order rationale: QueuedLLM.complete() routes through broker.enqueue() → executor,
  * NOT through this.realLLM. The executor is registered before assembly with the raw adapter.
- * If analytics/router wrap the raw adapter BEFORE QueuedLLM wraps them, those wrappers
+ * If analytics/router wrap the raw adapter BEFORE QueuedLLM wraps it, those wrappers
  * are bypassed for complete() calls (executor captures raw). By making broker innermost,
  * analytics and router correctly intercept every call before it reaches the queue.
  *

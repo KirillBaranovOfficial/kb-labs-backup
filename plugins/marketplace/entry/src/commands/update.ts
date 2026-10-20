@@ -1,4 +1,5 @@
-import { defineCommand, handleError, validationError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
+
 import { post } from '../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../scope.js';
 
@@ -30,7 +31,7 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
   description: 'Update marketplace package(s)',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: UpdateInput) {
+    async intent(_ctx: PluginCommandContextV3, input: UpdateInput) {
       const argv = input.argv ?? [];
       const targets = argv.length > 0 ? argv : ['all installed packages'];
       return {
@@ -43,7 +44,7 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: UpdateInput): Promise<CommandResult<UpdateResultData>> {
+    async execute(ctx: PluginCommandContextV3, input: UpdateInput): Promise<CommandResult<UpdateResultData>> {
       const argv = input.argv ?? [];
       const flags = (input.flags ?? input) as UpdateFlags;
 
@@ -52,11 +53,10 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          validationError(ctx, err.message, undefined, flags.json);
+          return validationError(err.message);
         } else {
-          handleError(ctx, err, flags.json);
+          return handleError(err);
         }
-        return { ok: false, error: 'Please specify at least one package to update', result: { installed: [], warnings: [], scope: '' } };
       }
 
       try {
@@ -70,7 +70,7 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
         const result = await post<UpdateResultData>('/packages/update', body);
 
         if (flags.json) {
-          ctx.ui?.json?.(result);
+          return result;
         } else if (result.installed.length === 0) {
           ctx.ui?.info?.(`Nothing to update (${scopeCtx.scope})`);
         } else {
@@ -85,10 +85,9 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
           });
         }
 
-        return { ok: true, result };
+        return result;
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { installed: [], warnings: [], scope: '' } };
+        return handleError(err);
       }
     },
   },

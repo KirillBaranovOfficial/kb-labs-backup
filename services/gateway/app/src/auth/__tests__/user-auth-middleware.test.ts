@@ -21,6 +21,7 @@ import {
   UsersStore,
   MembershipsStore,
   SessionsStore,
+  createStubPDP,
   createTenantResolver,
   signUserAccessToken,
   signAccessToken,
@@ -47,12 +48,17 @@ beforeEach(async () => {
   await app.register(fastifyCookie);
   app.addHook('onRequest', createUserAuthMiddleware({
     users,
+    sessions,
+    pdp: createStubPDP({ memberships }),
     tenantResolver: createTenantResolver({ pattern: '{tenant}.kblabs.ru' }),
     jwtConfig,
   }));
 
   app.get('/echo', async (req) => ({
     auth: req.userAuthContext ?? null,
+    tokenId: req.authContext?.tokenId,
+    namespaceId: req.authContext?.namespaceId,
+    permissions: req.authContext?.permissions,
   }));
 
   await app.ready();
@@ -69,18 +75,19 @@ const seedUserAndToken = async (
     email: 'a@x.com',
     status: opts.status,
   });
+  await memberships.addMembership({ userId: opts.userId, tenantId: opts.tenantId, groupId: 'tenant-member' });
   const sess = await sessions.createSession({
     userId: opts.userId,
     tenantId: opts.tenantId,
     deviceCtx: {},
   });
-  const { token } = await signUserAccessToken({
+  const { token, jti } = await signUserAccessToken({
     userId: opts.userId,
     tenantId: opts.tenantId,
     familyId: sess.familyId,
     ttlSec: 900,
   }, jwtConfig);
-  return { token, familyId: sess.familyId };
+  return { token, familyId: sess.familyId, jti };
 };
 
 describe('no cookie present', () => {
@@ -96,20 +103,38 @@ describe('no cookie present', () => {
 });
 
 describe('happy path', () => {
-  it('sets authContext to a user with userId, tenantId, familyId', async () => {
-    const { token, familyId } = await seedUserAndToken();
+  it('sets authContext to a user with userId, tokenId, tenantId, familyId', async () => {
+    const { token, familyId, jti } = await seedUserAndToken();
     const r = await app.inject({
       method: 'GET',
       url: '/echo',
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${token}` },
     });
     expect(r.statusCode).toBe(200);
+    expect(r.json().tokenId).toBe(jti);
     expect(r.json().auth).toMatchObject({
       type: 'user',
+      source: 'cookie',
       userId: 'u1',
       tenantId: 'kblabs-cloud',
       familyId,
     });
+    expect(r.json().namespaceId).toBe('kblabs-cloud');
+    expect(r.json().permissions).toContain('projects:read');
+  });
+});
+
+describe('revoked session families', () => {
+  // case: S-203.20
+  it('rejects an access token immediately after its family is revoked', async () => {
+    const { token, familyId } = await seedUserAndToken();
+    await sessions.revokeFamily(familyId);
+    const response = await app.inject({
+      method: 'GET', url: '/echo',
+      headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${token}` },
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error: { code: 'KB_AUTH_SESSION_REVOKED', details: { gatewayUrl: 'http://kblabs-cloud.kblabs.ru', reason: 'revoked' } } });
   });
 });
 
@@ -121,6 +146,7 @@ describe('bad cookie', () => {
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=not-a-jwt` },
     });
     expect(r.statusCode).toBe(401);
+    expect(r.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', details: { gatewayUrl: 'http://kblabs-cloud.kblabs.ru', reason: 'invalid' } } });
   });
 
   it('returns 401 for a JWT signed with a different secret', async () => {
@@ -134,6 +160,7 @@ describe('bad cookie', () => {
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${foreign}` },
     });
     expect(r.statusCode).toBe(401);
+    expect(r.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', details: { gatewayUrl: 'http://kblabs-cloud.kblabs.ru', reason: 'invalid' } } });
   });
 });
 
@@ -147,6 +174,7 @@ describe('CD-1: middleware checks User.status on every request', () => {
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${token}` },
     });
     expect(r.statusCode).toBe(401);
+    expect(r.json()).toMatchObject({ error: { code: 'KB_AUTH_USER_INACTIVE', details: { gatewayUrl: 'http://kblabs-cloud.kblabs.ru', reason: 'inactive' } } });
   });
 
   it('rejects when the user no longer exists', async () => {
@@ -201,13 +229,14 @@ describe('cross-tenant guard', () => {
 
 describe('Bearer user token (CLI session — no cookie involved)', () => {
   it('a valid user access token via Authorization: Bearer sets authContext identically to the cookie path', async () => {
-    const { token, familyId } = await seedUserAndToken();
+    const { token, familyId, jti } = await seedUserAndToken();
     const r = await app.inject({
       method: 'GET',
       url: '/echo',
       headers: { host: 'kblabs-cloud.kblabs.ru', authorization: `Bearer ${token}` },
     });
     expect(r.statusCode).toBe(200);
+    expect(r.json().tokenId).toBe(jti);
     expect(r.json().auth).toMatchObject({
       type: 'user',
       userId: 'u1',
@@ -228,7 +257,7 @@ describe('Bearer user token (CLI session — no cookie involved)', () => {
 
   it('a machine-shaped Bearer token (type !== "user") falls through instead of being misidentified as a user token', async () => {
     const { token: machineToken } = await signAccessToken(
-      { hostId: 'host_1', namespaceId: 'ns_1', tier: 'free', type: 'machine', permissions: ['host:connect'] },
+      { hostId: 'host_1', namespaceId: 'ns_1', tier: 'free', type: 'machine_access', permissions: ['host:connect'] },
       jwtConfig,
     );
     const r = await app.inject({

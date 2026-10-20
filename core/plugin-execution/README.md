@@ -4,25 +4,11 @@ Universal execution layer for KB Labs plugins — runs handlers in-process, subp
 
 ## Overview
 
-Provides a unified `IExecutionBackend` interface with pluggable backends, workspace isolation per execution, WebSocket channel support, and structured error handling. The backend is selected via `createExecutionBackend()` based on configuration.
+Provides the factory-owned `ExecutionBackend` contract, workspace isolation per execution, WebSocket channel support, and structured error handling. The platform runtime selects and owns the backend; service planes receive it through `platform.executionBackend`.
 
-## Quick Start
+## Backend access
 
-```typescript
-import { createExecutionBackend } from '@kb-labs/plugin-execution';
-
-const backend = createExecutionBackend({
-  platform,
-  type: 'in-process', // or 'worker-pool', 'subprocess'
-});
-
-const result = await backend.execute({
-  pluginId: '@my-org/my-plugin',
-  handlerId: 'run',
-  input: { args: ['--verbose'] },
-  context: contextDescriptor,
-});
-```
+Service planes use the initialized `platform.executionBackend`; backend construction belongs to core runtime.
 
 ## Backends
 

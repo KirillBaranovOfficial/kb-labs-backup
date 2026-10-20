@@ -44,8 +44,12 @@ describe('quality:fix-deps', () => {
 
     const result = await fixDepsCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.exitCode).toBe(1);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
+      expect(result.error.hint).toContain('kb quality fix-deps --help');
+    }
+    expect(captured.errors).toHaveLength(0);
   });
 
   it('FD-02: --all with no issues — exitCode 0, no changes', async () => {
@@ -55,7 +59,7 @@ describe('quality:fix-deps', () => {
 
     const result = await fixDepsCommand.execute(ctx as never, mockCLIInput({ flags: { all: true } }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -66,19 +70,18 @@ describe('quality:fix-deps', () => {
 
     const result = await fixDepsCommand.execute(ctx as never, mockCLIInput({ flags: { stats: true } }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
   it('FD-04: --json with --stats outputs JSON', async () => {
-    const { ui, captured } = createCapturedUI();
+    const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: '/project' });
     Object.assign(ctx, { platform: mockCtxPlatform });
 
     const result = await fixDepsCommand.execute(ctx as never, mockCLIInput({ flags: { stats: true, json: true } }));
 
-    expect(result.exitCode).toBe(0);
-    expect(captured.json.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ totalPackages: expect.any(Number), totalDeps: expect.any(Number) });
   });
 
   it('FD-05: --dry-run shows intent, writeFileSync is NOT called', async () => {
@@ -89,7 +92,7 @@ describe('quality:fix-deps', () => {
 
     const result = await fixDepsCommand.execute(ctx as never, mockCLIInput({ flags: { all: true, 'dry-run': true } }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(fs.default.writeFileSync)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

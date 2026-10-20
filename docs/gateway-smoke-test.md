@@ -15,10 +15,10 @@ BASE=http://localhost:4000
 ## 1. Health
 
 ```bash
-curl -s $BASE/health | jq .
+curl -s $BASE/health | jq '.data'
 ```
 
-Expected: `status: "healthy"`, all adapters `available: true`. Upstreams (rest, workflow, marketplace) may be down if not deployed — that's separate from gateway health.
+Expected under `data`: `status: "healthy"`, all adapters `available: true`. Upstreams (rest, workflow, marketplace) may be down if not deployed — that's separate from gateway health.
 
 ---
 

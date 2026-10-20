@@ -23,10 +23,11 @@ describe('release:doctor', () => {
     } as never);
     const { ui, captured } = createCapturedUI();
     const result = await doctorCommand.execute(createMockContext({ ui, cwd: '/project' }) as never, mockCLIInput({ flags: { json: true, flow: 'platform' } }));
-    expect(result.ok).toBe(true);
-    const out = captured.json[0] as { ok: boolean; report: { stages: Array<{ stage: string; status: string }> } };
-    expect(out.ok).toBe(true);
-    expect(out.report.stages[0]).toMatchObject({ stage: 'preflight', status: 'passed' });
+    expect(result).not.toHaveProperty('result');
+    expect(result).toMatchObject({
+      ok: true,
+      report: { stages: expect.arrayContaining([expect.objectContaining({ stage: 'preflight', status: 'passed' })]) },
+    });
     expect(runPreflightFor).toHaveBeenCalledWith(expect.objectContaining({ flow: 'platform' }));
   });
 
@@ -38,8 +39,11 @@ describe('release:doctor', () => {
     } as never);
     const { ui, captured } = createCapturedUI();
     const result = await doctorCommand.execute(createMockContext({ ui, cwd: '/project' }) as never, mockCLIInput({ flags: { json: true } }));
-    expect(result.ok).toBe(false);
-    const out = captured.json[0] as { report: { failures: Array<{ checkId: string; classification: string }> } };
-    expect(out.report.failures[0]).toMatchObject({ checkId: 'preflight:clean-tree', classification: 'environment' });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        diagnostics: [expect.objectContaining({ message: expect.stringContaining('preflight:clean-tree'), severity: 'error' })],
+      },
+    });
   });
 });

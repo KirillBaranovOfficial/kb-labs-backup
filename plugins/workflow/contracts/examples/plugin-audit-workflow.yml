@@ -14,7 +14,6 @@ version: 1.0.0
 description: Complete AI code review and audit
 on:
   manual: true
-  push: true
 jobs:
   audit:
     runsOn: local
@@ -41,4 +40,3 @@ jobs:
         with:
           format: markdown
           output: .ai-review/report.md
-

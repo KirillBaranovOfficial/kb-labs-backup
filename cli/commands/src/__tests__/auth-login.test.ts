@@ -9,21 +9,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
-// Mock CredentialsManager / SessionManager — avoid touching ~/.kb/*.json
+// The command test pins delegation; lifecycle and persistence are tested at the owner boundary.
 const mockSave = vi.fn();
 const mockSessionSave = vi.fn();
+const mockMachineLogin = vi.fn();
+const mockHumanLogin = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: class {
-    save = mockSave;
-  },
-  SessionManager: class {
-    save = mockSessionSave;
-  },
+  AuthSessionOwner: class { loginMachine = mockMachineLogin; loginSession = mockHumanLogin; },
 }));
-
-// Mock fetch globally
-const mockFetch = vi.fn();
-vi.stubGlobal('fetch', mockFetch);
 
 import { authLogin } from '../commands/system/auth/auth-login.js';
 
@@ -34,20 +27,6 @@ const TOKEN_RESPONSE = {
   refreshToken: 'refresh-tok',
   expiresIn: 900,
 };
-
-const ME_RESPONSE = {
-  handle: 'kirill',
-  namespaceId: 'ns_abc',
-};
-
-function makeJsonResponse(body: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    text: async () => JSON.stringify(body),
-    json: async () => body,
-  } as unknown as Response;
-}
 
 function makeCtx(captured: { errors: string[]; output: string[]; json: unknown[] }): PluginContextV3 {
   return {
@@ -71,7 +50,7 @@ function makeCtx(captured: { errors: string[]; output: string[]; json: unknown[]
     } as any,
     runtime: { fs: {} as any, fetch: vi.fn(), env: vi.fn() },
     api: {} as any,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
 }
@@ -80,14 +59,24 @@ function makeCtx(captured: { errors: string[]; output: string[]; json: unknown[]
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockMachineLogin.mockImplementation(async (gatewayUrl: string) => {
+    const handle = 'kirill';
+    const expiresAt = Date.now() + TOKEN_RESPONSE.expiresIn * 1000;
+    mockSave({ gatewayUrl, accessToken: TOKEN_RESPONSE.accessToken, refreshToken: TOKEN_RESPONSE.refreshToken,
+      expiresAt, handle, namespaceId: 'ns_abc' });
+    return { gatewayUrl, accessToken: TOKEN_RESPONSE.accessToken, refreshToken: TOKEN_RESPONSE.refreshToken,
+      expiresAt, handle, namespaceId: 'ns_abc' };
+  });
+  mockHumanLogin.mockImplementation(async (gatewayUrl: string, email: string) => {
+    const credential = { gatewayUrl, accessToken: 'session-access-tok', refreshToken: 'session-refresh-tok',
+      expiresAt: Date.now() + 900_000, email, tenantId: 'default' };
+    mockSessionSave(credential);
+    return { credential, expiresIn: 900 };
+  });
 });
 
 describe('kb auth login', () => {
   it('AL-01: successful login saves accessToken, handle and namespaceId', async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeJsonResponse(TOKEN_RESPONSE))   // POST /auth/token
-      .mockResolvedValueOnce(makeJsonResponse(ME_RESPONSE));      // GET /auth/me
-
     const captured = { errors: [], output: [], json: [] };
     const ctx = makeCtx(captured);
 
@@ -98,6 +87,7 @@ describe('kb auth login', () => {
     });
 
     expect(exitCode).toBe(0);
+    expect(mockMachineLogin).toHaveBeenCalledWith('http://localhost:4000', 'clt_test', 'cs_test');
     expect(mockSave).toHaveBeenCalledWith(
       expect.objectContaining({
         gatewayUrl: 'http://localhost:4000',
@@ -109,10 +99,7 @@ describe('kb auth login', () => {
     );
   });
 
-  it('AL-02: /auth/me failure is non-fatal — credentials saved without handle', async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeJsonResponse(TOKEN_RESPONSE))   // POST /auth/token
-      .mockRejectedValueOnce(new Error('network error'));         // GET /auth/me — fails
+  it('AL-02: the login command delegates verification and persistence to the owner', async () => {
 
     const captured = { errors: [], output: [], json: [] };
     const ctx = makeCtx(captured);
@@ -124,12 +111,7 @@ describe('kb auth login', () => {
     });
 
     expect(exitCode).toBe(0);
-    // credentials saved — but handle is undefined (not set)
-    expect(mockSave).toHaveBeenCalledWith(
-      expect.objectContaining({ accessToken: 'access-tok' }),
-    );
-    const saved = mockSave.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(saved.handle).toBeUndefined();
+    expect(mockMachineLogin).toHaveBeenCalledOnce();
   });
 
   it('AL-03: missing flags — exitCode 1, no fetch calls', async () => {
@@ -142,12 +124,12 @@ describe('kb auth login', () => {
     });
 
     expect(exitCode).toBe(1);
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockMachineLogin).not.toHaveBeenCalled();
     expect(captured.errors.length).toBeGreaterThan(0);
   });
 
   it('AL-04: gateway unreachable — exitCode 1, error shown', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    mockMachineLogin.mockRejectedValueOnce(new Error('unreachable'));
 
     const captured = { errors: [], output: [], json: [] };
     const ctx = makeCtx(captured);
@@ -164,7 +146,7 @@ describe('kb auth login', () => {
   });
 
   it('AL-05: token endpoint returns 401 — exitCode 1', async () => {
-    mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Unauthorized' }, 401));
+    mockMachineLogin.mockRejectedValueOnce(new Error('Authentication failed (401).'));
 
     const captured: { errors: string[]; output: string[]; json: unknown[] } = { errors: [], output: [], json: [] };
     const ctx = makeCtx(captured);
@@ -177,14 +159,11 @@ describe('kb auth login', () => {
 
     expect(exitCode).toBe(1);
     expect(mockSave).not.toHaveBeenCalled();
-    expect(captured.errors.some(e => e.includes('401'))).toBe(true);
+    expect(captured.errors.join('\n')).toContain('Gateway authentication failed');
+    expect(captured.errors.join('\n')).not.toContain('Unauthorized');
   });
 
   it('AL-06: --json flag outputs structured result', async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeJsonResponse(TOKEN_RESPONSE))
-      .mockResolvedValueOnce(makeJsonResponse(ME_RESPONSE));
-
     const captured = { errors: [], output: [], json: [] };
     const ctx = makeCtx(captured);
 
@@ -198,17 +177,15 @@ describe('kb auth login', () => {
     expect(exitCode).toBe(0);
     expect(captured.json[0]).toMatchObject({
       ok: true,
-      gatewayUrl: 'http://localhost:4000',
-      handle: 'kirill',
+      data: {
+        gatewayUrl: 'http://localhost:4000',
+        handle: 'kirill',
+      },
     });
     expect(captured.output.length).toBe(0);
   });
 
   it('AL-07: expiresAt is in the future (based on expiresIn)', async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeJsonResponse(TOKEN_RESPONSE))
-      .mockResolvedValueOnce(makeJsonResponse(ME_RESPONSE));
-
     const before = Date.now();
     const captured = { errors: [], output: [], json: [] };
     const ctx = makeCtx(captured);
@@ -225,24 +202,7 @@ describe('kb auth login', () => {
 
   // ── human (email/password) branch ─────────────────────────────────────────
 
-  const CLI_LOGIN_RESPONSE = {
-    accessToken: 'session-access-tok',
-    refreshToken: 'session-refresh-tok',
-    expiresIn: 900,
-    tenantId: 'default',
-  };
-
-  const ME_HUMAN_RESPONSE = {
-    userId: 'user_1',
-    email: 'admin@bootstrap.local',
-    tenantId: 'default',
-  };
-
-  it('AL-08: --email/--password hits /auth/login/cli and saves via SessionManager', async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeJsonResponse(CLI_LOGIN_RESPONSE))   // POST /auth/login/cli
-      .mockResolvedValueOnce(makeJsonResponse(ME_HUMAN_RESPONSE));    // GET /auth/me
-
+  it('AL-08: --email/--password delegates login and persistence to the owner', async () => {
     const captured = { errors: [], output: [], json: [] };
     const ctx = makeCtx(captured);
 
@@ -253,10 +213,7 @@ describe('kb auth login', () => {
     });
 
     expect(exitCode).toBe(0);
-    expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:4000/auth/login/cli', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ email: 'admin@bootstrap.local', password: 'AdminPass123!' }),
-    }));
+    expect(mockHumanLogin).toHaveBeenCalledWith('http://localhost:4000', 'admin@bootstrap.local', 'AdminPass123!');
     expect(mockSessionSave).toHaveBeenCalledWith(
       expect.objectContaining({
         gatewayUrl: 'http://localhost:4000',
@@ -271,7 +228,7 @@ describe('kb auth login', () => {
   });
 
   it('AL-09: --email/--password wrong password — exitCode 1, no session saved', async () => {
-    mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'invalid_credentials' }, 401));
+    mockHumanLogin.mockRejectedValueOnce(new Error('Authentication failed (401).'));
 
     const captured: { errors: string[]; output: string[]; json: unknown[] } = { errors: [], output: [], json: [] };
     const ctx = makeCtx(captured);
@@ -284,7 +241,8 @@ describe('kb auth login', () => {
 
     expect(exitCode).toBe(1);
     expect(mockSessionSave).not.toHaveBeenCalled();
-    expect(captured.errors.some(e => e.includes('401'))).toBe(true);
+    expect(captured.errors.join('\n')).toContain('Gateway authentication failed');
+    expect(captured.errors.join('\n')).not.toContain('invalid_credentials');
   });
 
   it('AL-10: neither client-id/secret nor email/password — exitCode 1, no fetch calls', async () => {
@@ -296,14 +254,12 @@ describe('kb auth login', () => {
     });
 
     expect(exitCode).toBe(1);
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockMachineLogin).not.toHaveBeenCalled();
+    expect(mockHumanLogin).not.toHaveBeenCalled();
     expect(captured.errors.length).toBeGreaterThan(0);
   });
 
-  it('AL-11: /auth/me failure on human branch is non-fatal — session saved without resolved profile', async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeJsonResponse(CLI_LOGIN_RESPONSE))
-      .mockRejectedValueOnce(new Error('network error'));
+  it('AL-11: human login delegates credential verification to the owner', async () => {
 
     const captured = { errors: [], output: [], json: [] };
     const ctx = makeCtx(captured);
@@ -315,9 +271,7 @@ describe('kb auth login', () => {
     });
 
     expect(exitCode).toBe(0);
-    // Falls back to the email flag itself and the tenantId from /auth/login/cli.
-    expect(mockSessionSave).toHaveBeenCalledWith(
-      expect.objectContaining({ email: 'admin@bootstrap.local', tenantId: 'default' }),
-    );
+    expect(mockHumanLogin).toHaveBeenCalledOnce();
+    expect(mockSessionSave).toHaveBeenCalledWith(expect.objectContaining({ email: 'admin@bootstrap.local', tenantId: 'default' }));
   });
 });

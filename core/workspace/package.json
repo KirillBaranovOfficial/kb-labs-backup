@@ -28,7 +28,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/core-sys": "workspace:*"
+    "@kb-labs/core-sys": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
@@ -42,7 +43,7 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "publishConfig": {

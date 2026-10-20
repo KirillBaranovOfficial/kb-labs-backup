@@ -239,7 +239,7 @@ _No packages found._
 | Package | Description |
 |---------|-------------|
 | `@kb-labs/adapters-analytics-duckdb` | DuckDB analytics adapter for KB Labs platform (SQL-native time-series analytics) |
-| `@kb-labs/adapters-analytics-file` | File-based analytics adapter for KB Labs platform (writes JSONL to .kb/analytics/buffer) |
+| `@kb-labs/adapters-analytics-file` | File-based analytics adapter for KB Labs platform (writes JSONL to <KB_HOME>/state/<projectId>/analytics/buffer) |
 | `@kb-labs/adapters-analytics-sqlite` | SQLite analytics adapter for KB Labs platform — concurrent writes, SQL analytics, no lock issues |
 | `@kb-labs/adapters-environment-docker` | Docker adapter implementing IEnvironmentProvider |
 | `@kb-labs/adapters-eventbus-cache` | EventBus adapter using ICache for persistent event storage |
@@ -249,12 +249,10 @@ _No packages found._
 | `@kb-labs/adapters-mongodb` | MongoDB adapter implementing IDocumentDatabase interface |
 | `@kb-labs/adapters-openai` | OpenAI adapter implementing ILLM and IEmbeddings interfaces |
 | `@kb-labs/adapters-pino` | Pino adapter implementing ILogger interface |
-| `@kb-labs/adapters-pino-http` | Pino HTTP transport for streaming logs to REST API |
 | `@kb-labs/adapters-qdrant` | Qdrant adapter implementing IVectorStore interface |
 | `@kb-labs/adapters-redis` | Redis adapter implementing ICache interface |
 | `@kb-labs/adapters-snapshot-localfs` | Local filesystem adapter implementing ISnapshotProvider |
 | `@kb-labs/adapters-sqlite` | SQLite adapter implementing ISQLDatabase interface |
-| `@kb-labs/adapters-transport` | Transport adapters for inter-process communication (IPC, Unix Sockets) |
 | `@kb-labs/adapters-vibeproxy` | VibeProxy adapter implementing ILLM interface for local Anthropic API proxy |
 | `@kb-labs/adapters-workspace-agent` | Workspace adapter that materializes workspaces from a remote Host Agent via Gateway |
 | `@kb-labs/adapters-workspace-localfs` | Local filesystem adapter implementing IWorkspaceProvider |

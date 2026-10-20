@@ -10,6 +10,13 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 )
 
+const CodeAdapterCredentialsMissing = "KB_ADAPTER_CREDENTIALS_MISSING"
+
+const (
+	SeverityError   = "error"
+	SeverityWarning = "warning"
+)
+
 type Manifest struct {
 	ID           string        `json:"id"`
 	Requirements []Requirement `json:"requirements"`
@@ -20,7 +27,10 @@ type Requirement struct {
 	Secret   bool     `json:"secret"`
 	Generate bool     `json:"generate,omitempty"`
 	Required bool     `json:"required"`
+	Optional bool     `json:"optional,omitempty"`
+	Severity string   `json:"severity,omitempty"`
 	Hint     string   `json:"hint"`
+	Action   string   `json:"action,omitempty"`
 	Env      string   `json:"env,omitempty"`
 	Services []string `json:"services,omitempty"`
 	// Default is present only when the manifest explicitly declares a safe,
@@ -30,9 +40,11 @@ type Requirement struct {
 }
 type Finding struct {
 	Code      string          `json:"code"`
+	Severity  string          `json:"severity"`
 	Component string          `json:"component"`
 	Path      string          `json:"path"`
 	Hint      string          `json:"hint"`
+	Action    string          `json:"action,omitempty"`
 	SafeFix   bool            `json:"safeFix"`
 	Default   json.RawMessage `json:"default,omitempty"`
 }
@@ -56,11 +68,15 @@ func Diagnose(manifests []Manifest, configured map[string]bool) []Finding {
 				continue
 			}
 			code := contracts.CodeConfigRequired
+			severity := SeverityError
 			if requirement.Secret {
-				code = contracts.CodeInputRequired
+				code = CodeAdapterCredentialsMissing
+			}
+			if requirement.Severity == SeverityWarning || requirement.Secret && requirement.Optional {
+				severity = SeverityWarning
 			}
 			safeFix := !requirement.Secret && len(requirement.Default) != 0
-			findings = append(findings, Finding{Code: code, Component: manifest.ID, Path: requirement.Path, Hint: requirement.Hint, SafeFix: safeFix, Default: append(json.RawMessage(nil), requirement.Default...)})
+			findings = append(findings, Finding{Code: code, Severity: severity, Component: manifest.ID, Path: requirement.Path, Hint: requirement.Hint, Action: requirement.Action, SafeFix: safeFix, Default: append(json.RawMessage(nil), requirement.Default...)})
 		}
 	}
 	sort.Slice(findings, func(i, j int) bool {
@@ -73,11 +89,14 @@ func Diagnose(manifests []Manifest, configured map[string]bool) []Finding {
 }
 
 // PlanRepair turns findings into an explicit recovery contract. Safe defaults
-// can be rendered automatically; secret or otherwise unsafe input remains a
-// required user/agent answer and is never guessed by doctor --fix.
+// can be rendered automatically; error findings without a safe default remain
+// required user/agent input and are never guessed by doctor --fix.
 func PlanRepair(findings []Finding) RepairPlan {
 	result := RepairPlan{}
 	for _, finding := range findings {
+		if finding.Severity == SeverityWarning {
+			continue
+		}
 		if finding.SafeFix {
 			result.SafeDefaults = append(result.SafeDefaults, finding)
 		} else {
@@ -85,6 +104,15 @@ func PlanRepair(findings []Finding) RepairPlan {
 		}
 	}
 	return result
+}
+
+func HasErrors(findings []Finding) bool {
+	for _, finding := range findings {
+		if finding.Severity != SeverityWarning {
+			return true
+		}
+	}
+	return false
 }
 
 // ApplySafe executes only the fixes explicitly marked safe. The callback

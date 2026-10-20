@@ -20,6 +20,7 @@ describe("AdapterManifest", () => {
   describe("Core Adapter Manifest", () => {
     it("should define valid core adapter manifest (Pino logger)", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "pino-logger",
         name: "Pino Logger",
@@ -27,6 +28,7 @@ describe("AdapterManifest", () => {
         description: "Production-ready structured logger based on Pino",
         type: "core",
         implements: "ILogger",
+        networkRequired: false,
         optional: {
           adapters: ["analytics"],
         },
@@ -43,12 +45,14 @@ describe("AdapterManifest", () => {
 
     it("should define minimal core adapter manifest", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "simple-logger",
         name: "Simple Logger",
         version: "1.0.0",
         type: "core",
         implements: "ILogger",
+        networkRequired: false,
       };
 
       expect(manifest.id).toBe("simple-logger");
@@ -61,12 +65,14 @@ describe("AdapterManifest", () => {
   describe("Extension Adapter Manifest", () => {
     it("should define extension adapter without dependencies (ring buffer)", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "log-ringbuffer",
         name: "Log Ring Buffer",
         version: "1.0.0",
         type: "extension",
         implements: "ILogRingBuffer",
+        networkRequired: false,
         extends: {
           adapter: "logger",
           hook: "onLog",
@@ -87,12 +93,14 @@ describe("AdapterManifest", () => {
 
     it("should define extension adapter with dependencies (SQLite persistence)", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "log-persistence",
         name: "SQLite Log Persistence",
         version: "1.0.0",
         type: "extension",
         implements: "ILogPersistence",
+        networkRequired: false,
         requires: {
           adapters: [{ id: "db", alias: "database" }],
           platform: ">= 1.0.0",
@@ -119,12 +127,14 @@ describe("AdapterManifest", () => {
 
     it("should support default priority (0) when not specified", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "log-extension",
         name: "Log Extension",
         version: "1.0.0",
         type: "extension",
         implements: "ILogExtension",
+        networkRequired: false,
         extends: {
           adapter: "logger",
           hook: "onLog",
@@ -140,12 +150,14 @@ describe("AdapterManifest", () => {
   describe("Proxy Adapter Manifest", () => {
     it("should define proxy adapter manifest (IPC proxy)", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "logger-ipc-proxy",
         name: "Logger IPC Proxy",
         version: "1.0.0",
         type: "proxy",
         implements: "ILogger",
+        networkRequired: false,
         description: "IPC proxy for cross-process logger communication",
       };
 
@@ -178,12 +190,14 @@ describe("AdapterManifest", () => {
 
     it("should support mixed required and optional dependencies", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "complex-adapter",
         name: "Complex Adapter",
         version: "1.0.0",
         type: "core",
         implements: "IComplexAdapter",
+        networkRequired: false,
         requires: {
           adapters: ["db", { id: "cache", alias: "cacheService" }],
         },
@@ -308,12 +322,14 @@ describe("AdapterManifest", () => {
   describe("Manifest Versioning", () => {
     it("should require semver version strings", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "versioned-adapter",
         name: "Versioned Adapter",
         version: "2.3.1",
         type: "core",
         implements: "IAdapter",
+        networkRequired: false,
         requires: {
           platform: ">= 1.0.0",
         },
@@ -335,12 +351,14 @@ describe("AdapterManifest", () => {
 
       ranges.forEach((range) => {
         const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
           manifestVersion: "1.0.0",
           id: "test",
           name: "Test",
           version: "1.0.0",
           type: "core",
           implements: "ITest",
+          networkRequired: false,
           requires: {
             platform: range,
           },
@@ -357,12 +375,14 @@ describe("AdapterManifest", () => {
 
       validTypes.forEach((type) => {
         const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
           manifestVersion: "1.0.0",
           id: "test",
           name: "Test",
           version: "1.0.0",
           type,
           implements: "ITest",
+          networkRequired: false,
         };
 
         expect(["core", "extension", "proxy"]).toContain(manifest.type);
@@ -394,12 +414,14 @@ describe("AdapterManifest", () => {
   describe("Real-world Examples", () => {
     it("should compile example from ADR: Pino Logger", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "pino-logger",
         name: "Pino Logger",
         version: "1.0.0",
         type: "core",
         implements: "ILogger",
+        networkRequired: false,
         optional: { adapters: ["analytics"] },
         capabilities: { streaming: true },
       };
@@ -409,12 +431,14 @@ describe("AdapterManifest", () => {
 
     it("should compile example from ADR: Ring Buffer", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "log-ringbuffer",
         name: "Log Ring Buffer",
         version: "1.0.0",
         type: "extension",
         implements: "ILogRingBuffer",
+        networkRequired: false,
         extends: {
           adapter: "logger",
           hook: "onLog",
@@ -429,12 +453,14 @@ describe("AdapterManifest", () => {
 
     it("should compile example from ADR: SQLite Persistence", () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: "1.0.0",
         id: "log-persistence",
         name: "SQLite Log Persistence",
         version: "1.0.0",
         type: "extension",
         implements: "ILogPersistence",
+        networkRequired: false,
         requires: {
           adapters: [{ id: "db", alias: "database" }],
           platform: ">= 1.0.0",
