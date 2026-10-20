@@ -39,16 +39,51 @@ function failureParts(payload: unknown, statusCode: number, limitBytes?: number)
     }
     const error = toErrorEnvelope(candidate);
     if (statusCode !== 413 || error.area === 'product') {
-      return { code: error.code, cataloguedPayload: isErrorCode(candidate.code), error };
+      const details = statusCode === 400 && !isErrorCode(candidate.code) ? validationDetails(payload) : undefined;
+      const normalizedError = details && error.code === 'KB_RUNTIME_INPUT_INVALID'
+        ? createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+          message: error.message,
+          hint: error.hint,
+          correlationId: error.correlationId,
+          details,
+        })
+        : error;
+      return { code: normalizedError.code, cataloguedPayload: isErrorCode(candidate.code), error: normalizedError };
     }
     const code = fallbackCodeForStatus(statusCode);
     return { code, cataloguedPayload: false, error: createFallbackError(code, limitBytes) };
   }
   const code = fallbackCodeForStatus(statusCode);
-  return { code, cataloguedPayload: false, error: createFallbackError(code, limitBytes) };
+  return { code, cataloguedPayload: false, error: createFallbackError(code, limitBytes, validationDetails(payload)) };
 }
 
-function createFallbackError(code: CatalogErrorCode, limitBytes?: number): ErrorEnvelope {
+function validationDetails(payload: unknown): Record<string, string> | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const source = payload as Record<string, unknown>;
+  const candidates = Array.isArray(source.validation) ? source.validation
+    : Array.isArray(source.issues) ? source.issues
+      : [];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const issue = candidate as Record<string, unknown>;
+    const path = Array.isArray(issue.path) ? issue.path.filter((part): part is string | number =>
+      typeof part === 'string' || typeof part === 'number')
+      : typeof issue.instancePath === 'string' ? issue.instancePath.split('/').filter(Boolean)
+        : typeof issue.dataPath === 'string' ? issue.dataPath.split('.').filter(Boolean)
+          : [];
+    if (path.length) return { field: path.map(String).join('.') };
+  }
+  return undefined;
+}
+
+function createFallbackError(
+  code: CatalogErrorCode,
+  limitBytes?: number,
+  details?: Record<string, string>,
+): ErrorEnvelope {
+  if (code === 'KB_RUNTIME_INPUT_INVALID') {
+    return createErrorEnvelope(code, details ? { details } : {});
+  }
   if (code === 'KB_AUTH_REQUIRED') {
     return createErrorEnvelope(code, {
       message: 'Authentication is required.',
