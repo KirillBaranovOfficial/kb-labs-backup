@@ -4,6 +4,19 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-20
+
+### Release sealing checks install scenarios without requiring operator input
+
+The release sealer validates built-in install scenarios against each candidate
+index for artifact and compatibility resolution. A required configuration
+value or secret that the operator has not supplied does not make that index
+invalid; the resolver still refuses the install or update until the value is
+provided. Other scenario resolution failures, including missing artifacts and
+incompatible releases, still fail sealing. Update-only requirements remain on
+their staged update index and do not appear in the base index. Cases: S-023.12,
+S-214.11.
+
 ## 2026-10-16
 
 ### D49 — MCP tool calls are durably audited with user and token identity

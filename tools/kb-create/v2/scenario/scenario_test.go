@@ -455,19 +455,74 @@ func TestValidateCatalogChecksTheCurrentBuiltinScenarioSet(t *testing.T) {
 }
 
 // case: S-054.15
-func TestValidateCatalogAllowsMissingOptionalSecretRequirement(t *testing.T) {
+func TestMissingOptionalSecretRequirementCanResolve(t *testing.T) {
 	source := source()
 	source.Platforms[0].Config = append(source.Platforms[0].Config, catalog.ConfigRequirement{
 		ID: "openai.apiKey", Path: "/platform/adapterOptions/llm/apiKey", Secret: true, Required: true,
 		Optional: true, Severity: "warning", Env: "OPENAI_API_KEY", Services: []string{"gateway"},
 		Action: "set OPENAI_API_KEY to enable LLM features",
 	})
-	if err := ValidateCatalog(source); err != nil {
-		t.Fatalf("built-in scenarios should resolve without optional OpenAI credentials: %v", err)
+	request := contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable},
+		ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible}
+	if _, err := resolve.Plan(request, source); err != nil {
+		t.Fatalf("plan should resolve without optional OpenAI credentials: %v", err)
 	}
 	source.Platforms[0].Config[len(source.Platforms[0].Config)-1].Optional = false
 	source.Platforms[0].Config[len(source.Platforms[0].Config)-1].Severity = "error"
-	if err := ValidateCatalog(source); err == nil || !strings.Contains(err.Error(), "required secret input openai.apiKey is missing") {
-		t.Fatalf("missing required secret should fail built-in scenario validation, got %v", err)
+	if _, err := resolve.Plan(request, source); err == nil {
+		t.Fatalf("plan without a required secret should fail with missing input, got %v", err)
+	}
+}
+
+// case: S-214.11
+func TestValidateCatalogAllowsUpdateOnlyRequiredConfiguration(t *testing.T) {
+	base := source()
+	if err := ValidateCatalog(base); err != nil {
+		t.Fatalf("base catalog did not resolve: %v", err)
+	}
+	update := source()
+	update.Platforms[0].Config = append(update.Platforms[0].Config, catalog.ConfigRequirement{
+		ID: "journey.update.requiredSecret", Secret: true, Required: true,
+		Env: "KB_JOURNEY_UPDATE_REQUIRED_SECRET", Services: []string{"gateway"},
+	})
+	update.Platforms[0].Config = append(update.Platforms[0].Config, catalog.ConfigRequirement{
+		ID: "journey.update.requiredConfig", Path: "/platform/journey/updateRequired", Required: true,
+	})
+	request := contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable},
+		ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible}
+	if _, err := resolve.Plan(request, update); err == nil {
+		t.Fatal("runtime plan should still require the newly added configuration value")
+	}
+	if err := ValidateCatalog(update); err != nil {
+		t.Fatalf("update catalog with a newly required user value should seal: %v", err)
+	}
+	for _, requirement := range base.Platforms[0].Config {
+		if requirement.ID == "journey.update.requiredConfig" {
+			t.Fatal("update-only requirement leaked into the base catalog")
+		}
+	}
+}
+
+// case: S-214.11
+func TestValidateCatalogStillRejectsConflictingRequirementsAfterMissingInput(t *testing.T) {
+	source := source()
+	source.Platforms[0].Config = append(source.Platforms[0].Config,
+		catalog.ConfigRequirement{ID: "journey.update.requiredConfig", Path: "/platform/journey/updateRequired", Required: true},
+		catalog.ConfigRequirement{ID: "journey.update.requiredConfig", Path: "/platform/journey/conflictingPath", Required: true},
+	)
+	if err := ValidateCatalog(source); err == nil {
+		t.Fatalf("conflicting manifest paths must still fail validation after an unanswered required value, got %v", err)
+	}
+}
+
+// case: S-214.11
+func TestValidateCatalogStillRejectsInvalidRequirementIDAfterMissingInput(t *testing.T) {
+	source := source()
+	source.Platforms[0].Config = append(source.Platforms[0].Config,
+		catalog.ConfigRequirement{ID: "journey.update.requiredConfig", Path: "/platform/journey/updateRequired", Required: true},
+		catalog.ConfigRequirement{Path: "/platform/journey/invalid", Required: true},
+	)
+	if err := ValidateCatalog(source); err == nil || !strings.Contains(err.Error(), "selected manifest has invalid configuration requirement") {
+		t.Fatalf("invalid requirement ID must still fail validation after an unanswered required value, got %v", err)
 	}
 }
