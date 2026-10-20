@@ -51,6 +51,59 @@ def _journey_modules(journey_root: Path = JOURNEY_DIR,
 
 
 class JourneyImportOrderTests(unittest.TestCase):
+    def test_workspace_layout_resolves_the_built_config_parser(self):
+        env = os.environ.copy()
+        env.pop("KB_JOURNEY_RESOURCE_LAYOUT", None)
+        env["PYTHONPATH"] = str(JOURNEY_DIR)
+        resolved = subprocess.run(
+            [sys.executable, "-B", "-c",
+             "from journey_resources import config_parser_source_path; "
+             "print(config_parser_source_path())"],
+            cwd=REPOSITORY_ROOT, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(resolved.returncode, 0, resolved.stderr or resolved.stdout)
+        self.assertEqual(Path(resolved.stdout.strip()), REPOSITORY_ROOT / "core/config/dist/index.js")
+
+        imported = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const { parseJsonc } = await import(process.argv[1]); "
+             "if (parseJsonc('{\\\"ok\\\":true}').ok !== true) process.exit(1)",
+             (REPOSITORY_ROOT / "core/config/dist/index.js").as_uri()],
+            cwd=REPOSITORY_ROOT, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(imported.returncode, 0, imported.stderr or imported.stdout)
+
+    def test_unknown_resource_layout_has_a_named_diagnostic(self):
+        env = os.environ.copy()
+        env["KB_JOURNEY_RESOURCE_LAYOUT"] = "unrecognized-layout"
+        env["PYTHONPATH"] = str(JOURNEY_DIR)
+        result = subprocess.run(
+            [sys.executable, "-B", "-c",
+             "from journey_resources import config_parser_source_path; config_parser_source_path()"],
+            cwd=REPOSITORY_ROOT, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown journey resource layout 'unrecognized-layout'", result.stderr)
+
+    def test_runner_layout_names_a_missing_parser_and_recovery_command(self):
+        with tempfile.TemporaryDirectory(prefix="journey-missing-layout-") as temporary:
+            journey_root = Path(temporary) / "e2e/journey"
+            journey_root.mkdir(parents=True)
+            shutil.copy2(JOURNEY_DIR / "journey_resources.py", journey_root / "journey_resources.py")
+            shutil.copy2(JOURNEY_DIR / "journey_values.py", journey_root / "journey_values.py")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(journey_root)
+            env["KB_JOURNEY_RESOURCE_LAYOUT"] = "runner-image"
+            result = subprocess.run(
+                [sys.executable, "-B", "-c",
+                 "from journey_resources import config_parser_source_path; config_parser_source_path()"],
+                cwd=journey_root, env=env, text=True, capture_output=True, check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("journey resource layout 'runner-image'", result.stderr)
+            self.assertIn("core/config/dist/jsonc-edit.mjs", result.stderr)
+            self.assertIn("bash e2e/journey/stage-runner-inputs.sh", result.stderr)
+
     def test_runner_inputs_are_materialized_by_the_runner_stage(self):
         staged = subprocess.run(
             ["bash", str(JOURNEY_DIR / "stage-runner-inputs.sh")],
@@ -146,9 +199,11 @@ class JourneyImportOrderTests(unittest.TestCase):
 
             parser = subprocess.run(
                 [sys.executable, "-B", "-c",
-                 "from journey_resources import runner_resource_source_path; "
-                 "print(runner_resource_source_path('core/config/dist/jsonc-edit.mjs'))"],
-                cwd=journey_root, env=env, text=True, capture_output=True, check=False,
+                 "from journey_resources import config_parser_source_path; "
+                 "print(config_parser_source_path())"],
+                cwd=journey_root,
+                env={**env, "KB_JOURNEY_RESOURCE_LAYOUT": "runner-image"},
+                text=True, capture_output=True, check=False,
             )
             self.assertEqual(parser.returncode, 0, parser.stderr or parser.stdout)
             parser_import = subprocess.run(
@@ -156,7 +211,9 @@ class JourneyImportOrderTests(unittest.TestCase):
                  "const { parseJsonc } = await import(process.argv[1]); "
                  "if (parseJsonc('{\\\"ok\\\":true}').ok !== true) process.exit(1)",
                  Path(parser.stdout.strip()).as_uri()],
-                cwd=journey_root, env=env, text=True, capture_output=True, check=False,
+                cwd=journey_root,
+                env={**env, "KB_JOURNEY_RESOURCE_LAYOUT": "runner-image"},
+                text=True, capture_output=True, check=False,
             )
             self.assertEqual(parser_import.returncode, 0, parser_import.stderr or parser_import.stdout)
 

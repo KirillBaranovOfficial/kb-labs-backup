@@ -9,6 +9,8 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
+from journey_values import journey_value
+
 
 class RunnerImageResource(NamedTuple):
     """One repository input copied into the journey runner image."""
@@ -18,11 +20,24 @@ class RunnerImageResource(NamedTuple):
     stage_source: str | None = None
 
 
+class JourneyResourceLayout(NamedTuple):
+    """A declared runtime root and config parser entry for one execution context."""
+
+    root: str
+    config_parser: str
+    missing_step: str
+
+
+CONFIG_JSONC_RESOURCE = RunnerImageResource(
+    ".journey/runner-inputs/config-jsonc-edit.mjs",
+    "/opt/kb-journey/core/config/dist/jsonc-edit.mjs",
+)
+
+
 RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("tools/kb-create/install.sh", "/usr/local/share/kb-create/install.sh"),
     RunnerImageResource("e2e/journey", "/opt/kb-journey/e2e/journey"),
-    RunnerImageResource(".journey/runner-inputs/config-jsonc-edit.mjs",
-                        "/opt/kb-journey/core/config/dist/jsonc-edit.mjs"),
+    CONFIG_JSONC_RESOURCE,
     RunnerImageResource(
         ".journey/runner-inputs/project-service-path.js",
         "/opt/kb-journey/core/plugin-contracts/dist/project-service-path.js",
@@ -76,6 +91,18 @@ RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("tools/kb-monitor/main.go", "/opt/kb-journey/tools/kb-monitor/main.go"),
 )
 
+JOURNEY_RESOURCE_LAYOUTS = {
+    "workspace": JourneyResourceLayout(
+        "built workspace checkout", "core/config/dist/index.js",
+        "corepack pnpm --filter @kb-labs/core-config build",
+    ),
+    "runner-image": JourneyResourceLayout(
+        "runner image root /opt/kb-journey",
+        PurePosixPath(CONFIG_JSONC_RESOURCE.destination).relative_to("/opt/kb-journey").as_posix(),
+        "bash e2e/journey/stage-runner-inputs.sh before building the journey image",
+    ),
+}
+
 
 def resource_root() -> Path:
     """Return the repository root mirrored by the runner image."""
@@ -87,23 +114,24 @@ def workspace_resource(*parts: str) -> Path:
     return resource_root().joinpath(*parts)
 
 
-def runner_resource_source_path(source: str) -> Path:
-    """Resolve an image-relative path through its declared runner resource."""
-    requested = PurePosixPath(source)
-    image_root = PurePosixPath("/opt/kb-journey")
-    candidates = [(resource, PurePosixPath(resource.destination).relative_to(image_root))
-                  for resource in RUNNER_IMAGE_RESOURCES
-                  if PurePosixPath(resource.destination).is_relative_to(image_root)
-                  and (requested == PurePosixPath(resource.destination).relative_to(image_root)
-                       or requested.is_relative_to(PurePosixPath(resource.destination).relative_to(image_root)))]
-    if not candidates:
-        raise ValueError(f"runner image has no declared resource for {source!r}")
-    resource, destination = max(candidates, key=lambda candidate: len(candidate[1].parts))
-    suffix = requested.relative_to(destination).parts
-    image_path = workspace_resource(*destination.parts, *suffix)
-    if image_path.exists():
-        return image_path
-    return workspace_resource(*PurePosixPath(resource.source).parts, *suffix)
+def config_parser_source_path() -> Path:
+    """Resolve the parser from the explicitly selected workspace or image layout."""
+    layout_name = journey_value("KB_JOURNEY_RESOURCE_LAYOUT", "workspace")
+    try:
+        layout = JOURNEY_RESOURCE_LAYOUTS[layout_name]
+    except KeyError as error:
+        raise ValueError(
+            f"unknown journey resource layout {layout_name!r}; choose one of "
+            f"{', '.join(sorted(JOURNEY_RESOURCE_LAYOUTS))}"
+        ) from error
+
+    parser_path = workspace_resource(*PurePosixPath(layout.config_parser).parts)
+    if not parser_path.is_file():
+        raise FileNotFoundError(
+            f"journey resource layout {layout_name!r} ({layout.root}) requires "
+            f"{layout.config_parser} at {parser_path}; {layout.missing_step}"
+        )
+    return parser_path
 
 
 def stage_runner_image_inputs() -> tuple[Path, ...]:
@@ -158,7 +186,7 @@ def stage_config_jsonc_parser() -> Path:
     from invocations import run_harness_command
 
     source = workspace_resource("core", "config", "src", "user-config", "jsonc-edit.ts")
-    destination = workspace_resource(".journey", "runner-inputs", "config-jsonc-edit.mjs")
+    destination = workspace_resource(*PurePosixPath(CONFIG_JSONC_RESOURCE.source).parts)
     result = run_harness_command([
         str(_esbuild_binary()), str(source), "--bundle", "--platform=node", "--format=esm",
         f"--outfile={destination}",
