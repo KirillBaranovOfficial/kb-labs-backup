@@ -9,10 +9,12 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 from invocations import print_report_text, write_report_json, write_report_text
+from journey_dependencies import Dependency
 
 CASE_STEP = re.compile(r"^\|\s*((?:S|PC)-\d+\.\d+)\s*\|", re.MULTILINE)
 CLAIM_TAG = re.compile(r"@(S|PC)-(\d+\.\d+)")
 MODES = ("local", "secured")
+FAILURE_MAX_LENGTH = 180
 
 
 def _yaml_scalar(value: str) -> str:
@@ -162,6 +164,175 @@ def _status(claims: list[str], observed: dict[str, list[dict]], applicable_modes
     return "Unclaimed", []
 
 
+def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: dict) -> dict:
+    """Rank failed journey steps by the claims reachable through their declared dependencies."""
+    steps_by_file: dict[str, list[dict]] = {}
+    states_by_file: dict[str, dict] = {}
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            if (not isinstance(data, dict)
+                    or data.get("schema") == "kb.journey-case-scoreboard/v1"
+                    or data.get("case_run", {}).get("partial") is True):
+                continue
+            file_mode = data.get("case_run", {}).get("mode")
+            steps = data.get("steps", [])
+            if not isinstance(steps, list):
+                continue
+            mode_steps = [step for step in steps if isinstance(step, dict)
+                          and (step.get("mode") == mode or file_mode == mode)]
+            if not mode_steps:
+                continue
+            steps_by_file[path.name] = mode_steps
+            states_by_file[path.name] = data.get("states", {}) if isinstance(data.get("states"), dict) else {}
+
+    roots = []
+    unresolved_owners = []
+    unresolved_dependencies = []
+
+    def report_unresolved_owner(source: str, state: str, step: str | None) -> None:
+        unresolved_owners.append({"source": source, "state": state, "step": step})
+
+    allowed_claims = {claim for case in cases if case["status"] == "active" and mode in case["modes"]
+                      for claim in case["claims"]}
+    steps_by_id: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+    graph: dict[str, set[str]] = defaultdict(set)
+    for filename, steps in steps_by_file.items():
+        for step in steps:
+            step_id = step.get("stepId")
+            if isinstance(step_id, str):
+                steps_by_id[step_id].append((filename, step))
+                graph.setdefault(step_id, set())
+    state_owners: dict[str, set[str]] = defaultdict(set)
+    for filename, states in states_by_file.items():
+        for state, value in states.items():
+            if isinstance(value, dict) and isinstance(value.get("step"), str):
+                owner_id = value["step"]
+                if owner_id in steps_by_id:
+                    state_owners[state].add(owner_id)
+                else:
+                    report_unresolved_owner(filename, state, owner_id)
+    for filename, steps in steps_by_file.items():
+        for step in steps:
+            step_id = step.get("stepId")
+            if not isinstance(step_id, str):
+                continue
+            details = step.get("details") if isinstance(step.get("details"), dict) else {}
+            requirements = details.get("requires", [])
+            dependencies = [Dependency.parse(item) for item in requirements if isinstance(item, str)] \
+                if isinstance(requirements, list) else []
+            for dependency in dependencies:
+                if dependency.kind in {"step", "flow"} and dependency.name in steps_by_id:
+                    graph[step_id].add(dependency.name)
+                elif dependency.kind in {"step", "flow"}:
+                    unresolved_dependencies.append({"source": filename, "stepId": step_id,
+                                                    "requiredStepId": dependency.name})
+                elif dependency.kind == "state":
+                    owners = state_owners.get(dependency.name, set())
+                    if owners:
+                        graph[step_id].update(owners)
+                    elif not any(dependency.name in states for states in states_by_file.values()):
+                        report_unresolved_owner(filename, dependency.name, None)
+    reverse: dict[str, set[str]] = defaultdict(set)
+    for consumer, prerequisites in graph.items():
+        for prerequisite in prerequisites:
+            reverse[prerequisite].add(consumer)
+    state_root_ids = {
+        value.get("step")
+        for states in states_by_file.values()
+        for value in states.values()
+        if isinstance(value, dict) and value.get("passed") is False and isinstance(value.get("step"), str)
+    }
+    for filename, steps in steps_by_file.items():
+        for root_step in steps:
+            root_id = root_step.get("stepId")
+            if not isinstance(root_id, str):
+                continue
+            if root_step.get("status") != "FAIL":
+                continue
+            reached: set[str] = set()
+            # Reverse edges: find all blocked steps transitively depending on this failure.
+            pending = list(reverse.get(root_id, set()))
+            while pending:
+                current = pending.pop()
+                if current in reached:
+                    continue
+                reached.add(current)
+                pending.extend(reverse.get(current, set()))
+            affected_claims = set(claim for claim in root_step.get("cases", [])
+                                  if isinstance(claim, str) and claim in allowed_claims)
+            blocked_cases = set()
+            for reached_name in reached:
+                for _, dependent in steps_by_id[reached_name]:
+                    if dependent.get("status") == "BLOCKED":
+                        for claim in dependent.get("cases", []):
+                            if isinstance(claim, str) and claim in allowed_claims:
+                                affected_claims.add(claim)
+            blocked_cases.update(claim.rsplit(".", 1)[0] for claim in affected_claims)
+            state_root = root_id in state_root_ids
+            details = root_step.get("details") if isinstance(root_step.get("details"), dict) else {}
+            error = details.get("error") if isinstance(details.get("error"), dict) else {}
+            error_code = error.get("code") if isinstance(error.get("code"), str) else None
+            error_message = error.get("message") if isinstance(error.get("message"), str) else None
+            failure = (f"{error_code}: {' '.join(error_message.split())}"
+                       if error_code and error_message else "structured error unavailable")
+            failure = failure[:FAILURE_MAX_LENGTH]
+            roots.append({"mode": mode, "source": filename, "stepId": root_id,
+                          "step": root_step.get("name", root_id),
+                          "failure": failure,
+                          "layer": 0 if state_root else 1, "stateRoot": state_root,
+                          "unblockedClaims": len(affected_claims),
+                          "claims": sorted(affected_claims, key=claim_sort_key),
+                          "blockedStepIds": sorted(name for name in reached if any(
+                              step.get("status") == "BLOCKED" for _, step in steps_by_id[name])),
+                          "blockedStepCount": sum(any(step.get("status") == "BLOCKED"
+                                                      for _, step in steps_by_id[name]) for name in reached),
+                          "blockedCaseIds": sorted(blocked_cases)})
+
+    deduplicated = {}
+    for root in roots:
+        key = root["stepId"]
+        existing = deduplicated.get(key)
+        if existing is None:
+            root["_failureMessages"] = {root["failure"]}
+            deduplicated[key] = root
+            continue
+        existing["_failureMessages"].add(root["failure"])
+        existing["claims"] = sorted(set(existing["claims"]) | set(root["claims"]), key=claim_sort_key)
+        existing["unblockedClaims"] = len(existing["claims"])
+        existing["blockedCaseIds"] = sorted(set(existing["blockedCaseIds"]) | set(root["blockedCaseIds"]))
+        existing["blockedStepIds"] = sorted(set(existing["blockedStepIds"]) | set(root["blockedStepIds"]))
+        existing["blockedStepCount"] = len(existing["blockedStepIds"])
+        existing["stateRoot"] = existing["stateRoot"] or root["stateRoot"]
+        existing["layer"] = 0 if existing["stateRoot"] else 1
+        existing["source"] = ", ".join(sorted(set(existing["source"].split(", ")) | {root["source"]}))
+    roots = list(deduplicated.values())
+    for root in roots:
+        root["failure"] = " | ".join(sorted(root.pop("_failureMessages")))[:FAILURE_MAX_LENGTH]
+    roots.sort(key=lambda item: (item["blockedStepCount"] == 0,
+                                 (item["blockedCaseIds"] or [""])[0] if item["blockedStepCount"] == 0 else "",
+                                 item["layer"], -item["unblockedClaims"], item["step"], item["source"]))
+    applicable = [case for case in cases if case["status"] == "active" and mode in case["modes"]]
+    unclaimed = [case["id"] for case in applicable if not any(
+        evidence.get(mode, {}).get(claim) for claim in case["claims"])]
+    claims = {claim for case in applicable for claim in case["claims"]}
+    observed = {claim: evidence.get(mode, {}).get(claim, []) for claim in claims}
+    passing = sum(any(result.get("status") == "PASS" for result in results)
+                  for results in observed.values())
+    reachable = sum(bool(results) and not all(result.get("status") == "BLOCKED" for result in results)
+                    for results in observed.values())
+    fully_green = sum(_status(case["claims"], evidence, [mode])[0] == "Fully green"
+                      for case in applicable)
+    return {"mode": mode, "blockingRoots": roots, "unclaimedCases": unclaimed,
+            "unresolvedStateOwners": unresolved_owners,
+            "unresolvedDependencies": unresolved_dependencies,
+            "headline": {"activeCasesFullyGreen": {"count": fully_green, "total": len(applicable)},
+                         "claimsPassing": {"count": passing, "total": len(claims)},
+                         "claimsReachable": {"count": reachable, "total": len(claims)}}}
+
 def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> dict:
     modes = list(modes)
     cases = load_cases(catalog)
@@ -204,7 +375,8 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
                      "claimedCount": sum(bool(evidence.get(mode, {}).get(claim_id)) for mode in relevant for claim_id in case["claims"]),
                      "claimCount": len(case["claims"])})
     release_cases = [row for row in rows if row["release"]]
-    return {
+    mode_reports = {mode: _blocking_report(directory, cases, mode, evidence) for mode in modes}
+    result = {
         "schema": "kb.journey-case-scoreboard/v1",
         "modes": modes,
         "partial": bool(partial_selections),
@@ -217,7 +389,42 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
         "plannedCount": planned_count,
         "historicalCount": historical_count,
         "cases": rows,
+        "modeReports": mode_reports,
     }
+    if len(modes) == 1:
+        result.update(mode_reports[modes[0]])
+    return result
+
+
+def _render_mode_report(mode: str, report: dict) -> list[str]:
+    headline = report["headline"]
+    lines = [f"## {mode}: platform coverage", "",
+             f"All active cases fully green: **{headline['activeCasesFullyGreen']['count']} / {headline['activeCasesFullyGreen']['total']}**.",
+             f"Claims passing: **{headline['claimsPassing']['count']} / {headline['claimsPassing']['total']}**.",
+             f"Claims reachable (not BLOCKED): **{headline['claimsReachable']['count']} / {headline['claimsReachable']['total']}**.",
+             "", "### Blocking roots", ""]
+    if report["blockingRoots"]:
+        lines.extend(["| Layer | Step ID | Step | Impacted claims | Blocked cases | Failure |",
+                      "|---:|---|---|---:|---|---|"])
+        for root in report["blockingRoots"]:
+            lines.append(f"| {root['layer']} | `{root['stepId']}` | {root['step']} | {root['unblockedClaims']} | "
+                         f"{', '.join(root['blockedCaseIds']) or 'none'} | {root['failure']} |")
+    else:
+        lines.append("No failed roots.")
+    lines.extend(["", "### Unclaimed", "", ", ".join(report["unclaimedCases"]) or "None."])
+    if report.get("unresolvedStateOwners"):
+        lines.extend(["", "### Unresolved state owners", ""])
+        lines.extend(
+            (f"- {owner['source']} state `{owner['state']}` has no owner record."
+             if owner["step"] is None else
+             f"- {owner['source']} state `{owner['state']}` names missing step `{owner['step']}`.")
+            for owner in report["unresolvedStateOwners"])
+    if report.get("unresolvedDependencies"):
+        lines.extend(["", "### Unresolved step dependencies", ""])
+        lines.extend(f"- {dependency['source']} step `{dependency['stepId']}` requires missing step ID `"
+                     f"{dependency['requiredStepId']}`."
+                     for dependency in report["unresolvedDependencies"])
+    return lines
 
 
 def render_markdown(scoreboard: dict) -> str:
@@ -228,12 +435,14 @@ def render_markdown(scoreboard: dict) -> str:
     release = scoreboard["releaseCases"]
     active = scoreboard["activeCases"]
     lines = [f"# Product case scoreboard ({modes})", "",
-             (f"**Partial run**; selection: {', '.join(scoreboard['selection'])}." if scoreboard.get("partial") else "Full run."),
-             f"Release cases: **{release['fullyGreen']} / {release['total']}** fully green.",
-             f"All active cases: **{active['fullyGreen']} / {active['total']}** fully green.",
-             f"Planned cases: **{scoreboard['plannedCount']}**.",
-             f"Historical cases excluded: **{scoreboard['historicalCount']}**.", "",
-             "Active case statuses:", "", "| Status | Cases |", "|---|---:|"]
+             (f"**Partial run**; selection: {', '.join(scoreboard['selection'])}." if scoreboard.get("partial") else "Full run.")]
+    for mode, report in scoreboard.get("modeReports", {}).items():
+        lines.extend(["", *_render_mode_report(mode, report)])
+    lines.extend(["", f"Release cases: **{release['fullyGreen']} / {release['total']}** fully green.",
+                  f"All active cases: **{active['fullyGreen']} / {active['total']}** fully green.",
+                  f"Planned cases: **{scoreboard['plannedCount']}**.",
+                  f"Historical cases excluded: **{scoreboard['historicalCount']}**.",
+                  "", "Active case statuses:", "", "| Status | Cases |", "|---|---:|"])
     for label in ("Fully green", "Partial", "Red", "Unclaimed", "Blocked"):
         if counts[label]:
             lines.append(f"| {label} | {counts[label]} |")
@@ -242,9 +451,35 @@ def render_markdown(scoreboard: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_journey_summary(scoreboard: dict) -> str:
+    lines = ["## Platform blocking pyramid", ""]
+    for mode, report in scoreboard.get("modeReports", {}).items():
+        lines.extend(_render_mode_report(mode, report))
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _write_journey_summary(directory: Path, scoreboard: dict) -> None:
+    path = directory / "journey-summary.md"
+    start_marker = "<!-- kb-journey-scoreboard:start -->"
+    end_marker = "<!-- kb-journey-scoreboard:end -->"
+    previous = path.read_text(encoding="utf-8") if path.exists() else ""
+    start = previous.find(start_marker)
+    end = previous.find(end_marker)
+    if (start == -1) != (end == -1) or (start != -1 and end < start):
+        raise ValueError(f"journey summary has an incomplete scoreboard section: {path}")
+    section = f"{start_marker}\n{render_journey_summary(scoreboard)}{end_marker}\n"
+    if start == -1:
+        updated = previous.rstrip() + ("\n\n" if previous.strip() else "") + section
+    else:
+        updated = previous[:start].rstrip() + "\n\n" + section + previous[end + len(end_marker):].lstrip("\n")
+    write_report_text(path, updated)
+
+
 def write_scoreboards(directory: Path, catalog: Path) -> None:
     outputs = {f"case-scoreboard-{mode}": build_scoreboard(directory, catalog, [mode]) for mode in MODES}
     outputs["case-scoreboard"] = build_scoreboard(directory, catalog, MODES)
+    _write_journey_summary(directory, outputs["case-scoreboard"])
     for stem, scoreboard in outputs.items():
         write_report_json(directory / f"{stem}.json", scoreboard)
         write_report_text(directory / f"{stem}.md", render_markdown(scoreboard))

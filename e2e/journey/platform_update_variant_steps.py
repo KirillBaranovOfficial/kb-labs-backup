@@ -22,7 +22,7 @@ from invocations import (
     read_kb_create_cli_result,
     start_background_command,
 )
-from service_steps import Journey
+from service_steps import Journey, StructuredJourneyError
 from journey_resources import active_platform_root, shared_runtime_file_fingerprints, snapshot_state_tree
 
 
@@ -34,7 +34,9 @@ def _payload(result: CompletedProcess, label: str) -> dict:
     value = read_kb_create_cli_result(result.args[1], result)
     if result.returncode:
         error = decode_ux_error_result(value)
-        raise RuntimeError(f"{label}: {error!r}")
+        if isinstance(error, dict):
+            raise StructuredJourneyError(error)
+        raise RuntimeError(f"{label}: expected a structured error")
     payload = decode_ux_success_result(value)
     if not isinstance(payload, dict):
         raise RuntimeError(f"{label}: expected an object result")
