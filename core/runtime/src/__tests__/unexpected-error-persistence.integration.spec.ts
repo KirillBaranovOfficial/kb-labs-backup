@@ -45,7 +45,7 @@ describe('installed default log persistence across CLI processes', () => {
       const loaded = await loadAdapterManifest({ packageRoot });
       if (loaded.kind === 'failed') { throw new Error(`${name}: ${loaded.reason}`); }
       if (loaded.kind !== 'adapter') { continue; }
-      const slots = loaded.manifest.defaultFor ?? [];
+      const slots = Object.keys(loaded.manifest.defaultFor ?? {});
       if (slots.length) { defaults.set(name, { packageName: name, packageRoot, slots }); }
     }
     const manifestSlots = [...new Set([...defaults.values()].flatMap(adapter => adapter.slots))];

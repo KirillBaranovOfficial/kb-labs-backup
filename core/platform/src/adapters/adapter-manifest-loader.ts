@@ -70,6 +70,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isDefaultFor(value: unknown): value is Record<string, string[]> {
+  if (!isRecord(value)) {return false;}
+  return Object.entries(value).every(([slot, entrypoint]) =>
+    slot.length > 0 && Array.isArray(entrypoint) && entrypoint.every(segment =>
+      typeof segment === 'string' && segment.length > 0 && segment !== '.' && segment !== '..' &&
+      !segment.includes('/') && !segment.includes('\\'),
+    ),
+  );
+}
+
 function isAdapterManifest(value: unknown): value is AdapterManifest {
   if (!isRecord(value)) {return false;}
   return typeof value.manifestVersion === 'string' &&
@@ -78,6 +88,7 @@ function isAdapterManifest(value: unknown): value is AdapterManifest {
     typeof value.name === 'string' &&
     typeof value.version === 'string' &&
     typeof value.networkRequired === 'boolean' &&
+    (value.defaultFor === undefined || isDefaultFor(value.defaultFor)) &&
     (value.type === 'core' || value.type === 'extension' || value.type === 'proxy') &&
     ((typeof value.implements === 'string' && value.implements.length > 0) ||
       (Array.isArray(value.implements) && value.implements.length > 0 && value.implements.every((role) => typeof role === 'string')));
@@ -115,6 +126,13 @@ export async function loadAdapterManifest(source: AdapterManifestSource): Promis
     }
     if (typeof mod.manifest.networkRequired !== 'boolean') {
       return { kind: 'failed', reason: 'adapter manifest must declare networkRequired as a boolean', modulePath };
+    }
+    if (mod.manifest.defaultFor !== undefined && !isDefaultFor(mod.manifest.defaultFor)) {
+      return {
+        kind: 'failed',
+        reason: 'adapter manifest defaultFor must be a slot-to-entrypoint map of path segments',
+        modulePath,
+      };
     }
     if (!isAdapterManifest(mod.manifest)) {
       return { kind: 'failed', reason: 'built module must export a valid AdapterManifest named manifest', modulePath };

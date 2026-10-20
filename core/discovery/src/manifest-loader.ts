@@ -29,6 +29,13 @@ export type ManifestLoadResult =
   | { kind: 'not-plugin'; packageName?: string }
   | { kind: 'failed'; cause: string; manifestPath?: string };
 
+export function resolveDeclaredManifestPath(packageRoot: string, manifestField: string): { manifestPath: string; escapesRoot: boolean } {
+  const root = path.resolve(packageRoot);
+  const manifestPath = path.resolve(root, manifestField);
+  const relative = path.relative(root, manifestPath);
+  return { manifestPath, escapesRoot: relative.startsWith('..') || path.isAbsolute(relative) };
+}
+
 async function safeImport(filePath: string, timeoutMs: number): Promise<Record<string, unknown>> {
   let timer: ReturnType<typeof setTimeout>;
   try {
@@ -176,11 +183,11 @@ export async function loadManifestFile(
   }
 
   if (manifestField) {
-    const manifestPath = path.resolve(root, manifestField);
-    const relative = path.relative(root, manifestPath);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      return failed(diag, pluginId, manifestPath, 'MANIFEST_VALIDATION_ERROR', `Declared manifest path "${manifestField}" escapes package root — possible path traversal`);
+    const resolved = resolveDeclaredManifestPath(root, manifestField);
+    if (resolved.escapesRoot) {
+      return failed(diag, pluginId, resolved.manifestPath, 'MANIFEST_VALIDATION_ERROR', `Declared manifest path "${manifestField}" escapes package root — possible path traversal`);
     }
+    const manifestPath = resolved.manifestPath;
     if (manifestPath.endsWith('.json')) {
       const result = await readManifestJson(manifestPath, pluginId, packageName, diag, true);
       return result!;

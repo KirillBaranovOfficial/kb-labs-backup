@@ -17,7 +17,7 @@ export const manifest: AdapterManifest = {
   type: 'core',
   implements: 'IAnalytics',
   networkRequired: false,
-  defaultFor: ['analytics'],
+  defaultFor: { analytics: [] },
   contexts: ['workspace', 'analytics', 'platformData'],
   capabilities: {
     search: true,
@@ -35,6 +35,7 @@ export const manifest: AdapterManifest = {
       type: 'string',
       description: 'Path to the SQLite database file (default: <KB_HOME>/state/<projectId>/analytics/analytics.sqlite)',
       pathBase: 'platformData',
+      defaultPath: { root: 'projectState', segments: ['analytics', 'analytics.sqlite'] },
     },
     retentionDays: {
       type: 'number',

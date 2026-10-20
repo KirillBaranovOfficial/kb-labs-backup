@@ -297,8 +297,10 @@ configuration, service graph and readiness before updating the receipt.
 
 ### Packages declare their own configuration requirements
 
-A selected package states the configuration it needs in a
-`kb-create.requirements.json` shipped in its tarball (package root or `dist/`):
+A service package states package-specific configuration in a
+`kb-create.requirements.json` shipped in its tarball (package root or `dist/`).
+For adapters, the build emits this artifact from `kb.adapter.manifest` and its
+`configSchema`, so credential requirements have one declaration:
 
 ```json
 {
@@ -310,7 +312,7 @@ A selected package states the configuration it needs in a
 }
 ```
 
-`prepare-release-index.mjs` merges these into the package's staged
+`prepare-release-index.mjs` merges the generated or service-declared requirements into the package's staged
 `kb-create.manifest.json`, and `kb-create-release-index` seals them into the
 index; the sealed shape is unchanged (`id`, `path`, `default`, `secret`, `env`,
 `services`), so launchers that predate this file keep verifying the digest.

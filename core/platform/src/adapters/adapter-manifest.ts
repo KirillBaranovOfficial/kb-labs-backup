@@ -235,8 +235,8 @@ export interface AdapterManifest {
   /** Configuration value used to select this adapter when it implements a typed extension point. */
   channelType?: string;
 
-  /** Capabilities this adapter is the platform's default provider for. */
-  defaultFor?: string[];
+  /** Default platform slots mapped to package entry-point path segments. Empty segments select the package root. */
+  defaultFor?: Record<string, string[]>;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Dependencies
@@ -449,9 +449,20 @@ export interface AdapterManifest {
       hint?: string;
       /** Resolve a relative filesystem option against a runtime-owned root. */
       pathBase?: 'platformData';
+      /** Default this path beneath the registered project's durable state directory. */
+      defaultPath?: { root: 'projectState'; segments: string[] };
       /** Values such as `:memory:` that are path options but not files. */
       specialValues?: string[];
       properties?: Record<string, unknown>;
+      /** Additional doctor metadata for this option; required/secret/env come from this schema field. */
+      doctor?: {
+        id: string;
+        optional?: boolean;
+        severity?: 'error' | 'warning';
+        services: string[];
+        action?: string;
+        hint: string;
+      };
     }
   >;
 }
@@ -473,7 +484,7 @@ const ADAPTER_SLOT_CONTRACTS: Record<string, string> = {
 
 /** Whether a manifest declares the platform slot through its identity fields. */
 export function adapterManifestProvidesSlot(manifest: AdapterManifest, slot: string): boolean {
-  if (manifest.defaultFor?.includes(slot)) {return true;}
+  if (manifest.defaultFor && Object.hasOwn(manifest.defaultFor, slot)) {return true;}
   const contract = ADAPTER_SLOT_CONTRACTS[slot];
   if (!contract) {return false;}
   const roles = Array.isArray(manifest.implements) ? manifest.implements : [manifest.implements];

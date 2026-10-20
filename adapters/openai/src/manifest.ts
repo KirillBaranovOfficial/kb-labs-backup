@@ -20,7 +20,7 @@ export const manifest: AdapterManifest = {
   type: "core",
   implements: "ILLM",
   networkRequired: true,
-  defaultFor: ["llm"],
+  defaultFor: { llm: ["llm"] },
   capabilities: {
     streaming: true,
     custom: {
@@ -34,6 +34,14 @@ export const manifest: AdapterManifest = {
       secret: true,
       env: "OPENAI_API_KEY",
       description: "OpenAI API key (defaults to OPENAI_API_KEY env var)",
+      doctor: {
+        id: "openai.apiKey",
+        optional: true,
+        severity: "warning",
+        services: ["gateway"],
+        action: "set OPENAI_API_KEY to enable LLM features",
+        hint: "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env",
+      },
     },
     model: {
       type: "string",
