@@ -22,6 +22,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         (self.root / "prompts").mkdir()
         (self.root / "tools/kb-devkit").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
+        shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         self.calls = self.root / "calls.log"
         self._script(self.root / "e2e/journey/run.sh", '''#!/bin/sh
@@ -50,6 +51,7 @@ exit 0
 ''')
         self._script(self.root / "e2e/journey/prepare-candidate.sh", '''#!/bin/sh
 printf 'candidate\\n' >> "$CALLS"
+if [ "${FAIL_CANDIDATE:-}" = 1 ]; then printf 'candidate failure fixture\\n'; exit 9; fi
 exit 0
 ''')
         self._script(self.bin / "node", '''#!/bin/sh
@@ -74,6 +76,13 @@ fi
 exit 0
 ''')
         self._script(self.bin / "go", '''#!/bin/sh
+{
+  printf 'go build'
+  for arg in "$@"; do
+    [ "$arg" = "-trimpath" ] && printf ' -trimpath'
+  done
+  printf '\n'
+} >> "$CALLS"
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-o" ]; then
     shift
@@ -154,10 +163,11 @@ exit 2
         calls = self.calls.read_text().splitlines()
         self.assertEqual(calls, [
             "journey  --down",
+            "go build -trimpath",
             "build",
             "build-output-check",
-            "unit",
             "candidate",
+            "unit",
             "journey service-local:explore --no-build",
             "journey service-secured:explore --no-build",
         ])
@@ -183,6 +193,32 @@ exit 2
             })
             self.assertTrue(all(isinstance(value, int) and value >= 0
                                 for value in metadata["stageDurationsSeconds"].values()))
+
+
+    # case: S-262.1
+    def test_candidate_failure_stops_shared_lane_before_unit_and_modes(self):
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root, env={**self.env, "FAIL_CANDIDATE": "1"},
+            text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        calls = self.calls.read_text().splitlines()
+        self.assertIn("candidate", calls)
+        self.assertNotIn("unit", calls)
+        self.assertFalse(any(row.startswith("journey service-") for row in calls))
+        self.assertIn("candidate failure fixture", (self.root / "out/shared/candidate.log").read_text())
+        self.assertIn("- Failed stage: `candidate`", (self.root / "out/shared/summary.md").read_text())
+        self.assertIn("next: e2e/journey/prepare-candidate.sh", result.stderr)
+
+    # case: S-262.4
+    def test_shared_devkit_build_is_path_independent_for_digest_cache(self):
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        go_builds = [row for row in self.calls.read_text().splitlines()
+                     if row.startswith("go build ")]
+        self.assertEqual(len(go_builds), 1)
+        self.assertEqual(go_builds[0], "go build -trimpath")
 
     # case: S-262.1
     def test_entry_retries_only_a_docker_image_build_failure_once(self):
