@@ -257,6 +257,8 @@ def run_platform_update_variant_steps(
                                 "--input", str(request), "--json"]), f"staged {label} verification")
             if not error.get("code") or not error.get("hint"):
                 raise RuntimeError(f"staged {label} verification failure omitted its typed error and hint")
+            if label == "config" and error["code"] != "KB_INSTALL_CONFIG_REQUIRED":
+                raise RuntimeError("update without the newly required configuration did not return KB_INSTALL_CONFIG_REQUIRED")
             if hashlib.sha256(receipt_path.read_bytes()).hexdigest() != receipt_hash:
                 raise RuntimeError(f"staged {label} failure changed the active receipt")
             if hashlib.sha256(config_path.read_bytes()).hexdigest() != config_hash:
