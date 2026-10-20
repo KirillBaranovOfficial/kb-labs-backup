@@ -66,6 +66,7 @@ import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
 import { interpolateConfig } from "./config-interpolation.js";
 import { requireProjectContext } from "./project-context.js";
 import { applyLocalNetworkOffset } from "./config-net-offset.js";
+import { isWorkspaceDevelopmentMode } from "./platform-mode.js";
 import { PLATFORM_CONFIG_PRODUCT } from "./schema/platform-config-schema.js";
 import { discoverAdapters } from "./discover-adapters.js";
 
@@ -727,6 +728,13 @@ export async function loadPlatformConfig(
   }
   registerProcessSensitiveValues(secretValues);
 
+  const workspaceRootIsConfigRoot = samePath && isWorkspaceDevelopmentMode({
+    sameLocation: roots.sameLocation,
+    rawConfig: rawProjectConfig,
+    rawPlatformConfig,
+  });
+  const resolvedProjectRoot = roots.projectRoot ?? (workspaceRootIsConfigRoot ? roots.platformRoot : undefined);
+  const sameLocation = roots.sameLocation || (workspaceRootIsConfigRoot && resolvedProjectRoot === roots.platformRoot);
   const result: LoadPlatformConfigResultBase = {
     platformConfig: effective,
     rawConfig: rawProjectConfig,
@@ -734,7 +742,7 @@ export async function loadPlatformConfig(
     effectiveConfig,
     pluginSettingsDefaults,
     platformRoot: roots.platformRoot,
-    sameLocation: roots.sameLocation,
+    sameLocation,
     sources: {
       platformDefaults: platformDefaultsSource,
       projectConfig: projectConfigSource,
@@ -757,7 +765,7 @@ export async function loadPlatformConfig(
     },
   };
   if (projectScope === 'platform') {
-    return { ...result, projectScope, projectRoot: roots.projectRoot };
+    return { ...result, projectScope, projectRoot: resolvedProjectRoot };
   }
   return { ...result, projectScope, projectRoot: configRoot };
 }

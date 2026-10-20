@@ -510,6 +510,24 @@ Cases: S-010.1, S-054.11, S-054.12.
 `@kb-labs/adapters-fs` is the only adapter that declares itself the default for `storage`. `@kb-labs/data-store` stays installable and bindable, but two defaults made install resolution ambiguous.
 Cases: S-047, S-048.
 
+### 2026-10-20: Keep implicit storage project-scoped
+
+The fresh-install release config selects the filesystem adapter without writing
+`platform.adapterOptions.storage`; the adapter manifest supplies its implicit
+`<KB_HOME>/state/<projectId>/storage` path. A user-selected relative storage
+path remains platform data and is configured explicitly.
+Cases: S-048.2, S-054.1, S-054.21.
+
+### 2026-10-20: Release defaults have a release-owned config source
+
+The developer workspace config and the fresh-install release config have
+different owners and purposes. `.kb/kb.config.jsonc` retains the explicit
+workspace storage directory; `tools/kb-create/config/platform-release.jsonc`
+is the release producer's source for the config sealed into a fresh install and
+leaves implicit storage to the adapter manifest. Release tooling reads that
+source directly instead of deriving it by filtering developer settings. Cases:
+S-054.1, S-054.21, S-179.5.
+
 ### Marketplace plugins never mutate the sealed platform dependency graph
 
 Marketplace plugin entry packages use the shared extension store at both project

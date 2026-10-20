@@ -12,7 +12,7 @@ test('reads stable platform version from a sealed V2 release index', () => {
 });
 
 test('journey platform members match the release config and exclude unlisted devkit', () => {
-  const config = readPlatformReleaseConfig(join(dirname(fileURLToPath(import.meta.url)), '../../.kb/kb.config.jsonc'));
+  const config = readPlatformReleaseConfig(join(dirname(fileURLToPath(import.meta.url)), '../../tools/kb-create/config/platform-release.jsonc'));
   assert.deepEqual(config.platformMembers, [
     '@kb-labs/cli-bin',
     '@kb-labs/scaffold',

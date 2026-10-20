@@ -50,6 +50,7 @@ COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
 COPY e2e/platform/release-index-version.mjs /src/release-index-version.mjs
 COPY tools/kb-create/scripts/prepare-binary-manifest.mjs /src/kb-create/scripts/prepare-binary-manifest.mjs
 COPY tools/kb-create/scripts/prepare-release-index.mjs /src/kb-create/scripts/prepare-release-index.mjs
+COPY tools/kb-create/config/platform-release.jsonc /src/platform-release.jsonc
 COPY --from=go-builder /out/kb-create-linux-amd64 /out/binaries/kb-create-linux-amd64
 COPY --from=go-builder /out/kb-create-linux-arm64 /out/binaries/kb-create-linux-arm64
 COPY --from=go-builder /out/kb-create-release-index /usr/local/bin/kb-create-release-index
@@ -70,6 +71,7 @@ RUN sha256sum /out/binaries/kb-create-linux-amd64 /out/binaries/kb-create-linux-
       --binary-manifest /out/binary-manifest.json \
       --binary-manifest-tool /src/kb-create/scripts/prepare-binary-manifest.mjs \
       --binary-checksums /out/binary-checksums.txt \
+      --release-config /src/platform-release.jsonc \
       --binary-version "$BINARY_VERSION" \
       --source-revision "$SOURCE_REVISION" \
       --output /out/release-index.json

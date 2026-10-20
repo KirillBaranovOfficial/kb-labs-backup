@@ -8,7 +8,6 @@
  * only adds CLI-specific concerns: the UI provider and lifecycle hooks.
  */
 
-import { createHash } from "node:crypto";
 import {
   initPlatform,
   loadPlatformConfig as readPlatformConfig,
@@ -21,7 +20,6 @@ import {
   type LoadPlatformConfigResult,
   isWorkspaceDevelopmentMode,
 } from "@kb-labs/core-runtime";
-import { findRepoRoot } from "@kb-labs/core-sys";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { noopUI } from "@kb-labs/plugin-contracts";
 import type { UIFacade } from "@kb-labs/plugin-contracts";
@@ -107,19 +105,6 @@ export async function loadPlatformConfiguration(
   moduleUrl?: string,
   projectScope: 'required' | 'platform' = 'platform',
 ): Promise<LoadPlatformConfigResult> {
-  // Mirror daemon.ts: derive KB_SOCKET_HASH before config is loaded so
-  // ${KB_SOCKET_HASH} placeholders in socket paths resolve without warnings.
-  // kb-dev sets it as a real env var for managed services; the CLI derives the
-  // same value from KB_PROJECT_ROOT (or the repo root) when running standalone.
-  if (!process.env["KB_SOCKET_HASH"]) {
-    const repoRoot = await findRepoRoot(cwd).catch(() => cwd);
-    const hashRoot = process.env["KB_PROJECT_ROOT"] ?? repoRoot;
-    process.env["KB_SOCKET_HASH"] = createHash("md5")
-      .update(hashRoot)
-      .digest("hex")
-      .slice(0, 8);
-  }
-
   return readPlatformConfig({
     moduleUrl,
     startDir: cwd,
@@ -146,6 +131,8 @@ export async function initializePlatform(
     return { ...loadResult, platform };
   }
   ensureLifecycleHooksRegistered();
+  const workspaceDevelopment = isWorkspaceDevelopmentMode(loadResult);
+  const workspaceRoot = workspaceDevelopment ? projectRoot : undefined;
   const platformInstance = await initPlatform(
       platformConfig,
       adapterProjectRoot,
@@ -155,7 +142,8 @@ export async function initializePlatform(
       assemblyHook: makeAssemblyHook(() =>
         process.env.KB_DEBUG === "true" ? platform.logger : undefined,
       ),
-      workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
+      workspaceDevelopment,
+      ...(workspaceRoot ? { workspaceRoot } : {}),
     },
   );
 

@@ -37,7 +37,7 @@ const binaryRepository = value('--binary-repository') ?? 'kb-labs-team/kb-labs';
 const binaryReleaseTag = value('--binary-release-tag') ?? 'journey-candidate';
 const binaryBaseUrl = value('--binary-base-url') ?? 'http://origin:8080/journey-candidate';
 const prepareScript = resolve(value('--prepare-script') ?? '/src/kb-create/scripts/prepare-release-index.mjs');
-const releaseConfigPath = resolve(value('--release-config') ?? '.kb/kb.config.jsonc');
+const releaseConfigPath = resolve(value('--release-config') ?? 'tools/kb-create/config/platform-release.jsonc');
 const stage = resolve(process.env.KB_JOURNEY_RELEASE_STAGE ?? '/tmp/kb-e2e-release-stage');
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
