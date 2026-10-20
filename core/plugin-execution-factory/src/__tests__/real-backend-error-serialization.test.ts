@@ -160,19 +160,29 @@ describe.each(backends)('%s real failure dispatch', (mode) => {
       expect(result.error.envelope).not.toHaveProperty('stack');
       expect(validateErrorEnvelope(result.error.envelope)).toEqual([]);
 
-      const [record] = logger.queryByCorrelationId(correlationId);
+      const records = logger.queryByCorrelationId(correlationId);
+      expect(records).toHaveLength(1);
+      const [record] = records;
       expect(record).toEqual(expect.objectContaining({
         event: 'plugin.handler.failed',
         correlationId,
       }));
       if (failure.expectedCode === 'KB_PLUGIN_CONTRACT_VIOLATION') {
         expect(record).toMatchObject({
-          sourceCode: 'undefined',
+          sourceErrorClass: failure.name,
+          sourceMessage: failure.message,
+          failureMode: 'returned',
           sourceHintType: 'absent',
           pluginId: '@kb-labs/failure-fixture',
+          pluginVersion: '1.0.0',
           command: 'fixture failure',
         });
-        expect(JSON.stringify(record)).not.toContain(failure.message);
+        expect(result.error.envelope.details).toMatchObject({
+          sourceErrorClass: failure.name,
+          sourceMessage: failure.message,
+          failureMode: 'returned',
+        });
+        expect(JSON.stringify(record)).toContain(failure.message);
         expect(record).not.toHaveProperty('serializedError');
         expect(record).not.toHaveProperty('error');
       } else {
@@ -187,13 +197,66 @@ describe.each(backends)('%s real failure dispatch', (mode) => {
         expect((record?.serializedError as { stack?: string } | undefined)?.stack).toContain(
           failure.stackIncludes ?? failure.stack,
         );
+        if (failure.expectedCode === 'KB_PLUGIN_COMMAND_FAILED') {
+          expect(result.error.envelope.details).toMatchObject({
+            sourceErrorClass: failure.name,
+            sourceMessage: failure.message,
+            failureMode: 'thrown',
+          });
+          expect(record).toMatchObject({
+            sourceErrorClass: failure.name,
+            sourceMessage: failure.message,
+            failureMode: 'thrown',
+            pluginId: '@kb-labs/failure-fixture',
+            pluginVersion: '1.0.0',
+            command: 'fixture failure',
+          });
+        }
       }
     } finally {
       await backend.shutdown();
     }
   });
 
-  // case: S-203.6
+  // case: S-243.7
+  it('preserves source identity when a plain Error is thrown', async () => {
+    const logger = new MemoryLoggerSink();
+    const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
+    const backend = makeBackend(mode, platform, logger);
+    const correlationId = `${mode}-plain-thrown-error`;
+
+    try {
+      const result = await backend.execute(makeRequest('thrown-failure-handler.js', correlationId));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.envelope).toMatchObject({
+        code: 'KB_PLUGIN_COMMAND_FAILED',
+        correlationId,
+        details: {
+          sourceErrorClass: 'Error',
+          sourceMessage: thrownMessage,
+          failureMode: 'thrown',
+        },
+      });
+      expect(result.error.envelope).not.toHaveProperty('stack');
+      const records = logger.queryByCorrelationId(correlationId);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        event: 'plugin.handler.failed',
+        correlationId,
+        sourceErrorClass: 'Error',
+        sourceMessage: thrownMessage,
+        failureMode: 'thrown',
+        pluginId: '@kb-labs/failure-fixture',
+        pluginVersion: '1.0.0',
+        command: 'fixture failure',
+      });
+    } finally {
+      await backend.shutdown();
+    }
+  });
+
+  // case: S-243.6
   it('turns a returned malformed hint into a valid platform envelope', async () => {
     const logger = new MemoryLoggerSink();
     const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
@@ -208,10 +271,28 @@ describe.each(backends)('%s real failure dispatch', (mode) => {
       expect(result.error.envelope).toMatchObject({
         code: 'KB_PLUGIN_CONTRACT_VIOLATION',
         correlationId,
-        details: { field: 'hint' },
+        details: {
+          field: 'hint',
+          sourceCode: 'COMMIT_COMMAND_FAILED',
+          sourceErrorClass: 'Object',
+          sourceMessage: 'Commit command failed.',
+          failureMode: 'returned',
+        },
       });
       expect(validateErrorEnvelope(result.error.envelope)).toEqual([]);
-      expect(logger.queryByCorrelationId(correlationId)).toHaveLength(1);
+      const records = logger.queryByCorrelationId(correlationId);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        event: 'plugin.handler.failed',
+        correlationId,
+        sourceCode: 'COMMIT_COMMAND_FAILED',
+        sourceErrorClass: 'Object',
+        sourceMessage: 'Commit command failed.',
+        failureMode: 'returned',
+        pluginId: '@kb-labs/failure-fixture',
+        pluginVersion: '1.0.0',
+        command: 'fixture failure',
+      });
     } finally {
       await backend.shutdown();
     }

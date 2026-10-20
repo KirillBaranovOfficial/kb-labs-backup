@@ -645,9 +645,9 @@ export interface CatalogDetailsFor {
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string };
   "KB_NODE_VERSION_UNSUPPORTED": { "actualVersion": string; "requiredMajor": string };
   "KB_PLUGIN_ABORTED": Record<string, never>;
-  "KB_PLUGIN_COMMAND_FAILED": { "command": string; "failureReason": string; "plugin": string };
+  "KB_PLUGIN_COMMAND_FAILED": { "command": string; "failureReason": string; "plugin": string; "sourceCode"?: string; "sourceErrorClass"?: string; "sourceMessage"?: string; "failureMode"?: string };
   "KB_PLUGIN_COMMAND_SHADOWED": { "command": string; "plugin": string };
-  "KB_PLUGIN_CONTRACT_VIOLATION": { "command"?: string; "field"?: string; "plugin"?: string; "observedType"?: string; "observedValuePreview"?: string };
+  "KB_PLUGIN_CONTRACT_VIOLATION": { "command"?: string; "field"?: string; "plugin"?: string; "observedType"?: string; "observedValuePreview"?: string; "failureMode"?: string; "sourceCode"?: string; "sourceErrorClass"?: string; "sourceMessage"?: string };
   "KB_PLUGIN_CRASHED": { "plugin": string };
   "KB_PLUGIN_INSTALL_FAILED": { "plugin": string };
   "KB_PLUGIN_INTEGRITY_MISMATCH": { "actual": string; "expected": string; "plugin": string };
@@ -2451,9 +2451,9 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["requestedVersion"],
   "KB_NODE_VERSION_UNSUPPORTED": [],
   "KB_PLUGIN_ABORTED": [],
-  "KB_PLUGIN_COMMAND_FAILED": [],
+  "KB_PLUGIN_COMMAND_FAILED": ["sourceCode","sourceErrorClass","sourceMessage","failureMode"],
   "KB_PLUGIN_COMMAND_SHADOWED": [],
-  "KB_PLUGIN_CONTRACT_VIOLATION": ["command","field","plugin","observedType","observedValuePreview"],
+  "KB_PLUGIN_CONTRACT_VIOLATION": ["command","field","plugin","observedType","observedValuePreview","failureMode","sourceCode","sourceErrorClass","sourceMessage"],
   "KB_PLUGIN_CRASHED": [],
   "KB_PLUGIN_INSTALL_FAILED": [],
   "KB_PLUGIN_INTEGRITY_MISMATCH": [],

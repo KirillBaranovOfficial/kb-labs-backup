@@ -1502,7 +1502,11 @@
         "field",
         "plugin",
         "observedType",
-        "observedValuePreview"
+        "observedValuePreview",
+        "failureMode",
+        "sourceCode",
+        "sourceErrorClass",
+        "sourceMessage"
       ]
     },
     {
@@ -2915,7 +2919,13 @@
       "processExitClass": "operation-failure",
       "runtimeTemplateParameters": {
         "correlationId": "optional"
-      }
+      },
+      "structuredDetailFields": [
+        "sourceCode",
+        "sourceErrorClass",
+        "sourceMessage",
+        "failureMode"
+      ]
     },
     {
       "code": "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE",
