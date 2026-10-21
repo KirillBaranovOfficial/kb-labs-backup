@@ -396,13 +396,14 @@ test('each staged plugin must have its declared platform peers provided by the p
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/cli-bin', '2.0.0', '', { dependencies: { '@kb-labs/cli-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/cli-bin', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-entry', '2.0.0', '', {
       peerDependencies: { '@kb-labs/cli-runtime': '^2.0.0' },
     }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/marketplace-plugin', '2.0.0', '', {
       peerDependencies: { '@kb-labs/cli-runtime': '^2.0.0' },
     }, { 'dist/manifest.json': JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/marketplace-plugin', version: '2.0.0' }) }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/cli-runtime', '2.0.0', ''),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
@@ -415,8 +416,7 @@ test('each staged plugin must have its declared platform peers provided by the p
   assert.notEqual(missingPeer.status, 0);
   assert.match(`${missingPeer.stdout}\n${missingPeer.stderr}`, /declares platform peer @kb-labs\/cli-runtime, which the platform package graph does not provide/);
 
-  artifacts.push(packageArtifact(root, packageRoot, stage, '@kb-labs/cli-runtime', '2.0.0', ''));
-  writeStageManifest(root, packageRoot, stage, artifacts);
+  args[args.indexOf('--platform-member-packages') + 1] = '@kb-labs/cli-bin,@kb-labs/workflow-entry,@kb-labs/cli-runtime';
   const providedPeer = spawnSync(process.execPath, args, { encoding: 'utf8' });
   assert.equal(providedPeer.status, 0, `${providedPeer.stdout}\n${providedPeer.stderr}`);
 });

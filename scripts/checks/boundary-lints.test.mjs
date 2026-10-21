@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { applyExceptions, findPluginEntryPackages, loadExceptions } from './lib/boundary-common.mjs';
 import { collect as collectImports, findCoreImports } from './check-plugin-imports.mjs';
 import { collect as collectSpawns, findPlatformBinarySpawns } from './check-platform-spawn.mjs';
-import { collect as collectPeer, findPlatformRuntimeDeps, isPlatformPackage } from './check-plugin-peer-deps.mjs';
+import { collect as collectPeer } from './check-plugin-peer-deps.mjs';
 import { collect as collectBrowserNodeBuiltins } from './check-browser-node-builtins.mjs';
 import { collect as collectManifests, RULES, validateManifest } from './check-manifest-command-naming.mjs';
 
@@ -24,6 +24,8 @@ const tmpRoots = [];
 function fixtureRepo(files) {
   const root = mkdtempSync(join(tmpdir(), 'kb-boundary-lint-'));
   tmpRoots.push(root);
+  mkdirSync(join(root, 'e2e/scripts'), { recursive: true });
+  writeFileSync(join(root, 'e2e/scripts/pack-extras.json'), '[]\n');
   for (const [path, content] of Object.entries(files)) {
     const abs = join(root, path);
     mkdirSync(dirname(abs), { recursive: true });
@@ -326,37 +328,31 @@ describe('platform-spawn (0.2b)', () => {
 // ─── 0.3 peerDependencies ────────────────────────────────────────────────────
 
 describe('plugin-peer-deps (0.3)', () => {
-  test('classifies platform vs plugin-own packages', () => {
-    for (const n of ['@kb-labs/sdk', '@kb-labs/core-platform', '@kb-labs/plugin-contracts', '@kb-labs/plugin-runtime', '@kb-labs/shared-cli-ui', '@kb-labs/cli-runtime', '@kb-labs/adapters-fs']) {
-      assert.equal(isPlatformPackage(n), true, n);
-    }
-    for (const n of ['@kb-labs/commit-core', '@kb-labs/agent-sdk', '@kb-labs/workflow-runtime', 'zod', '@kb-labs/devkit']) {
-      assert.equal(isPlatformPackage(n), false, n);
-    }
-  });
-
-  test('failing fixture: platform package under dependencies; peer + dev entries pass', () => {
-    assert.deepEqual(
-      findPlatformRuntimeDeps({ dependencies: { '@kb-labs/sdk': 'workspace:*', zod: '^3' }, optionalDependencies: { '@kb-labs/core-sys': '*' } }),
-      [
-        { target: '@kb-labs/sdk', field: 'dependencies' },
-        { target: '@kb-labs/core-sys', field: 'optionalDependencies' },
-      ],
-    );
-    assert.deepEqual(
-      findPlatformRuntimeDeps({
-        dependencies: { '@kb-labs/commit-core': 'workspace:*' },
-        peerDependencies: { '@kb-labs/sdk': 'workspace:*' },
-        devDependencies: { '@kb-labs/sdk': 'workspace:*', '@kb-labs/core-runtime': 'workspace:*' },
-      }),
-      [],
-    );
+  test('rejects a peer package reachable only through a non-release workspace manifest', () => {
+    const root = fixtureRepo({
+      'tools/kb-create/config/platform-release.jsonc': JSON.stringify({ profiles: [{ id: 'default', products: { release: { flows: { platform: { platformMembers: ['@fixture/platform-plugin'] } } } } }], platform: { adapters: {} } }),
+      'e2e/platform/registry-manifest.json': { core: [], services: [{ pkg: '@fixture/studio-app' }], plugins: [] },
+      'plugins/example/entry/package.json': { name: '@fixture/plugin', kb: { manifest: './dist/manifest.js' }, peerDependencies: { '@fixture/agent-contracts': '*' } },
+      'plugins/example/entry/src/manifest.ts': `export const manifest = { schema: 'kb.plugin/3', id: 'fixture' };\n`,
+      'packages/platform-plugin/package.json': { name: '@fixture/platform-plugin' },
+      'studio/app/package.json': { name: '@fixture/studio-app', dependencies: { '@fixture/non-release-helper': 'workspace:*' } },
+      'packages/non-release-helper/package.json': { name: '@fixture/non-release-helper', dependencies: { '@fixture/agent-contracts': 'workspace:*' } },
+      'packages/agent-contracts/package.json': { name: '@fixture/agent-contracts' },
+    });
+    const findings = collectPeer(root);
+    assert.ok(findings.some(finding => finding.target === '@fixture/agent-contracts'
+      && /peer dependency/.test(finding.message)), JSON.stringify(findings));
   });
 
   test('scans plugins/* and templates/plugin-template packages', () => {
     const root = fixtureRepo({
+      'tools/kb-create/config/platform-release.jsonc': JSON.stringify({ profiles: [{ id: 'default', products: { release: { flows: { platform: { platformMembers: ['@kb-labs/sdk'] } } } } }], platform: { adapters: {} } }),
+      'e2e/platform/registry-manifest.json': { core: [], services: [], plugins: [] },
       ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
       ...pluginEntry('plugins/good/entry', '@kb-labs/good-entry', { peerDependencies: { '@kb-labs/sdk': '*' }, devDependencies: { '@kb-labs/sdk': 'workspace:*' } }),
+      'packages/sdk/package.json': { name: '@kb-labs/sdk', peerDependencies: { '@kb-labs/plugin-contracts': '*', '@kb-labs/core-platform': '*' } },
+      'packages/plugin-contracts/package.json': { name: '@kb-labs/plugin-contracts' },
+      'packages/core-platform/package.json': { name: '@kb-labs/core-platform' },
       // platform parts under plugins/ (daemon, engine) are out of scope
       'plugins/bad/daemon/package.json': { name: '@kb-labs/bad-daemon', dependencies: { '@kb-labs/core-platform': 'workspace:*' } },
       'templates/plugin-template/packages/core/package.json': { name: 'tpl-core', dependencies: { '@kb-labs/plugin-contracts': 'workspace:*' } },
@@ -371,6 +367,9 @@ describe('plugin-peer-deps (0.3)', () => {
 
   test('CLI exits 1 on a new offender', () => {
     const root = fixtureRepo({
+      'tools/kb-create/config/platform-release.jsonc': JSON.stringify({ profiles: [{ id: 'default', products: { release: { flows: { platform: { platformMembers: ['@kb-labs/sdk'] } } } } }], platform: { adapters: {} } }),
+      'e2e/platform/registry-manifest.json': { core: [], services: [], plugins: [] },
+      'packages/sdk/package.json': { name: '@kb-labs/sdk' },
       ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
       'ex.json': { version: 1, exceptions: [] },
     });
@@ -611,6 +610,9 @@ describe('exceptions file', () => {
 
   test('devkit mode: non-anchor package gets an empty issue list; anchor gets findings', () => {
     const root = fixtureRepo({
+      'tools/kb-create/config/platform-release.jsonc': JSON.stringify({ profiles: [{ id: 'default', products: { release: { flows: { platform: { platformMembers: ['@kb-labs/sdk'] } } } } }], platform: { adapters: {} } }),
+      'e2e/platform/registry-manifest.json': { core: [], services: [], plugins: [] },
+      'packages/sdk/package.json': { name: '@kb-labs/sdk' },
       ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
       'ex.json': { version: 1, exceptions: [] },
     });
