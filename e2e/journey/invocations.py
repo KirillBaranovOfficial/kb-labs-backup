@@ -530,13 +530,13 @@ def invocation_context(*, step_id: str | None = None, report_root: str | Path | 
 
 
 def write_report_json(path: str | Path, value: Any, *, env: Mapping[str, str] | None = None,
-                      append: bool = False, indent: int | None = 2,
+                      indent: int | None = 2,
                       ensure_ascii: bool = False, secrets: tuple[str, ...] = ()) -> Any:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     redacted = redaction.redact_report_value(value, env, secrets)
     rendered = json.dumps(redacted, indent=indent, ensure_ascii=ensure_ascii) + "\n"
-    with target.open("a" if append else "w", encoding="utf-8") as stream:
+    with target.open("w", encoding="utf-8") as stream:
         stream.write(rendered)
     return redacted
 
@@ -816,8 +816,12 @@ def _failure_log_query(kind: str, exit_code: int | None, argv: list[str], stdout
         if error is not None:
             break
     kb_cli = _kb_shim_evidence(effective_env)
-    is_installed_cli = bool(argv and kb_cli is not None
-                            and _resolve_invoked_executable(argv[0], cwd, effective_env) == kb_cli["realpath"])
+    invoked_cli = (_resolve_invoked_executable(argv[0], cwd, effective_env)
+                   if kind == "command" and argv else None)
+    is_installed_cli = bool(kind == "command" and kb_cli is not None
+                            and invoked_cli == kb_cli["realpath"])
+    if kind == "command" and not is_installed_cli:
+        return None
     is_unexpected, human_correlation_id = (
         parse_unexpected_correlation_id(stdout, stderr) if kind == "command" and is_installed_cli
         else (False, None)
@@ -831,9 +835,10 @@ def _failure_log_query(kind: str, exit_code: int | None, argv: list[str], stdout
     if kb_cli is None:
         return {"code": code, "correlationId": correlation_id,
                 "queryError": "installed kb CLI is not available on the invocation PATH"}
+    query_cli = invoked_cli if is_installed_cli else kb_cli["path"]
     try:
         query = subprocess.run(
-            [kb_cli["path"], "logs", "query", "--correlation-id", correlation_id, "--json"],
+            [query_cli, "logs", "query", "--correlation-id", correlation_id, "--json"],
             cwd=str(cwd) if cwd else None,
             env=dict(effective_env),
             capture_output=True,
