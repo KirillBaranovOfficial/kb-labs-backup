@@ -4,7 +4,7 @@
  */
 
 import { basename } from 'node:path';
-import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import type { ErrorEnvelope } from '@kb-labs/sdk/errors';
 import type { CheckPhaseTiming, CheckResult, CheckResultDetails } from '../types';
 import { classifyFailure, type FailureClassification } from './classify';
 import { createReleaseError } from './error-codes';

@@ -14,7 +14,7 @@ import type {
   RepositoryModel,
   ToolCapability,
 } from '@kb-labs/agent-contracts';
-import type { ICache } from '@kb-labs/core-platform';
+import type { ICache } from '@kb-labs/sdk/types';
 import type { IWorkspaceProvider } from './workspace-provider.js';
 
 /**

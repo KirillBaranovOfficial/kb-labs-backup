@@ -42,7 +42,6 @@
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
-    "@kb-labs/plugin-runtime": "workspace:*",
     "@kb-labs/studio-plugin-tools": "workspace:*",
     "@rspack/cli": "^2.1.2",
     "@rspack/core": "^2.1.2",
@@ -56,7 +55,6 @@
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.11",
-    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
@@ -73,7 +71,6 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.0.0",
-    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*"
   },
   "peerDependenciesMeta": {

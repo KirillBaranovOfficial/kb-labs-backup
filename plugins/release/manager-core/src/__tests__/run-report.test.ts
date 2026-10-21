@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import type { CheckResult } from '../types';
-import { errorCatalog, getCatalogEntry, isErrorCode } from '@kb-labs/core-platform/error-envelope';
+import { errorCatalog, getCatalogEntry, isErrorCode } from '@kb-labs/sdk/errors';
 import {
   classifyFailure,
   buildReleaseRunReport,

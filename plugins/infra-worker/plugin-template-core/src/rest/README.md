@@ -47,27 +47,20 @@ export type YourResponse = z.infer<typeof YourResponseSchema>;
 Create `handlers/your-handler.ts`:
 
 ```typescript
-import { definePluginHandler } from '@kb-labs/plugin-runtime';
-import { YourRequestSchema, YourResponseSchema } from '../schemas/your-schema.js';
+import { defineHandler } from '@kb-labs/sdk';
 import type { YourRequest, YourResponse } from '../schemas/your-schema.js';
 
-export const handleYourEndpoint = definePluginHandler<YourRequest, YourResponse>({
-  schema: {
-    input: YourRequestSchema,
-    output: YourResponseSchema
-  },
-
-  async handle(input, ctx) {
+export const handleYourEndpoint = defineHandler<unknown, YourRequest, YourResponse>({
+  async execute(ctx, input) {
     // 1. Log request
-    ctx.logger.info('Processing request', {
-      requestId: ctx.requestId,
-      input: input.input
+    ctx.ui.info('Processing request', {
+      summary: { requestId: ctx.requestId, value: input.input }
     });
 
     // 2. Delegate business logic to core/
     const result = await yourBusinessLogic(input.input);
 
-    // 3. Return typed response (auto-validated against schema)
+    // 3. Return the response described by the route's output schema
     return {
       result,
       processedAt: new Date().toISOString()
@@ -111,9 +104,9 @@ rest: {
 
 ### ✅ DO
 
-- **Use `ctx.logger`** for logging (not `console.log`, see [Migration Guide](../../../docs/MIGRATION-ui-output.md))
-  - REST uses `ctx.logger.info()` for structured logging
-- **Define Zod schemas** - automatic validation + TypeScript types
+- **Use `ctx.ui`** for REST output (not `console.log`, see [Migration Guide](../../../docs/MIGRATION-ui-output.md))
+  - REST uses `ctx.ui.info()` for structured output
+- **Define Zod schemas** in the route manifest for boundary validation and TypeScript types
 - **Delegate to `core/`** - keep handlers thin
 - **Return typed responses** - schemas ensure correctness
 - **Set proper permissions** - minimal permissions (fs: none, net: none)
@@ -124,19 +117,15 @@ rest: {
 - Don't make network requests without `net: 'allow'`
 - Don't put business logic in handlers
 - Don't skip schema definitions
-- Don't use `console.log` - use `ctx.logger`
+- Don't use `console.log` - use `ctx.ui`
 
 ## Handler Patterns
 
 ### Simple GET Handler
 
 ```typescript
-export const handleGet = definePluginHandler<void, { message: string }>({
-  schema: {
-    output: z.object({ message: z.string() })
-  },
-
-  async handle(input, ctx) {
+export const handleGet = defineHandler<unknown, void, { message: string }>({
+  async execute(ctx) {
     return { message: 'Hello from GET' };
   }
 });
@@ -150,17 +139,12 @@ const InputSchema = z.object({
   age: z.number().int().positive().optional()
 });
 
-export const handlePost = definePluginHandler({
-  schema: {
-    input: InputSchema,
-    output: z.object({ created: z.boolean() })
-  },
+export const handlePost = defineHandler<unknown, YourRequest, { created: boolean }>({
+  async execute(ctx, input) {
+    const validatedInput = InputSchema.parse(input);
+    ctx.ui.info('Creating resource', { title: 'Creating resource' });
 
-  async handle(input, ctx) {
-    // Input is automatically validated
-    ctx.logger.info('Creating resource', { name: input.name });
-
-    const result = await createResource(input);
+    const result = await createResource(validatedInput);
 
     return { created: true };
   }
@@ -172,13 +156,8 @@ export const handlePost = definePluginHandler({
 ```typescript
 import { createError } from '../../utils/errors.js';
 
-export const handleWithErrors = definePluginHandler({
-  schema: {
-    input: RequestSchema,
-    output: ResponseSchema
-  },
-
-  async handle(input, ctx) {
+export const handleWithErrors = defineHandler<unknown, YourRequest, YourResponse>({
+  async execute(ctx, input) {
     // Validate business rules
     if (!isValid(input)) {
       throw createError('VALIDATION_FAILED', 'Invalid input', { input });
@@ -188,7 +167,7 @@ export const handleWithErrors = definePluginHandler({
       const result = await riskyOperation(input);
       return { result };
     } catch (error) {
-      ctx.logger.error('Operation failed', { error });
+      ctx.ui.error(error instanceof Error ? error : String(error));
       throw createError('OPERATION_FAILED', 'Failed to process', { cause: error });
     }
   }
@@ -225,10 +204,10 @@ REST handlers receive `ctx` with these properties:
 ### Output (Logging)
 
 ```typescript
-ctx.logger.info('Message', { meta });   // Info log
-ctx.logger.warn('Warning', { meta });   // Warning log
-ctx.logger.error('Error', { meta });    // Error log
-ctx.logger.debug('Debug', { meta });    // Debug log
+ctx.ui.info('Message');   // Info output
+ctx.ui.warn('Warning');   // Warning output
+ctx.ui.error('Error');    // Error output
+ctx.ui.debug('Debug');    // Debug output
 ```
 
 ### Request Metadata
@@ -266,7 +245,7 @@ describe('handleYourEndpoint', () => {
   it('should process request successfully', async () => {
     const ctx = {
       requestId: 'test-123',
-      output: {
+      ui: {
         info: vi.fn(),
         error: vi.fn()
       },
@@ -279,20 +258,12 @@ describe('handleYourEndpoint', () => {
     };
 
     const input = { input: 'test value' };
-    const result = await handleYourEndpoint.handle(input, ctx);
+    const result = await handleYourEndpoint.execute(ctx, input);
 
     expect(result.result).toBeDefined();
-    expect(ctx.logger.info).toHaveBeenCalled();
+    expect(ctx.ui.info).toHaveBeenCalled();
   });
 
-  it('should handle validation errors', async () => {
-    const ctx = { ... };
-    const invalidInput = { input: '' }; // Too short
-
-    await expect(
-      handleYourEndpoint.handle(invalidInput, ctx)
-    ).rejects.toThrow();
-  });
 });
 ```
 
@@ -346,7 +317,7 @@ const InputSchema = z.object({
 See [hello-handler.ts](./handlers/hello-handler.ts) for a complete example with:
 - Zod schema validation
 - Typed request/response
-- Logging with `ctx.logger`
+- Output with `ctx.ui`
 - Business logic delegation to `core/`
 - Artifact tracking
 

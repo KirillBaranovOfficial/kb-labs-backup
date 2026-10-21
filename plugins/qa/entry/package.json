@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/qa-entry",
-  "description": "CLI commands for KB Labs QA Plugin \u2014 qa:run, qa:save, qa:history, qa:trends, qa:regressions, baseline:update, baseline:status.",
+  "description": "CLI commands for KB Labs QA Plugin — qa:run, qa:save, qa:history, qa:trends, qa:regressions, baseline:update, baseline:status.",
   "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,7 +42,6 @@
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
-    "@kb-labs/plugin-runtime": "workspace:*",
     "@kb-labs/studio-plugin-tools": "workspace:*",
     "@rspack/cli": "^2.2.8",
     "@rspack/core": "^2.2.8",
@@ -56,7 +55,6 @@
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.11",
-    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
@@ -68,7 +66,6 @@
   },
   "peerDependencies": {
     "react": "^19.0.0",
-    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*"
   },
   "sideEffects": false

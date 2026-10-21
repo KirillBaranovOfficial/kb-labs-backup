@@ -142,10 +142,11 @@ export const run = defineCommand({
 });
 
 // In REST handler
+import { defineHandler } from '@kb-labs/sdk';
 import { createUserUseCase } from '../../core/index.js';
 
-export const handleCreateUser = definePluginHandler({
-  async handle(input, ctx) {
+export const handleCreateUser = defineHandler({
+  async execute(ctx, input) {
     const result = createUserUseCase(input);
     return result.user;
   }

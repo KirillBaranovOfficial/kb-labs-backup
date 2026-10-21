@@ -2,14 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 
 // Mock fs to avoid real filesystem scanning
-vi.mock('node:fs', () => ({
-  default: {
-    existsSync: vi.fn().mockReturnValue(false),
-    readdirSync: vi.fn().mockReturnValue([]),
-    readFileSync: vi.fn().mockReturnValue('{}'),
-    writeFileSync: vi.fn(),
-  },
-}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      existsSync: vi.fn().mockReturnValue(false),
+      readdirSync: vi.fn().mockReturnValue([]),
+      readFileSync: vi.fn().mockReturnValue('{}'),
+      writeFileSync: vi.fn(),
+    },
+  };
+});
 
 vi.mock('@kb-labs/sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kb-labs/sdk')>();
