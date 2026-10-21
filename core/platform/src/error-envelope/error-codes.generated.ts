@@ -616,7 +616,7 @@ export interface CatalogDetailsFor {
   "KB_INSTALL_PORT_IN_USE": { "operation": string; "port": string; "address"?: string; "command"?: string; "pid"?: string; "platformRoot"?: string; "purpose"?: string };
   "KB_INSTALL_PROJECT_REGISTRATION_FAILED": { "causeCode"?: string; "httpStatus"?: string; "platformRoot"?: string; "projectRoot"?: string; "remoteCorrelationId"?: string; "requestStage"?: string };
   "KB_INSTALL_PROJECT_SELECTION_CHANGED": Record<string, never>;
-  "KB_INSTALL_PROVENANCE_MISMATCH": { "actual": string; "digestVersion": string; "expected": string; "field": string; "package": string; "packagePath": string; "actualPresent"?: string };
+  "KB_INSTALL_PROVENANCE_MISMATCH": { "actual": string; "digestVersion": string; "expected": string; "field": string; "package": string; "packagePath": string; "actualPresent"?: string; "diagnosticPath"?: string; "logPath"?: string };
   "KB_INSTALL_PROVIDER_AMBIGUOUS": { "capability": string };
   "KB_INSTALL_PROVIDER_UNRESOLVED": { "capability": string };
   "KB_INSTALL_RECEIPT_UNAVAILABLE": Record<string, never>;
@@ -2429,7 +2429,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_PORT_IN_USE": ["address","command","pid","platformRoot","purpose"],
   "KB_INSTALL_PROJECT_REGISTRATION_FAILED": ["causeCode","httpStatus","platformRoot","projectRoot","remoteCorrelationId","requestStage"],
   "KB_INSTALL_PROJECT_SELECTION_CHANGED": [],
-  "KB_INSTALL_PROVENANCE_MISMATCH": ["actualPresent"],
+  "KB_INSTALL_PROVENANCE_MISMATCH": ["actualPresent","diagnosticPath","logPath"],
   "KB_INSTALL_PROVIDER_AMBIGUOUS": [],
   "KB_INSTALL_PROVIDER_UNRESOLVED": [],
   "KB_INSTALL_RECEIPT_UNAVAILABLE": [],

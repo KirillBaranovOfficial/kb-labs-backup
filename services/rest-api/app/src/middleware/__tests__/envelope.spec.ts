@@ -10,7 +10,9 @@ import { Readable } from 'node:stream';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
-import { createContextLogger } from '@kb-labs/core-platform';
+import { createContextLogger, createErrorEnvelope, serializeError } from '@kb-labs/core-platform';
+import { mountRoutes } from '@kb-labs/plugin-execution/http';
+import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
 import { registerEnvelopeMiddleware } from '../envelope';
 import { assertNoStackTraceLeak } from '../../__tests__/helpers/safe-error-envelope';
 import { platform } from '@kb-labs/core-runtime';
@@ -32,7 +34,7 @@ describe('registerEnvelopeMiddleware', () => {
   let app: ReturnType<typeof Fastify>;
 
   beforeEach(async () => {
-    app = Fastify({ logger: false });
+    app = Fastify({ logger: false, genReqId: (request) => String(request.headers['x-request-id'] ?? 'test-request') });
     registerEnvelopeMiddleware(app, TEST_CONFIG);
   });
 
@@ -168,6 +170,69 @@ describe('registerEnvelopeMiddleware', () => {
   });
 
   describe('error responses', () => {
+    it('preserves a diagnostic contract violation and safe producer stack through the project REST route', async () => {
+      const log = vi.spyOn(platform.logger, 'error').mockImplementation(() => {});
+      const privateValue = 'diagnostic-secret-sentinel';
+      createContextLogger(platform.logger, {
+        applicationId: 'rest-api', serviceId: 'rest', instanceId: 'diagnostic-test-instance', layer: 'service',
+      }).registerSensitiveValues([privateValue]);
+      const diagnostic = createErrorEnvelope('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION', {
+        correlationId: 'diagnostic-request-1',
+        details: { originalCode: 'KB_CONFIG_LLM_KEY_INVALID', fields: 'provider,apiKey' },
+      });
+      const backend = createNormalizedExecutionBackend({
+        async execute() {
+          return {
+            ok: false,
+            error: {
+              ...diagnostic,
+              error: serializeError(new Error(`diagnostic producer failed: ${privateValue}`)),
+            },
+            executionTimeMs: 1,
+          };
+        },
+        async health() { return { healthy: true, backend: 'in-process', executionMode: 'in-process' }; },
+        async stats() { return { totalExecutions: 0, successCount: 0, errorCount: 0, avgExecutionTimeMs: 0 }; },
+        async shutdown() {},
+      }, platform.logger, 'in-process');
+      await mountRoutes(app, {
+        schema: 'kb.plugin/3', id: '@kb-labs/agents', version: '2.120.1',
+        rest: { routes: [{ method: 'POST', path: '/sessions', handler: './sessions-handler.js#createSessionHandler' }] },
+      }, {
+        backend,
+        pluginRoot: '/fixture/plugin',
+        workspaceRoot: '/fixture/project',
+        basePath: '/api/v1/projects/prj_fixture/rest/plugins/agents',
+      });
+      await app.ready();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/prj_fixture/rest/plugins/agents/sessions',
+        headers: { 'x-request-id': 'diagnostic-request-1' },
+        payload: { agentId: 'orchestrator', task: 'Summarize the project' },
+      });
+      const error = response.json().error;
+      const failureRecord = log.mock.calls.find(([, , fields]) => fields?.errorCode === 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION');
+
+      expect(response.statusCode).toBe(500);
+      expect(error).toMatchObject({
+        code: 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION',
+        correlationId: 'diagnostic-request-1',
+        details: { originalCode: 'KB_CONFIG_LLM_KEY_INVALID', fields: 'provider,apiKey' },
+      });
+      expect(error.cause).toContain('diagnostic producer failed: [REDACTED]');
+      expect(JSON.stringify(error)).not.toContain(privateValue);
+      expect(failureRecord?.[2]).toMatchObject({
+        errorCode: error.code,
+        statusCode: 500,
+        originalCode: 'KB_CONFIG_LLM_KEY_INVALID',
+        fields: 'provider,apiKey',
+      });
+      expect(failureRecord?.[1]?.stack).toContain('diagnostic producer failed: [REDACTED]');
+      expect(JSON.stringify(failureRecord)).not.toContain(privateValue);
+    });
+
     it('should return a catalogued validation failure using the platform envelope', async () => {
       app.get('/error', async () => {
         const error = new Error('Something went wrong') as Error & { statusCode?: number; code?: string };
@@ -252,8 +317,8 @@ describe('registerEnvelopeMiddleware', () => {
 
       const body = (await app.inject({ method: 'GET', url: '/detailed-error' })).json();
       expect(body.error.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
-      expect(body.error.message).toContain('must include a non-empty message');
-      expect(body.error.details).toMatchObject({ field: 'message' });
+      expect(body.error.message).toContain('must include a non-empty hint');
+      expect(body.error.details).toMatchObject({ field: 'hint' });
       expect(JSON.stringify(body)).not.toContain('email');
     });
 

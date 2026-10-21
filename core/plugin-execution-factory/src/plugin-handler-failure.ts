@@ -69,7 +69,7 @@ function recordPluginFailure(
         sourceHintType: sourceFailure.sourceHintType,
       } : {}),
       ...(!sourceFailure || envelope.code !== 'KB_PLUGIN_CONTRACT_VIOLATION'
-        ? { serializedError: logger.redactSensitiveValues(context.serializedError ?? error) }
+        ? { serializedError: logger.redactSensitiveValues(error) }
         : {}),
       ...(malformedField ? {
         malformedField,
@@ -230,7 +230,7 @@ export function normalizePluginHandlerFailure(
         });
   const envelope = contextLogger.redactSensitiveValues(rawEnvelope);
   if (typedEnvelope) {
-    recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), 'typed product or platform error', context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview,
+    recordPluginFailure(context, envelope, serializeError(returnedCandidate ?? context.serializedError ?? error), 'typed product or platform error', context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview,
       envelope.code === 'KB_PLUGIN_CONTRACT_VIOLATION' || envelope.code === 'KB_PLUGIN_COMMAND_FAILED' ? sourceFailure : undefined);
     return envelope;
   }

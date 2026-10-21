@@ -48,8 +48,12 @@ export function isErrorCode(code: string): code is PlatformErrorCode {
   return byCode.has(code);
 }
 
-export function getCatalogEntry(code: PlatformErrorCode): ErrorCatalogEntry | undefined {
-  return byCode.get(code);
+export function getCatalogEntry(code: PlatformErrorCode): ErrorCatalogEntry {
+  const entry = byCode.get(code);
+  if (!entry) {
+    throw new Error(`Catalogued error ${code} is missing from errors.catalog.json`);
+  }
+  return entry;
 }
 
 /** Map catalogued command failures to the CLI usage exit code at shared boundaries. */

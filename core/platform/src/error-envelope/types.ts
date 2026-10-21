@@ -147,8 +147,8 @@ export const UxFailureResultJsonSchema = {
 /** One row of `errors.catalog.json`. */
 export interface ErrorCatalogEntry {
   code: PlatformErrorCode;
-  /** HTTP status when this error is surfaced by HTTP; absent means it is not an HTTP-surface code. */
-  httpStatus?: number;
+  /** Canonical HTTP status for this error code. */
+  httpStatus: number;
   area: ErrorArea;
   stage: ErrorStage;
   severity: ErrorSeverity;

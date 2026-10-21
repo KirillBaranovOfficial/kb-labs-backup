@@ -676,14 +676,19 @@ describe('MarketplaceService', () => {
       const source = createMockSource(new Map());
       const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
-      await expect(service.enable({ scope: "platform" }, '@kb-labs/ghost')).rejects.toThrow('not found');
+      await expect(service.enable({ scope: "platform" }, '@kb-labs/ghost')).rejects.toMatchObject({
+        envelope: { code: 'KB_PLUGIN_NOT_INSTALLED', details: { package: '@kb-labs/ghost' } },
+      });
     });
 
+    // case: S-011.6
     it('throws when disabling a non-existent package', async () => {
       const source = createMockSource(new Map());
       const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
-      await expect(service.disable({ scope: "platform" }, '@kb-labs/ghost')).rejects.toThrow('not found');
+      await expect(service.disable({ scope: "platform" }, '@kb-labs/ghost')).rejects.toMatchObject({
+        envelope: { code: 'KB_PLUGIN_NOT_INSTALLED', details: { package: '@kb-labs/ghost' } },
+      });
     });
   });
 

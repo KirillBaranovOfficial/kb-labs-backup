@@ -67,10 +67,6 @@ func run() diag.ExitStatus {
 		if item.HintWithoutCorrelationID != "" {
 			hintWithoutCorrelationID = fmt.Sprintf(", HintWithoutCorrelationID: %q", item.HintWithoutCorrelationID)
 		}
-		if item.HTTPStatus == 0 {
-			_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringMapLiteral(item.RuntimeTemplateParameters))
-			continue
-		}
 		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringMapLiteral(item.RuntimeTemplateParameters))
 	}
 	_, _ = source.WriteString("}\n")
@@ -142,6 +138,12 @@ func stringMapLiteral(values map[string]string) string {
 func validate(entries []entry) error {
 
 	for _, item := range entries {
+		if item.HTTPStatus < 100 || item.HTTPStatus > 599 {
+			return fmt.Errorf("catalog entry %s has missing or invalid httpStatus %d", item.Code, item.HTTPStatus)
+		}
+		if item.ProcessExitClass != "input-refusal" && item.ProcessExitClass != "operation-failure" {
+			return fmt.Errorf("catalog entry %s has missing or invalid processExitClass %q", item.Code, item.ProcessExitClass)
+		}
 		names := templateParameters(item)
 		used := make(map[string]struct{}, len(names))
 		for _, name := range names {
@@ -167,9 +169,6 @@ func validate(entries []entry) error {
 				return fmt.Errorf("catalog entry %s declares duplicate structured detail field %s", item.Code, name)
 			}
 			structured[name] = struct{}{}
-		}
-		if item.ProcessExitClass != "input-refusal" && item.ProcessExitClass != "operation-failure" {
-			return fmt.Errorf("catalog entry %s has missing or invalid processExitClass %q", item.Code, item.ProcessExitClass)
 		}
 	}
 	return nil

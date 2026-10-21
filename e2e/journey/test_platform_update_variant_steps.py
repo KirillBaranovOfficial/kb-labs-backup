@@ -117,7 +117,7 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             def fake_runner(args, cwd):
                 if args[1] == "update":
                     return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
-                        "code": "KB_UPDATE_CHECKSUM_MISMATCH", "message": "Artifact checksum mismatch.",
+                        "code": "KB_INSTALL_APPLY_FAILED", "message": "Artifact checksum mismatch.",
                         "hint": "Replace the artifact and rerun the update."}}), "")
                 if args[1] == "status":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
