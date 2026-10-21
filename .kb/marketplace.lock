@@ -26,18 +26,8 @@
       "enabled": true,
       "source": "local"
     },
-    "@kb-labs/impact": {
-      "link": "./plugins/impact/core",
-      "enabled": true,
-      "source": "local"
-    },
     "@kb-labs/inbox": {
       "link": "./plugins/inbox/entry",
-      "enabled": true,
-      "source": "local"
-    },
-    "@kb-labs/marketplace": {
-      "link": "./plugins/marketplace/entry",
       "enabled": true,
       "source": "local"
     },
@@ -48,11 +38,6 @@
     },
     "@kb-labs/mind": {
       "link": "./plugins/mind/entry",
-      "enabled": true,
-      "source": "local"
-    },
-    "@kb-labs/policy": {
-      "link": "./plugins/policy/core",
       "enabled": true,
       "source": "local"
     },
@@ -93,11 +78,6 @@
     },
     "@kb-labs/viewer": {
       "link": "./plugins/viewer/entry",
-      "enabled": true,
-      "source": "local"
-    },
-    "@kb-labs/workflow": {
-      "link": "./plugins/workflow/entry",
       "enabled": true,
       "source": "local"
     }

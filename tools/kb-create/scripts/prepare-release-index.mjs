@@ -288,11 +288,10 @@ for (const item of stage) {
 }
 
 const sdkPackageJSON = packageJSONFor(sdk);
-const sdkPlatformRange = sdkPackageJSON.peerDependencies?.[platformPackage];
-if (!sdkPlatformRange) throw new Error(`${sdkPackage} does not declare a peer dependency on ${platformPackage}`);
-// The SDK package manifest is the owner of its required runtime peers. Include
-// each required peer as a platform member so the installed platform root can
-// provide the shared copy to every plugin. Optional peers remain consumer-owned.
+const sdkPlatformRange = sdkPackageJSON.dependencies?.[platformPackage];
+if (!sdkPlatformRange) throw new Error(`${sdkPackage} does not declare a dependency on ${platformPackage}`);
+// The SDK package owns its runtime dependencies; the package manager resolves
+// those from the SDK package manifest. Platform members are only explicit roots.
 const platformMemberRoots = platformPackageRoots({
   servicePackages: services.map(service => service.packageName),
   hostPackage,
@@ -300,7 +299,6 @@ const platformMemberRoots = platformPackageRoots({
   adapterPackages: configuredPlatformAdapterPackages,
   platformPackage,
   sdkPackage: sdk.name,
-  sdkManifest: sdkPackageJSON,
 });
 const platformMemberArtifacts = new Set(platformMemberRoots);
 // The release graph is the owner for peer availability. It includes the exact
@@ -354,8 +352,8 @@ const exportValue = {
   compatibility: {
     schema: 'kb.release-compatibility/2',
     labels: [
-      { id: `platform@${resolvedPlatformVersion}`, kind: 'platform', artifactId: 'platform', version: resolvedPlatformVersion, requires: [{ label: `sdk@${sdk.version}`, constraint: sdkPlatformRange }], status: 'prepared', validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-peer-dependency'] },
-      { id: `sdk@${sdk.version}`, kind: 'sdk', artifactId: 'sdk', version: sdk.version, status: 'prepared', validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-peer-dependency'] },
+      { id: `platform@${resolvedPlatformVersion}`, kind: 'platform', artifactId: 'platform', version: resolvedPlatformVersion, requires: [{ label: `sdk@${sdk.version}`, constraint: sdkPlatformRange }], status: 'prepared', validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-runtime-dependency'] },
+      { id: `sdk@${sdk.version}`, kind: 'sdk', artifactId: 'sdk', version: sdk.version, status: 'prepared', validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-runtime-dependency'] },
       ...binaries.map(binary => { const version = binary.version; return { id: `binary:${binary.id}@${version}:${binary.os}/${binary.arch}`, kind: 'binary', artifactId: binary.id, version, requires: [{ label: `platform@${resolvedPlatformVersion}` }, { label: `sdk@${sdk.version}` }], status: 'prepared', validatedBy: ['release-asset', 'artifact-hash', 'post-publish-smoke'] }; }),
     ],
   },

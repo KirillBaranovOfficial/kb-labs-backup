@@ -64,17 +64,12 @@ export function platformPackageRoots({
   adapterPackages,
   platformPackage = DEFAULT_PLATFORM_PACKAGE,
   sdkPackage = DEFAULT_SDK_PACKAGE,
-  sdkManifest,
 }) {
-  const sdkRuntimePeerPackages = Object.entries(sdkManifest?.peerDependencies ?? {})
-    .filter(([name]) => name !== platformPackage && sdkManifest.peerDependenciesMeta?.[name]?.optional !== true)
-    .map(([name]) => name);
   return new Set([
     ...servicePackages,
     hostPackage,
     ...platformMembers,
     ...adapterPackages,
-    ...sdkRuntimePeerPackages,
     sdkPackage,
   ]);
 }
