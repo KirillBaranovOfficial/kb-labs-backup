@@ -288,33 +288,33 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({
       type: 'command',
       command: {
-        manifest: { segments: ['marketplace', 'plugins', 'list'], _synthetic: false },
+        manifest: { segments: ['commit', 'status'], _synthetic: false },
         available: true,
         shadowed: false,
         source: 'workspace',
-        packageName: '@kb-labs/marketplace-entry',
+        packageName: '@kb-labs/commit-entry',
       },
       rest: [],
     });
     await setDiscoveryResult([{
-      packageName: '@kb-labs/marketplace-entry',
-      manifestPath: '/test/node_modules/@kb-labs/marketplace-entry/dist/manifest.js',
-      pkgRoot: '/test/node_modules/@kb-labs/marketplace-entry',
+      packageName: '@kb-labs/commit-entry',
+      manifestPath: '/test/node_modules/@kb-labs/commit-entry/dist/manifest.js',
+      pkgRoot: '/test/node_modules/@kb-labs/commit-entry',
       source: 'linked',
       scope: 'platform',
-      manifests: [{ _synthetic: false, group: 'marketplace', segments: ['marketplace', 'plugins', 'list'], id: 'list', describe: 'List plugins', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
+      manifests: [{ _synthetic: false, group: 'commit', segments: ['commit', 'status'], id: 'list', describe: 'List plugins', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
     }]);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
       plugins: {
-        '@kb-labs/marketplace-entry': { enabled: true, resolvedPath: '/test/node_modules/@kb-labs/marketplace-entry' },
+        '@kb-labs/commit-entry': { enabled: true, resolvedPath: '/test/node_modules/@kb-labs/commit-entry' },
       },
     });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
-    const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'marketplace plugins list' });
+    const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'commit status' });
 
     expect(code).toBe(0);
     const result = readData<{ status: string; stages: Array<{ code: string; status: string }>; verdict: { rootCause: string } }> (jsonSpy);

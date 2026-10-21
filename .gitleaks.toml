@@ -43,7 +43,6 @@ paths = [
   '''plugins/gateway/auth/src/__tests__/.*''',
   # e2e / unit test specs — fake API tokens in test helpers
   '''e2e/rest-api/specs/internal\.spec\.ts''',
-  '''plugins/host-agent/entry/src/__tests__/cli/register\.cli\.test\.ts''',
   '''e2e/tests/specs/studio/realtime\.spec\.ts''',
   '''core/platform/src/wrappers/pii-detector\.test\.ts''',
   '''plugins/agents/core/tests/tracer/incremental-trace-writer\.test\.ts''',

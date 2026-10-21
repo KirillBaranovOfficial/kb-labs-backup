@@ -1491,6 +1491,27 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "install")
 	home := t.TempDir()
+	t.Cleanup(func() {
+		if err := filepath.Walk(home, func(name string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				if errors.Is(walkErr, os.ErrNotExist) {
+					return nil
+				}
+				return walkErr
+			}
+			mode := info.Mode().Perm() | 0o200
+			if info.IsDir() {
+				mode |= 0o100
+			}
+			if err := os.Chmod(name, mode); errors.Is(err, os.ErrNotExist) {
+				return nil
+			} else {
+				return err
+			}
+		}); err != nil {
+			t.Errorf("make isolated test HOME removable: %v", err)
+		}
+	})
 	t.Setenv("HOME", home)
 	t.Setenv("COREPACK_HOME", filepath.Join(home, "corepack"))
 	_, fakehost := binaries(t)
@@ -1594,7 +1615,7 @@ func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	marketplaceModule := filepath.Join(workspaceRoot, "plugins", "marketplace", "npm", "dist", "index.js")
+	marketplaceModule := filepath.Join(workspaceRoot, "services", "marketplace", "npm", "dist", "index.js")
 	const marketplaceInstall = `
 const moduleURL = (await import('node:url')).pathToFileURL(process.argv[1]).href;
 const { NpmPackageSource } = await import(moduleURL);

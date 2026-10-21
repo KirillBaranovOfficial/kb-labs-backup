@@ -58,7 +58,7 @@ services:
     depends_on:
       - kb-redis
       - kb-minio
-      # plugins/marketplace-registry/README.md:44 — real runtime dependency, not dev-only.
+      # services/marketplace-registry/README.md:46 — real runtime dependency, not dev-only.
       - kb-state-daemon
     restart: unless-stopped
     logging: *kb-json-logging
@@ -74,7 +74,7 @@ services:
       - NODE_ENV=production
       # Consumer-side daemon (distinct from kb-marketplace-registry, the
       # publisher/storage service). Points at your own registry, not any
-      # KB Labs default — see plugins/marketplace/daemon/Dockerfile.
+      # KB Labs default — see services/marketplace/app/Dockerfile.
       - KB_REGISTRY_URL=http://kb-marketplace-registry:5071/api/v1
     depends_on:
       - kb-marketplace-registry

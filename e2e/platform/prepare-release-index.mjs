@@ -7,6 +7,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { clearGeneratedReleasePackages } from './release-index-package-stage.mjs';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
 import { invokePackageProvenanceOwner } from './package-provenance.mjs';
@@ -28,6 +29,7 @@ const registryManifest = JSON.parse(readFileSync(resolve(required('--registry-ma
 const releaseConfigPath = resolve(value('--release-config') ?? 'tools/kb-create/config/platform-release.jsonc');
 const releaseConfig = readPlatformReleaseConfig(releaseConfigPath);
 const output = resolve(required('--output'));
+clearGeneratedReleasePackages(packagesDir, resolve(output, '..'));
 const sealer = resolve(required('--sealer'));
 const binaryDirectory = resolve(required('--binary-dir'));
 const binaryManifest = resolve(required('--binary-manifest'));
@@ -38,7 +40,7 @@ const sourceRevision = required('--source-revision');
 const binaryRepository = value('--binary-repository') ?? 'kb-labs-team/kb-labs';
 const binaryReleaseTag = value('--binary-release-tag') ?? 'journey-candidate';
 const binaryBaseUrl = value('--binary-base-url') ?? process.env.KB_JOURNEY_BINARY_BASE_URL ?? 'http://origin:8080/journey-candidate';
-const registryURL = process.env.KB_JOURNEY_REGISTRY_URL ?? 'http://verdaccio:4873';
+const packageRegistry = value('--package-registry') ?? process.env.KB_JOURNEY_REGISTRY_URL ?? 'http://verdaccio:4873';
 const prepareScript = resolve(value('--prepare-script') ?? '/src/kb-create/scripts/prepare-release-index.mjs');
 const stage = resolve(process.env.KB_JOURNEY_RELEASE_STAGE ?? '/tmp/kb-e2e-release-stage');
 rmSync(stage, { recursive: true, force: true });
@@ -112,7 +114,7 @@ const result = spawnSync(process.execPath, [
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
   '--adapter-overrides', adapterOverrides,
-  '--registry', registryURL,
+  '--registry', packageRegistry,
   '--output', output,
   ...releaseNotesArgs,
   '--sealer-bin', sealer,
@@ -147,7 +149,7 @@ const update = spawnSync(process.execPath, [
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
   '--adapter-overrides', adapterOverrides,
-  '--registry', registryURL,
+  '--registry', packageRegistry,
   '--output', updateOutput,
   ...releaseNotesArgs,
   '--sealer-bin', sealer,
@@ -174,7 +176,7 @@ const jump = spawnSync(process.execPath, [
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
   '--adapter-overrides', adapterOverrides,
-  '--registry', registryURL,
+  '--registry', packageRegistry,
   '--output', jumpOutput,
   ...releaseNotesArgs,
   ...jumpHistoryArgs,
@@ -192,7 +194,7 @@ const minor = spawnSync(process.execPath, [
   '--platform-version', minorVersion, '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig, '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers, '--adapter-overrides', adapterOverrides,
-  '--registry', registryURL, '--output', minorOutput, ...releaseNotesArgs, '--sealer-bin', sealer,
+  '--registry', packageRegistry, '--output', minorOutput, ...releaseNotesArgs, '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (minor.status !== 0) process.exit(minor.status ?? 1);
 
@@ -221,7 +223,7 @@ const failedHost = spawnSync(process.execPath, [
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
   '--adapter-overrides', adapterOverrides,
-  '--registry', registryURL,
+  '--registry', packageRegistry,
   '--output', failedHostOutput,
   ...releaseNotesArgs,
   '--sealer-bin', sealer,
@@ -248,7 +250,7 @@ const healthyHost = spawnSync(process.execPath, [
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
   '--adapter-overrides', adapterOverrides,
-  '--registry', registryURL,
+  '--registry', packageRegistry,
   '--output', healthyHostOutput,
   ...releaseNotesArgs,
   '--sealer-bin', sealer,
@@ -281,7 +283,7 @@ const badChecksum = spawnSync(process.execPath, [
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
   '--adapter-overrides', adapterOverrides,
-  '--registry', registryURL,
+  '--registry', packageRegistry,
   '--output', badChecksumOutput,
   ...releaseNotesArgs,
   '--sealer-bin', sealer,
@@ -335,7 +337,7 @@ for (const candidate of stagedFailureCandidates) {
     '--provenance-manifest', candidateProvenance, '--binary-manifest', binaryManifest, '--platform-version', candidate.version,
     '--platform-requires', platformRequires, '--platform-adapter-config', adapterConfig,
     '--platform-adapter-options', adapterOptions, '--platform-member-packages', platformMembers,
-    '--adapter-overrides', adapterOverrides, '--registry', registryURL,
+    '--adapter-overrides', adapterOverrides, '--registry', packageRegistry,
     '--output', candidateOutput, ...releaseNotesArgs, '--sealer-bin', sealer,
   ], { stdio: 'inherit' });
   if (sealed.status !== 0) process.exit(sealed.status ?? 1);
@@ -362,7 +364,7 @@ const canary = spawnSync(process.execPath, [
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
   '--adapter-overrides', adapterOverrides,
-  '--registry', registryURL,
+  '--registry', packageRegistry,
   '--output', canaryOutput,
   ...releaseNotesArgs,
   '--sealer-bin', sealer,

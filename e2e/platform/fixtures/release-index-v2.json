@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "6d88227809aedac56ea8eb96e4007536e299c50fc47dd8f49f90ffc7d1ecc8b2",
+  "digest": "25ee076b6cdbeb077a954d30f3f6f1f33a3ff98d06190255e4212d05ee5732a3",
   "channels": {
     "stable": "2.120.1"
   },
@@ -38,6 +38,66 @@
           "artifact-hash",
           "sdk-peer-dependency"
         ]
+      },
+      {
+        "id": "binary:kb-create@2.120.1:darwin/arm64",
+        "kind": "binary",
+        "artifactId": "kb-create",
+        "version": "2.120.1",
+        "requires": [
+          {
+            "label": "platform@2.120.1"
+          },
+          {
+            "label": "sdk@2.120.1"
+          }
+        ],
+        "status": "prepared",
+        "validatedBy": [
+          "release-asset",
+          "artifact-hash",
+          "post-publish-smoke"
+        ]
+      },
+      {
+        "id": "binary:kb-create@2.120.1:linux/amd64",
+        "kind": "binary",
+        "artifactId": "kb-create",
+        "version": "2.120.1",
+        "requires": [
+          {
+            "label": "platform@2.120.1"
+          },
+          {
+            "label": "sdk@2.120.1"
+          }
+        ],
+        "status": "prepared",
+        "validatedBy": [
+          "release-asset",
+          "artifact-hash",
+          "post-publish-smoke"
+        ]
+      },
+      {
+        "id": "binary:kb-create@2.120.1:linux/arm64",
+        "kind": "binary",
+        "artifactId": "kb-create",
+        "version": "2.120.1",
+        "requires": [
+          {
+            "label": "platform@2.120.1"
+          },
+          {
+            "label": "sdk@2.120.1"
+          }
+        ],
+        "status": "prepared",
+        "validatedBy": [
+          "release-asset",
+          "artifact-hash",
+          "post-publish-smoke"
+        ]
       }
     ]
   },
@@ -45,10 +105,17 @@
     {
       "id": "platform",
       "version": "2.120.1",
+      "releaseNotes": "Prepared candidate platform release for update verification.",
       "package": "@kb-labs/core-runtime",
-      "sha256": "afecb47980c37efe806b2834c4af4703cdb4059a4aba6531a21c861b4a202a69",
+      "sha256": "03071500602258c76e038332b1bb710b90d403721f9ef6f8f214731cf5632896",
       "tarball": "http://verdaccio:4873/@kb-labs/core-runtime/-/core-runtime-2.120.1.tgz",
+      "sizeBytes": 423648,
       "profiles": {
+        "client": {
+          "platformVersion": "2.120.1",
+          "profile": "client",
+          "services": []
+        },
         "default": {
           "platformVersion": "2.120.1",
           "profile": "",
@@ -56,7 +123,6 @@
             {
               "id": "state-daemon",
               "command": "kb-state-daemon",
-              "port": 7777,
               "healthCheck": "/health",
               "required": true
             },
@@ -79,16 +145,6 @@
               "required": true
             },
             {
-              "id": "marketplace-registry",
-              "command": "marketplace-registry-app",
-              "port": 5071,
-              "healthCheck": "/health",
-              "dependsOn": [
-                "state-daemon"
-              ],
-              "required": true
-            },
-            {
               "id": "mcp-daemon",
               "command": "mcp-app",
               "port": 7779,
@@ -99,7 +155,7 @@
               "id": "rest",
               "command": "rest-api-app",
               "port": 5050,
-              "healthCheck": "localhost:5050",
+              "healthCheck": "http://localhost:5050/health",
               "required": true
             },
             {
@@ -132,7 +188,23 @@
       },
       "requires": [
         {
-          "capability": "serviceTransport",
+          "capability": "storage",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "cache",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "eventBus",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "documentDatabase",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "kvStore",
           "requiredBy": "platform"
         },
         {
@@ -142,18 +214,63 @@
         {
           "capability": "logRingBuffer",
           "requiredBy": "platform"
+        },
+        {
+          "capability": "logPersistence",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "analytics",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "serviceTransport",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "llm",
+          "requiredBy": "platform"
         }
       ],
       "config": [
         {
           "id": "platform.adapters",
           "path": "/platform/adapters",
-          "default": "{\"serviceTransport\":\"@kb-labs/adapters-service-transport-http\"}"
+          "default": "{\"storage\":\"@kb-labs/adapters-fs\",\"cache\":\"@kb-labs/adapters-state-broker\",\"eventBus\":\"@kb-labs/adapters-eventbus-cache\",\"documentDatabase\":\"@kb-labs/adapters-sqlite\",\"kvStore\":\"@kb-labs/adapters-sqlite/kv\",\"logger\":\"@kb-labs/adapters-pino\",\"logRingBuffer\":\"@kb-labs/adapters-log-ringbuffer\",\"logPersistence\":\"@kb-labs/adapters-log-document\",\"analytics\":\"@kb-labs/adapters-analytics-sqlite\",\"serviceTransport\":\"@kb-labs/adapters-service-transport-http\"}"
         },
         {
           "id": "platform.adapterOptions",
           "path": "/platform/adapterOptions",
-          "default": "{\"serviceTransport\":{\"services\":{\"rest\":{\"url\":\"http://127.0.0.1:5050\"},\"workflow\":{\"url\":\"http://127.0.0.1:7778\"},\"gateway\":{\"url\":\"http://127.0.0.1:4000\"},\"marketplace\":{\"url\":\"http://127.0.0.1:5070\"},\"marketplace-registry\":{\"url\":\"http://127.0.0.1:5071\"},\"studio\":{\"url\":\"http://127.0.0.1:3000\"},\"mcp-daemon\":{\"url\":\"http://127.0.0.1:7779\"}}}}"
+          "default": "{\"cache\":{\"url\":\"http://127.0.0.1:7777\",\"namespace\":\"kb:\"},\"serviceTransport\":{\"services\":{\"rest\":{\"url\":\"http://127.0.0.1:5050\"},\"workflow\":{\"url\":\"http://127.0.0.1:7778\"},\"gateway\":{\"url\":\"http://127.0.0.1:4000\"},\"marketplace\":{\"url\":\"http://127.0.0.1:5070\"},\"studio\":{\"url\":\"http://127.0.0.1:3000\"},\"mcp-daemon\":{\"url\":\"http://127.0.0.1:7779\"}}},\"documentDatabase\":{\"filename\":\"database/kb.sqlite\"},\"kvStore\":{\"filename\":\"database/kb.sqlite\"},\"analytics\":{\"dbPath\":\"analytics/analytics.sqlite\"},\"logger\":{\"level\":\"info\",\"streaming\":{\"enabled\":true,\"bufferSize\":1000,\"bufferMaxAge\":3600000}},\"logRingBuffer\":{\"maxSize\":100},\"logPersistence\":{\"collection\":\"logs\",\"batchSize\":100,\"flushInterval\":5000,\"retention\":{\"maxAgeFatal\":2592000000,\"maxAgeError\":1209600000,\"maxAgeWarn\":604800000,\"maxAgeInfo\":1800000,\"maxAgeDebug\":1800000,\"cleanupIntervalMs\":300000}}}"
+        }
+      ],
+      "binaries": [
+        {
+          "id": "kb-create",
+          "os": "darwin",
+          "arch": "arm64",
+          "url": "http://origin:8080/journey-candidate/kb-create-darwin-arm64",
+          "sha256": "cb75bcc19fa00ef8a378329291d28d5600688f0cda0ed0b545fa0f75250a8bfd",
+          "filename": "kb-create-darwin-arm64",
+          "sizeBytes": 17351554
+        },
+        {
+          "id": "kb-create",
+          "os": "linux",
+          "arch": "amd64",
+          "url": "http://origin:8080/journey-candidate/kb-create-linux-amd64",
+          "sha256": "05b065cc1a25c67a073a1103f6be90c39e3c82eb45f504ad3544ce231bd2a7d7",
+          "filename": "kb-create-linux-amd64",
+          "sizeBytes": 12849314
+        },
+        {
+          "id": "kb-create",
+          "os": "linux",
+          "arch": "arm64",
+          "url": "http://origin:8080/journey-candidate/kb-create-linux-arm64",
+          "sha256": "595c1a3566d620ad12fd7dc1f8e0e966f8840fe574cb4dc8e21748765330b1a9",
+          "filename": "kb-create-linux-arm64",
+          "sizeBytes": 11862178
         }
       ],
       "members": [
@@ -161,15 +278,17 @@
           "id": "state-daemon",
           "version": "2.120.1",
           "package": "@kb-labs/core-state-daemon",
-          "sha256": "ede431074c3f866948f7d03f8112a16df5afa085bd098cded94a40a4b789cc5b",
-          "tarball": "http://verdaccio:4873/@kb-labs/core-state-daemon/-/core-state-daemon-2.120.1.tgz"
+          "sha256": "f5505ed5871c36381758ea12326646da7d38e677363096126671abaf01d70a15",
+          "tarball": "http://verdaccio:4873/@kb-labs/core-state-daemon/-/core-state-daemon-2.120.1.tgz",
+          "sizeBytes": 2446367
         },
         {
           "id": "gateway",
           "version": "2.120.1",
           "package": "@kb-labs/gateway-app",
-          "sha256": "7740a64b010f6a421cb148b953da8a65b14a3dd346f3b769d20e51f026d74edf",
+          "sha256": "c420de8a0814d333e5519221f4eede6e3a0d3cd06f8e0da03823182a4a75b11c",
           "tarball": "http://verdaccio:4873/@kb-labs/gateway-app/-/gateway-app-2.120.1.tgz",
+          "sizeBytes": 380372,
           "config": [
             {
               "id": "gateway.access.mode",
@@ -190,11 +309,12 @@
             {
               "id": "gateway.bootstrap.password",
               "secret": true,
+              "generate": true,
               "env": "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
               "services": [
                 "gateway"
               ],
-              "hint": "Password of the first administrator; without it no admin is created (recover later with `kb-create doctor --recover`)"
+              "hint": "Password of the first administrator; kb-create generates one when omitted and discloses it once after successful install"
             },
             {
               "id": "gateway.jwtSecret",
@@ -213,8 +333,7 @@
               "env": "GATEWAY_INTERNAL_SECRET",
               "services": [
                 "gateway",
-                "rest",
-                "marketplace-registry"
+                "rest"
               ],
               "hint": "Shared gateway-to-service authentication secret; kb-create generates and preserves it"
             },
@@ -230,148 +349,217 @@
           "id": "marketplace",
           "version": "2.120.1",
           "package": "@kb-labs/marketplace-app",
-          "sha256": "5391e2d19edb26ea8f748b81c41babb507668cac1522ebf90b3581b418617a63",
-          "tarball": "http://verdaccio:4873/@kb-labs/marketplace-app/-/marketplace-app-2.120.1.tgz"
-        },
-        {
-          "id": "marketplace-registry",
-          "version": "2.120.1",
-          "package": "@kb-labs/marketplace-registry-app",
-          "sha256": "27d500972ea197de15c7a9235bb5a7eafc9aa639845d14ab5134a303e0f10349",
-          "tarball": "http://verdaccio:4873/@kb-labs/marketplace-registry-app/-/marketplace-registry-app-2.120.1.tgz"
+          "sha256": "1e9c4604555bc6fd9cae148da62a59a347d33efbf0c9a5f83839d04d9ca9bdda",
+          "tarball": "http://verdaccio:4873/@kb-labs/marketplace-app/-/marketplace-app-2.120.1.tgz",
+          "sizeBytes": 3955
         },
         {
           "id": "mcp-daemon",
           "version": "2.120.1",
           "package": "@kb-labs/mcp-app",
-          "sha256": "671fd1cbd95c3f1d461e9add9c5559255ae14d68a2b3f1ef323fcdff69715b38",
-          "tarball": "http://verdaccio:4873/@kb-labs/mcp-app/-/mcp-app-2.120.1.tgz"
+          "sha256": "b938471699fb64712603055de0730a35cfb73ca835aa36051da742751c97a24e",
+          "tarball": "http://verdaccio:4873/@kb-labs/mcp-app/-/mcp-app-2.120.1.tgz",
+          "sizeBytes": 3459730
         },
         {
           "id": "rest",
           "version": "2.120.1",
           "package": "@kb-labs/rest-api-app",
-          "sha256": "16056336704679e4e86f9b60c5f326d673ab372b7c5832f1a0c9e8fa7c6db7e8",
-          "tarball": "http://verdaccio:4873/@kb-labs/rest-api-app/-/rest-api-app-2.120.1.tgz"
+          "sha256": "e645085c978654f26a207b13de6a2beed2f4f17d4772aa2a283541c22c991d31",
+          "tarball": "http://verdaccio:4873/@kb-labs/rest-api-app/-/rest-api-app-2.120.1.tgz",
+          "sizeBytes": 346700
         },
         {
           "id": "studio",
           "version": "2.120.1",
           "package": "@kb-labs/studio-app",
-          "sha256": "421c1c4a60d87b85e975617ed79ddcccdd8f606fafa6f0d491dbfec54d60e945",
-          "tarball": "http://verdaccio:4873/@kb-labs/studio-app/-/studio-app-2.120.1.tgz"
+          "sha256": "ba5c5b3d532fddd5a9a97bc7d3b5f673299ef107ee0c75d6a7e876adfceff835",
+          "tarball": "http://verdaccio:4873/@kb-labs/studio-app/-/studio-app-2.120.1.tgz",
+          "sizeBytes": 5919417
         },
         {
           "id": "workflow",
           "version": "2.120.1",
           "package": "@kb-labs/workflow-daemon",
-          "sha256": "40f1b71b485e8fe46329095e0861fe0cf869dbf0183a5e88c600f1fdf866922e",
-          "tarball": "http://verdaccio:4873/@kb-labs/workflow-daemon/-/workflow-daemon-2.120.1.tgz"
+          "sha256": "d6bc2da908058d67eb1c838c5070e87566af7190ed79a922b959edc484448235",
+          "tarball": "http://verdaccio:4873/@kb-labs/workflow-daemon/-/workflow-daemon-2.120.1.tgz",
+          "sizeBytes": 183224
         },
         {
           "id": "host-app",
           "version": "2.120.1",
           "package": "@kb-labs/host-app",
-          "sha256": "d84d7963cb0c31cc82f115c9732d2a888e5d5d2e16bfeb7c1f1a08a473bb7612",
-          "tarball": "http://verdaccio:4873/@kb-labs/host-app/-/host-app-2.120.1.tgz"
+          "sha256": "5d886678e7c214f1def500baca08262a6ae86a4c38c43bf5f048cc0484b0e892",
+          "tarball": "http://verdaccio:4873/@kb-labs/host-app/-/host-app-2.120.1.tgz",
+          "sizeBytes": 118127
         },
         {
           "id": "cli-bin",
           "version": "2.120.1",
           "package": "@kb-labs/cli-bin",
-          "sha256": "4e7f483614fb9156f3dd180d05869f8480421726e42de5a84eb9a1bc89ed3045",
-          "tarball": "http://verdaccio:4873/@kb-labs/cli-bin/-/cli-bin-2.120.1.tgz"
+          "sha256": "c4c4a2e9bda311a1464d09ad9f2765ff747e4dd0110bc51efeb94de7ac9f48ab",
+          "tarball": "http://verdaccio:4873/@kb-labs/cli-bin/-/cli-bin-2.120.1.tgz",
+          "sizeBytes": 131960
         },
         {
-          "id": "project-runtime-app",
-          "version": "2.120.1",
-          "package": "@kb-labs/project-runtime-app",
-          "sha256": "966cba8c0f51825788673b946f519de21e4805d83fc1bf1c904bc20bcf4db8e3",
-          "tarball": "http://verdaccio:4873/@kb-labs/project-runtime-app/-/project-runtime-app-2.120.1.tgz"
+          "id": "fs-storage",
+          "version": "2.107.0",
+          "package": "@kb-labs/adapters-fs",
+          "sha256": "4dcd08c718a262b7c34861d38f37dc96050021c058f81809dfe8ba21f0823830",
+          "tarball": "http://verdaccio:4873/@kb-labs/adapters-fs/-/adapters-fs-2.107.0.tgz",
+          "sizeBytes": 11597
         },
         {
-          "id": "devkit",
+          "id": "state-broker",
           "version": "2.120.1",
-          "package": "@kb-labs/devkit",
-          "sha256": "883c9219257f481cdfbdc94c14c941c758a6a9246c0db96ab8721fbe93933fad",
-          "tarball": "http://verdaccio:4873/@kb-labs/devkit/-/devkit-2.120.1.tgz"
+          "package": "@kb-labs/adapters-state-broker",
+          "sha256": "9574c972bd523940e88813f7201dc6c9dad0a976cfa2bd815ce98f42e11a55e7",
+          "tarball": "http://verdaccio:4873/@kb-labs/adapters-state-broker/-/adapters-state-broker-2.120.1.tgz",
+          "sizeBytes": 6105
         },
         {
-          "id": "core-contracts",
+          "id": "eventbus-cache",
           "version": "2.120.1",
-          "package": "@kb-labs/core-contracts",
-          "sha256": "be440a46161d8e6d28ed39cd3517ff19c4bd6bf1900323cfbd2c9868407de011",
-          "tarball": "http://verdaccio:4873/@kb-labs/core-contracts/-/core-contracts-2.120.1.tgz"
-        },
-        {
-          "id": "core-platform",
-          "version": "2.120.1",
-          "package": "@kb-labs/core-platform",
-          "sha256": "51dc47bb8e6bd30cee1f4ecec006ac55018ea8dcc675d44f0e5048819745533f",
-          "tarball": "http://verdaccio:4873/@kb-labs/core-platform/-/core-platform-2.120.1.tgz"
-        },
-        {
-          "id": "core-project-registry",
-          "version": "2.120.1",
-          "package": "@kb-labs/core-project-registry",
-          "sha256": "06c596a69d46f0b294f876a9857b622797557b70e12193e692a30b55d44dc819",
-          "tarball": "http://verdaccio:4873/@kb-labs/core-project-registry/-/core-project-registry-2.120.1.tgz"
-        },
-        {
-          "id": "core-retry",
-          "version": "2.120.1",
-          "package": "@kb-labs/core-retry",
-          "sha256": "7d726bf6e5c87066446bffda9f4129acd40aacadaec9820b572d82ef0ee97a0f",
-          "tarball": "http://verdaccio:4873/@kb-labs/core-retry/-/core-retry-2.120.1.tgz"
-        },
-        {
-          "id": "core-sys",
-          "version": "2.120.1",
-          "package": "@kb-labs/core-sys",
-          "sha256": "ea18c0cf13403b1fc838f29b3fae91f61fbddb3776ff2b52ee21a48873483e11",
-          "tarball": "http://verdaccio:4873/@kb-labs/core-sys/-/core-sys-2.120.1.tgz"
-        },
-        {
-          "id": "perm-presets",
-          "version": "2.120.1",
-          "package": "@kb-labs/perm-presets",
-          "sha256": "51b90ca8216fd6591e37d64b04466064cd12bdf8f099d6ad32b0e522ece300fd",
-          "tarball": "http://verdaccio:4873/@kb-labs/perm-presets/-/perm-presets-2.120.1.tgz"
-        },
-        {
-          "id": "plugin-contracts",
-          "version": "2.120.1",
-          "package": "@kb-labs/plugin-contracts",
-          "sha256": "bd0786e150f3ad23fc8ba339416969b57ffbdb40b74f4dc0bcbe50d62efc7f35",
-          "tarball": "http://verdaccio:4873/@kb-labs/plugin-contracts/-/plugin-contracts-2.120.1.tgz"
-        },
-        {
-          "id": "shared-cli-ui",
-          "version": "2.120.1",
-          "package": "@kb-labs/shared-cli-ui",
-          "sha256": "4e6484e34f8c6065d67bb927000a390b6c5c0522471ae0853e466d149f06f122",
-          "tarball": "http://verdaccio:4873/@kb-labs/shared-cli-ui/-/shared-cli-ui-2.120.1.tgz"
-        },
-        {
-          "id": "shared-tool-kit",
-          "version": "2.120.1",
-          "package": "@kb-labs/shared-tool-kit",
-          "sha256": "673aeed59106074612318c8d0498f9033ffb67c3c361d9b833076b5888e4cd73",
-          "tarball": "http://verdaccio:4873/@kb-labs/shared-tool-kit/-/shared-tool-kit-2.120.1.tgz"
+          "package": "@kb-labs/adapters-eventbus-cache",
+          "sha256": "aed8620e23f187f0d6b3c1700400cd6fd0207c514683f5991dbc2144215f32ae",
+          "tarball": "http://verdaccio:4873/@kb-labs/adapters-eventbus-cache/-/adapters-eventbus-cache-2.120.1.tgz",
+          "sizeBytes": 8781
         },
         {
           "id": "sqlite-stores",
           "version": "2.120.1",
           "package": "@kb-labs/adapters-sqlite",
-          "sha256": "cd272f18cfecd606c529e7453caab7c6064620db9711e297b86e7e469374f887",
-          "tarball": "http://verdaccio:4873/@kb-labs/adapters-sqlite/-/adapters-sqlite-2.120.1.tgz"
+          "sha256": "0788e8ca3a4b38be5d40e0691836ade2a7a0d322fb093fc2dbab2ee45c811f74",
+          "tarball": "http://verdaccio:4873/@kb-labs/adapters-sqlite/-/adapters-sqlite-2.120.1.tgz",
+          "sizeBytes": 41684
+        },
+        {
+          "id": "pino-logger",
+          "version": "2.120.1",
+          "package": "@kb-labs/adapters-pino",
+          "sha256": "3cef588bfa91c930fc923a80907b269fba8ed6381ee6609c0b5e8212c64db88e",
+          "tarball": "http://verdaccio:4873/@kb-labs/adapters-pino/-/adapters-pino-2.120.1.tgz",
+          "sizeBytes": 11469
+        },
+        {
+          "id": "log-ringbuffer",
+          "version": "2.120.1",
+          "package": "@kb-labs/adapters-log-ringbuffer",
+          "sha256": "8f8d5cf6497f220fb6dbc936e595f41de571be11a922fcb54b32fbd83b981d43",
+          "tarball": "http://verdaccio:4873/@kb-labs/adapters-log-ringbuffer/-/adapters-log-ringbuffer-2.120.1.tgz",
+          "sizeBytes": 7335
+        },
+        {
+          "id": "log-document",
+          "version": "2.120.1",
+          "package": "@kb-labs/adapters-log-document",
+          "sha256": "b38e99dd98f71800181cdc3f94d2a7d3c7861306b0e87f212d5bf4c1833806d7",
+          "tarball": "http://verdaccio:4873/@kb-labs/adapters-log-document/-/adapters-log-document-2.120.1.tgz",
+          "sizeBytes": 10404
+        },
+        {
+          "id": "analytics-sqlite",
+          "version": "2.120.1",
+          "package": "@kb-labs/adapters-analytics-sqlite",
+          "sha256": "2dfbbf9bed67330f210db71bb0c7b80551fb3bddb4f84c486b20b379360f2503",
+          "tarball": "http://verdaccio:4873/@kb-labs/adapters-analytics-sqlite/-/adapters-analytics-sqlite-2.120.1.tgz",
+          "sizeBytes": 18513
         },
         {
           "id": "service-transport-http",
           "version": "2.120.1",
           "package": "@kb-labs/adapters-service-transport-http",
-          "sha256": "73ffecd69601318c9ce21d404992a34b2364ab9d391f113f95d77b855863da89",
-          "tarball": "http://verdaccio:4873/@kb-labs/adapters-service-transport-http/-/adapters-service-transport-http-2.120.1.tgz"
+          "sha256": "4e514e72ef8f75c29d236a82ea9fcb9337d6b9a998955121953b3fe7cddb7209",
+          "tarball": "http://verdaccio:4873/@kb-labs/adapters-service-transport-http/-/adapters-service-transport-http-2.120.1.tgz",
+          "sizeBytes": 6583
+        },
+        {
+          "id": "core-platform",
+          "version": "2.120.1",
+          "package": "@kb-labs/core-platform",
+          "sha256": "836a6056943cb6d9bf7e4a111dbe8672a0c32a3dacefee025e804a36174b709c",
+          "tarball": "http://verdaccio:4873/@kb-labs/core-platform/-/core-platform-2.120.1.tgz",
+          "sizeBytes": 952822
+        },
+        {
+          "id": "core-resource-broker",
+          "version": "2.120.1",
+          "package": "@kb-labs/core-resource-broker",
+          "sha256": "3bf11cb72ccde889477b768dd381441de2b00fb312dead9d9b35b9cd85435cbc",
+          "tarball": "http://verdaccio:4873/@kb-labs/core-resource-broker/-/core-resource-broker-2.120.1.tgz",
+          "sizeBytes": 44429
+        },
+        {
+          "id": "core-sys",
+          "version": "2.120.1",
+          "package": "@kb-labs/core-sys",
+          "sha256": "c2bbf8ca89b778f14ed403868256182899b20cd0ea2feb5403b4e9d4ff1b11bb",
+          "tarball": "http://verdaccio:4873/@kb-labs/core-sys/-/core-sys-2.120.1.tgz",
+          "sizeBytes": 23626
+        },
+        {
+          "id": "plugin-contracts",
+          "version": "2.120.1",
+          "package": "@kb-labs/plugin-contracts",
+          "sha256": "f133303a2812487cef68c13c77977cc93eab1615bd4ae5a98f6c0b076cfb1085",
+          "tarball": "http://verdaccio:4873/@kb-labs/plugin-contracts/-/plugin-contracts-2.120.1.tgz",
+          "sizeBytes": 144729
+        },
+        {
+          "id": "shared-cli-ui",
+          "version": "2.120.1",
+          "package": "@kb-labs/shared-cli-ui",
+          "sha256": "4c93095e0fec6042f22abceb95984340e54bf507f5befd90e4b307a021851bfd",
+          "tarball": "http://verdaccio:4873/@kb-labs/shared-cli-ui/-/shared-cli-ui-2.120.1.tgz",
+          "sizeBytes": 248925
+        },
+        {
+          "id": "shared-command-kit",
+          "version": "2.120.1",
+          "package": "@kb-labs/shared-command-kit",
+          "sha256": "3d35a79cacf1b681fd9a4a270f63cb6b63cc0407d8016abe50cac833b47a2859",
+          "tarball": "http://verdaccio:4873/@kb-labs/shared-command-kit/-/shared-command-kit-2.120.1.tgz",
+          "sizeBytes": 126685
+        },
+        {
+          "id": "studio-devtools",
+          "version": "2.120.1",
+          "package": "@kb-labs/studio-devtools",
+          "sha256": "b8fc747414860c63a30cf67a5f9eb90163ee4c0eee35ac943c689f86e5a39bff",
+          "tarball": "http://verdaccio:4873/@kb-labs/studio-devtools/-/studio-devtools-2.120.1.tgz",
+          "sizeBytes": 3329
+        },
+        {
+          "id": "studio-event-bus",
+          "version": "2.120.1",
+          "package": "@kb-labs/studio-event-bus",
+          "sha256": "870a51922ee2185feef756f8a6261a3e204d1ec0de004c4466509e1ba1efa33e",
+          "tarball": "http://verdaccio:4873/@kb-labs/studio-event-bus/-/studio-event-bus-2.120.1.tgz",
+          "sizeBytes": 3945
+        },
+        {
+          "id": "studio-hooks",
+          "version": "2.120.1",
+          "package": "@kb-labs/studio-hooks",
+          "sha256": "624dd36b7358de59ac50fcb24e417e22919f2bbb66bf8fe09a7de2d043dd32cf",
+          "tarball": "http://verdaccio:4873/@kb-labs/studio-hooks/-/studio-hooks-2.120.1.tgz",
+          "sizeBytes": 39938
+        },
+        {
+          "id": "studio-ui-core",
+          "version": "2.120.1",
+          "package": "@kb-labs/studio-ui-core",
+          "sha256": "6ed7879ca2cebb956c9d6cfcc63311d541326781f023c0f8a71c956065dde781",
+          "tarball": "http://verdaccio:4873/@kb-labs/studio-ui-core/-/studio-ui-core-2.120.1.tgz",
+          "sizeBytes": 8832
+        },
+        {
+          "id": "studio-ui-kit",
+          "version": "2.120.1",
+          "package": "@kb-labs/studio-ui-kit",
+          "sha256": "a1897c3b3e670d468233f3ec8df601c65b7fb1e98f7badc0e305d821cd5665a1",
+          "tarball": "http://verdaccio:4873/@kb-labs/studio-ui-kit/-/studio-ui-kit-2.120.1.tgz",
+          "sizeBytes": 171268
         }
       ]
     }
@@ -381,8 +569,9 @@
       "id": "sdk",
       "version": "2.120.1",
       "package": "@kb-labs/sdk",
-      "sha256": "2fa94695b6ecac30f3c995d10ab2b1b078149b9cf1dda2c13fc9f964c772cb38",
-      "tarball": "http://verdaccio:4873/@kb-labs/sdk/-/sdk-2.120.1.tgz"
+      "sha256": "274d19c3e9e0d7344f710112672e272c143069ee46f9bd20dd4fbb0ee7bfb601",
+      "tarball": "http://verdaccio:4873/@kb-labs/sdk/-/sdk-2.120.1.tgz",
+      "sizeBytes": 29887
     }
   ],
   "plugins": [
@@ -390,8 +579,9 @@
       "id": "@kb-labs/agents",
       "version": "2.120.1",
       "package": "@kb-labs/agent-entry",
-      "sha256": "f0d123bb372b024b664ce0d69231e7e9416db5e73c3c1f342c1971dc368722ec",
+      "sha256": "5d62ebf14de93b7c2af5ce01f53683ac3f04846b34db90056a3439796eaddc02",
       "tarball": "http://verdaccio:4873/@kb-labs/agent-entry/-/agent-entry-2.120.1.tgz",
+      "sizeBytes": 1284550,
       "requires": [
         {
           "capability": "llm",
@@ -403,8 +593,9 @@
       "id": "@kb-labs/commit",
       "version": "2.120.1",
       "package": "@kb-labs/commit-entry",
-      "sha256": "9fa8230d6a40f8ff11eee30fd20f0d453bebf542e85d12932932772067db4969",
+      "sha256": "11c39fc8ddfa4ce272138ea1856bfbe3c62813c67088e1989064d9c6e830b4aa",
       "tarball": "http://verdaccio:4873/@kb-labs/commit-entry/-/commit-entry-2.120.1.tgz",
+      "sizeBytes": 1181897,
       "requires": [
         {
           "capability": "storage",
@@ -417,18 +608,30 @@
       ]
     },
     {
-      "id": "@kb-labs/marketplace",
-      "version": "2.120.1",
-      "package": "@kb-labs/marketplace-entry",
-      "sha256": "24564c97735c6cdf6be584227c1f784c3898ece42355da828d0c4ca4840abe07",
-      "tarball": "http://verdaccio:4873/@kb-labs/marketplace-entry/-/marketplace-entry-2.120.1.tgz"
+      "id": "@kb-labs/e2e-analytics-emitter",
+      "version": "1.0.0",
+      "package": "@kb-labs/e2e-analytics-emitter",
+      "sha256": "eab7748761717d4726673b55c5924bcf93734ba6ca8902df95abfd2748641fee",
+      "tarball": "http://verdaccio:4873/@kb-labs/e2e-analytics-emitter/-/e2e-analytics-emitter-1.0.0.tgz",
+      "sizeBytes": 1481,
+      "requires": [
+        {
+          "capability": "analytics",
+          "requiredBy": "@kb-labs/e2e-analytics-emitter"
+        },
+        {
+          "capability": "llm",
+          "requiredBy": "@kb-labs/e2e-analytics-emitter"
+        }
+      ]
     },
     {
       "id": "@kb-labs/mind",
       "version": "2.120.1",
       "package": "@kb-labs/mind-entry",
-      "sha256": "31ca362c310a29bfdf267743b35b43bee2fc1ef01532238fda378d423d1d6660",
+      "sha256": "b2e31eae16ab6576a5cf8f37969aac0d39c34787b34cdc6528d2ff75334ef447",
       "tarball": "http://verdaccio:4873/@kb-labs/mind-entry/-/mind-entry-2.120.1.tgz",
+      "sizeBytes": 26960,
       "requires": [
         {
           "capability": "cache",
@@ -444,8 +647,9 @@
       "id": "@kb-labs/quality",
       "version": "2.120.1",
       "package": "@kb-labs/quality-entry",
-      "sha256": "c289f282aef2bbcccd31840e1c17cf7adec5eea407351a0b09c5ed5b3216de8a",
+      "sha256": "0132c671de61b7f785aaeb4540e871e163d60ac8261d439b318f55a4ea4bd10b",
       "tarball": "http://verdaccio:4873/@kb-labs/quality-entry/-/quality-entry-2.120.1.tgz",
+      "sizeBytes": 1215454,
       "requires": [
         {
           "capability": "storage",
@@ -461,8 +665,9 @@
       "id": "@kb-labs/release",
       "version": "2.120.1",
       "package": "@kb-labs/release-manager-cli",
-      "sha256": "df2be71c7204d96b479698b715edfccf0960f2813d25443da2fb11c7177feb9c",
+      "sha256": "7970a0458d053b57c7e7b8787a8ad414c21d1b49bfe1e216fd7dd5cd8360b38f",
       "tarball": "http://verdaccio:4873/@kb-labs/release-manager-cli/-/release-manager-cli-2.120.1.tgz",
+      "sizeBytes": 1415155,
       "requires": [
         {
           "capability": "storage",
@@ -478,8 +683,9 @@
       "id": "@kb-labs/review",
       "version": "2.120.1",
       "package": "@kb-labs/review-entry",
-      "sha256": "f743687e445e357d32594c778e2817a6a1ed32fc123540300f8eb01e031db2d1",
+      "sha256": "b604c38d4a385f7fdb71cbdf0f005ab1a356bd65ca2bc8c2a09d55a1bf796926",
       "tarball": "http://verdaccio:4873/@kb-labs/review-entry/-/review-entry-2.120.1.tgz",
+      "sizeBytes": 21457,
       "requires": [
         {
           "capability": "storage",
@@ -495,15 +701,31 @@
       "id": "@kb-labs/scaffold",
       "version": "2.120.1",
       "package": "@kb-labs/scaffold",
-      "sha256": "36cf599986cf0cfe55398508af7493c81ee38cafd50eef3750d1fadfcd98ab14",
-      "tarball": "http://verdaccio:4873/@kb-labs/scaffold/-/scaffold-2.120.1.tgz"
+      "sha256": "8251d258515fb10d6ec1a91615ff620bac470471850104d042c44be0881dd999",
+      "tarball": "http://verdaccio:4873/@kb-labs/scaffold/-/scaffold-2.120.1.tgz",
+      "sizeBytes": 23953
+    },
+    {
+      "id": "@kb-labs/steward",
+      "version": "2.120.1",
+      "package": "@kb-labs/steward-entry",
+      "sha256": "548c23998db5c4f06bb31f2b41a356fdfef669624164bd432318b89f2ef4374a",
+      "tarball": "http://verdaccio:4873/@kb-labs/steward-entry/-/steward-entry-2.120.1.tgz",
+      "sizeBytes": 39700,
+      "requires": [
+        {
+          "capability": "documentDatabase",
+          "requiredBy": "@kb-labs/steward"
+        }
+      ]
     },
     {
       "id": "@kb-labs/workflow",
       "version": "2.120.1",
       "package": "@kb-labs/workflow-entry",
-      "sha256": "bcc7b676fbe98729f7ef62a9a9fafe7c03668306378448db4b4c8a4f4dc243ad",
-      "tarball": "http://verdaccio:4873/@kb-labs/workflow-entry/-/workflow-entry-2.120.1.tgz"
+      "sha256": "53f1d54f768b8519f34c03eca0c4a235705afadbaab8c1fc77827c5d3dbe6c34",
+      "tarball": "http://verdaccio:4873/@kb-labs/workflow-entry/-/workflow-entry-2.120.1.tgz",
+      "sizeBytes": 1573483
     }
   ],
   "adapters": [
@@ -511,8 +733,20 @@
       "id": "analytics-file",
       "version": "2.120.1",
       "package": "@kb-labs/adapters-analytics-file",
-      "sha256": "84725728f75c57045837732dc823a63756481bf708cff87a6f34a18cb1901ca6",
+      "sha256": "2f40638e622b489a06a5cc83ee60d97cb2ab082ad00cddade6169587186adfa9",
       "tarball": "http://verdaccio:4873/@kb-labs/adapters-analytics-file/-/adapters-analytics-file-2.120.1.tgz",
+      "sizeBytes": 16989,
+      "provides": [
+        "analytics"
+      ]
+    },
+    {
+      "id": "analytics-sqlite",
+      "version": "2.120.1",
+      "package": "@kb-labs/adapters-analytics-sqlite",
+      "sha256": "2dfbbf9bed67330f210db71bb0c7b80551fb3bddb4f84c486b20b379360f2503",
+      "tarball": "http://verdaccio:4873/@kb-labs/adapters-analytics-sqlite/-/adapters-analytics-sqlite-2.120.1.tgz",
+      "sizeBytes": 18513,
       "provides": [
         "analytics"
       ],
@@ -524,8 +758,45 @@
       "id": "disk-io-storage",
       "version": "2.120.1",
       "package": "@kb-labs/data-store",
-      "sha256": "06eb0e5a583d11d63c2dd5e77417ad2610b1d7d83211291fa0f6eba027b864f6",
+      "sha256": "a19c5a64ec4e401f7a19d157bba4ed11a673dd2419f975b6914bcb6bd852a4ca",
       "tarball": "http://verdaccio:4873/@kb-labs/data-store/-/data-store-2.120.1.tgz",
+      "sizeBytes": 8899,
+      "provides": [
+        "storage"
+      ]
+    },
+    {
+      "id": "e2e-llm-deterministic",
+      "version": "1.0.0",
+      "package": "@kb-labs/e2e-llm-deterministic",
+      "sha256": "4e786ead95ff9bfa06ef333cc047232c640731c45ece3e99018d9a1d4822b8ed",
+      "tarball": "http://verdaccio:4873/@kb-labs/e2e-llm-deterministic/-/e2e-llm-deterministic-1.0.0.tgz",
+      "sizeBytes": 1195,
+      "provides": [
+        "llm"
+      ]
+    },
+    {
+      "id": "eventbus-cache",
+      "version": "2.120.1",
+      "package": "@kb-labs/adapters-eventbus-cache",
+      "sha256": "aed8620e23f187f0d6b3c1700400cd6fd0207c514683f5991dbc2144215f32ae",
+      "tarball": "http://verdaccio:4873/@kb-labs/adapters-eventbus-cache/-/adapters-eventbus-cache-2.120.1.tgz",
+      "sizeBytes": 8781,
+      "provides": [
+        "eventBus"
+      ],
+      "defaultFor": [
+        "eventBus"
+      ]
+    },
+    {
+      "id": "fs-storage",
+      "version": "2.107.0",
+      "package": "@kb-labs/adapters-fs",
+      "sha256": "4dcd08c718a262b7c34861d38f37dc96050021c058f81809dfe8ba21f0823830",
+      "tarball": "http://verdaccio:4873/@kb-labs/adapters-fs/-/adapters-fs-2.107.0.tgz",
+      "sizeBytes": 11597,
       "provides": [
         "storage"
       ],
@@ -537,29 +808,82 @@
       "id": "kblabs-gateway-llm",
       "version": "2.120.1",
       "package": "@kb-labs/adapters-kblabs-gateway",
-      "sha256": "9c5a68018f163cef172fc1708fcb34ad10e519faff98a1c0a6daf9271ec77d2e",
+      "sha256": "a738d1aab638be9b924f876f8e99e7397d62d972b74273e70ade4fc3723b3db7",
       "tarball": "http://verdaccio:4873/@kb-labs/adapters-kblabs-gateway/-/adapters-kblabs-gateway-2.120.1.tgz",
+      "sizeBytes": 11489,
       "provides": [
         "llm"
+      ]
+    },
+    {
+      "id": "log-document",
+      "version": "2.120.1",
+      "package": "@kb-labs/adapters-log-document",
+      "sha256": "b38e99dd98f71800181cdc3f94d2a7d3c7861306b0e87f212d5bf4c1833806d7",
+      "tarball": "http://verdaccio:4873/@kb-labs/adapters-log-document/-/adapters-log-document-2.120.1.tgz",
+      "sizeBytes": 10404,
+      "provides": [
+        "logPersistence"
+      ],
+      "defaultFor": [
+        "logPersistence"
       ]
     },
     {
       "id": "log-ringbuffer",
       "version": "2.120.1",
       "package": "@kb-labs/adapters-log-ringbuffer",
-      "sha256": "366e10349caaecbbd9b3cec1d7544e35c91c1eaac6eff4ee95bd933314679054",
+      "sha256": "8f8d5cf6497f220fb6dbc936e595f41de571be11a922fcb54b32fbd83b981d43",
       "tarball": "http://verdaccio:4873/@kb-labs/adapters-log-ringbuffer/-/adapters-log-ringbuffer-2.120.1.tgz",
+      "sizeBytes": 7335,
       "provides": [
         "logRingBuffer"
+      ],
+      "defaultFor": [
+        "logRingBuffer"
+      ]
+    },
+    {
+      "id": "openai-llm",
+      "version": "2.120.1",
+      "package": "@kb-labs/adapters-openai",
+      "sha256": "ba055066bcc9e11f6a8099b65c693e420f8e5758a9cb60c5e06a85c88bb1e3fc",
+      "tarball": "http://verdaccio:4873/@kb-labs/adapters-openai/-/adapters-openai-2.120.1.tgz",
+      "sizeBytes": 12048,
+      "config": [
+        {
+          "id": "openai.apiKey",
+          "path": "/platform/adapterOptions/llm/apiKey",
+          "required": true,
+          "optional": true,
+          "severity": "warning",
+          "secret": true,
+          "env": "OPENAI_API_KEY",
+          "services": [
+            "gateway"
+          ],
+          "hint": "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env",
+          "action": "set OPENAI_API_KEY to enable LLM features"
+        }
+      ],
+      "provides": [
+        "llm"
+      ],
+      "defaultFor": [
+        "llm"
       ]
     },
     {
       "id": "pino-logger",
       "version": "2.120.1",
       "package": "@kb-labs/adapters-pino",
-      "sha256": "8874714c33db0a759b11e1186b8b7f7347734d41cb9192ff70eb4719cfbce274",
+      "sha256": "3cef588bfa91c930fc923a80907b269fba8ed6381ee6609c0b5e8212c64db88e",
       "tarball": "http://verdaccio:4873/@kb-labs/adapters-pino/-/adapters-pino-2.120.1.tgz",
+      "sizeBytes": 11469,
       "provides": [
+        "logger"
+      ],
+      "defaultFor": [
         "logger"
       ]
     },
@@ -567,8 +891,9 @@
       "id": "service-transport-http",
       "version": "2.120.1",
       "package": "@kb-labs/adapters-service-transport-http",
-      "sha256": "73ffecd69601318c9ce21d404992a34b2364ab9d391f113f95d77b855863da89",
+      "sha256": "4e514e72ef8f75c29d236a82ea9fcb9337d6b9a998955121953b3fe7cddb7209",
       "tarball": "http://verdaccio:4873/@kb-labs/adapters-service-transport-http/-/adapters-service-transport-http-2.120.1.tgz",
+      "sizeBytes": 6583,
       "provides": [
         "serviceTransport"
       ]
@@ -577,8 +902,9 @@
       "id": "sqlite-stores",
       "version": "2.120.1",
       "package": "@kb-labs/adapters-sqlite",
-      "sha256": "cd272f18cfecd606c529e7453caab7c6064620db9711e297b86e7e469374f887",
+      "sha256": "0788e8ca3a4b38be5d40e0691836ade2a7a0d322fb093fc2dbab2ee45c811f74",
       "tarball": "http://verdaccio:4873/@kb-labs/adapters-sqlite/-/adapters-sqlite-2.120.1.tgz",
+      "sizeBytes": 41684,
       "provides": [
         "documentDatabase",
         "kvStore"
@@ -592,14 +918,423 @@
       "id": "state-broker",
       "version": "2.120.1",
       "package": "@kb-labs/adapters-state-broker",
-      "sha256": "b988a6686d825f06010eaf1e90332e0f319670a927e537adcadff72b53221685",
+      "sha256": "9574c972bd523940e88813f7201dc6c9dad0a976cfa2bd815ce98f42e11a55e7",
       "tarball": "http://verdaccio:4873/@kb-labs/adapters-state-broker/-/adapters-state-broker-2.120.1.tgz",
+      "sizeBytes": 6105,
       "provides": [
         "cache"
       ],
       "defaultFor": [
         "cache"
       ]
+    }
+  ],
+  "provenance": [
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-/TB3FDMRM46tx+4tYm/qBp7oXPXoFbZWQQHTsAh+0jM1uG9j2G5pBOLjf2864DlqW03hZu9R9rboz0cJsHc+fg==",
+      "distSha256": "97390b25b888fc5ec97504c15a73dedf98b6b70b72911326993e9233826c5193",
+      "package": "@kb-labs/adapters-analytics-file",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-7XoKwRGVP438zJTwmR5jIRXjdcn+nhhWSuSaiGef4ibPEW+zvAqycXQgjjc3CROzNDoRE1OlcOLJbKOlWTyU2g==",
+      "distSha256": "6dc285dc4e9c63d65e489bd26899416db76f1a3df9f15f68af0282d307710ac0",
+      "package": "@kb-labs/adapters-analytics-sqlite",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-yREhNAGjnLoUSCdjngZtSRu0Nl00+VtYm/e3LytPiEfjlfAdqVqsysLwK3azJyATgYl6U0w0NvazoFyXrk3WDA==",
+      "distSha256": "82b59ffbc1d85dbc0ff457ccbe8bef3a88cf42f7938aa9f6917ffed1627fee0a",
+      "package": "@kb-labs/adapters-eventbus-cache",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-rtq0gmhRZtuY/qG6KK6q+ndGuSZ3d9GWiGKRyOBjhZEsdxbXAhSDI24U+bc8FrNSAVtuzWdXoellg0HjFAa3Sg==",
+      "distSha256": "a69028b7d0a7a36cbf481aab26fbd5601dac149bd4a0515ddd05e91331c23631",
+      "package": "@kb-labs/adapters-fs",
+      "version": "2.107.0"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-4RHYevY0bmqdUJeohNYcUPXrhaaehPxBQFhfaoMP9yMiNGA19GOInMFSaKiVXlW1llxkpJPo5ORX40wf7VdU7Q==",
+      "distSha256": "c146619ae9ced56b27091a29743a1b666d5dbf0bacca9c52011d186c84b7ed2c",
+      "package": "@kb-labs/adapters-kblabs-gateway",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-I57bMFI3q776D6UtLEUagKrYiJ+p2Us7ufj0PFKlJTk6zs7U74+y1hQgu4zNYBuOIK/wO6zflSpOuTVhZqcFhQ==",
+      "distSha256": "3962bd7f650783d09c3451d8b3068923af27a737ba489e7d8c6021316b19b622",
+      "package": "@kb-labs/adapters-log-document",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-ol0KgUaulHS3b8fpv7fd+uLZeUnqpAA4tF9XGMURxlNNTP7IC+gooqLnfQpdA/C7F9nIrP2Qum7AvcQOL5QKlg==",
+      "distSha256": "d8bd8647e3dfbe9ffa91cb7e5b294cc71c51bc1820d16a6bed370217559c981b",
+      "package": "@kb-labs/adapters-log-ringbuffer",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-V5e0QHZka4Sw5OlLXiir+9T5PvVDO6a/HU4Cl8i1kC32WC8pBDjJJD84Zf/Oqr+OxL8zydzPF5B61zMd3LPnuA==",
+      "distSha256": "3858482cf324cee6f52d4ca257b3100c950e5147cecc8545054d04507b8a5299",
+      "package": "@kb-labs/adapters-openai",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-kmnCUYikgl0Dg5uqT20/eMl2wyKPhsGgLi2Nl11eCfMYu/qE9RijDDB+w249XjqRUYCyDEBInfLbMyp0QZaxXA==",
+      "distSha256": "f4484350e18d9320cf964d5156885ce9ca51ab8120ecec24915409b839dcfa6c",
+      "package": "@kb-labs/adapters-pino",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-xvasO/4Rh7VIN4y78WfEgFBrf8nrh9sHw4ao54tp/BdYTX/67XTCxeuWmg035//7Vq2yBR+xuOvJXSKBTIHUXQ==",
+      "distSha256": "13731cb11919e8790f8787653802e376b64f9b3c62758674ce9fc173034f5901",
+      "package": "@kb-labs/adapters-service-transport-http",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-hZDcchGUPpD0neCXxp0DZtr6uaADGdlj2mbxxeU3oT+qfsaH0MexXa76wT8J1qte7meYZQdtA4C2uxRa1FNVDw==",
+      "distSha256": "5ce0f531e861ac306f7dd60a3a3fdd50a50a44cc5ad8f79b02b1758dc03134e0",
+      "package": "@kb-labs/adapters-sqlite",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-HCKHP0Cbx5mwvfoGCR1ln4XADv00TvSr3vMSRWxYpgIsleQB/5pZgIhT+fswzDYc9PH8ztOhxxDD1vLEdzSJGw==",
+      "distSha256": "8d629a3cfd604261d568c9afab4c2869382ed7a47acad0525da6767755147eb4",
+      "package": "@kb-labs/adapters-state-broker",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-MwzFoTJW6MA3Q0UW8xMOo2+WfMzWjLqj5iV3dNOhQ0GM0nCvbXwlIQY9i3BSsZAd4RkUynyOhmXk6zmqrhFsOA==",
+      "distSha256": "28fb0ca7d0bfe6c30bf656bd55172cc0d2bdfc9cea7891ac1b4a4ea8ca64cc41",
+      "package": "@kb-labs/agent-entry",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-/JPC/ODovJEFBK1fFXZcJrt8z33UNEshFdlYBtaOGuaFHVX4HVlTbx9qER43WId+8dFSFeAphZl6rjQkqsw/FA==",
+      "distSha256": "857061a0d430b8388ee3daf45dd5a4af808fd38f8c95015cf6a6ab5a131890dc",
+      "package": "@kb-labs/cli-bin",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-TQRUfYEoz/2QetxWEAP529W0xM34AcQV21gXLka4nJBmLFVS5vuguolP+zor1gkSAVDpCqw5W95MZovmWWNMsg==",
+      "distSha256": "2494ba8f840d4c7af2021589e4a86fc178f4575b6f0a80f6dd5eb4266fb394a9",
+      "package": "@kb-labs/cli-commands",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-vgdSSjYPt9WTrVHNjvEe/g/hlelQCc2xaUoGo+NDp5SYRXoXN0Co8i+XryRVt8kTBisikFoKqehHnAp/EUtH9w==",
+      "distSha256": "21aa90595ee27ff3964b1a60a4efdc8b81a432b1966a278309e78e27c36c0716",
+      "package": "@kb-labs/cli-runtime",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-qrMQrcyoQTiP1EFasugIPOSG/dWh0YtvyvG/Xj1KhMpfH6V/TFNBhhIhiA+l9DF0Ocu4VoM1XJTJSx9l1ubfmQ==",
+      "distSha256": "c92d035a546f334ae35621fbcdd267504f0c2098aaee8372cbb0b1d9e1ff1087",
+      "package": "@kb-labs/commit-entry",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-nkR8uv58k1pc0R2ySnimHw4Qa8Kxo7uG3VYAc66qrNQvvwYO6DQO4i6Ho2v4SsowovOZ/doN5cJTc14YMjRJSQ==",
+      "distSha256": "0ca3b4d3c1824b4cbd95d09efa7113123e661abd904c299ba8a5326339500a60",
+      "package": "@kb-labs/core-contracts",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-aZm1gtgKrX6rDR7YchqLLWdDVnzuJyd3LrYF10ZwrJ5CaCjOT6EirFPtoqcoY5MiVJVd+SBfVSUW9TuZ74fPtQ==",
+      "distSha256": "e9d021fc47c06071d3fd753038679258e4358fa8e195677fba9a62993f2ba98e",
+      "package": "@kb-labs/core-ipc",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-LDTjSasjig6Ij+ZNyxsr43EhNc2d67OiORc8ycNHQ+KTyqnxOxaoiPKYe+LAQAttQE7J1I0kFyPqQ3uF7N/kug==",
+      "distSha256": "1b491573f6e7a9fea52971b3a82cfa74549ebb383419cdfeef048ca3bd26790b",
+      "package": "@kb-labs/core-platform",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-JMxc/YLlymteROY2QAeV82hd5gh/QbG4QpPIANsUEueNrEtr0L3xvJhoIQshTFzogSAtnG3neTk8AhxgRSDGnA==",
+      "distSha256": "49fa6d26573af913e1330a1c88f2f4ed67761a0cd9b2e402cceb5ed21584e67f",
+      "package": "@kb-labs/core-project-registry",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-OPlx3LJ3B7yLikyf+ADj1xKwrAQlXaVpyMc/4teW84POzFSrV6fCSCVy2xOVvd2v86e6NZJ1NnbBj0C5Iya8Gw==",
+      "distSha256": "c2e1bf7ef39e9d427ca7e07970f4ec53e5bf10a416e743101ab56385a296a28e",
+      "package": "@kb-labs/core-resource-broker",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-RAdausruNORrRMqwyEJ2rpAoAcEVwmvJd8jhYaLG72FCxLubQ/H7YI0AqoFzACdZfbIeY98OFefaZ6cdy8dPCA==",
+      "distSha256": "c04e9e27c7e874df656a9efdea61d4bf72f24423f071d97c80ef7dee9fd23db0",
+      "package": "@kb-labs/core-retry",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-nq4oy10CQM6MGFljMh4JTOt8xksv1YKuN4WekAZ2ZzbekTqyVYDlxaxzS6mC2ffLTWewc8nISkHdPCGX8SB04g==",
+      "distSha256": "241d4889bbc7cc8cfc1fd579564ba8a2574a658f2c87d674c6986adbfc7b5298",
+      "package": "@kb-labs/core-runtime",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-Vdy3OMyh1Rr92ANRUMl4e651V9jg/iPU+tm1reBGXzY9GbzR7UkBnejZ4U1chIoB4IbVjK/q4qKO6Z0rL1hCDA==",
+      "distSha256": "4e2b98d9a78e58bcdecb349f98ccdaee13cda36530d3d64aca8a1ec4f9d1e7a9",
+      "package": "@kb-labs/core-state-daemon",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-IrWFmoUZuH/bIR/igOJMrxUJRgRXWP/sEk4XqzElxoPRsw9RIhIXuQyyNr7VI1SieE6KlbGhNbtl9R833gRAMw==",
+      "distSha256": "f88be2800defba008752031691477d22b515d00e14b528df20696f80e774304e",
+      "package": "@kb-labs/core-sys",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-R7D9CjNMrZL4Q0NwNqEzuBnoPn5RaYtHVmch6RtSPiVlN5P6xK4LBElZd08TG6GLqcYGRri2X2bGaYtJCJdL1w==",
+      "distSha256": "463d0b4a02adb1b95d308668a2683630ccbf8b800ff5eec4f09960d44af5280e",
+      "package": "@kb-labs/data-store",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-XwJuqZ0PDbD3PsJBOAnCcShad9k6nmyKl9HasGOOCIRlSizT67mbAOYp6WtMn6bcKU6eVN+SuNhbNx1dObtjpw==",
+      "distSha256": "d9514a2d6b311db2e474cba769bdcd947effc643653553d0132539ef5a414227",
+      "package": "@kb-labs/e2e-analytics-emitter",
+      "version": "1.0.0"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-rUoXoB9dH/ERt2EToOzz8MuPufZmnMh9yx/ywnWgsmeBG2l2BWnRexSxQbTNX2yvN5E9wDRvVYFl+DWLKEpMzg==",
+      "distSha256": "bef547f41bea4fa83925bb67c90516b868d1f96e4e5f7652d62d1d6eb07f5713",
+      "package": "@kb-labs/e2e-llm-deterministic",
+      "version": "1.0.0"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-ApejLwRnTvl65wDDpsYjYCqPwDLRyCzfRjt51SF5mKGSiOi6KKwRB94DRdmDknbGUvk2G0ExIloBzyyMHxny5Q==",
+      "distSha256": "d91db279b580521cadd94d6d3eb08a65e1857569975bb0608951fbfa90132116",
+      "package": "@kb-labs/gateway-app",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-GHL8ISftgoxGo+LGq+H10GKOYAB9J92gVhZqeWIHXBtNjy0u3lWEmyG9n7EyqwxIyaT1QAE/TpSnXpQP8xz1Tw==",
+      "distSha256": "1a37eba0df5aa23e7048fb2a40ea8857938b21d65ce36b14bc68b561a76bb20f",
+      "package": "@kb-labs/host-app",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-k/vig2WAJuRLUW/FbUIkcYwuUqRhRf4/W4B/XjcqbQD4xmroz9WAMuXCf/+7jk/2niAfs5H0D9WdOdEpsYyh3A==",
+      "distSha256": "3dd76bcf18481ec99802a7ba7813a14f760523b91ce43cdc62b0a01ec88e9c7a",
+      "package": "@kb-labs/llm-router",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-5uzpVjrT61ndFiqbWB88sDnLTDqHh1e4SCN6E5qqZi6CtKph+bjWvMKKrFkoN099LnVerZy0dm56Mgw50ixitQ==",
+      "distSha256": "15f685d5d00ab6f3d4141500c4ff5fc828022dbe86d0adc958a0ae637929263a",
+      "package": "@kb-labs/marketplace-app",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-llIRtSw8FiADvHBPfPo7wwFCk7lhYDmcau1M8zKOQWUa+uh57Q9T6vFJ0ifAKILRWDy8hc41V8FdTPHVMRud3Q==",
+      "distSha256": "d813481a5416fcda1322b4092819e1ac490a341db3a600d08b88f5b669169cc4",
+      "package": "@kb-labs/marketplace-contracts",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-Pef8+8z4XkgbFO3bC42orCnDHwFgrK3VcmqwCI3AfcL3z2xFn6Xo0v6W7y29K0MRWOZlYvGEGTIVWY2dR7adBw==",
+      "distSha256": "37439bebc01f83deee107b7f6d96dff27562b42bd55d026908aa6ec5dd431302",
+      "package": "@kb-labs/mcp-app",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-26A42Po3xjpNOP8MS2vbfb4psgXwWbCMFoHt3JeMztI4xItsRl313KMMsE0jU5PKxL0gtXtTzAX8r8RJUGLTaw==",
+      "distSha256": "ba107b40af7d215cea3ed95d6456422ce915076e544b1fcd354a268b199226b1",
+      "package": "@kb-labs/mind-entry",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-OlExairTjarXdle3P7LF/pZmkVr3KZRrncRJ+D+ziv6/hE4P9Te7mFX1XKyr4/4UGPYwOWx/sXdbqQs66AwZ4A==",
+      "distSha256": "e981cdee707a838ec3ea6dc284139fe11939a2c9fb2ec979e24fd4b1921afa87",
+      "package": "@kb-labs/perm-presets",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-7xdFDb/t83AZ1c6zrmS6/l7vUUTw3GaeOYvM907zpaKxnfm03DoM5u4s2JcApD3b0/kMUVbabdQtZZ+qWHizGw==",
+      "distSha256": "85912ce99763a0b1ab4a33cd0b168d9206b169b1a2888ee94701f81fb346780e",
+      "package": "@kb-labs/platform-client",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-mSN05DfRU/h4DNrGWsnKVSFjL1htn5KZIT75JqyZjNXOFOT9syrrQ8y0Fk9LGbCSmnDWxbeWB9HE78/PG9/Ldg==",
+      "distSha256": "1ac6df008db3480db547ef096da33f269653ac07f03abd5db36ed869b125b077",
+      "package": "@kb-labs/plugin-contracts",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-EfQ9Z6A7fOfCka31J8b4lBu9wVW4KAYlXcKZ00vc76UzofoPOpFLvuHxZguW0tL5/LSlIptVJXn0CffkGE8WlA==",
+      "distSha256": "d6f17584b1bbbd40f6c92d0cfb69e47d776d0aa119bc040d7b26be808fc23ea4",
+      "package": "@kb-labs/project-runtime-app",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-APORAj4P4BA2nE6cMWOH5+6M36voumz1J/cBMHq0vmJ6k2HXgDXkKmEcUIbA5jku2256zCfUX+is+PcfwKw7/A==",
+      "distSha256": "bf20e1536c847b9b5391c528ff9f30871e3f455cf4441dd3d71b0d4c4f49b2f1",
+      "package": "@kb-labs/quality-entry",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-OsPiuLgZbF++cr+Kbf8zOnVjcLBCxZILngzubxiuMhKBhR1kzvY3sOMfFPaWFL+c9lmO29aTtPBKeA0pFSam1g==",
+      "distSha256": "deee8825a5143a0a5dc1b3aa0ba6907897482dc1cc18196019764ecb05dfc7a9",
+      "package": "@kb-labs/release-manager-cli",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-owaMBRw1E8hEHUqUq420t5NtOa2vBCm3AmwSbPUCzgdCEhlhHz4p9609gvGC7+eXKNaHdrPDMi3uZS9Gv3uCSw==",
+      "distSha256": "6f897f3d05edc87446775dc4b6aaf2df508ae9148dd4008ad1a0f0d6929cef75",
+      "package": "@kb-labs/rest-api-app",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-bI+2HNC1DRKErNyDcOWCdvpAu/RaaKE0c6DtPeMn/IEGHOlF77nn6CFWEeoFpQm0C90evhdCo5yj7dl7EswouQ==",
+      "distSha256": "79e57290779a587b0bd2160139666e38051fcdc7891eebb7cf88671a546a4103",
+      "package": "@kb-labs/review-entry",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-5VT8T/CkR1jlfE+hVeQtEpo10V9ep+/W9SzsoJ0ljyqnlRm+NgDiVQdvEf78sLoG1XJ8gSd5qnHMxGiECJCOnQ==",
+      "distSha256": "c521b49eb32d1347eef495b7f1dce0c713a6c6a03a7b7734df129159a7638cdc",
+      "package": "@kb-labs/scaffold",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-UBaG5/jKu6YfO+4HNwFVDSY8wXjCtcEIpjVUB0DbS1/9qBNiX2gX3TwTFoTGtYI23nJ5gIAxSNuZs1cJwalCPQ==",
+      "distSha256": "248b95cb99bd9055993373fa8cafb2b678a54f18ce7894a398a1ccc5441344a7",
+      "package": "@kb-labs/sdk",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-pEQTFHURZIoZRLdhLyMcgBgJoC7xa4/t9eHpC6MfnnOpaN7T1YA6w46r5wV90t2HSfDQXCU+6jV7VBed3YdCHw==",
+      "distSha256": "53738adcebfc534af67a01bb710c78b9189bedf44d534dbc26130cc12069769a",
+      "package": "@kb-labs/shared-cli-ui",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-B+UPtEJwLWHuIjbH3sP1s+0rkfcHdC/KTLUwbpOYzVVgRE4egFLu6KTsbvgcSV2wLJEOpRq2G5KjBy/zOwViOQ==",
+      "distSha256": "1de698fa2a244a8acc7d161c338cf2893da24aafd713a53542b34cdde633a716",
+      "package": "@kb-labs/shared-command-kit",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-9uZqvLYAi+7ech50pcDS1w6qCC3IjHyNAEZhnoi0zWp2rFylYHtnjMkGrCjNfq4i4m3O2NdP7Ju1AVYoUX90bw==",
+      "distSha256": "a4b1f9fffcc489396e9a7fc4967f8e049fac10d7c1dbf4cd3edaf57bb5a6f4c1",
+      "package": "@kb-labs/shared-tool-kit",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-SsY0XU2tHzZcjF9KbPWkg911Onx+I4eJWAXG/AIQYvgujBv2XbA3HTJ8SXPzsmB6WxNEfaYGdHzJEKS721mjKA==",
+      "distSha256": "ebd76a2b6c9e14248a95076e01dbf347f513814451ad0c4b68b3685659a57cee",
+      "package": "@kb-labs/steward-entry",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-s/keubJ928k6SdyuvAOKa+9bZ949S/xw57HUxp5+ZH6yeioHcadLKwJA0s+KugA+SntY5t5ev2Ot9qykHu4S4w==",
+      "distSha256": "27c908c30c76b2ed625e8759940cb41c163fe14c8f967d7449a1b13ef1c9bc8b",
+      "package": "@kb-labs/studio-app",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-65nMal9FZHlAnz4BiEzBFyrAJCv36eiYSUGWErDEMzexRQO5U7zKeMUp+idw0qRUQGwoQaepVHRUNmVLSJ5chQ==",
+      "distSha256": "81463d45bbb88d0deb4e7ba029f01000d9acc27e9b47ba0dc558d9132c89aa79",
+      "package": "@kb-labs/studio-devtools",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-PPX7Yo/3ot+cyZQoZbV69qUn1/dhM7KZj9TfR2hRQ94TcLMXgWDLJeniHwUEZ6Gcfsg6IwPTkH4+Z12GBBoz8Q==",
+      "distSha256": "9648865479130a6b04f1dfb1700ab475cf915afe9d81c42d06e65bf8fea15471",
+      "package": "@kb-labs/studio-event-bus",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-fRqZ1wiJgX5DKS6Z9b796Nq8hWkdFshGiVsFL+3n4+1m/XzZ9D8h7baN7GIEBKQ898ZvJTwALCcuMotT0xNkHg==",
+      "distSha256": "f67d64be6d55650fcd475c60dd3b810e921814a167075fe06c42ef0481d4e86f",
+      "package": "@kb-labs/studio-hooks",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-ZvCkZI7Km0xP3E139EQ/hRaJU8Ql3piLznrJ+VYKL4ovg4zGRev1LHtAdmD/FDGWTeUFLKlXfXijSuvwfKzVHg==",
+      "distSha256": "be46061c50417fced964386714183c6c89a053d88a5c070fb51e636409d689f6",
+      "package": "@kb-labs/studio-ui-core",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-UQjOtEirKKXumjBg18wVwq9DUGG/KNxHSPQ130zDJqER+gd+HFWEjpUSlhHN8XGun2XWk927DzfqUjTXlwLokg==",
+      "distSha256": "085ddbcd5a6827330c3f73f535958bfa7e369ab1d0c2ade57a72e340a3665b27",
+      "package": "@kb-labs/studio-ui-kit",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-KjU441GSivxvml1poff4KT/VsoxSJyW9hDOC8r36lhUdnCDW8bdqunsFmaZdFW+E0erQ1fVHCEKqZh9LiWlPiw==",
+      "distSha256": "fad6732e0faf5a1bd5fda2c8bc44f3bed3c0eb84656cffcdf4fcb18b3e26499c",
+      "package": "@kb-labs/workflow-daemon",
+      "version": "2.120.1"
+    },
+    {
+      "sourceRevision": "1a92e8a49",
+      "integrity": "sha512-9dxt51QCoGtYJmb5iTMQ7K0R9ra4FfIdkBt/WTD5HSPd1JzFdRNtblfQm40eTONWE1NU4aySL6kyy58rwjq/dg==",
+      "distSha256": "fc42e1cf62e78a5792c647736ca76f7b7b7699bd009c75ad1a402f3871c8efbb",
+      "package": "@kb-labs/workflow-entry",
+      "version": "2.120.1"
     }
   ]
 }

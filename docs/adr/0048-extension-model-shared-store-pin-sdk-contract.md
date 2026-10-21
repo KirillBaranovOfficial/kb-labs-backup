@@ -47,7 +47,7 @@ pin). Source: `docs/architecture/target/03-domain-model.md` (variant C) and
   `kb.config` (`cli/commands/src/registry/plugins-state.ts:26-43`) and is not the
   lock.
 - Consequence: a project-scope `kb marketplace install` runs `pnpm add` in
-  `<projectRoot>` (`plugins/marketplace/npm/src/npm-source.ts:48-57`), so the
+  `<projectRoot>` (`services/marketplace/npm/src/npm-source.ts:48-57`), so the
   package lands in `<projectRoot>/node_modules/<id>` (`:66`). REST sees it through
   the lock; the CLI scans only `<platformRoot>/node_modules`, so by code reading
   it does not. (Read from code; not exercised end to end.)
@@ -59,7 +59,7 @@ pin). Source: `docs/architecture/target/03-domain-model.md` (variant C) and
 **F2. Install writes into the user's repository.** `pnpm add <spec>
 --ignore-workspace-root-check` with `cwd = <projectRoot>` rewrites the project's
 own `package.json`, lockfile and `node_modules`
-(`plugins/marketplace/npm/src/npm-source.ts:48-57`; the comment there says
+(`services/marketplace/npm/src/npm-source.ts:48-57`; the comment there says
 kb-create projects are flat). This contradicts ADR-0044 §8 ("never modifies a
 project silently"). The lock entry also stores `installedAt`
 (`marketplace-lock.ts:160`) and an absolute-ish `resolvedPath`, both poor for a
@@ -83,7 +83,7 @@ schema must not reuse that name.
 
 **F4. Manifest detection executes plugin JS inside the host.** At install,
 `PluginStrategy.detectKind/extractProvides/resolveId` call `loadManifest`
-(`plugins/marketplace/core/src/strategies/plugin-strategy.ts:13-30`), which
+(`services/marketplace/core/src/strategies/plugin-strategy.ts:13-30`), which
 `import()`s the plugin's `dist/manifest.js` in the marketplace daemon process
 (`core/discovery/src/manifest-loader.ts:133-141`); adapters are `import()`ed the
 same way (`adapter-strategy.ts:83-90`). The CLI does it again at registration
@@ -248,7 +248,7 @@ $KB_HOME/store/
   **Gate:** measure real dedup on a registry plugin before 7.2 is accepted.
 - Because the manifest of a version is immutable, the manifest cache becomes
   content-addressed: it lives in `entry.json`. The per-root
-  `.kb/marketplace.manifests.json` (`plugins/marketplace/core/src/manifest-cache.ts:11`)
+  `.kb/marketplace.manifests.json` (`services/marketplace/core/src/manifest-cache.ts:11`)
   and the lock-hash based invalidation of the CLI cache (`discover.ts:1154-1163`)
   are deleted for store entries; the merged-registry cache moves to
   `~/.kb/state/<projectId>/` (ADR-0044 §7).

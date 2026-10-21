@@ -15,6 +15,7 @@
 | `platform` | sync                                                           | Platform lifecycle / provisioning  |
 | `info`     | hello, version, health, diag                                   | Platform health & version info     |
 | `logs`     | diagnose, context, summarize, query, search, get, stats        | Platform log access & analysis     |
+| `marketplace` | install, uninstall, update, sync, plugins:add/remove/list/enable/disable/doctor | Built-in plugin and adapter management |
 | `docs`     | generate-cli-reference                                         | Generate CLI reference docs        |
 | `registry` | diagnostics                                                    | Entity registry diagnostics (1 cmd)|
 | `completion`| install, bash, zsh, fish                                      | Shell tab completion setup         |
@@ -29,7 +30,6 @@
 | `devlink`         | @kb-labs/devlink-entry            | switch · status · plan · freeze · undo · backups                                                               | Cross-repo dep linking |
 | `workspace`       | built-in workspace command group         | register · status · list                                                                                       | Remote workspace agents |
 | `infra-worker`    | @kb-labs/infra-worker-core        | prepare · capture-snapshot · restore-snapshot                                                                  | Environment provisioning |
-| `marketplace`     | @kb-labs/marketplace-entry        | install · uninstall · update · sync · plugins:list/enable/disable/link/unlink/doctor/refresh                   | Plugin management |
 | `hub`             | @kb-labs/marketplace-registry-entry | publish · share · yank · deprecate                                                                             | Plugin publishing (author tools) |
 | `mind`            | @kb-labs/mind-entry               | init · verify · rag-index · rag-query · sync:add/update/delete/list/status                                    | RAG / semantic code search |
 | `qa`              | @kb-labs/qa-entry                 | run · check · stats · gate · history · trends · regressions · baseline:update/status/diff                     | Build/test quality metrics |
@@ -43,15 +43,15 @@
 
 ## Problems Found
 
-### P1 — Namespace collision: two packages under `marketplace`
+### P1 — Resolved: Marketplace management is a built-in command group
 
-`@kb-labs/marketplace-entry` and `@kb-labs/marketplace-registry-entry` both use the `marketplace`
-top-level group. With namespace ownership enforcement (ADR-0018), the second package's commands
-(`publish`, `share`, `yank`, `deprecate`) are silently blocked.
+Plugin installation and management are registered by the platform's built-in
+CLI command groups. Publisher commands remain under the `hub` group supplied by
+`@kb-labs/marketplace-registry-entry`.
 
-These are semantically different audiences too:
+The separate command groups serve different audiences:
 - `marketplace install/plugins/*` → **user** managing their plugin environment
-- `marketplace publish/yank/deprecate` → **plugin author** publishing to KB Labs Hub
+- `hub publish/share/yank/deprecate` → **plugin author** publishing to KB Labs Hub
 
 ### P2 — `quality` vs `qa`: two plugins, blurry boundary
 

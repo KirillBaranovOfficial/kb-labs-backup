@@ -188,7 +188,7 @@ Files changed (in implementation order):
 | 19 | `cli/bin/src/runtime/plugin-executor.ts` | lookup by `path` |
 | 20 | `cli/bin/src/runtime/limits.ts` | `listCommandsUnder()` |
 | 21 | `plugins/clickup/entry/src/manifest.ts` | migrate 20 commands |
-| 22 | `plugins/marketplace/entry/src/manifest.ts` | migrate 11 commands |
+| 22 | `cli/commands/src/commands/system/marketplace/index.ts` | migrate 11 commands |
 | 23–25 | `cli/commands/src/registry/__tests__/` | rewrite tests |
 
 ## References

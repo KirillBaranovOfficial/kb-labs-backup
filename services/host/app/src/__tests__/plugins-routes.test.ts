@@ -3,7 +3,7 @@
  * marketplace plugins list|enable|disable`, over HTTP. Uses a real registry
  * against a temp `KB_HOME` and a stubbed {@link MarketplaceClient} (the real
  * one talks to a live marketplace service; that HTTP contract is exercised by
- * `plugins/marketplace/api`'s own tests).
+ * `services/marketplace/api`'s own tests).
  */
 
 import { mkdtemp, mkdir, rm, realpath } from "node:fs/promises";

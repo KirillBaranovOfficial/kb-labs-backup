@@ -28,6 +28,7 @@ interface FlagDefinition {
   description?: string;
   default?: unknown;
   required?: boolean;
+  secret?: boolean;
   choices?: string[];
 }
 
@@ -133,6 +134,7 @@ function convertFlagSchema(schema: FlagSchemaDefinition): FlagDefinition[] {
       description: def.description,
       default: def.default,
       required: def.required,
+      secret: def.secret,
     };
 
     // Add choices if present (for string flags with choices)
@@ -385,12 +387,6 @@ export function defineSystemCommand<
       let result: number | TResult;
       try {
         result = await handler(handlerContext, argv as unknown as TArgv, validatedFlags);
-        if (isUxResult(result)) {
-          throw createContractViolation();
-        }
-        if (isFailureClaim(result) && !isCommandFailure(result)) {
-          throw createContractViolation();
-        }
         if (isCommandFailure(result)) {
           const envelope = toErrorEnvelope(result.error, {
             correlationId: ctx.requestId,
@@ -402,6 +398,12 @@ export function defineSystemCommand<
             ctx.ui?.error(renderErrorEnvelope(envelope), { hint: envelope.hint });
           }
           return mapErrorEnvelopeToExitCode(envelope.code);
+        }
+        if (isUxResult(result)) {
+          throw createContractViolation();
+        }
+        if (isFailureClaim(result) && !isCommandFailure(result)) {
+          throw createContractViolation();
         }
       } catch (error) {
         const envelope = toErrorEnvelope(error, {

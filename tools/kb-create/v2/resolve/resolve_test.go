@@ -583,8 +583,8 @@ func TestPlanKeepsPlatformMembersThatShareACatalogID(t *testing.T) {
 	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{
 		ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
 		Members: []catalog.Component{
-			{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-app", Tarball: "https://example.test/marketplace-app.tgz", SHA256: "app"},
-			{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-entry", Tarball: "https://example.test/marketplace-entry.tgz", SHA256: "entry"},
+			{ID: "shared-member", Version: "2.0.0", Package: "@kb-labs/member-a", Tarball: "https://example.test/member-a.tgz", SHA256: "a"},
+			{ID: "shared-member", Version: "2.0.0", Package: "@kb-labs/member-b", Tarball: "https://example.test/member-b.tgz", SHA256: "b"},
 		},
 		Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}},
 	}}}
@@ -598,7 +598,7 @@ func TestPlanKeepsPlatformMembersThatShareACatalogID(t *testing.T) {
 			packages[artifact.Package] = true
 		}
 	}
-	if !packages["@kb-labs/marketplace-app"] || !packages["@kb-labs/marketplace-entry"] {
+	if !packages["@kb-labs/member-a"] || !packages["@kb-labs/member-b"] {
 		t.Fatalf("expected both same-ID members to survive dedup, got artifacts = %#v", plan.Artifacts)
 	}
 }
@@ -650,8 +650,8 @@ func TestPlanHashIsStableForPlatformMembersThatShareCatalogIDs(t *testing.T) {
 		Platforms: []catalog.PlatformBundle{{
 			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
 			Members: []catalog.Component{
-				{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-app", Tarball: "https://example.test/marketplace-app.tgz", SHA256: "app"},
-				{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-entry", Tarball: "https://example.test/marketplace-entry.tgz", SHA256: "entry"},
+				{ID: "shared-member", Version: "2.0.0", Package: "@kb-labs/member-a", Tarball: "https://example.test/member-a.tgz", SHA256: "a"},
+				{ID: "shared-member", Version: "2.0.0", Package: "@kb-labs/member-b", Tarball: "https://example.test/member-b.tgz", SHA256: "b"},
 				{ID: "workflow", Version: "2.0.0", Package: "@kb-labs/workflow-daemon", Tarball: "https://example.test/workflow-daemon.tgz", SHA256: "daemon"},
 				{ID: "workflow", Version: "2.0.0", Package: "@kb-labs/workflow-entry", Tarball: "https://example.test/workflow-entry.tgz", SHA256: "entry"},
 			},
@@ -659,7 +659,6 @@ func TestPlanHashIsStableForPlatformMembersThatShareCatalogIDs(t *testing.T) {
 			Profiles: map[string]contracts.ServiceGraph{"default": {}},
 		}},
 		Plugins: []catalog.Component{
-			{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-entry", Tarball: "https://example.test/marketplace-entry.tgz", SHA256: "entry"},
 			{ID: "workflow", Version: "2.0.0", Package: "@kb-labs/workflow-entry", Tarball: "https://example.test/workflow-entry.tgz", SHA256: "entry"},
 		},
 	}

@@ -33,7 +33,6 @@ e2e/delivery/apply_test.go
 infra/devkit/bin/kb-devkit-qa.mjs
 plugins/marketplace-registry/api/src/routes/packages.ts
 plugins/review/heuristic/src/runner.ts
-plugins/state/daemon/src/__tests__/bootstrap.test.ts
 plugins/workflow/daemon/src/api/workflows-api.ts
 plugins/workflow/entry/src/studio/components/artifacts/MarkdownViewer.tsx
 services/gateway/app/src/auth/routes.ts

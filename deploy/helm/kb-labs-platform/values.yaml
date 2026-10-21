@@ -35,7 +35,7 @@ services:
     port: 5071
     replicas: 1
     healthPath: /health
-    # Real runtime dependency (plugins/marketplace-registry/README.md:44) —
+    # Real runtime dependency (services/marketplace-registry/README.md:46) —
     # an initContainer waits for state-daemon before starting.
     dependsOn: [state-daemon]
   marketplace:

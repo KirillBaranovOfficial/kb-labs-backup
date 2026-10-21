@@ -23,7 +23,6 @@
           "rest": { "url": "http://127.0.0.1:5050" },
           "workflow": { "url": "http://127.0.0.1:7778" },
           "marketplace": { "url": "http://127.0.0.1:5070" },
-          "marketplace-registry": { "url": "http://127.0.0.1:5071" },
           "mcp-daemon": { "url": "http://127.0.0.1:7779" }
         }
       },

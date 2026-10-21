@@ -29,7 +29,10 @@ import enableCommand from '../../commands/plugins/enable.js';
 import disableCommand from '../../commands/plugins/disable.js';
 import addCommand from '../../commands/plugins/add.js';
 import removeCommand from '../../commands/plugins/remove.js';
-import { manifest } from '../../manifest.js';
+import { marketplaceGroup } from '../../index.js';
+
+const marketplacePluginGroup = marketplaceGroup.subgroups?.find(({ name }) => name === 'plugins');
+const marketplacePluginCommands = marketplacePluginGroup?.commands ?? [];
 
 const mockedPost = vi.mocked(post);
 const mockedResolveCliScope = vi.mocked(resolveCliScope);
@@ -95,28 +98,28 @@ describe('marketplace:plugins:disable', () => {
 
 describe('marketplace plugins add', () => {
   it('S-179.32: declares --json on the mutating add command', () => {
-    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace plugins add');
+    const command = marketplacePluginCommands.find(({ name }) => name === 'add');
 
-    expect(command?.operationType).toBe('mutate');
+    expect(command).toBeDefined();
     expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'json', type: 'boolean' }));
   });
 
   it('declares the --link and --scope flags consumed by the add handler', () => {
-    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace plugins add');
+    const command = marketplacePluginCommands.find(({ name }) => name === 'add');
 
     expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'link', type: 'string' }));
     expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'scope', type: 'string' }));
   });
 
   it('registers add and remove under the existing plural plugins group', () => {
-    const paths = manifest.cli.commands.map(({ path }) => path);
+    const names = marketplacePluginCommands.map(({ name }) => name);
 
-    expect(paths).toContain('marketplace plugins add');
-    expect(paths).toContain('marketplace plugins remove');
-    expect(manifest.cli.groupMeta).toContainEqual(expect.objectContaining({ path: 'marketplace plugins' }));
-    expect(manifest.cli.commands.find(({ path }) => path === 'marketplace plugins add')?.examples)
+    expect(names).toContain('add');
+    expect(names).toContain('remove');
+    expect(marketplacePluginGroup?.describe).toBe('Plugin management');
+    expect(marketplacePluginCommands.find(({ name }) => name === 'add')?.examples)
       .toContain('kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry');
-    expect(manifest.cli.commands.find(({ path }) => path === 'marketplace plugins remove')?.examples)
+    expect(marketplacePluginCommands.find(({ name }) => name === 'remove')?.examples)
       .toContain('kb marketplace plugins remove @kb-labs/my-plugin');
   });
 
@@ -146,14 +149,14 @@ describe('marketplace plugins add', () => {
 
 describe('marketplace plugins remove', () => {
   it('declares --json on the mutating remove command', () => {
-    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace plugins remove');
+    const command = marketplacePluginCommands.find(({ name }) => name === 'remove');
 
-    expect(command?.operationType).toBe('mutate');
+    expect(command).toBeDefined();
     expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'json', type: 'boolean' }));
   });
 
   it('declares the --scope flag consumed by the remove handler', () => {
-    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace plugins remove');
+    const command = marketplacePluginCommands.find(({ name }) => name === 'remove');
 
     expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'scope', type: 'string' }));
   });

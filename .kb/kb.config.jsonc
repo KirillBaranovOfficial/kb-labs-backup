@@ -150,9 +150,8 @@
               ],
               "platformMembers": [
                 "@kb-labs/cli-bin",
-                "@kb-labs/scaffold",
-                "@kb-labs/workflow-entry",
-                "@kb-labs/marketplace-entry"
+                "@kb-labs/core-workspace",
+                "@kb-labs/host-agent-app"
               ],
               "packages": {
                 "exclude": [

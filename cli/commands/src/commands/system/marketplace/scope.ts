@@ -1,5 +1,5 @@
 /**
- * @module @kb-labs/marketplace-entry/scope
+ * @module @kb-labs/cli-commands/marketplace/scope
  *
  * Client-side scope resolution for marketplace CLI commands. Project scope
  * is resolved from the platform registry; repository files do not establish

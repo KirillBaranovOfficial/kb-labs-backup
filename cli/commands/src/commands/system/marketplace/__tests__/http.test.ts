@@ -8,7 +8,10 @@ vi.mock('@kb-labs/sdk', () => ({
     return environment.KB_GATEWAY_URL.replace(/\/+$/, '');
   },
 }));
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({ gatewayApiFetch }));
+vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>(),
+  gatewayApiFetch,
+}));
 
 import { get } from '../http.js';
 
@@ -17,8 +20,8 @@ describe('marketplace shared gateway client', () => {
 
   // case: S-041.7
   it('delegates marketplace REST calls to the shared authenticated client', async () => {
-    gatewayApiFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    await get('/packages');
+    gatewayApiFetch.mockResolvedValue(new Response(JSON.stringify({ packages: [] }), { status: 200 }));
+    await expect(get('/packages')).resolves.toEqual({ packages: [] });
     expect(gatewayApiFetch).toHaveBeenCalledWith(
       new URL('http://gateway.test/api/v1/marketplace/packages'),
       expect.objectContaining({ method: 'GET' }),

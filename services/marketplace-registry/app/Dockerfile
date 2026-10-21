@@ -14,7 +14,7 @@ COPY --chown=kb:nodejs .kb/deploy/marketplace-registry-app/dist ./dist
 # Composition is deliberately absent from the release image. kb-create writes
 # the user's explicit config and lock into their derived image; the entrypoint
 # refuses to boot without both files.
-COPY --chown=kb:nodejs plugins/marketplace-registry/app/docker-entrypoint.sh /app/docker-entrypoint.sh
+COPY --chown=kb:nodejs services/marketplace-registry/app/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN mkdir -p .kb/data && chown -R kb:nodejs .kb && \
     chmod +x /app/docker-entrypoint.sh
