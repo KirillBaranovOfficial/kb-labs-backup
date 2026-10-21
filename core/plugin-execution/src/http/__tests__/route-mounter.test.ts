@@ -1,17 +1,18 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { createErrorEnvelope, serializeError } from '@kb-labs/core-platform';
+import { NoOpLogger } from '@kb-labs/core-platform/noop';
+import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
 import { mountRoutes } from '../route-mounter.js';
 import type { ExecutionBackend, ExecutionResult } from '../../types.js';
 
 function backendReturning(result: ExecutionResult): ExecutionBackend {
-  return {
-    async execute() { return result as unknown as Awaited<ReturnType<ExecutionBackend['execute']>>; },
+  return createNormalizedExecutionBackend({
+    async execute() { return result; },
     async health() { return { healthy: true, backend: 'in-process', executionMode: 'in-process' }; },
     async stats() { return { totalExecutions: 0, successCount: 0, errorCount: 0, avgExecutionTimeMs: 0 }; },
     async shutdown() {},
-    executionMode: 'in-process',
-  };
+  }, new NoOpLogger(), 'in-process');
 }
 
 const manifest = {

@@ -185,6 +185,29 @@ describe('errors.catalog.json lint', () => {
     }
   });
 
+  // case: S-203.2
+  it('declares a transport status for every catalog code', () => {
+    for (const entry of errorCatalog.codes) {
+      expect(entry.httpStatus, `${entry.code} httpStatus`).toBeTypeOf('number');
+      expect(entry.httpStatus, `${entry.code} httpStatus`).toBeGreaterThanOrEqual(100);
+      expect(entry.httpStatus, `${entry.code} httpStatus`).toBeLessThanOrEqual(599);
+    }
+  });
+
+  it('assigns compatibility refusal its input refusal exit class', () => {
+    expect(getCatalogEntry('KB_INSTALL_INCOMPATIBLE_COMPONENTS')).toMatchObject({
+      processExitClass: 'input-refusal',
+      httpStatus: 409,
+    });
+  });
+
+  it('catalogues the transport outcomes for the recorded HTTP failures', () => {
+    expect(getCatalogEntry('KB_CONFIG_LLM_KEY_INVALID')?.httpStatus).toBe(502);
+    expect(getCatalogEntry('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION')?.httpStatus).toBe(500);
+    expect(getCatalogEntry('KB_INSTALL_PROVENANCE_MISMATCH')?.structuredDetailFields)
+      .toEqual(expect.arrayContaining(['diagnosticPath', 'logPath']));
+  });
+
 
   it('renders the unexpected-error log query from the envelope correlation ID', () => {
     const envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId: 'cli-correlation-1' });

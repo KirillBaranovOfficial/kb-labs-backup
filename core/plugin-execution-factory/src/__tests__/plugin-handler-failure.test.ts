@@ -398,6 +398,32 @@ describe('normalizePluginHandlerFailure', () => {
     });
   });
 
+  // case: S-203.25
+  it('logs the returned typed failure message instead of the coerced object message', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const returnedFailureError = {
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      message: 'Marketplace doctor found issues',
+      hint: 'Run the marketplace doctor command again.',
+    };
+    const envelope = normalizePluginHandlerFailure(new Error('[object Object]'), {
+      pluginId: '@kb-labs/marketplace',
+      pluginVersion: '1.0.0',
+      command: 'marketplace plugins doctor',
+      correlationId: 'marketplace-doctor-correlation',
+      returnedFailure: true,
+      returnedFailureError,
+      serializedError: { name: 'NonErrorThrown', message: '[object Object]' },
+      logger: loggerFor(records),
+      logContext,
+    });
+
+    expect(envelope.correlationId).toBe('marketplace-doctor-correlation');
+    expect(records).toHaveLength(1);
+    expect(records[0]?.serializedError).toMatchObject({ message: 'Marketplace doctor found issues' });
+    expect(JSON.stringify(records[0])).not.toContain('[object Object]');
+  });
+
   it('redacts process secrets from a typed envelope returned to the caller', () => {
     const records: Array<Record<string, unknown>> = [];
     const secret = 'x46-typed-envelope-secret-fixture';

@@ -28,6 +28,15 @@ describe('core toErrorEnvelope for plugin errors', () => {
     ['platform code without a product hint', new PluginError('boom', 'KB_RUNTIME_COMMAND_FAILED'), 'KB_RUNTIME_COMMAND_FAILED'],
   ];
 
+  it('derives REST status from the shared error catalog', () => {
+    const error = new PluginError('Package is missing.', 'KB_PLUGIN_NOT_INSTALLED', { package: '@kb-labs/missing' });
+    expect(error.statusCode).toBe(404);
+    expect(toErrorEnvelope(error)).toMatchObject({
+      code: 'KB_PLUGIN_NOT_INSTALLED',
+      details: { package: '@kb-labs/missing' },
+    });
+  });
+
   for (const [name, error, code] of cases) {
     it(`maps ${name} to ${code} as a valid envelope`, () => {
       const envelope = toErrorEnvelope(error, { correlationId: 'c1', binary: 'test-cli' });
@@ -76,6 +85,7 @@ describe('core toErrorEnvelope for plugin errors', () => {
     const error = new ProductPluginError(
       'Nothing is staged.',
       productError.code,
+      400,
       undefined,
       'Stage the intended changes, then retry.',
     );

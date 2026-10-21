@@ -52,9 +52,7 @@ describe('shared HTTP failure boundary', () => {
     });
 
     expect(statusForHttpFailure(new Error('upstream'), 502)).toBe(502);
-    expect(() => statusForHttpFailure({ code: 'KB_AUTH_CLOCK_SKEW' }, 401)).toThrow(
-      'Catalogued error "KB_AUTH_CLOCK_SKEW" reached an HTTP boundary without httpStatus',
-    );
+    expect(statusForHttpFailure({ code: 'KB_AUTH_CLOCK_SKEW' }, 401)).toBe(500);
   });
 
   it('preserves a validated product failure and keeps the transport HTTP status', () => {

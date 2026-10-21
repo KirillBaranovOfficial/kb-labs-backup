@@ -65,7 +65,7 @@ describe('Agents session handler', () => {
     await expect(createSessionHandler.execute(ctx, {
       body: { agentId: 'agent-does-not-exist', task: 'Summarize the project' },
     })).rejects.toMatchObject({
-      errorCode: 'KB_AGENT_NOT_FOUND',
+      code: 'KB_AGENT_NOT_FOUND',
       statusCode: 404,
       details: { agentId: 'agent-does-not-exist' },
       message: expect.stringContaining('agent-does-not-exist'),
@@ -81,7 +81,7 @@ describe('Agents session handler', () => {
     await expect(getSessionHandler.execute(ctx, {
       params: { sessionId: 'session-does-not-exist' },
     })).rejects.toMatchObject({
-      errorCode: 'KB_RUNTIME_RESOURCE_NOT_FOUND',
+      code: 'KB_RUNTIME_RESOURCE_NOT_FOUND',
       statusCode: 404,
       details: { plugin: '@kb-labs/agents', sessionId: 'session-does-not-exist' },
       message: expect.stringContaining('session-does-not-exist'),
