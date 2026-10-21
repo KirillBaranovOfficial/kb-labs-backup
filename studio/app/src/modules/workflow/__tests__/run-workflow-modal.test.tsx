@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { DynamicField, runWithRequiredInputs } from '../../studio/components/RunWorkflowModal.js';
+import { DynamicField, runWithRequiredInputs } from '../components/RunWorkflowModal.js';
 
 describe('RunWorkflowModal input validation', () => {
   // case: S-022.4

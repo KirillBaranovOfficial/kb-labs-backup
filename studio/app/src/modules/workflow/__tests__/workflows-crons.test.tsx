@@ -1,25 +1,23 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import WorkflowsCrons from '../../studio/pages/WorkflowsCrons.js';
+import WorkflowsCrons from '../pages/WorkflowsCrons.js';
 
 const hooks = vi.hoisted(() => ({
   useData: vi.fn(),
   useMutateData: vi.fn(),
   useWorkflowProject: vi.fn(),
+  component: (name: string) => Object.assign(() => null, { displayName: name }),
 }));
 
-vi.mock('@kb-labs/sdk/studio', () => {
-  const component = (name: string) => Object.assign(({ children, ...props }: Record<string, unknown>) =>
-    React.createElement(name, props, children as React.ReactNode), { displayName: name });
-  return {
-    UITable: component('table'), UITag: component('span'), UISpace: component('div'),
-    UITypographyText: component('span'), UIBadge: component('span'), UIIcon: component('i'),
-    UIButton: component('button'), UICard: component('section'), UIPage: component('main'),
-    UIPageHeader: component('header'), useData: hooks.useData, useMutateData: hooks.useMutateData,
-  };
-});
+vi.mock('@kb-labs/studio-ui-kit', () => ({
+  UITable: hooks.component('table'), UITag: hooks.component('span'), UISpace: hooks.component('div'),
+  UITypographyText: hooks.component('span'), UIBadge: hooks.component('span'), UIIcon: hooks.component('i'),
+  UIButton: hooks.component('button'), UICard: hooks.component('section'), UIPage: hooks.component('main'),
+  UIPageHeader: hooks.component('header'),
+}));
+vi.mock('@kb-labs/studio-hooks', () => ({ useData: hooks.useData, useMutateData: hooks.useMutateData }));
 
-vi.mock('../../studio/components/shared/WorkflowProjectPicker.js', () => ({
+vi.mock('../components/shared/WorkflowProjectPicker.js', () => ({
   useWorkflowProject: hooks.useWorkflowProject,
 }));
 

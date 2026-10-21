@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createErrorEnvelope, getCatalogEntry } from '@kb-labs/core-platform/error-envelope';
 import { createUxFailureResult } from '@kb-labs/core-platform/ux-result';
+import type { WorkflowHealthResponse } from '@kb-labs/workflow-contracts';
 vi.mock('@kb-labs/sdk', () => ({
   useEnv: (name: string) => process.env[name],
   deriveProjectId: () => 'prj_0123456789abcdef',
@@ -36,6 +37,22 @@ describe('workflow project gateway address', () => {
   it('does not fall back to a default gateway address when none is injected', () => {
     delete process.env.KB_PROJECT_ID;
     expect(() => getWorkflowDaemonUrl()).toThrow('gateway address missing');
+  });
+
+  it('reads the daemon health response contract', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'degraded', service: 'workflow', ts: 123,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    try {
+      const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
+      const health: WorkflowHealthResponse = await client.health();
+
+      expect(health).toEqual({ status: 'degraded', service: 'workflow', ts: 123 });
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4312/workflow/health', undefined);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('lists cron schedules through the daemon plural route', async () => {

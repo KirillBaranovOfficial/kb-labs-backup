@@ -41,7 +41,7 @@ describe('workflow:health', () => {
   it('CH-01: prints success message when daemon is healthy', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
-        health: async () => ({ ok: true, service: 'workflow' }),
+        health: async () => ({ status: 'ok', service: 'workflow', ts: 1 }),
       });
     });
 
@@ -53,10 +53,10 @@ describe('workflow:health', () => {
     expect(captured.success[0]?.message).toContain('healthy');
   });
 
-  it('CH-02: --json returns { ok: true, data: { ok, service } }', async () => {
+  it('CH-02: --json returns the daemon health status', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
-        health: async () => ({ ok: true, service: 'workflow' }),
+        health: async () => ({ status: 'ok', service: 'workflow', ts: 1 }),
       });
     });
 
@@ -64,7 +64,7 @@ describe('workflow:health', () => {
     const ctx = createMockContext({ ui });
     const result = await healthCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result).toMatchObject({ ok: true, service: 'workflow' });
+    expect(result).toEqual({ status: 'ok', service: 'workflow', ts: 1 });
   });
 
   it('CH-03: daemon unavailable — prints error, returns exitCode 1', async () => {

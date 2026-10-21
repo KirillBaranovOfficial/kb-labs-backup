@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it } from 'vitest';
-import { RunInputs } from '../../studio/pages/WorkflowRunDetail.js';
+import { RunInputs } from '../pages/WorkflowRunDetail.js';
 
 function textContent(node: React.ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') {return String(node)}

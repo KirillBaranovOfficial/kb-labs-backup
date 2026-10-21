@@ -33,13 +33,7 @@ class ProjectIdentityStepsTest(unittest.TestCase):
             (platform_root / ".kb").mkdir(parents=True)
             (platform_root / ".kb" / "marketplace.lock").write_text(json.dumps({
                 "schema": "kb.marketplace/3",
-                "plugins": {"@kb-labs/workflow": {
-                    "version": "2.120.1",
-                    "integrity": "sha256-fixture",
-                    "source": "marketplace",
-                    "enabled": True,
-                    "package": "@kb-labs/workflow-entry",
-                }},
+                "plugins": {},
             }))
             env = {"HOME": home, "KB_HOME": str(Path(home) / ".kb"), "KB_PLATFORM_ROOT": str(platform_root)}
             Path(env["KB_HOME"]).mkdir()
@@ -65,18 +59,20 @@ class ProjectIdentityStepsTest(unittest.TestCase):
                 if args[:2] == ["marketplace", "install"]:
                     package = args[2].split("@2.120.1")[0]
                     manifest_id = {
-                        "@kb-labs/workflow-entry": "@kb-labs/workflow",
+                        "@kb-labs/qa-entry": "@kb-labs/qa",
                         "@kb-labs/commit-entry": "@kb-labs/commit",
                         "@kb-labs/mind-entry": "@kb-labs/mind",
                     }.get(package, package)
-                    locks.setdefault(cwd, {})[manifest_id] = {
+                    target = (Path(env["KB_PLATFORM_ROOT"])
+                              if "--scope" in args and args[args.index("--scope") + 1] == "platform" else cwd)
+                    locks.setdefault(target, {})[manifest_id] = {
                         "version": "2.120.1",
                         "integrity": "sha256-fixture",
                         "source": "marketplace",
                         "enabled": True,
                         "package": package,
                     }
-                    lock = cwd / ".kb" / "marketplace.lock"
+                    lock = target / ".kb" / "marketplace.lock"
                     lock.parent.mkdir(parents=True, exist_ok=True)
                     lock.write_text(json.dumps({"plugins": locks[cwd]}))
                     return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")

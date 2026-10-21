@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "6d88227809aedac56ea8eb96e4007536e299c50fc47dd8f49f90ffc7d1ecc8b2",
+  "digest": "6c2eb5af652247822a4452fef6e2cb7f0351a1cff397cae3febf71d796b4f636",
   "channels": {
     "stable": "2.120.1"
   },
@@ -15,7 +15,7 @@
         "requires": [
           {
             "label": "sdk@2.120.1",
-            "constraint": "\u003e=2.0.0"
+            "constraint": ">=2.0.0"
           }
         ],
         "status": "prepared",
@@ -372,6 +372,13 @@
           "package": "@kb-labs/adapters-service-transport-http",
           "sha256": "73ffecd69601318c9ce21d404992a34b2364ab9d391f113f95d77b855863da89",
           "tarball": "http://verdaccio:4873/@kb-labs/adapters-service-transport-http/-/adapters-service-transport-http-2.120.1.tgz"
+        },
+        {
+          "id": "workflow-entry",
+          "version": "2.120.1",
+          "package": "@kb-labs/workflow-entry",
+          "sha256": "bcc7b676fbe98729f7ef62a9a9fafe7c03668306378448db4b4c8a4f4dc243ad",
+          "tarball": "http://verdaccio:4873/@kb-labs/workflow-entry/-/workflow-entry-2.120.1.tgz"
         }
       ]
     }
@@ -497,13 +504,6 @@
       "package": "@kb-labs/scaffold",
       "sha256": "36cf599986cf0cfe55398508af7493c81ee38cafd50eef3750d1fadfcd98ab14",
       "tarball": "http://verdaccio:4873/@kb-labs/scaffold/-/scaffold-2.120.1.tgz"
-    },
-    {
-      "id": "@kb-labs/workflow",
-      "version": "2.120.1",
-      "package": "@kb-labs/workflow-entry",
-      "sha256": "bcc7b676fbe98729f7ef62a9a9fafe7c03668306378448db4b4c8a4f4dc243ad",
-      "tarball": "http://verdaccio:4873/@kb-labs/workflow-entry/-/workflow-entry-2.120.1.tgz"
     }
   ],
   "adapters": [

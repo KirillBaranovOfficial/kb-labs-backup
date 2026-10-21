@@ -18,7 +18,7 @@ export function makeClient(overrides: Partial<WorkflowClientInstance>): Workflow
  * Use: const client = mockObject(defaultWorkflowClient, { runWorkflow: async () => ... })
  */
 export const defaultWorkflowClient: WorkflowDaemonClient = {
-  health: async () => ({ ok: true, service: 'workflow' }),
+  health: async () => ({ status: 'ok', service: 'workflow', ts: 1 }),
 
   getMetrics: async () => ({
     runs: { total: 0, queued: 0, running: 0, success: 0, failed: 0, cancelled: 0 },
