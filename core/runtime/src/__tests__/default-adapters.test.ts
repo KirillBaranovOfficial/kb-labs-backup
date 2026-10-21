@@ -8,10 +8,32 @@ import { loadAdapterManifest } from '@kb-labs/core-platform';
 import type { AdapterManifest } from '@kb-labs/core-platform';
 import { validatePlatformAdapterOptions } from '@kb-labs/core-config';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
-import { resolveDiscoveredAdapterDefaults } from '../default-adapters.js';
+import { configuredAdapterForSlot, projectEffectiveAdapterImplementation, resolveDiscoveredAdapterDefaults } from '../default-adapters.js';
+import { ADAPTER_CONFIG_KEYS } from '../config.js';
 import type { DiscoveredAdapter } from '../discover-adapters.js';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
+const adapterProjectionCases: Array<{ slot: string; key: string | undefined; projection: 'package' | 'composite' }> =
+  Object.entries(ADAPTER_CONFIG_KEYS).reduce((cases, [slot, mapping]) => {
+    if (mapping.keys.length === 0) {cases.push({ slot, key: undefined, projection: mapping.projection });}
+    for (const key of mapping.keys) {cases.push({ slot, key, projection: mapping.projection });}
+    return cases;
+  }, [] as Array<{ slot: string; key: string | undefined; projection: 'package' | 'composite' }>);
+
+describe('projectEffectiveAdapterImplementation', () => {
+  it.each(adapterProjectionCases)('projects $slot from mapped key $key', ({ slot, key, projection }) => {
+    const configured = '@kb-labs/adapters-selected';
+    const staleHost = '@kb-labs/adapters-stale';
+    const host = projection === 'composite' ? 'HybridLogReader' : staleHost;
+    const adapters = key === undefined ? {} : { [key]: configured };
+    const result = projectEffectiveAdapterImplementation(slot, adapters, host);
+    expect(result).toBe(projection === 'package' && key !== undefined ? configured : host);
+    if (projection === 'package' && key !== undefined) {
+      expect(projectEffectiveAdapterImplementation(slot, adapters, undefined, '@kb-labs/adapters-default'))
+        .toBe(configured);
+    }
+  });
+});
 
 async function workspaceAdapterManifests(): Promise<Map<string, AdapterManifest>> {
   const packages = await findWorkspacePackages(workspaceRoot);
@@ -29,6 +51,7 @@ async function workspaceAdapterManifests(): Promise<Map<string, AdapterManifest>
     for (const [slot, entrypoint] of Object.entries(result.manifest.defaultFor ?? {})) {
       expect(Array.isArray(entrypoint), `${candidate.packageName} defaultFor ${slot} must declare path segments`).toBe(true);
       expect(entrypoint.every(segment => segment.length > 0 && segment !== '.' && segment !== '..'), `${candidate.packageName} defaultFor ${slot} must use package path segments`).toBe(true);
+      expect(configuredAdapterForSlot(slot, {}), `${candidate.packageName} defaultFor ${slot} must resolve through the platform config mapping`).toBeDefined();
     }
     manifests.set(candidate.packageName, result.manifest);
   }
@@ -133,6 +156,51 @@ describe('resolveDiscoveredAdapterDefaults', () => {
       documentDatabase: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
       kvStore: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
     });
+  });
+
+  it('rejects a manifest default when its slot has no package config key', () => {
+    const mapping = Object.entries(ADAPTER_CONFIG_KEYS).find(([, entry]) =>
+      entry.projection === 'package' && entry.keys.length === 0,
+    );
+    expect(mapping).toBeDefined();
+    const slot = mapping![0];
+    const invalidDefault = discovered('@kb-labs/adapters-invalid-default', {
+      defaultFor: { [slot]: [] }, schema: 'kb.adapter/1', implements: 'IStorage',
+    });
+
+    expect(() => resolveDiscoveredAdapterDefaults({ adapters: {}, adapterOptions: {} }, new Map([
+      [invalidDefault.packageName, invalidDefault],
+    ]), '/project')).toThrow(`Adapter ${invalidDefault.packageName} declares ${slot} as a default, but that slot has no package config key.`);
+  });
+
+  it('resolves declared option defaults for explicitly selected installed adapters', () => {
+    const storage = discovered('@kb-labs/adapters-fs', {
+      defaultFor: { storage: [] },
+      schema: 'kb.adapter/1', implements: 'IStorage',
+      configSchema: { baseDir: { type: 'string', defaultPath: { root: 'projectState', segments: ['storage'] } } },
+    });
+    const resolved = resolveDiscoveredAdapterDefaults({
+      adapters: { storage: '@kb-labs/adapters-fs' }, adapterOptions: {},
+    }, new Map([[storage.packageName, storage]]), '/project');
+
+    expect(resolved.adapters.storage).toBe('@kb-labs/adapters-fs');
+    expect(resolved.adapterOptions.storage).toEqual({
+      baseDir: resolveRuntimeStatePath('/project', ['storage']),
+    });
+  });
+
+  it('preserves explicit options stored under a mapped config key for a manifest default', () => {
+    const workspaceProvider = discovered('@kb-labs/adapters-workspace-localfs', {
+      defaultFor: { workspaceProvider: [] },
+      schema: 'kb.adapter/1', implements: 'IWorkspaceProvider',
+      configSchema: { rootDir: { type: 'string', default: '/default/workspaces' } },
+    });
+    const resolved = resolveDiscoveredAdapterDefaults({
+      adapters: {}, adapterOptions: { workspace: { rootDir: '/custom/workspaces' } },
+    }, new Map([[workspaceProvider.packageName, workspaceProvider]]), '/project');
+
+    expect(resolved.adapters.workspace).toBe('@kb-labs/adapters-workspace-localfs');
+    expect(resolved.adapterOptions.workspace).toEqual({ rootDir: '/custom/workspaces' });
   });
 
   it('resolves multi-entry defaults from the real SQLite and OpenAI manifests', async () => {

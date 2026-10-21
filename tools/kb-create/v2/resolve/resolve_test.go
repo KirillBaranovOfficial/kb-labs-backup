@@ -537,6 +537,37 @@ func TestPlanRecordsBundledSDKOnceUnderItsSelectedRole(t *testing.T) {
 	}
 }
 
+func TestPlanIncludesSDKSelectedByPlatformReleaseWhenRequestOmitsSDK(t *testing.T) {
+	sdk := catalog.Component{ID: "sdk", Version: "2.0.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk-2.0.0.tgz", SHA256: "sdk-2.0.0"}
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+			SDKRange: "2.0.0",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+		}},
+		SDKs: []catalog.Component{sdk},
+		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{
+			{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Requires: []catalog.CompatibilityRelation{{Label: "sdk@2.0.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}},
+			{ID: "sdk@2.0.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"stage"}},
+		}},
+	}
+	plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: t.TempDir()}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected []contracts.Artifact
+	for _, artifact := range plan.Artifacts {
+		if artifact.Package == sdk.Package {
+			selected = append(selected, artifact)
+		}
+	}
+	if len(selected) != 1 || selected[0].Kind != "sdk" || selected[0].Version != sdk.Version {
+		t.Fatalf("selected SDK artifacts = %#v, want one %s@%s SDK", selected, sdk.Package, sdk.Version)
+	}
+}
+
 func TestPlanRefusesAnSDKVersionThatDiffersFromTheBundledOne(t *testing.T) {
 	_, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: t.TempDir(), SDK: contracts.VersionSelector{Version: "2.1.0"}}, bundledSDKCatalog())
 	var failure *diag.Diag

@@ -21,7 +21,7 @@ import { SnapshotManager } from './snapshot-manager.js';
 import { RunExecutor } from './run-executor.js';
 import { RunOrchestrator } from './run-orchestrator.js';
 import { createDefaultExecutionPolicyLLM } from './wrappers/default-execution-policy-llm.js';
-import { resolveInstalledAdapterDefaults } from './default-adapters.js';
+import { configuredAdapterForSlot, resolveInstalledAdapterDefaults } from './default-adapters.js';
 import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
 
 import { ResourceManager } from './core/resource-manager.js';
@@ -197,7 +197,7 @@ export function fillAdapterFallbacksAndRecord(
       continue;
     }
     const desc = ADAPTER_DEFAULTS[slot];
-    const configuredPkg = getPrimaryAdapter(adapters[slot]);
+    const configuredPkg = getPrimaryAdapter(configuredAdapterForSlot(slot, adapters)?.value);
     const hasPresent = container.hasAdapter(slot);
 
     const failure = failures.get(slot);
@@ -227,7 +227,7 @@ export function fillAdapterFallbacksAndRecord(
         correlationId: failure.correlationId,
         action: failure.action,
         recordedAt: now(),
-      });
+      }, adapters);
       continue;
     }
 
@@ -239,7 +239,7 @@ export function fillAdapterFallbacksAndRecord(
         implementation: configuredPkg,
         configuredPackage: configuredPkg,
         recordedAt: now(),
-      });
+      }, adapters);
       continue;
     }
 
@@ -257,7 +257,7 @@ export function fillAdapterFallbacksAndRecord(
         mode: 'real',
         implementation: 'HybridLogReader',
         recordedAt: now(),
-      });
+      }, adapters);
       continue;
     }
 
@@ -281,7 +281,7 @@ export function fillAdapterFallbacksAndRecord(
         implementation: implName,
         reason: 'not-configured',
         recordedAt: now(),
-      });
+      }, adapters);
       continue;
     }
 
@@ -305,7 +305,7 @@ export function fillAdapterFallbacksAndRecord(
         implementation: Object.getPrototypeOf(impl as object)?.constructor?.name ?? 'unknown',
         reason: 'not-configured',
         recordedAt: now(),
-      });
+      }, adapters);
       container.logger.warn(
         `Adapter "${slot}" using InMemory fallback — data lives in-process only`,
         { slot, reason: 'not-configured' },
@@ -329,7 +329,7 @@ export function fillAdapterFallbacksAndRecord(
       implementation: Object.getPrototypeOf(impl as object)?.constructor?.name ?? 'unknown',
       reason: 'not-configured',
       recordedAt: now(),
-    });
+    }, adapters);
     container.logger.warn(
       `Adapter "${slot}" using NoOp fallback — calls will throw AdapterUnavailableError`,
       { slot, reason: 'not-configured' },

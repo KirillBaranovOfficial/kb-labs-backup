@@ -1,7 +1,7 @@
 /** Show platform adapters and their built-in fallback. */
 
 import { ADAPTER_DEFAULTS, toErrorEnvelope, ErrorEnvelopeError, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { ADAPTER_CONFIG_KEYS, discoverAdapters, isWorkspaceDevelopmentMode, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
+import { adapterPackageName, adapterPackageRoot, configuredAdapterForSlot, discoverAdapters, isWorkspaceDevelopmentMode, loadPlatformConfig, projectEffectiveAdapterImplementation, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { isEnvReference } from '@kb-labs/core-config';
 import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
@@ -38,17 +38,6 @@ type HostAdapterStatus = {
 
 type ListResult = CommandResult & { adapters?: AdapterRow[]; projectRoot?: string; envelope?: ErrorEnvelope };
 
-function packageName(spec: string): string {
-  const separator = spec.lastIndexOf('@');
-  return separator > spec.indexOf('/') ? spec.slice(0, separator) : spec;
-}
-
-function packageRoot(spec: string): string {
-  const name = packageName(spec);
-  const segments = name.split('/');
-  return name.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0] ?? name;
-}
-
 export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; description?: string } }, ListResult>({
   name: 'list',
   scope: 'platform',
@@ -69,7 +58,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     }
     const config = loaded.platformConfig;
     const resolvedDefaults = await resolveInstalledAdapterDefaults({
-      adapters: Object.fromEntries(Object.entries(config.adapters ?? {})),
+      adapters: { ...(config.adapters ?? {}) },
       adapterOptions: Object.fromEntries(Object.entries(config.adapterOptions ?? {})),
     }, loaded.platformRoot, loaded.projectRoot ?? getContextCwd(ctx));
     const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
@@ -101,13 +90,13 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       runtimeReason = error instanceof Error ? error.message : String(error);
     }
     const rows = (Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[]).map((slot): AdapterRow => {
-      const configKeys = ADAPTER_CONFIG_KEYS[slot];
-      const configKey = configKeys.find((key) => effectiveAdapters[key] !== undefined);
-      const configured = configKey ? effectiveAdapters[configKey] : undefined;
+      const configuredAdapter = configuredAdapterForSlot(slot, effectiveAdapters);
+      const configKey = configuredAdapter?.key;
+      const configured = configuredAdapter?.value;
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
-      const packageId = configuredPackage ? packageName(configuredPackage) : undefined;
+      const packageId = configuredPackage ? configuredPackage : undefined;
       const option = configKey ? effectiveAdapterOptions[configKey] : undefined;
-      const schema = packageId ? discovered.get(packageRoot(packageId))?.module.manifest : undefined;
+      const schema = packageId ? discovered.get(adapterPackageRoot(packageId))?.module.manifest : undefined;
       const configSchema = schema && typeof schema === 'object' && 'configSchema' in schema &&
         schema.configSchema && typeof schema.configSchema === 'object'
         ? schema.configSchema as Record<string, { required?: boolean; secret?: boolean; env?: string }>
@@ -130,9 +119,12 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         Boolean(effectiveAdapters.logRingBuffer || effectiveAdapters.logPersistence);
       const hostStatus = hostStatuses.get(slot);
       const slotRuntimeKnown = runtimeStatus === 'known' && hostStatus !== undefined;
-      const implementation = slotRuntimeKnown
-        ? hostStatus.implementation === 'unavailable' ? null : hostStatus.implementation
-        : localLogsAvailable ? 'HybridLogReader' : packageId ?? (ADAPTER_DEFAULTS[slot].implementation === 'unavailable' ? null : ADAPTER_DEFAULTS[slot].implementation);
+      const implementation = projectEffectiveAdapterImplementation(
+        slot,
+        effectiveAdapters,
+        slotRuntimeKnown ? hostStatus.implementation : undefined,
+        localLogsAvailable ? 'HybridLogReader' : undefined,
+      );
       return {
         slot,
         implementation,
@@ -159,8 +151,8 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       if (knownSlots.has(slot)) {continue;}
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
       if (!configuredPackage) {continue;}
-      const implementation = packageName(configuredPackage);
-      const schema = discovered.get(packageRoot(implementation))?.module.manifest;
+      const implementation = adapterPackageName(configuredPackage);
+      const schema = discovered.get(adapterPackageRoot(implementation))?.module.manifest;
       rows.push({ slot, implementation, mode: 'unknown', runtimeStatus: 'unknown', runtimeReason,
         action: { id: 'start-host', label: 'Start host', command: startHostCommand },
         networkRequired: projectNetworkRequirement(schema) });
