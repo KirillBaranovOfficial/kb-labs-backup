@@ -29,6 +29,7 @@ from typing import Any, Callable, Mapping, MutableMapping, NoReturn
 from urllib.error import HTTPError, URLError
 
 import redaction
+import jsonl
 from journey_resources import workspace_resource, workspace_tool_entrypoints
 
 class PtyReadinessUnsupported(RuntimeError):
@@ -351,10 +352,10 @@ def validate_catalogued_cli_status(result: Any) -> None:
     try:
         documents.append(json.loads(stdout))
     except json.JSONDecodeError:
-        try:
-            documents.extend(json.loads(line) for line in stdout.splitlines() if line.strip())
-        except json.JSONDecodeError:
+        rows = jsonl.read_jsonl_text(stdout, skip_blank=True)
+        if any(row.error is not None for row in rows):
             return
+        documents.extend(row.value for row in rows)
     terminal_statuses = [document.get("meta", {}).get("stream", {}).get("exitCode")
                          for document in documents if isinstance(document, dict)
                          and document.get("meta", {}).get("stream", {}).get("terminal") is True]
@@ -398,16 +399,13 @@ def read_ux_cli_stream(result: subprocess.CompletedProcess[str]) -> list[dict[st
     """Validate JSONL UX records and the terminal record's process status."""
     stdout, returncode = _cli_process_result(result)
     records = []
-    for line in stdout.splitlines():
-        if not line.strip():
-            continue
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError as error:
+    for row in jsonl.read_jsonl_text(stdout, skip_blank=True):
+        if row.error is not None:
             try:
                 _invalid_ux_result("CLI stream contains a non-JSON record")
             except ValueError as failure:
-                raise failure from error
+                raise failure from ValueError(row.error)
+        value = row.value
         if not isinstance(value, dict):
             _invalid_ux_result("CLI stream record is not an object")
         if value.get("ok") is True:
@@ -543,6 +541,14 @@ def write_report_json(path: str | Path, value: Any, *, env: Mapping[str, str] | 
     return redacted
 
 
+def write_report_jsonl(path: str | Path, value: Any, *, env: Mapping[str, str] | None = None,
+                       append: bool = True, ensure_ascii: bool = False,
+                       secrets: tuple[str, ...] = ()) -> Any:
+    redacted = redaction.redact_report_value(value, env, secrets)
+    jsonl.write_jsonl(path, [redacted], append=append, ensure_ascii=ensure_ascii)
+    return redacted
+
+
 def write_report_text(path: str | Path, value: str, *, env: Mapping[str, str] | None = None,
                       append: bool = False, secrets: tuple[str, ...] = ()) -> str:
     rendered = redaction.redact_text(value, env, secrets)
@@ -561,6 +567,29 @@ def print_report_text(value: str, *, env: Mapping[str, str] | None = None,
     if flush:
         output.flush()
     return rendered
+
+
+def _error_envelope_from_response(stdout: str, stderr: str) -> dict[str, str] | None:
+    for body in (stdout, stderr):
+        try:
+            response = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(response, dict):
+            continue
+        error = response.get("error")
+        if not isinstance(error, dict):
+            continue
+        code = error.get("code")
+        area = error.get("area")
+        if not isinstance(code, str) or not isinstance(area, str):
+            continue
+        envelope = {"code": code, "area": area}
+        stage = error.get("stage")
+        if isinstance(stage, str):
+            envelope["stage"] = stage
+        return envelope
+    return None
 
 
 def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
@@ -594,6 +623,9 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         "error": error,
         "duration_seconds": round(duration_seconds, 3),
     }
+    error_envelope = _error_envelope_from_response(stdout, stderr)
+    if error_envelope is not None:
+        record["error_envelope"] = error_envelope
     if kind == "command":
         record["kb_environment"] = kb_environment
         shim = _kb_shim_evidence(effective_env)
@@ -606,7 +638,7 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
     if unexpected_error_diagnostics:
         record["unexpected_error_diagnostics"] = unexpected_error_diagnostics
     target = root / "invocations" / "calls.jsonl"
-    return write_report_json(target, record, env=effective_env, append=True, indent=None, ensure_ascii=False)
+    return write_report_jsonl(target, record, env=effective_env, append=True, ensure_ascii=False)
 
 
 def _kb_shim_evidence(env: Mapping[str, str]) -> dict[str, str] | None:
@@ -658,7 +690,7 @@ def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,
         return []
     calls = root / "invocations" / "calls.jsonl"
     try:
-        invocation_number = len(calls.read_text(encoding="utf-8").splitlines()) + 1
+        invocation_number = len(jsonl.read_jsonl(calls)) + 1
     except OSError:
         invocation_number = 1
     references = []
@@ -697,10 +729,11 @@ def invocation_link(step_id: str) -> str | None:
         return None
     target = root / "invocations" / "calls.jsonl"
     try:
-        matching = [(number, json.loads(line))
-                    for number, line in enumerate(target.read_text(encoding="utf-8").splitlines(), 1)
-                    if json.loads(line).get("step_id") == step_id]
-    except (OSError, json.JSONDecodeError):
+        matching = [(record.line_number, record.value)
+                    for record in jsonl.read_jsonl(target)
+                    if record.error is None and isinstance(record.value, dict)
+                    and record.value.get("step_id") == step_id]
+    except OSError:
         return None
     if not matching:
         return None
