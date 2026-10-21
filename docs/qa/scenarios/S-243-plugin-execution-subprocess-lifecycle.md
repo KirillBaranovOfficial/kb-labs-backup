@@ -42,4 +42,4 @@ and receive a stable exit result.
 `core/plugin-execution-factory/src/backends/subprocess.ts` owns per-call IPC,
 timeout, signal forwarding, and cleanup. `cli/runtime/src/v3/execute-command.ts`
 returns exit code `1` for failed execution. Workflow cancellation passes a
-signal through `plugins/workflow/runtime/src/runners/sandbox-runner.ts`.
+signal through `services/workflow/runtime/src/runners/sandbox-runner.ts`.

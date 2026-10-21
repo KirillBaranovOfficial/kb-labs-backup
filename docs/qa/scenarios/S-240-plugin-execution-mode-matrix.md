@@ -42,7 +42,7 @@ contract.
 `core/runtime/src/loader.ts` creates the shared backend. Plane wiring is in
 `cli/runtime/src/v3/execute-command.ts`,
 `services/rest-api/app/src/routes/plugins.ts`,
-`plugins/workflow/daemon/src/worker.ts`,
+`services/workflow/daemon/src/worker.ts`,
 `services/gateway/app/src/webhook/router.ts`, and
 `services/mcp/app/src/mcp/tool-router.ts`. The REST WebSocket path is also in
 `services/rest-api/app/src/routes/plugins.ts`.
