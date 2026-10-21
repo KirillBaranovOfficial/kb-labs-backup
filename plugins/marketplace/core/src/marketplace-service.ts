@@ -15,6 +15,7 @@ import * as crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { IntegrityMismatchError, type IExtensionStore } from '@kb-labs/core-extension-store';
 import type { ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform/error-envelope';
 import { resolveMarketplaceLockScope } from '@kb-labs/core-discovery';
 import { glob } from 'glob';
 import semver from 'semver';
@@ -470,7 +471,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     await this.withScopeMutation(scopeRoot, async () => {
       const ok = await enablePlugin(scopeRoot, packageId, ctx.scope);
       if (!ok) {
-        throw new Error(`Package "${packageId}" not found in ${ctx.scope} marketplace.lock`);
+        throw new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_INSTALLED', {
+          details: { package: packageId },
+        }));
       }
     });
   }
@@ -480,7 +483,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     await this.withScopeMutation(scopeRoot, async () => {
       const ok = await disablePlugin(scopeRoot, packageId, ctx.scope);
       if (!ok) {
-        throw new Error(`Package "${packageId}" not found in ${ctx.scope} marketplace.lock`);
+        throw new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_INSTALLED', {
+          details: { package: packageId },
+        }));
       }
     });
   }

@@ -14,12 +14,6 @@ export function statusForHttpFailure(payload: unknown, transportStatusCode: numb
   if (!parts.cataloguedPayload || !isErrorCode(parts.code)) return transportStatusCode;
 
   const entry = getCatalogEntry(parts.code);
-  if (!entry) {
-    throw new Error(`HTTP failure code "${parts.code}" is not in errors.catalog.json`);
-  }
-  if (entry.httpStatus === undefined) {
-    throw new Error(`Catalogued error "${parts.code}" reached an HTTP boundary without httpStatus; add httpStatus to errors.catalog.json`);
-  }
   return entry.httpStatus;
 }
 

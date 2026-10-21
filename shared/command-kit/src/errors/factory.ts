@@ -1,3 +1,6 @@
+import { createProductErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { ProductPluginError } from '@kb-labs/plugin-contracts';
+
 /**
  * Error Factory for KB Labs Plugins
  *
@@ -41,60 +44,11 @@ export interface ErrorDefinition {
 export type ErrorDefinitions = Record<string, ErrorDefinition>;
 
 /**
- * Base error class with HTTP status code support
- */
-export class PluginError extends Error {
-  public readonly statusCode: number;
-  public readonly errorCode: string;
-  public hint?: string;
-  public readonly details?: Record<string, unknown>;
-
-  constructor(
-    errorCode: string,
-    message: string,
-    statusCode: number,
-    details?: Record<string, unknown>
-  ) {
-    super(message);
-    this.name = 'PluginError';
-    this.errorCode = errorCode;
-    this.statusCode = statusCode;
-    this.details = details;
-
-    // Maintains proper stack trace for where our error was thrown (only available on V8)
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, PluginError);
-    }
-  }
-
-  /**
-   * Convert error to JSON for logging/serialization
-   */
-  toJSON() {
-    return {
-      name: this.name,
-      errorCode: this.errorCode,
-      message: this.message,
-      statusCode: this.statusCode,
-      details: this.details,
-      stack: this.stack,
-    };
-  }
-
-  /**
-   * Check if error is a PluginError
-   */
-  static isPluginError(error: unknown): error is PluginError {
-    return error instanceof PluginError;
-  }
-}
-
-/**
  * Type for error constructor created by defineError
  */
 type ErrorConstructor<TArgs extends unknown[] = unknown[]> = {
-  new (details?: Record<string, unknown>): PluginError;
-  new (...args: TArgs): PluginError;
+  new (details?: Record<string, unknown>): ProductPluginError;
+  new (...args: TArgs): ProductPluginError;
 };
 
 /**
@@ -104,7 +58,7 @@ type ErrorNamespace<TDefs extends ErrorDefinitions> = {
   [K in keyof TDefs]: ErrorConstructor;
 } & {
   /** Check if error is from this namespace */
-  is(error: unknown): error is PluginError;
+  is(error: unknown): error is ProductPluginError;
   /** Check if error has specific error code */
   hasCode(error: unknown, code: keyof TDefs): boolean;
 };
@@ -150,11 +104,17 @@ export function defineError<TDefs extends ErrorDefinitions>(
     const errorCode = `${prefix}_${key.toUpperCase()}`;
 
     // Create error class
-    class DefinedError extends PluginError {
+    class DefinedError extends ProductPluginError {
       constructor(...args: unknown[]) {
         const { message, details } = buildMessageAndDetails(def, args);
-        super(errorCode, message, def.code, details);
-        this.hint = def.hint;
+        const envelope = createProductErrorEnvelope({
+          code: errorCode,
+          message,
+          details: details as Record<string, string> | undefined,
+          hint: def.hint,
+          retryable: def.code >= 500,
+        });
+        super(message, envelope.code, def.code, envelope.details, envelope.hint);
         this.name = `${prefix}Error`;
       }
     }
@@ -163,13 +123,13 @@ export function defineError<TDefs extends ErrorDefinitions>(
   }
 
   // Add helper methods
-  errorNamespace.is = (error: unknown): error is PluginError => {
-    return PluginError.isPluginError(error) && error.errorCode.startsWith(prefix + '_');
+  errorNamespace.is = (error: unknown): error is ProductPluginError => {
+    return error instanceof ProductPluginError && error.code.startsWith(prefix + '_');
   };
 
   errorNamespace.hasCode = (error: unknown, code: keyof TDefs): boolean => {
     const errorCode = `${prefix}_${String(code).toUpperCase()}`;
-    return PluginError.isPluginError(error) && error.errorCode === errorCode;
+    return error instanceof ProductPluginError && error.code === errorCode;
   };
 
   return errorNamespace as ErrorNamespace<TDefs>;

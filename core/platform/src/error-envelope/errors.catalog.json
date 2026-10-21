@@ -10,7 +10,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Adapter {service} is bound but is missing required credential {credential}.",
-      "hint": "Set {credential} or configure it at platform scope at {path} with `{command}`. No request was sent."
+      "hint": "Set {credential} or configure it at platform scope at {path} with `{command}`. No request was sent.",
+      "httpStatus": 500
     },
     {
       "code": "KB_ADAPTER_MANIFEST_LOAD",
@@ -49,7 +50,8 @@
       "structuredDetailFields": [
         "path",
         "slot"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_ADAPTER_OPERATION_FAILED",
@@ -59,7 +61,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The {slot} adapter failed during {operation}.",
-      "hint": "Run `kb logs query` to inspect the adapter failure, correct the underlying issue, then retry the operation."
+      "hint": "Run `kb logs query` to inspect the adapter failure, correct the underlying issue, then retry the operation.",
+      "httpStatus": 500
     },
     {
       "code": "KB_ADAPTER_PROJECT_SCOPE",
@@ -69,7 +72,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Project adapter configuration at {path} is unsupported.",
-      "hint": "Move `platform.adapters` and `platform.adapterOptions` to the platform config and retry."
+      "hint": "Move `platform.adapters` and `platform.adapterOptions` to the platform config and retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_ADAPTER_SLOT_MISMATCH",
@@ -82,7 +86,8 @@
       "hint": "Install a provider that declares {slot} with `kb marketplace install <pkg> --scope platform`, then retry.",
       "structuredDetailFields": [
         "path"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_AGENT_NOT_FOUND",
@@ -103,7 +108,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The token time does not match the system clock.",
-      "hint": "Check the system time and time zone."
+      "hint": "Check the system time and time zone.",
+      "httpStatus": 500
     },
     {
       "code": "KB_AUTH_FORBIDDEN",
@@ -129,7 +135,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The gateway is unreachable.",
-      "hint": "Check that the host is running, see KB_HOST_UNREACHABLE."
+      "hint": "Check that the host is running, see KB_HOST_UNREACHABLE.",
+      "httpStatus": 500
     },
     {
       "code": "KB_AUTH_INVALID_CREDENTIALS",
@@ -199,7 +206,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "No administrator access is available.",
-      "hint": "Run \"kb-create doctor --recover\"."
+      "hint": "Run \"kb-create doctor --recover\".",
+      "httpStatus": 500
     },
     {
       "code": "KB_AUTH_MODE_MISMATCH",
@@ -209,7 +217,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The client expects authentication mode {expected} but the host runs in {actual}.",
-      "hint": "Align the client with the installed access mode."
+      "hint": "Align the client with the installed access mode.",
+      "httpStatus": 500
     },
     {
       "code": "KB_AUTH_REQUIRED",
@@ -301,7 +310,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The run ended with a resource or scratch cleanup failure.",
-      "hint": "Inspect the failed resource or scratch path in the run record; inspect resource leftovers and retry cleanup using the commands shown below."
+      "hint": "Inspect the failed resource or scratch path in the run record; inspect resource leftovers and retry cleanup using the commands shown below.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG",
@@ -311,7 +321,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The run scratch path cannot support the required Unix socket name.",
-      "hint": "The inspected root {root} makes the required {socketNameBytes}-byte Unix socket name use {pathBytes} bytes including the terminator; the supported limit is {maxBytes} bytes. Run `realpath /tmp` to inspect the resolved path, repair the system /tmp target so the scratch path fits, then retry."
+      "hint": "The inspected root {root} makes the required {socketNameBytes}-byte Unix socket name use {pathBytes} bytes including the terminator; the supported limit is {maxBytes} bytes. Run `realpath /tmp` to inspect the resolved path, repair the system /tmp target so the scratch path fits, then retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED",
@@ -325,7 +336,8 @@
       "structuredDetailFields": [
         "creationError",
         "removalError"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_WAIT_NOT_FINISHED",
@@ -335,7 +347,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The wait outcome was requested before the run finished.",
-      "hint": "Inspect the run record with the command shown below, then wait again after it reaches a terminal state."
+      "hint": "Inspect the run record with the command shown below, then wait again after it reaches a terminal state.",
+      "httpStatus": 500
     },
     {
       "code": "KB_CONFIG_APPLY_FAILED",
@@ -345,7 +358,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The configuration overlay could not be applied.",
-      "hint": "Check the overlay path and the `kb-env` operation log, then retry the profile operation."
+      "hint": "Check the overlay path and the `kb-env` operation log, then retry the profile operation.",
+      "httpStatus": 500
     },
     {
       "code": "KB_CONFIG_CONFLICT",
@@ -385,6 +399,7 @@
     },
     {
       "code": "KB_CONFIG_LLM_KEY_INVALID",
+      "httpStatus": 502,
       "area": "config",
       "stage": "run",
       "severity": "error",
@@ -401,7 +416,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The LLM provider did not respond before the request timed out.",
-      "hint": "Check provider availability and platform.adapterOptions.llm.baseURL with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`, then retry."
+      "hint": "Check provider availability and platform.adapterOptions.llm.baseURL with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`, then retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE",
@@ -411,7 +427,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The LLM provider could not be reached or returned an invalid response.",
-      "hint": "Check platform.adapterOptions.llm.baseURL with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`, then retry."
+      "hint": "Check platform.adapterOptions.llm.baseURL with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`, then retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_CONFIG_LLM_QUOTA",
@@ -421,7 +438,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The quota or budget for LLM provider {provider} is exhausted.",
-      "hint": "Top up the quota or switch to another model."
+      "hint": "Top up the quota or switch to another model.",
+      "httpStatus": 500
     },
     {
       "code": "KB_CONFIG_LOAD_FAILED",
@@ -431,7 +449,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The deployment configuration could not be loaded.",
-      "hint": "Check the path passed to `kb-deploy --config` and verify the file is readable."
+      "hint": "Check the path passed to `kb-deploy --config` and verify the file is readable.",
+      "httpStatus": 500
     },
     {
       "code": "KB_CONFIG_OVERLAY_NOT_FOUND",
@@ -441,7 +460,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The configuration overlay does not exist.",
-      "hint": "Check the profile's `config:` path, then rerun `kb-env up <profile> --fresh`."
+      "hint": "Check the profile's `config:` path, then rerun `kb-env up <profile> --fresh`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_CONFIG_SECRET_MISSING",
@@ -487,7 +507,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Configuration could not be delivered to every deployment host.",
-      "hint": "Check SSH connectivity and host disk space, then retry `kb-deploy apply`."
+      "hint": "Check SSH connectivity and host disk space, then retry `kb-deploy apply`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_DEPLOY_HOST_UNDEFINED",
@@ -497,7 +518,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The deployment plan references an undefined host.",
-      "hint": "Add the referenced host to `hosts:` in the deployment configuration, then rerun `kb-deploy plan`."
+      "hint": "Add the referenced host to `hosts:` in the deployment configuration, then rerun `kb-deploy plan`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_DEPLOY_LOCK_WRITE_FAILED",
@@ -507,7 +529,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The deployment completed, but its state lock could not be written.",
-      "hint": "Check write permission beside the deployment manifest, then verify the result with `kb-deploy status`."
+      "hint": "Check write permission beside the deployment manifest, then verify the result with `kb-deploy status`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_DEPLOY_WAVE_FAILED",
@@ -517,7 +540,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "A deployment wave did not complete.",
-      "hint": "Inspect the reported service failures, fix their cause, then rerun `kb-deploy apply`."
+      "hint": "Inspect the reported service failures, fix their cause, then rerun `kb-deploy apply`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_DEVKIT_CHECK_EXECUTION_FAILED",
@@ -527,7 +551,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Workspace check {check} could not complete.",
-      "hint": "Rerun this check alone with `kb-devkit check --only {check}`, then correct the check's execution problem."
+      "hint": "Rerun this check alone with `kb-devkit check --only {check}`, then correct the check's execution problem.",
+      "httpStatus": 500
     },
     {
       "code": "KB_DEVKIT_TASK_FAILED",
@@ -537,7 +562,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "A workspace task failed.",
-      "hint": "Read the failed task log with `cat {logPath}`, correct the cause, then rerun `kb-devkit run {task} --packages {package}`."
+      "hint": "Read the failed task log with `cat {logPath}`, correct the cause, then rerun `kb-devkit run {task} --packages {package}`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_DEVKIT_TASK_LOG_UNAVAILABLE",
@@ -551,7 +577,8 @@
       "structuredDetailFields": [
         "logError",
         "logPath"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_DEVKIT_TASK_GRAPH_INVALID",
@@ -564,7 +591,8 @@
       "hint": "Add a {dependencyTask} variant for {dependency} in devkit.yaml, then rerun `kb-devkit run {task}`.",
       "structuredDetailFields": [
         "package"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_DEVKIT_STANDARDS_VIOLATIONS",
@@ -574,7 +602,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Workspace standards violations were found.",
-      "hint": "Review the findings, correct them, then rerun `kb-devkit check`."
+      "hint": "Review the findings, correct them, then rerun `kb-devkit check`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_ENV_PROFILE_MISMATCH",
@@ -584,7 +613,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The live environment cannot switch to a profile with a different plugin set.",
-      "hint": "Run `kb-env up <profile> --fresh` to install the requested plugin set."
+      "hint": "Run `kb-env up <profile> --fresh` to install the requested plugin set.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_ADAPTER_UNAVAILABLE",
@@ -594,7 +624,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Adapter {slot} is unavailable: {reason}.",
-      "hint": "Start or configure the adapter under adapters.{slot} in kb.config.json."
+      "hint": "Start or configure the adapter under adapters.{slot} in kb.config.json.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_ALREADY_RUNNING",
@@ -608,7 +639,8 @@
       "structuredDetailFields": [
         "pid",
         "platformRoot"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_CONTROL_UNAUTHORIZED",
@@ -618,7 +650,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The launcher control channel rejected the request token.",
-      "hint": "Read the current token from control.json in the launcher state directory."
+      "hint": "Read the current token from control.json in the launcher state directory.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_CONTROL_UNAVAILABLE",
@@ -628,7 +661,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The launcher control channel is unavailable.",
-      "hint": "Start the launcher or the desktop shell."
+      "hint": "Start the launcher or the desktop shell.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_EXPOSURE_REFUSED",
@@ -641,7 +675,8 @@
       "hint": "Enable authentication or bind to a loopback address.",
       "structuredDetailFields": [
         "bindHost"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_IDENTITY_MISMATCH",
@@ -651,7 +686,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The Gateway identifies as installation {actualInstallationId}, not the active platform root {expectedPlatformRoot} ({expectedInstallationId}).",
-      "hint": "Run \"kb-create start --platform-root {expectedPlatformRoot}\" and retry the command."
+      "hint": "Run \"kb-create start --platform-root {expectedPlatformRoot}\" and retry the command.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_PROCESS_IDENTITY_STALE",
@@ -667,7 +703,8 @@
         "pid",
         "platformRoot",
         "record"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_SERVICE_ADDRESS_INVALID",
@@ -677,7 +714,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The host {service} address passed to this runtime is not a valid HTTP URL.",
-      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime."
+      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_SERVICE_ADDRESS_MISSING",
@@ -701,7 +739,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Installation operation locks are supported only on Linux and macOS.",
-      "hint": "Run this command on a Linux or macOS host."
+      "hint": "Run this command on a Linux or macOS host.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_SPEC_INVALID",
@@ -711,7 +750,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The host specification in the installation receipt is invalid: {reason}.",
-      "hint": "Run \"kb-create doctor --fix\" or reinstall with \"kb-create apply\"."
+      "hint": "Run \"kb-create doctor --fix\" or reinstall with \"kb-create apply\".",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_START_FAILED",
@@ -744,7 +784,8 @@
         "supervisorExit",
         "controlRecord",
         "nextCommand"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_STATE_DIR_UNWRITABLE",
@@ -754,7 +795,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Cannot write to the state directory {path}.",
-      "hint": "Fix the directory permissions or free disk space."
+      "hint": "Fix the directory permissions or free disk space.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_STOP_FAILED",
@@ -764,7 +806,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The host process {pid} did not stop.",
-      "hint": "Run \"kb-create stop\" again, or end the process manually and remove the stale pid file."
+      "hint": "Run \"kb-create stop\" again, or end the process manually and remove the stale pid file.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_STUDIO_ASSETS_MISSING",
@@ -774,7 +817,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Studio is enabled but its built files were not found: {dir}.",
-      "hint": "Reinstall or update KB Labs so the Studio bundle is present, or point gateway.studio.dir at a built Studio directory, or disable gateway.studio."
+      "hint": "Reinstall or update KB Labs so the Studio bundle is present, or point gateway.studio.dir at a built Studio directory, or disable gateway.studio.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_UNHEALTHY",
@@ -784,7 +828,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The host responds but module {module} is unhealthy.",
-      "hint": "Run \"kb-create restart\" or \"kb-create doctor\"."
+      "hint": "Run \"kb-create restart\" or \"kb-create doctor\".",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_UNREACHABLE",
@@ -794,7 +839,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The KB Labs host is not running: cannot connect to {address}.",
-      "hint": "Run \"kb-create start\", or \"kb-create doctor\" if the host should already be running."
+      "hint": "Run \"kb-create start\", or \"kb-create doctor\" if the host should already be running.",
+      "httpStatus": 500
     },
     {
       "code": "KB_HOST_VERSION_SKEW",
@@ -804,7 +850,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The launcher or CLI version {client} does not match the host version {host}.",
-      "hint": "Run \"kb-create update\"."
+      "hint": "Run \"kb-create update\".",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE",
@@ -814,7 +861,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The Gateway address index at {path} cannot be used: {reason}.",
-      "hint": "Remove the derived index with `{removeCommand}`, then run `{repairCommand}` to rebuild it from the installation receipt."
+      "hint": "Remove the derived index with `{removeCommand}`, then run `{repairCommand}` to rebuild it from the installation receipt.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_APPLY_FAILED",
@@ -828,7 +876,8 @@
       "structuredDetailFields": [
         "diagnosticPath",
         "logPath"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH",
@@ -838,7 +887,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The artifact manifest does not match the installed artifact {artifact}.",
-      "hint": "Retry the installation; if it persists report the correlationId."
+      "hint": "Retry the installation; if it persists report the correlationId.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_CONFIG_REQUIRED",
@@ -848,7 +898,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "Required configuration is missing or conflicting: {field}.",
-      "hint": "Provide the configuration value or run the wizard to complete it."
+      "hint": "Provide the configuration value or run the wizard to complete it.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_CONFIRMATION_REQUIRED",
@@ -858,7 +909,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "This operation requires explicit confirmation.",
-      "hint": "Run the command in an interactive terminal and confirm the operation when prompted."
+      "hint": "Run the command in an interactive terminal and confirm the operation when prompted.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE",
@@ -868,7 +920,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The operation failed and the diagnostic dossier could not be written.",
-      "hint": "Inspect the local operation log."
+      "hint": "Inspect the local operation log.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_DOCTOR_INPUT_INVALID",
@@ -878,10 +931,12 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Installed manifest diagnostics could not be prepared.",
-      "hint": "Install exact artifacts that ship matching manifests."
+      "hint": "Install exact artifacts that ship matching manifests.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_INCOMPATIBLE_COMPONENTS",
+      "httpStatus": 409,
       "area": "install",
       "stage": "resolve",
       "severity": "error",
@@ -912,7 +967,8 @@
         "gate",
         "path",
         "supported"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_INPUT_REQUIRED",
@@ -926,7 +982,8 @@
       "structuredDetailFields": [
         "field",
         "registry"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_INTERRUPTED",
@@ -936,7 +993,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The installation was interrupted.",
-      "hint": "Run \"kb-create apply\" again; it resumes from where it stopped."
+      "hint": "Run \"kb-create apply\" again; it resumes from where it stopped.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_LAUNCHER_TOO_OLD",
@@ -946,7 +1004,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Platform {platform} requires launcher {minLauncherVersion} or newer, but this is {launcher}.",
-      "hint": "Run kb-create update, or download the current launcher, then retry."
+      "hint": "Run kb-create update, or download the current launcher, then retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_LAYOUT_UNSUPPORTED",
@@ -960,7 +1019,8 @@
       "structuredDetailFields": [
         "nextCommand",
         "platformRoot"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_LOG_UNAVAILABLE",
@@ -970,7 +1030,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The local operation log could not be created.",
-      "hint": "Check that the platform root is writable."
+      "hint": "Check that the platform root is writable.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_MANIFEST_PROJECTION_INVALID",
@@ -980,7 +1041,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The installation manifest contains fields that cannot be projected.",
-      "hint": "Correct the reported manifest fields, then rerun `kb-create doctor`."
+      "hint": "Correct the reported manifest fields, then rerun `kb-create doctor`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_MEMORY_INSUFFICIENT",
@@ -990,7 +1052,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The platform install needs at least {minimum} of available memory; {available} is available.",
-      "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again."
+      "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_NETWORK_UNREACHABLE",
@@ -1000,7 +1063,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Cannot reach the release index or registry at {url}.",
-      "hint": "Check your network or proxy settings and retry."
+      "hint": "Check your network or proxy settings and retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_NODE_MISSING",
@@ -1010,7 +1074,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Required Node.js or package manager version is missing: {requirement}.",
-      "hint": "Install the required version or use the bundled runtime."
+      "hint": "Install the required version or use the bundled runtime.",
+      "httpStatus": 500
     },
     {
       "code": "KB_NODE_VERSION_UNSUPPORTED",
@@ -1020,7 +1085,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Node.js {actualVersion} is unsupported; KB Labs requires major {requiredMajor}.",
-      "hint": "Switch to Node.js {requiredMajor}: run `nvm install {requiredMajor} && nvm use {requiredMajor}`, then rerun your command."
+      "hint": "Switch to Node.js {requiredMajor}: run `nvm install {requiredMajor} && nvm use {requiredMajor}`, then rerun your command.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_NO_DISK_SPACE",
@@ -1030,7 +1096,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Not enough disk space in {path}: {needed} needed, {available} available.",
-      "hint": "Free up disk space or choose another directory with --platform-root."
+      "hint": "Free up disk space or choose another directory with --platform-root.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_NO_WRITE_ACCESS",
@@ -1040,7 +1107,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Cannot write to the platform directory {path}.",
-      "hint": "Choose another directory with --platform-root or fix its permissions."
+      "hint": "Choose another directory with --platform-root or fix its permissions.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_OFFLINE_ARTIFACT_MISSING",
@@ -1050,7 +1118,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Artifact {artifact} is unavailable from the local cache.",
-      "hint": "Run without --offline to download the artifact, or restore its checksum-verified entry in the V2 cache."
+      "hint": "Run without --offline to download the artifact, or restore its checksum-verified entry in the V2 cache.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_OPERATION_CANCELLED",
@@ -1060,7 +1129,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The operation was cancelled.",
-      "hint": "Rerun the command and confirm when prompted to continue."
+      "hint": "Rerun the command and confirm when prompted to continue.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_OPERATION_FAILED",
@@ -1070,7 +1140,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The operation failed.",
-      "hint": "Inspect the local log and include the correlationId in a report."
+      "hint": "Inspect the local log and include the correlationId in a report.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_OPERATION_IN_PROGRESS",
@@ -1080,7 +1151,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Another launcher operation is already running (process {pid}).",
-      "hint": "Wait for it to finish, then rerun the command."
+      "hint": "Wait for it to finish, then rerun the command.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_PACKAGE_MANAGER_KILLED",
@@ -1090,7 +1162,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The package manager was killed, likely out of memory. The tuned install peaked at 992.3 MiB RSS (the unbounded run reached 1.14 GiB); this install requires 1.20 GiB available memory.",
-      "hint": "Free memory, then rerun `kb-create install`."
+      "hint": "Free memory, then rerun `kb-create install`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_PLAN_ARTIFACT_IDENTITY_INVALID",
@@ -1100,7 +1173,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The resolved plan contains more than one record for artifact {artifact}.",
-      "hint": "Use a current sealed release index and kb-create launcher; if the error persists, report the correlationId."
+      "hint": "Use a current sealed release index and kb-create launcher; if the error persists, report the correlationId.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_PORT_IN_USE",
@@ -1117,7 +1191,8 @@
         "pid",
         "platformRoot",
         "purpose"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_PROJECT_REGISTRATION_FAILED",
@@ -1135,7 +1210,8 @@
         "projectRoot",
         "remoteCorrelationId",
         "requestStage"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_PROJECT_SELECTION_CHANGED",
@@ -1145,7 +1221,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "The selected project differs from the project recorded by this installation.",
-      "hint": "Complete the project registration commands for this installation."
+      "hint": "Complete the project registration commands for this installation.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_PROVIDER_AMBIGUOUS",
@@ -1155,7 +1232,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "Capability {capability} has more than one compatible provider.",
-      "hint": "Specify which provider to use with --provider."
+      "hint": "Specify which provider to use with --provider.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_PROVIDER_UNRESOLVED",
@@ -1165,7 +1243,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "No adapter provides the required capability {capability}.",
-      "hint": "Select a provider explicitly with --provider."
+      "hint": "Select a provider explicitly with --provider.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_RECEIPT_UNAVAILABLE",
@@ -1175,7 +1254,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The active install receipt could not be read.",
-      "hint": "Run `kb-create install` to create the platform, or restore a named snapshot."
+      "hint": "Run `kb-create install` to create the platform, or restore a named snapshot.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_RECOVERY_FAILED",
@@ -1185,7 +1265,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The recovery operation did not reach a verified state.",
-      "hint": "Inspect the local log and the diagnostic dossier, then retry with the named receipt or snapshot."
+      "hint": "Inspect the local log and the diagnostic dossier, then retry with the named receipt or snapshot.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_RECOVERY_HOST_RUNNING",
@@ -1195,7 +1276,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Recovery needs the host to be stopped, but it is running.",
-      "hint": "Run \"kb-create stop\", recover, then \"kb-create start\"."
+      "hint": "Run \"kb-create stop\", recover, then \"kb-create start\".",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_RECOVERY_UNAVAILABLE",
@@ -1205,7 +1287,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The installed platform does not ship a recovery tool.",
-      "hint": "Update the platform with \"kb-create update\", then retry."
+      "hint": "Update the platform with \"kb-create update\", then retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_RELEASE_ID_MISSING",
@@ -1215,7 +1298,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The install result did not include a release identifier.",
-      "hint": "Inspect the remote install log and correct the install failure before retrying."
+      "hint": "Inspect the remote install log and correct the install failure before retrying.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_RELEASE_INDEX_INVALID",
@@ -1231,7 +1315,8 @@
         "expected",
         "gate",
         "path"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_RELEASE_INDEX_UNREADABLE",
@@ -1246,7 +1331,8 @@
         "actual",
         "expected",
         "gate"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_RESOURCE_CHECK_FAILED",
@@ -1256,7 +1342,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The launcher could not check available memory and disk space.",
-      "hint": "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again."
+      "hint": "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_ROLLBACK_FAILED",
@@ -1266,7 +1353,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The rollback did not succeed; the snapshot is at {snapshot}.",
-      "hint": "Restore the snapshot manually and report the correlationId."
+      "hint": "Restore the snapshot manually and report the correlationId.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_SCENARIO_INVALID",
@@ -1276,7 +1364,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "The scenario could not be compiled.",
-      "hint": "Inspect the scenario answers and the manifest requirements."
+      "hint": "Inspect the scenario answers and the manifest requirements.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_SECRET_INPUT_INVALID",
@@ -1289,7 +1378,8 @@
       "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable.",
       "structuredDetailFields": [
         "requirement"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_SECRET_STATE_CHANGED",
@@ -1299,7 +1389,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The installation secret state changed underneath this operation.",
-      "hint": "Rerun `kb-create apply --platform-root <platform-root>` to apply changes to the current state."
+      "hint": "Rerun `kb-create apply --platform-root <platform-root>` to apply changes to the current state.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_SECRET_STORE_UNSUPPORTED",
@@ -1309,7 +1400,8 @@
       "retryable": false,
       "message": "The platform secret state uses a format this launcher cannot safely read.",
       "hint": "Preserve the existing platform root, then run `kb-create install --platform-root NEW_ROOT` with a new empty path.",
-      "processExitClass": "operation-failure"
+      "processExitClass": "operation-failure",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED",
@@ -1319,7 +1411,8 @@
       "retryable": false,
       "message": "The first-administrator credential cannot be replaced after bootstrap completes.",
       "hint": "Stop the host, then run `kb-create doctor --platform-root <platform-root> --recover --email <email> --generate --yes`; restart with `kb-create start --platform-root <platform-root>`.",
-      "processExitClass": "operation-failure"
+      "processExitClass": "operation-failure",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_SERVICE_GRAPH_MISMATCH",
@@ -1329,7 +1422,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The rendered service graph does not match the resolved plan or the running services.",
-      "hint": "Run \"kb-create doctor --fix\" to rebuild generated files from the install receipt."
+      "hint": "Run \"kb-create doctor --fix\" to rebuild generated files from the install receipt.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_SHIM_DANGLING",
@@ -1339,7 +1433,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The managed `kb` command points to a platform root without a valid installation receipt.",
-      "hint": "Run `kb-create doctor --fix --platform-root <platform-root>` to point the command at the live installation."
+      "hint": "Run `kb-create doctor --fix --platform-root <platform-root>` to point the command at the live installation.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_TOOLCHAIN_UNSUPPORTED",
@@ -1349,7 +1444,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Runtime preflight failed: the installed toolchain is not supported.",
-      "hint": "Use the supported Node.js major and pnpm 11.x, or update the runtime and retry."
+      "hint": "Use the supported Node.js major and pnpm 11.x, or update the runtime and retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_UNSUPPORTED_PLATFORM",
@@ -1359,7 +1455,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "{os}/{arch} is not a supported platform.",
-      "hint": "Use a supported platform (macOS, Linux or Windows on x64/arm64) or install from source."
+      "hint": "Use a supported platform (macOS, Linux or Windows on x64/arm64) or install from source.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_WIZARD_INPUT_INVALID",
@@ -1369,7 +1466,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "A wizard answer is invalid.",
-      "hint": "Choose one of the displayed compatible options."
+      "hint": "Choose one of the displayed compatible options.",
+      "httpStatus": 500
     },
     {
       "code": "KB_MARKETPLACE_INSTALL_FAILED",
@@ -1438,7 +1536,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The package integrity could not be verified from the registry.",
-      "hint": "Publish the package to the configured registry and verify its integrity metadata before retrying deployment."
+      "hint": "Publish the package to the configured registry and verify its integrity metadata before retrying deployment.",
+      "httpStatus": 500
     },
     {
       "code": "KB_MARKETPLACE_RESOLUTION_FAILED",
@@ -1487,7 +1586,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The plugin operation was cancelled before it completed.",
-      "hint": "Retry the command. If cancellation was unexpected, inspect the plugin logs and retry."
+      "hint": "Retry the command. If cancellation was unexpected, inspect the plugin logs and retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_COMMAND_SHADOWED",
@@ -1497,7 +1597,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Command {command} is hidden: plugin {plugin} is shadowed by a built-in command.",
-      "hint": "Run \"kb marketplace plugins doctor\" for details."
+      "hint": "Run \"kb marketplace plugins doctor\" for details.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_CONTRACT_VIOLATION",
@@ -1518,7 +1619,8 @@
         "sourceCode",
         "sourceErrorClass",
         "sourceMessage"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_CRASHED",
@@ -1528,7 +1630,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Plugin {plugin} crashed while running.",
-      "hint": "Retry; if it repeats, include the correlationId in a report."
+      "hint": "Retry; if it repeats, include the correlationId in a report.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_INSTALL_FAILED",
@@ -1538,7 +1641,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Installing plugin {plugin} failed.",
-      "hint": "Check the network and registry, then retry."
+      "hint": "Check the network and registry, then retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_INTEGRITY_MISMATCH",
@@ -1548,7 +1652,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Store entry for plugin {plugin} has integrity {actual}, expected {expected}.",
-      "hint": "Remove the store entry and reinstall the pinned version."
+      "hint": "Remove the store entry and reinstall the pinned version.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_LOAD_FAILED",
@@ -1558,7 +1663,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Plugin {plugin} could not be loaded.",
-      "hint": "Run \"kb marketplace plugins doctor\" to see the manifest or dependency problem."
+      "hint": "Run \"kb marketplace plugins doctor\" to see the manifest or dependency problem.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_NAMESPACE_RESERVED",
@@ -1568,7 +1674,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The namespace {namespace} is reserved.",
-      "hint": "Choose another namespace, for example acme-{namespace}."
+      "hint": "Choose another namespace, for example acme-{namespace}.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_NAMESPACE_TAKEN",
@@ -1578,7 +1685,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The namespace {namespace} is taken by package {owner}.",
-      "hint": "Choose another namespace or use the owning package."
+      "hint": "Choose another namespace or use the owning package.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_NOT_FOUND",
@@ -1613,7 +1721,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Plugin {plugin} was denied the {permission} permission.",
-      "hint": "Grant the permission in the plugin settings if you trust it."
+      "hint": "Grant the permission in the plugin settings if you trust it.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_PLATFORM_DUPLICATE",
@@ -1627,7 +1736,8 @@
       "structuredDetailFields": [
         "ownCopy",
         "requester"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_SDK_INCOMPATIBLE",
@@ -1637,7 +1747,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Plugin {plugin} needs SDK {required} but {installed} is installed.",
-      "hint": "Update the plugin or the platform to compatible versions."
+      "hint": "Update the plugin or the platform to compatible versions.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_SETTINGS_INVALID",
@@ -1647,7 +1758,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Plugin setting {path} is invalid.",
-      "hint": "Correct {path} to match the plugin's declared settings schema, then retry."
+      "hint": "Correct {path} to match the plugin's declared settings schema, then retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_SETTINGS_SCHEMA_INVALID",
@@ -1657,7 +1769,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The settings schema for plugin {plugin} could not be loaded.",
-      "hint": "Correct the plugin manifest's settings schema, then rerun the config command."
+      "hint": "Correct the plugin manifest's settings schema, then rerun the config command.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_TIMEOUT",
@@ -1667,7 +1780,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Plugin {plugin} did not finish in time.",
-      "hint": "Retry or increase the timeout."
+      "hint": "Retry or increase the timeout.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PROJECT_ALREADY_REGISTERED",
@@ -1856,7 +1970,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Package {package}@{version} already exists in the immutable registry.",
-      "hint": "After assigning a new package version in the source, run `bash e2e/journey/prepare-candidate.sh` to rebuild the immutable candidate."
+      "hint": "After assigning a new package version in the source, run `bash e2e/journey/prepare-candidate.sh` to rebuild the immutable candidate.",
+      "httpStatus": 500
     },
     {
       "code": "KB_INSTALL_PROVENANCE_MISMATCH",
@@ -1868,8 +1983,11 @@
       "message": "Installed package {package} differs at {field}: expected {expected}, actual {actual} (path {packagePath}; digest version {digestVersion}).",
       "hint": "Inspect {packagePath}; compare {field}, expected {expected} and actual {actual} using {digestVersion}, then rerun kb-create install.",
       "structuredDetailFields": [
-        "actualPresent"
-      ]
+        "actualPresent",
+        "diagnosticPath",
+        "logPath"
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_BASELINE_DRIFT",
@@ -1886,7 +2004,8 @@
         "distTag",
         "gitVersion",
         "npmVersion"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_BRANCH_NOT_MASTER",
@@ -1902,7 +2021,8 @@
         "classification",
         "branch",
         "expected"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_BUILD_FAILED",
@@ -1912,7 +2032,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Building the release candidate failed.",
-      "hint": "Fix the candidate build error shown in the report, then rerun release checks."
+      "hint": "Fix the candidate build error shown in the report, then rerun release checks.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_CHECK_FAILED",
@@ -1928,7 +2049,8 @@
         "package",
         "classification",
         "rule"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_CHECK_TIMEOUT",
@@ -1944,7 +2066,8 @@
         "package",
         "classification",
         "rule"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_DOCKER_UNAVAILABLE",
@@ -1960,7 +2083,8 @@
         "classification",
         "package",
         "rule"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_GIT_PUSH_REJECTED",
@@ -1970,7 +2094,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Git push was rejected.",
-      "hint": "Resolve the remote branch rejection, then retry the release command."
+      "hint": "Resolve the remote branch rejection, then retry the release command.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_INDEX_SEAL_FAILED",
@@ -1984,7 +2109,8 @@
       "structuredDetailFields": [
         "gate",
         "rule"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_PLAN_INVALID",
@@ -2000,7 +2126,8 @@
         "package",
         "classification",
         "rule"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_PROMOTE_FAILED",
@@ -2010,7 +2137,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Promoting the candidate to a channel failed.",
-      "hint": "Check the registry and release credentials, then retry promotion."
+      "hint": "Check the registry and release credentials, then retry promotion.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_REGISTRY_BINDING_FAILED",
@@ -2020,7 +2148,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Binding delivered bytes to the registry failed.",
-      "hint": "Check registry availability and release credentials, then retry delivery."
+      "hint": "Check registry availability and release credentials, then retry delivery.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_REGISTRY_UNREACHABLE",
@@ -2038,7 +2167,8 @@
         "registry",
         "package",
         "rule"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_SMOKE_FAILED",
@@ -2048,7 +2178,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Smoke install of the public candidate failed.",
-      "hint": "Inspect the smoke install report, fix the candidate or registry issue, then retry."
+      "hint": "Inspect the smoke install report, fix the candidate or registry issue, then retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_STAGING_FAILED",
@@ -2058,7 +2189,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Staging the planned versions failed.",
-      "hint": "Inspect the staging command output, correct the reported issue, then retry staging."
+      "hint": "Inspect the staging command output, correct the reported issue, then retry staging.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_TOKEN_MISSING",
@@ -2072,7 +2204,8 @@
       "structuredDetailFields": [
         "check",
         "classification"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RELEASE_TREE_DIRTY",
@@ -2088,7 +2221,8 @@
         "classification",
         "changes",
         "toolGenerated"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_APPROVAL_INPUT_INVALID",
@@ -2151,7 +2285,8 @@
       ],
       "runtimeTemplateParameters": {
         "binary": "required"
-      }
+      },
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_CONTAINER_UNAVAILABLE",
@@ -2209,7 +2344,8 @@
         "blastRadiusUnit",
         "blastRadiusScope",
         "recovery"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_CRON_LIST_FAILED",
@@ -2279,7 +2415,8 @@
         "field",
         "observedType",
         "observedValuePreview"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_DISK_FULL",
@@ -2289,7 +2426,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "There is no free disk space in {path}.",
-      "hint": "Free some space or clear the cache and logs there."
+      "hint": "Free some space or clear the cache and logs there.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE",
@@ -2307,7 +2445,8 @@
         "remoteCorrelationId",
         "remoteCode",
         "fields"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_INPUT_INVALID",
@@ -2455,7 +2594,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The log storage is unavailable.",
-      "hint": "Try \"kb logs query\" first, then the raw log files under .kb/logs."
+      "hint": "Try \"kb logs query\" first, then the raw log files under .kb/logs.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_MCP_INVALID_ARGUMENTS",
@@ -2465,7 +2605,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "Argument {argument} must match expected {expected}.",
-      "hint": "Call tools/list to inspect the tool inputSchema, correct {argument}, and retry."
+      "hint": "Call tools/list to inspect the tool inputSchema, correct {argument}, and retry.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_MCP_TOOL_FORBIDDEN",
@@ -2475,7 +2616,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The API token cannot call MCP tool {tool}.",
-      "hint": "Use an API token with a role allowed to run this tool, then call it again."
+      "hint": "Use an API token with a role allowed to run this tool, then call it again.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_MCP_UNKNOWN_TOOL",
@@ -2485,7 +2627,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "MCP tool {tool} is not available in this project.",
-      "hint": "Call tools/list to discover the available project tools."
+      "hint": "Call tools/list to discover the available project tools.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_RATE_LIMITED",
@@ -2495,7 +2638,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The request limit was reached; retry after {retryAfter}.",
-      "hint": "Wait and retry, or reduce the request rate."
+      "hint": "Wait and retry, or reduce the request rate.",
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
@@ -2803,7 +2947,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Services did not become healthy before the readiness timeout.",
-      "hint": "Run `kb-env status` and inspect service logs, then retry after correcting the failure."
+      "hint": "Run `kb-env status` and inspect service logs, then retry after correcting the failure.",
+      "httpStatus": 500
     },
     {
       "code": "KB_SERVICE_UNAVAILABLE",
@@ -2833,7 +2978,8 @@
       "structuredDetailFields": [
         "diagnosticPath",
         "logPath"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_UPDATE_DOWNGRADE_REFUSED",
@@ -2843,7 +2989,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "The requested platform version {target} is older than the installed version {installed}.",
-      "hint": "use `kb-create rollback`"
+      "hint": "use `kb-create rollback`",
+      "httpStatus": 500
     },
     {
       "code": "KB_UPDATE_DOWNLOAD_FAILED",
@@ -2853,7 +3000,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Downloading the update failed.",
-      "hint": "Check the network and run the update again."
+      "hint": "Check the network and run the update again.",
+      "httpStatus": 500
     },
     {
       "code": "KB_UPDATE_HOST_NOT_HEALTHY",
@@ -2877,7 +3025,8 @@
         "restoredHealthy",
         "snapshot",
         "hostRestart"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_UPDATE_INCOMPATIBLE",
@@ -2887,7 +3036,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The update is incompatible with installed {kind} {id} at {selectedVersion}; its declared compatibility range is {requiredRange}.",
-      "hint": "Update or remove {kind} {id} first, then rerun `kb-create update`."
+      "hint": "Update or remove {kind} {id} first, then rerun `kb-create update`.",
+      "httpStatus": 500
     },
     {
       "code": "KB_UPDATE_NO_SNAPSHOT",
@@ -2897,7 +3047,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "There is no snapshot to roll back to.",
-      "hint": "Reinstall the previous version with \"kb-create apply\"."
+      "hint": "Reinstall the previous version with \"kb-create apply\".",
+      "httpStatus": 500
     },
     {
       "code": "KB_UPDATE_SECRET_REFUSED",
@@ -2907,7 +3058,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Update cannot change or create installation secret {secret}.",
-      "hint": "Stop the host and run `kb-create apply` with the required `--secret-env` mapping."
+      "hint": "Stop the host and run `kb-create apply` with the required `--secret-env` mapping.",
+      "httpStatus": 500
     },
     {
       "code": "KB_UPDATE_VERIFY_FAILED",
@@ -2917,7 +3069,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Verification after the update failed; rolled back to {version}.",
-      "hint": "Inspect the diagnostic dossier and report the correlationId."
+      "hint": "Inspect the diagnostic dossier and report the correlationId.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PLUGIN_COMMAND_FAILED",
@@ -2937,7 +3090,8 @@
         "sourceErrorClass",
         "sourceMessage",
         "failureMode"
-      ]
+      ],
+      "httpStatus": 500
     },
     {
       "code": "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE",
@@ -2947,7 +3101,8 @@
       "retryable": false,
       "message": "WebSocket connection {connectionId} is unknown or closed.",
       "hint": "Reconnect the WebSocket client to obtain an active connection, then retry the operation.",
-      "processExitClass": "operation-failure"
+      "processExitClass": "operation-failure",
+      "httpStatus": 500
     },
     {
       "code": "ACQUIRE_TIMEOUT",
@@ -3044,7 +3199,8 @@
       "structuredDetailFields": [
         "actualBytes",
         "maximumBytes"
-      ]
+      ],
+      "httpStatus": 500
     }
   ]
 }

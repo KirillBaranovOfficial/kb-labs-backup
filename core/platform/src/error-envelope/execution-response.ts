@@ -44,6 +44,15 @@ export function serializeError(value: unknown): SerializedError {
 
   if (isSerializedError(value)) return value;
 
+  if (typeof value === 'object' && value !== null && !Array.isArray(value) &&
+      'message' in value && typeof value.message === 'string') {
+    return {
+      name: 'name' in value && typeof value.name === 'string' ? value.name : 'Error',
+      message: value.message,
+      ...('stack' in value && typeof value.stack === 'string' ? { stack: value.stack } : {}),
+    };
+  }
+
   return {
     name: 'NonErrorThrown',
     message: typeof value === 'string' ? value : String(value),

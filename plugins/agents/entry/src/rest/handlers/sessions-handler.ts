@@ -90,9 +90,8 @@ export const createSessionHandler = defineHandler({
 
       if (!globalAgentRegistry.has(body.agentId)) {
         throw new PluginError(
-          'KB_AGENT_NOT_FOUND',
           `Agent ID "${body.agentId}" is not defined by the Agents plugin.`,
-          404,
+          'KB_AGENT_NOT_FOUND',
           { agentId: body.agentId },
         );
       }

@@ -6,6 +6,14 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const catalogPath = resolve(packageRoot, 'src/error-envelope/errors.catalog.json');
 const outputPath = resolve(packageRoot, 'src/error-envelope/error-codes.generated.ts');
 const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
+for (const entry of catalog.codes) {
+  if (!Number.isInteger(entry.httpStatus) || entry.httpStatus < 100 || entry.httpStatus > 599) {
+    throw new Error(`${entry.code} must declare an HTTP status between 100 and 599`);
+  }
+  if (!['input-refusal', 'operation-failure'].includes(entry.processExitClass)) {
+    throw new Error(`${entry.code} must declare a process exit class`);
+  }
+}
 const entries = [...catalog.codes].sort((left, right) => left.code < right.code ? -1 : left.code > right.code ? 1 : 0);
 const codes = [...new Set(entries.map(({ code }) => code))];
 const templateParameterMetadata = entries.map((entry) => {
