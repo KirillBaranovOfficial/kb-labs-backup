@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
-import { access, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, cp, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createServer, type Server } from 'node:http';
@@ -397,17 +397,35 @@ describe('installed platform adapter defaults', () => {
     const installRoot = path.join(tempRoot, 'install');
     const versionRoot = path.join(installRoot, 'versions', 'v1');
     const platformRoot = path.join(installRoot, 'current');
+    const installedCommitRoot = path.join(versionRoot, 'plugins', 'commit-entry');
     const projectRoot = path.join(tempRoot, 'project');
     const secondProjectRoot = path.join(tempRoot, 'project-b');
     const home = path.join(tempRoot, 'home');
     const dataRoot = path.join(installRoot, 'state', 'data');
     await Promise.all([
       mkdir(path.join(versionRoot, '.kb', 'v2'), { recursive: true }),
+      mkdir(path.join(versionRoot, 'node_modules', '@kb-labs'), { recursive: true }),
+      mkdir(path.join(installedCommitRoot, 'node_modules', '@kb-labs'), { recursive: true }),
       mkdir(dataRoot, { recursive: true }),
       mkdir(projectRoot, { recursive: true }),
       mkdir(secondProjectRoot, { recursive: true }),
       mkdir(home, { recursive: true }),
     ]);
+    await symlink(
+      path.join(workspaceRoot, 'sdk/sdk'),
+      path.join(versionRoot, 'node_modules', '@kb-labs', 'sdk'),
+      'dir',
+    );
+    await symlink(
+      path.join(versionRoot, 'node_modules', '@kb-labs', 'sdk'),
+      path.join(installedCommitRoot, 'node_modules', '@kb-labs', 'sdk'),
+      'dir',
+    );
+    await symlink(
+      path.join(workspaceRoot, 'plugins/commit/core'),
+      path.join(installedCommitRoot, 'node_modules', '@kb-labs', 'commit-core'),
+      'dir',
+    );
     const initialized = spawnSync('git', ['init', '--quiet', projectRoot], { encoding: 'utf8' });
     expect(initialized.status, initialized.stderr).toBe(0);
     const gitRepositories = new Set([projectRoot]);
@@ -489,6 +507,10 @@ describe('installed platform adapter defaults', () => {
     }));
     const commitRoot = path.join(workspaceRoot, 'plugins/commit/entry');
     const commitPackageJSON = await readFile(path.join(commitRoot, 'package.json'));
+    await cp(path.join(commitRoot, 'dist'), path.join(installedCommitRoot, 'dist'), { recursive: true });
+    await writeFile(path.join(installedCommitRoot, 'package.json'), commitPackageJSON);
+    expect(await realpath(path.join(installedCommitRoot, 'node_modules', '@kb-labs', 'sdk')))
+      .toBe(await realpath(path.join(versionRoot, 'node_modules', '@kb-labs', 'sdk')));
     const commitPackage = JSON.parse(commitPackageJSON.toString('utf8')) as { version: string };
     await writeFile(path.join(versionRoot, '.kb', 'marketplace.lock'), JSON.stringify({
       schema: 'kb.marketplace/3',
@@ -497,7 +519,7 @@ describe('installed platform adapter defaults', () => {
           version: commitPackage.version,
           integrity: `sha256-${createHash('sha256').update(commitPackageJSON).digest('base64')}`,
           package: '@kb-labs/commit-entry',
-          resolvedPath: path.relative(platformRoot, commitRoot),
+          resolvedPath: path.relative(platformRoot, installedCommitRoot),
           source: 'platform',
           enabled: true,
         },
