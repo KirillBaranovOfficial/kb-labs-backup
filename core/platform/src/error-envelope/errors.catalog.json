@@ -85,6 +85,17 @@
       ]
     },
     {
+      "code": "KB_AGENT_NOT_FOUND",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "httpStatus": 404,
+      "message": "Agent ID {agentId} is not registered in the Agents plugin.",
+      "hint": "Use an agent ID registered by the Agents plugin, then retry this request."
+    },
+    {
       "code": "KB_AUTH_CLOCK_SKEW",
       "area": "auth",
       "stage": "run",
@@ -1502,7 +1513,11 @@
         "field",
         "plugin",
         "observedType",
-        "observedValuePreview"
+        "observedValuePreview",
+        "failureMode",
+        "sourceCode",
+        "sourceErrorClass",
+        "sourceMessage"
       ]
     },
     {
@@ -2493,6 +2508,7 @@
       "message": "The requested resource was not found.",
       "hint": "Check the resource ID or name, then rerun the command.",
       "structuredDetailFields": [
+        "sessionId",
         "plugin",
         "route",
         "upstreamStatus"
@@ -2915,7 +2931,13 @@
       "processExitClass": "operation-failure",
       "runtimeTemplateParameters": {
         "correlationId": "optional"
-      }
+      },
+      "structuredDetailFields": [
+        "sourceCode",
+        "sourceErrorClass",
+        "sourceMessage",
+        "failureMode"
+      ]
     },
     {
       "code": "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE",

@@ -235,6 +235,7 @@ describe('errors.catalog.json lint', () => {
       PROJECT: 'project',
       CONFIG: 'config',
       PLUGIN: 'plugin',
+      AGENT: 'plugin',
       ADAPTER: 'plugin',
       UPDATE: 'update',
       RUNTIME: 'runtime',
@@ -430,6 +431,39 @@ describe('structured error diagnostics', () => {
 });
 
 describe('toErrorEnvelope (platform errors)', () => {
+  it('retains agent session IDs in catalogued resource not-found details', () => {
+    const error = Object.assign(
+      new Error('session-does-not-exist'),
+      {
+        errorCode: 'KB_RUNTIME_RESOURCE_NOT_FOUND',
+        details: { plugin: '@kb-labs/agents', sessionId: 'session-does-not-exist' },
+      },
+    );
+
+    expect(toErrorEnvelope(error)).toMatchObject({
+      code: 'KB_RUNTIME_RESOURCE_NOT_FOUND',
+      details: { plugin: '@kb-labs/agents', sessionId: 'session-does-not-exist' },
+      cause: expect.stringContaining('session-does-not-exist'),
+    });
+  });
+
+  it('maps an unknown agent ID to its registered plugin 404 envelope', () => {
+    const error = Object.assign(
+      new Error('agent-not-found-test'),
+      { errorCode: 'KB_AGENT_NOT_FOUND', details: { agentId: 'agent-does-not-exist' } },
+    );
+
+    const envelope = toErrorEnvelope(error);
+    expect(envelope).toMatchObject({
+      code: 'KB_AGENT_NOT_FOUND',
+      area: 'plugin',
+      message: expect.stringContaining('agent-does-not-exist'),
+      details: { agentId: 'agent-does-not-exist' },
+    });
+    expect(envelope.hint).toBe(getCatalogEntry('KB_AGENT_NOT_FOUND')?.hint);
+    expect(getCatalogEntry('KB_AGENT_NOT_FOUND')?.httpStatus).toBe(404);
+  });
+
   it('does not promote a catalogued error message into a duplicate cause', () => {
     const message = 'Adapter package @kb-labs/not-installed is not installed on this platform.';
     const error = Object.assign(new Error(message), { code: 'KB_ADAPTER_NOT_INSTALLED', details: { package: '@kb-labs/not-installed' } });

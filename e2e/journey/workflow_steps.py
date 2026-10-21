@@ -21,6 +21,7 @@ from invocations import (
     run_command,
     run_pty_command,
     write_report_json,
+    write_report_jsonl,
 )
 
 
@@ -469,9 +470,9 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
                 raise AssertionError("secured auth evidence did not establish registered and unregistered project roots")
             report_root = env.get("KB_JOURNEY_INVOCATIONS")
             if report_root:
-                write_report_json(Path(report_root) / "project-registries.jsonl", {
+                write_report_jsonl(Path(report_root) / "project-registries.jsonl", {
                     "mode": "secured", "projects": projects,
-                }, env=setup_env, append=True, indent=None)
+                }, env=setup_env, append=True)
             with invocation_context(step_id="S-041.17"):
                 command_listing = run_cli(["registry", "commands", "--json"], env=setup_env, cwd=project)
                 if command_listing.returncode != 0:

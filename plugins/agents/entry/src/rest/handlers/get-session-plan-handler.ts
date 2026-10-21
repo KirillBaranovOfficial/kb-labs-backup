@@ -7,6 +7,7 @@ import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } f
 import { SessionManager, PlanDocumentService } from '@kb-labs/agent-core';
 import type { GetSessionPlanResponse, TaskPlan } from '@kb-labs/agent-contracts';
 import { promises as fs } from 'node:fs';
+import { agentSessionNotFound } from './session-errors.js';
 
 interface GetSessionPlanRequest {
   sessionId?: string;
@@ -45,7 +46,7 @@ export default defineHandler({
       const sessionManager = new SessionManager(ctx.cwd);
       const session = await sessionManager.loadSession(sessionId);
       if (!session) {
-        throw new Error(`Session not found: ${sessionId}`);
+        throw agentSessionNotFound(sessionId);
       }
 
       const workingDir = session.workingDir || ctx.cwd;

@@ -23,6 +23,7 @@ from journey_dependencies import Dependency
 import service_runner
 from test_install_layout import create_test_install_container
 from invocations import catalogued_error_hint, invocation_context, open_http, run_command
+import jsonl
 
 
 class MarketplaceStepTests(unittest.TestCase):
@@ -157,7 +158,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 result = run_command(["kb", "marketplace", "plugins", "list", "--json"],
                                      cwd="/isolated/project", env=env, runner=runner)
 
-            record = json.loads((report_root / "invocations" / "calls.jsonl").read_text().splitlines()[0])
+            record = jsonl.read_jsonl(report_root / "invocations" / "calls.jsonl")[0].value
             self.assertEqual(result.returncode, 7)
             self.assertEqual(record["step_id"], "S-041.7")
             self.assertEqual(record["home_label"], "anonymous")
@@ -191,7 +192,7 @@ class MarketplaceStepTests(unittest.TestCase):
             with invocation_context(step_id="S-106.2", report_root=report_root):
                 status, body, _ = open_http(lambda *_args, **_kwargs: Response(), request,
                                             timeout=3, env={"KB_STUDIO_MEMBER_PASSWORD": secret})
-            record = json.loads((report_root / "invocations" / "calls.jsonl").read_text().splitlines()[0])
+            record = jsonl.read_jsonl(report_root / "invocations" / "calls.jsonl")[0].value
             self.assertEqual(status, 201)
             self.assertEqual(body, b'{"ok":true}')
             self.assertEqual(record["argv"], ["POST"])

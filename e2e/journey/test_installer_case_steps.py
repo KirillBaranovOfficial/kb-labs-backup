@@ -15,6 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
+import jsonl
 import installer_case_steps
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import (_add_installed_manifest_requirement, _data, _seed_installed_fixture,
@@ -50,7 +51,7 @@ from service_port_assertions import assert_service_ports_preserved
 def kb_create_stream(envelope: dict, exit_code: int) -> str:
     terminal = {"ok": True, "data": None,
                 "meta": {"stream": {"terminal": True, "exitCode": exit_code}}}
-    return "\n".join((json.dumps(envelope), json.dumps(terminal))) + "\n"
+    return jsonl.encode_jsonl_records((envelope, terminal))
 
 
 def fake_product_install(args: list[str]) -> None:
@@ -503,11 +504,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
         journey = Journey("local")
         envelope = {"code": "KB_INSTALL_LAYOUT_UNSUPPORTED", "message": "foreign target",
                     "cause": "foreign bytes found", "hint": "choose a fresh writable path"}
-        stdout = "\n".join((
-            json.dumps({"ok": False, "error": envelope}),
-            json.dumps({"ok": True, "data": None,
-                        "meta": {"stream": {"terminal": True, "exitCode": 1}}}),
-        )) + "\n"
+        stdout = jsonl.encode_jsonl_records((
+            {"ok": False, "error": envelope},
+            {"ok": True, "data": None,
+             "meta": {"stream": {"terminal": True, "exitCode": 1}}},
+        ))
 
         parsed = installer_case_steps.parse_install_refusal(
             subprocess.CompletedProcess(["kb-create", "install", "--json"], 1, stdout, ""))
@@ -1292,7 +1293,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     {"ok": True, "data": payload, "meta": {"stream": {"result": True}}},
                     {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 0}}},
                 ]
-                return subprocess.CompletedProcess(args, 0, "\n".join(json.dumps(record) for record in records) + "\n", "")
+                return subprocess.CompletedProcess(args, 0, jsonl.encode_jsonl_records(records), "")
 
             journey = run_gateway_allocation_step(mode="local", launcher="kb-create", stable_index=index,
                                                   primary_root=primary, automatic_root=automatic,

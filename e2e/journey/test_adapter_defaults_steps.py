@@ -16,6 +16,7 @@ from adapter_defaults_steps import (_assert_no_network_defaults, _assert_require
                                     _run_from_registered_project, run_adapter_default_steps)
 from sdk_runtime_import_check import check_installed_runtime_imports
 from invocations import invocation_context
+import jsonl
 from service_steps import Journey
 from test_install_layout import create_test_install_container
 
@@ -159,13 +160,13 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
 
     def test_kb_create_install_json_uses_registered_stream_reader(self):
         result_payload = {"operation": "install", "receipt": {"id": "receipt-1"}}
-        stdout = "\n".join((
-            json.dumps({"ok": True, "data": {"phase": "Apply"}}),
-            json.dumps({"ok": True, "data": result_payload,
-                        "meta": {"stream": {"result": True}}}),
-            json.dumps({"ok": True, "data": None,
-                        "meta": {"stream": {"terminal": True, "exitCode": 0}}}),
-        )) + "\n"
+        stdout = jsonl.encode_jsonl_records((
+            {"ok": True, "data": {"phase": "Apply"}},
+            {"ok": True, "data": result_payload,
+             "meta": {"stream": {"result": True}}},
+            {"ok": True, "data": None,
+             "meta": {"stream": {"terminal": True, "exitCode": 0}}},
+        ))
         command = ["kb-create", "install", "--json"]
         result = subprocess.CompletedProcess(command, 0, stdout, "")
 
@@ -620,11 +621,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             cleanup = next(step for step in journey.steps if step.name == "restore adapter journey fixture state")
             self.assertEqual(cleanup.status, "PASS")
             self.assertEqual(claims, expected)
-            workflow_rows = [
-                json.loads(line)
-                for line in (report_root / "invocations" / "calls.jsonl").read_text().splitlines()
-                if json.loads(line).get("argv", [])[1:3] == ["workflow", "run"]
-            ]
+            invocation_records = jsonl.read_jsonl(report_root / "invocations" / "calls.jsonl")
+            self.assertEqual([row.line_number for row in invocation_records if row.error is not None], [])
+            workflow_rows = [row.value for row in invocation_records
+                             if row.value.get("argv", [])[1:3] == ["workflow", "run"]]
             self.assertTrue(workflow_rows)
             for row in workflow_rows:
                 self.assertTrue(json.loads(row["stdout"])["ok"])

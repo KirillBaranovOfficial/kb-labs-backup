@@ -122,6 +122,7 @@ export { generateLogId, LOG_CONTEXT_FIELDS } from "./logger.js";
 export type { ILogRingBuffer, LogRingBufferConfig } from "./log-ring-buffer.js";
 
 // Log Persistence
+export { LOG_PERSISTENCE_ERROR_FLUSH_TIMEOUT_MS } from "./log-persistence.js";
 export type {
   ILogPersistence,
   LogPersistenceConfig,

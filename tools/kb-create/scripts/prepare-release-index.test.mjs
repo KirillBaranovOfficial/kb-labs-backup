@@ -209,7 +209,7 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
   const sdkPackageJSON = JSON.parse(readFileSync(join(sdkWorkspace.path, 'package.json'), 'utf8'));
   const sdkRequiredPeers = Object.keys(sdkPackageJSON.peerDependencies ?? {}).filter(name =>
     sdkPackageJSON.peerDependenciesMeta?.[name]?.optional !== true);
-  const releaseConfig = readPlatformReleaseConfig(join(workspaceRoot, '.kb/kb.config.jsonc'));
+  const releaseConfig = readPlatformReleaseConfig(join(workspaceRoot, 'tools/kb-create/config/platform-release.jsonc'));
   const registryManifest = JSON.parse(readFileSync(join(workspaceRoot, 'e2e/platform/registry-manifest.json'), 'utf8'));
   const version = JSON.parse(readFileSync(join(workspaceRoot, 'core/runtime/package.json'), 'utf8')).version;
   const artifacts = [

@@ -11,6 +11,7 @@ export type CatalogErrorCode =
   | "KB_ADAPTER_OPERATION_FAILED"
   | "KB_ADAPTER_PROJECT_SCOPE"
   | "KB_ADAPTER_SLOT_MISMATCH"
+  | "KB_AGENT_NOT_FOUND"
   | "KB_AUTH_CLOCK_SKEW"
   | "KB_AUTH_FORBIDDEN"
   | "KB_AUTH_GATEWAY_UNREACHABLE"
@@ -269,6 +270,7 @@ export interface CatalogTemplateParameters {
   "KB_ADAPTER_OPERATION_FAILED": { "operation": string; "slot": string };
   "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
   "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string };
+  "KB_AGENT_NOT_FOUND": { "agentId": string };
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -527,6 +529,7 @@ export interface CatalogDetailsFor {
   "KB_ADAPTER_OPERATION_FAILED": { "operation": string; "slot": string };
   "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
   "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string; "path"?: string };
+  "KB_AGENT_NOT_FOUND": { "agentId": string };
   "KB_AUTH_CLOCK_SKEW": Record<string, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<string, never>;
@@ -645,9 +648,9 @@ export interface CatalogDetailsFor {
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string };
   "KB_NODE_VERSION_UNSUPPORTED": { "actualVersion": string; "requiredMajor": string };
   "KB_PLUGIN_ABORTED": Record<string, never>;
-  "KB_PLUGIN_COMMAND_FAILED": { "command": string; "failureReason": string; "plugin": string };
+  "KB_PLUGIN_COMMAND_FAILED": { "command": string; "failureReason": string; "plugin": string; "sourceCode"?: string; "sourceErrorClass"?: string; "sourceMessage"?: string; "failureMode"?: string };
   "KB_PLUGIN_COMMAND_SHADOWED": { "command": string; "plugin": string };
-  "KB_PLUGIN_CONTRACT_VIOLATION": { "command"?: string; "field"?: string; "plugin"?: string; "observedType"?: string; "observedValuePreview"?: string };
+  "KB_PLUGIN_CONTRACT_VIOLATION": { "command"?: string; "field"?: string; "plugin"?: string; "observedType"?: string; "observedValuePreview"?: string; "failureMode"?: string; "sourceCode"?: string; "sourceErrorClass"?: string; "sourceMessage"?: string };
   "KB_PLUGIN_CRASHED": { "plugin": string };
   "KB_PLUGIN_INSTALL_FAILED": { "plugin": string };
   "KB_PLUGIN_INTEGRITY_MISMATCH": { "actual": string; "expected": string; "plugin": string };
@@ -728,7 +731,7 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": { "tool": string };
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": { "limit": string; "limitBytes"?: string };
   "KB_RUNTIME_RATE_LIMITED": { "retryAfter": string };
-  "KB_RUNTIME_RESOURCE_NOT_FOUND": { "plugin"?: string; "route"?: string; "upstreamStatus"?: string };
+  "KB_RUNTIME_RESOURCE_NOT_FOUND": { "sessionId"?: string; "plugin"?: string; "route"?: string; "upstreamStatus"?: string };
   "KB_RUNTIME_RUN_DIRTY": Record<string, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": { "path": string; "creationError"?: string; "removalError"?: string };
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": { "maxBytes": string; "pathBytes": string; "root": string; "socketNameBytes": string };
@@ -785,6 +788,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_ADAPTER_OPERATION_FAILED": ["operation","slot"],
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
+  "KB_AGENT_NOT_FOUND": ["agentId"],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1043,6 +1047,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_ADAPTER_OPERATION_FAILED": ["operation","slot"],
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
+  "KB_AGENT_NOT_FOUND": ["agentId"],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1301,6 +1306,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_ADAPTER_OPERATION_FAILED": [],
   "KB_ADAPTER_PROJECT_SCOPE": [],
   "KB_ADAPTER_SLOT_MISMATCH": ["slot"],
+  "KB_AGENT_NOT_FOUND": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": [],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1559,6 +1565,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_ADAPTER_OPERATION_FAILED": ["operation","slot"],
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
+  "KB_AGENT_NOT_FOUND": ["agentId"],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1817,6 +1824,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_ADAPTER_OPERATION_FAILED": ["operation","slot"],
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
+  "KB_AGENT_NOT_FOUND": ["agentId"],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -2075,6 +2083,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_ADAPTER_OPERATION_FAILED": [],
   "KB_ADAPTER_PROJECT_SCOPE": [],
   "KB_ADAPTER_SLOT_MISMATCH": ["slot"],
+  "KB_AGENT_NOT_FOUND": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": [],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -2333,6 +2342,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_ADAPTER_OPERATION_FAILED": [],
   "KB_ADAPTER_PROJECT_SCOPE": [],
   "KB_ADAPTER_SLOT_MISMATCH": ["path"],
+  "KB_AGENT_NOT_FOUND": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["requestStage","httpStatus","remoteCorrelationId"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -2451,9 +2461,9 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["requestedVersion"],
   "KB_NODE_VERSION_UNSUPPORTED": [],
   "KB_PLUGIN_ABORTED": [],
-  "KB_PLUGIN_COMMAND_FAILED": [],
+  "KB_PLUGIN_COMMAND_FAILED": ["sourceCode","sourceErrorClass","sourceMessage","failureMode"],
   "KB_PLUGIN_COMMAND_SHADOWED": [],
-  "KB_PLUGIN_CONTRACT_VIOLATION": ["command","field","plugin","observedType","observedValuePreview"],
+  "KB_PLUGIN_CONTRACT_VIOLATION": ["command","field","plugin","observedType","observedValuePreview","failureMode","sourceCode","sourceErrorClass","sourceMessage"],
   "KB_PLUGIN_CRASHED": [],
   "KB_PLUGIN_INSTALL_FAILED": [],
   "KB_PLUGIN_INTEGRITY_MISMATCH": [],
@@ -2534,7 +2544,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": [],
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limitBytes"],
   "KB_RUNTIME_RATE_LIMITED": [],
-  "KB_RUNTIME_RESOURCE_NOT_FOUND": ["plugin","route","upstreamStatus"],
+  "KB_RUNTIME_RESOURCE_NOT_FOUND": ["sessionId","plugin","route","upstreamStatus"],
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["creationError","removalError"],
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": [],
@@ -2591,6 +2601,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_ADAPTER_OPERATION_FAILED": { "operation": string; "slot": string };
   "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
   "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string };
+  "KB_AGENT_NOT_FOUND": { "agentId": string };
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -2849,6 +2860,7 @@ export interface CatalogHintTemplateParameters {
   "KB_ADAPTER_OPERATION_FAILED": Record<never, never>;
   "KB_ADAPTER_PROJECT_SCOPE": Record<never, never>;
   "KB_ADAPTER_SLOT_MISMATCH": { "slot": string };
+  "KB_AGENT_NOT_FOUND": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": Record<never, never>;
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -3107,6 +3119,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_ADAPTER_OPERATION_FAILED": Record<never, never>;
   "KB_ADAPTER_PROJECT_SCOPE": Record<never, never>;
   "KB_ADAPTER_SLOT_MISMATCH": Record<never, never>;
+  "KB_AGENT_NOT_FOUND": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": Record<never, never>;
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;

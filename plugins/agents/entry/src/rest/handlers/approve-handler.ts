@@ -6,6 +6,7 @@
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import { SessionManager } from '@kb-labs/agent-core';
 import { SnapshotStorage } from '@kb-labs/agent-history';
+import { agentSessionNotFound } from './session-errors.js';
 
 interface ApproveRequest {
   runId?: string;
@@ -34,7 +35,7 @@ export default defineHandler({
       const sessionManager = new SessionManager(ctx.cwd);
       const session = await sessionManager.loadSession(sessionId);
       if (!session) {
-        throw new Error(`Session not found: ${sessionId}`);
+        throw agentSessionNotFound(sessionId);
       }
 
       // Use session's own workingDir for snapshot lookup (may differ from ctx.cwd)

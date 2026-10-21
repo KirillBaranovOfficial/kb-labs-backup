@@ -525,14 +525,20 @@ export async function initPlatform(
       adapterConfig: Partial<Record<string, unknown>>,
     ) => Partial<Record<string, unknown>>;
     workspaceDevelopment?: boolean;
+    workspaceRoot?: string;
     hostServiceEnvironment?: HostServiceEnvironment;
   } = {},
 ): Promise<PlatformContainer> {
   const {
     assemblyHook,
     workspaceDevelopment = false,
+    workspaceRoot,
     hostServiceEnvironment,
   } = options;
+
+  if (workspaceDevelopment && !workspaceRoot) {
+    throw new Error('Workspace development requires the root supplied by its CLI or service launcher.');
+  }
 
   // ✅ Idempotent: If already initialized, return existing singleton
   // This prevents duplicate adapter instances across CLI and service startup.
@@ -601,18 +607,16 @@ export async function initPlatform(
     const loadModule = async (modulePath: string): Promise<LoadedAdapterModule> => {
       try {
         const { discoverAdapters } = await import('./discover-adapters.js');
-        const discovered = await discoverAdapters(
-          platformRoot ?? cwd,
-          {
-            development: workspaceDevelopment,
-            configuredPackages: Object.entries(adapters).flatMap(([slot, value]) =>
-              normalizeAdapterValue(value as AdapterValue).map(modulePath => ({
-                packageName: modulePath.split('/').slice(0, 2).join('/'),
-                slot,
-              })),
-            ),
-          },
+        const configuredPackages = Object.entries(adapters).flatMap(([slot, value]) =>
+          normalizeAdapterValue(value as AdapterValue).map(modulePath => ({
+            packageName: modulePath.split('/').slice(0, 2).join('/'),
+            slot,
+          })),
         );
+        const workspaceOptions = workspaceDevelopment
+          ? { development: true as const, workspaceRoot: workspaceRoot!, configuredPackages }
+          : { development: false as const, configuredPackages };
+        const discovered = await discoverAdapters(platformRoot ?? cwd, workspaceOptions);
 
         // Parse module path into base package and subpath (same logic as resolveAdapter)
         const basePkgName = modulePath.split('/').slice(0, 2).join('/'); // "@kb-labs/adapters-openai"

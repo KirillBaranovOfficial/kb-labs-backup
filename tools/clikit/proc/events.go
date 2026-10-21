@@ -20,7 +20,7 @@ func ParseEventFilter(value string) ([]EventType, error) {
 		return nil, nil
 	}
 	allowed := map[EventType]bool{
-		EventQueued: true, EventBlocked: true, EventStart: true,
+		EventQueued: true, EventBlocked: true, EventIdle: true, EventStart: true,
 		EventStall: true, EventExit: true, EventLost: true, EventTeardown: true,
 		EventPressure: true, EventOverBudget: true,
 	}
@@ -41,7 +41,10 @@ func ParseEventFilter(value string) ([]EventType, error) {
 }
 
 // Events streams existing JSONL records and, when follow is true, later appends.
-func Events(ctx context.Context, stateDir string, follow bool, filter []EventType, output io.Writer) error {
+func Events(ctx context.Context, stateDir string, follow bool, filter []EventType, startOffset int64, output io.Writer) error {
+	if startOffset < 0 {
+		return errors.New("proc: event offset must not be negative")
+	}
 	info, err := os.Stat(stateDir)
 	if err != nil {
 		return fmt.Errorf("proc: inspect state directory: %w", err)
@@ -50,7 +53,7 @@ func Events(ctx context.Context, stateDir string, follow bool, filter []EventTyp
 		return fmt.Errorf("proc: state path %q is not a directory", stateDir)
 	}
 	path := filepath.Join(stateDir, "events.jsonl")
-	var offset int64
+	offset := startOffset
 	var pending []byte
 	allowed := make(map[EventType]bool, len(filter))
 	for _, kind := range filter {
@@ -72,34 +75,48 @@ func Events(ctx context.Context, stateDir string, follow bool, filter []EventTyp
 			if remaining < 0 {
 				return errors.Join(errors.New("proc: append-only event file shrank while being followed"), file.Close())
 			}
-			chunk := make([]byte, remaining)
-			n, readErr := file.ReadAt(chunk, offset)
+			var readErr error
+			for remaining > 0 {
+				chunkSize := min(remaining, int64(64*1024))
+				chunk := make([]byte, int(chunkSize))
+				n, chunkErr := file.ReadAt(chunk, offset)
+				if chunkErr != nil && !errors.Is(chunkErr, io.EOF) {
+					readErr = chunkErr
+					break
+				}
+				offset += int64(n)
+				remaining -= int64(n)
+				data := append(pending, chunk[:n]...)
+				for {
+					lineEnd := bytes.IndexByte(data, '\n')
+					if lineEnd < 0 {
+						break
+					}
+					var event Event
+					if err := json.Unmarshal(data[:lineEnd], &event); err != nil {
+						_ = file.Close()
+						return fmt.Errorf("proc: decode event: %w", err)
+					}
+					if len(allowed) == 0 || allowed[event.Type] {
+						if _, err := output.Write(data[:lineEnd+1]); err != nil {
+							_ = file.Close()
+							return err
+						}
+					}
+					data = data[lineEnd+1:]
+				}
+				pending = data
+				if n == 0 {
+					break
+				}
+			}
 			closeErr := file.Close()
-			if readErr != nil && !errors.Is(readErr, io.EOF) {
+			if readErr != nil {
 				return errors.Join(fmt.Errorf("proc: read events: %w", readErr), closeErr)
 			}
 			if closeErr != nil {
 				return fmt.Errorf("proc: close events: %w", closeErr)
 			}
-			offset += int64(n)
-			data := append(pending, chunk[:n]...)
-			for {
-				lineEnd := bytes.IndexByte(data, '\n')
-				if lineEnd < 0 {
-					break
-				}
-				var event Event
-				if err := json.Unmarshal(data[:lineEnd], &event); err != nil {
-					return fmt.Errorf("proc: decode event: %w", err)
-				}
-				if len(allowed) == 0 || allowed[event.Type] {
-					if err := json.NewEncoder(output).Encode(event); err != nil {
-						return err
-					}
-				}
-				data = data[lineEnd+1:]
-			}
-			pending = data
 		}
 		if !follow {
 			if len(pending) != 0 {

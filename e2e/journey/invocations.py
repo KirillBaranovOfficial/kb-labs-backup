@@ -29,6 +29,7 @@ from typing import Any, Callable, Mapping, MutableMapping, NoReturn
 from urllib.error import HTTPError, URLError
 
 import redaction
+import jsonl
 from journey_resources import workspace_resource, workspace_tool_entrypoints
 
 class PtyReadinessUnsupported(RuntimeError):
@@ -351,10 +352,10 @@ def validate_catalogued_cli_status(result: Any) -> None:
     try:
         documents.append(json.loads(stdout))
     except json.JSONDecodeError:
-        try:
-            documents.extend(json.loads(line) for line in stdout.splitlines() if line.strip())
-        except json.JSONDecodeError:
+        rows = jsonl.read_jsonl_text(stdout, skip_blank=True)
+        if any(row.error is not None for row in rows):
             return
+        documents.extend(row.value for row in rows)
     terminal_statuses = [document.get("meta", {}).get("stream", {}).get("exitCode")
                          for document in documents if isinstance(document, dict)
                          and document.get("meta", {}).get("stream", {}).get("terminal") is True]
@@ -398,16 +399,13 @@ def read_ux_cli_stream(result: subprocess.CompletedProcess[str]) -> list[dict[st
     """Validate JSONL UX records and the terminal record's process status."""
     stdout, returncode = _cli_process_result(result)
     records = []
-    for line in stdout.splitlines():
-        if not line.strip():
-            continue
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError as error:
+    for row in jsonl.read_jsonl_text(stdout, skip_blank=True):
+        if row.error is not None:
             try:
                 _invalid_ux_result("CLI stream contains a non-JSON record")
             except ValueError as failure:
-                raise failure from error
+                raise failure from ValueError(row.error)
+        value = row.value
         if not isinstance(value, dict):
             _invalid_ux_result("CLI stream record is not an object")
         if value.get("ok") is True:
@@ -543,6 +541,14 @@ def write_report_json(path: str | Path, value: Any, *, env: Mapping[str, str] | 
     return redacted
 
 
+def write_report_jsonl(path: str | Path, value: Any, *, env: Mapping[str, str] | None = None,
+                       append: bool = True, ensure_ascii: bool = False,
+                       secrets: tuple[str, ...] = ()) -> Any:
+    redacted = redaction.redact_report_value(value, env, secrets)
+    jsonl.write_jsonl(path, [redacted], append=append, ensure_ascii=ensure_ascii)
+    return redacted
+
+
 def write_report_text(path: str | Path, value: str, *, env: Mapping[str, str] | None = None,
                       append: bool = False, secrets: tuple[str, ...] = ()) -> str:
     rendered = redaction.redact_text(value, env, secrets)
@@ -563,15 +569,35 @@ def print_report_text(value: str, *, env: Mapping[str, str] | None = None,
     return rendered
 
 
+def _error_envelope_from_response(stdout: str, stderr: str) -> dict[str, str] | None:
+    for body in (stdout, stderr):
+        try:
+            response = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(response, dict):
+            continue
+        error = response.get("error")
+        if not isinstance(error, dict):
+            continue
+        code = error.get("code")
+        area = error.get("area")
+        if not isinstance(code, str) or not isinstance(area, str):
+            continue
+        envelope = {"code": code, "area": area}
+        stage = error.get("stage")
+        if isinstance(stage, str):
+            envelope["stage"] = stage
+        return envelope
+    return None
+
+
 def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
                       env: Mapping[str, str] | None, exit_code: int | None,
                       stdout: str = "", stderr: str = "", duration_seconds: float,
                       url: str | None = None, request_body: str | None = None,
                       invocation_evidence: list[str] | None = None,
                       error: str | None = None) -> dict[str, Any] | None:
-    unexpected_error_diagnostics = (
-        _unexpected_error_diagnostics(argv, stdout, stderr, cwd, env) if kind == "command" else None
-    )
     root = _REPORT_ROOT.get()
     if root is None:
         path = journey_value("KB_JOURNEY_INVOCATIONS")
@@ -579,6 +605,7 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
     if root is None:
         return None
     effective_env = env if env is not None else os.environ
+    correlated_log_query = _failure_log_query(kind, exit_code, argv, stdout, stderr, cwd, effective_env)
     kb_environment = {key: value for key, value in effective_env.items() if key.startswith("KB_")}
     record = {
         "step_id": _STEP_ID.get(),
@@ -594,6 +621,9 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         "error": error,
         "duration_seconds": round(duration_seconds, 3),
     }
+    error_envelope = _error_envelope_from_response(stdout, stderr)
+    if error_envelope is not None:
+        record["error_envelope"] = error_envelope
     if kind == "command":
         record["kb_environment"] = kb_environment
         shim = _kb_shim_evidence(effective_env)
@@ -603,10 +633,28 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         invocation_evidence = _capture_typed_error_files(argv, stdout, stderr, exit_code, effective_env)
     if invocation_evidence:
         record["invocation_evidence"] = invocation_evidence
-    if unexpected_error_diagnostics:
-        record["unexpected_error_diagnostics"] = unexpected_error_diagnostics
+    if correlated_log_query:
+        record["correlated_log_query"] = correlated_log_query
+        if correlated_log_query.get("code") == "KB_RUNTIME_UNEXPECTED":
+            correlation_id = correlated_log_query.get("correlationId")
+            query_result = correlated_log_query.get("result")
+            if not isinstance(correlation_id, str):
+                unexpected_diagnostic = {"queryError": correlated_log_query.get("queryError")}
+            elif isinstance(query_result, dict):
+                unexpected_diagnostic = {
+                    "correlationId": correlation_id,
+                    "logs": logs_from_query_envelope(query_result),
+                }
+            else:
+                unexpected_diagnostic = {
+                    "correlationId": correlation_id,
+                    "queryError": correlated_log_query.get("queryError", "log query did not return a result"),
+                }
+            collector = _UNEXPECTED_DIAGNOSTICS.get()
+            if collector is not None:
+                collector.append(unexpected_diagnostic)
     target = root / "invocations" / "calls.jsonl"
-    return write_report_json(target, record, env=effective_env, append=True, indent=None, ensure_ascii=False)
+    return write_report_jsonl(target, record, env=effective_env, append=True, ensure_ascii=False)
 
 
 def _kb_shim_evidence(env: Mapping[str, str]) -> dict[str, str] | None:
@@ -658,7 +706,7 @@ def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,
         return []
     calls = root / "invocations" / "calls.jsonl"
     try:
-        invocation_number = len(calls.read_text(encoding="utf-8").splitlines()) + 1
+        invocation_number = len(jsonl.read_jsonl(calls)) + 1
     except OSError:
         invocation_number = 1
     references = []
@@ -697,10 +745,11 @@ def invocation_link(step_id: str) -> str | None:
         return None
     target = root / "invocations" / "calls.jsonl"
     try:
-        matching = [(number, json.loads(line))
-                    for number, line in enumerate(target.read_text(encoding="utf-8").splitlines(), 1)
-                    if json.loads(line).get("step_id") == step_id]
-    except (OSError, json.JSONDecodeError):
+        matching = [(record.line_number, record.value)
+                    for record in jsonl.read_jsonl(target)
+                    if record.error is None and isinstance(record.value, dict)
+                    and record.value.get("step_id") == step_id]
+    except OSError:
         return None
     if not matching:
         return None
@@ -744,6 +793,70 @@ def logs_from_query_envelope(envelope: Mapping[str, Any]) -> list[dict[str, Any]
     return [record for record in logs if isinstance(record, dict)] if isinstance(logs, list) else []
 
 
+def _failure_log_query(kind: str, exit_code: int | None, argv: list[str], stdout: str, stderr: str,
+                       cwd: str | Path | None, env: Mapping[str, str] | None) -> dict[str, Any] | None:
+    if exit_code is None or (exit_code == 0 and kind == "command") or (exit_code < 400 and kind == "http"):
+        return None
+    effective_env = env if env is not None else os.environ
+    error: dict[str, Any] | None = None
+    for output in (stdout, stderr):
+        try:
+            result = json.loads(output)
+        except json.JSONDecodeError:
+            result = None
+        candidates = result if isinstance(result, list) else [result]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_error = candidate.get("error")
+            if isinstance(candidate_error, dict) and (
+                    candidate.get("ok") is False or kind == "http"):
+                error = candidate_error
+                break
+        if error is not None:
+            break
+    kb_cli = _kb_shim_evidence(effective_env)
+    is_installed_cli = bool(argv and kb_cli is not None
+                            and _resolve_invoked_executable(argv[0], cwd, effective_env) == kb_cli["realpath"])
+    is_unexpected, human_correlation_id = (
+        parse_unexpected_correlation_id(stdout, stderr) if kind == "command" and is_installed_cli
+        else (False, None)
+    )
+    if error is None and not is_unexpected:
+        return None
+    correlation_id = error.get("correlationId") if error is not None else human_correlation_id
+    code = error.get("code") if error is not None else "KB_RUNTIME_UNEXPECTED"
+    if not isinstance(correlation_id, str) or not correlation_id:
+        return {"code": code, "queryError": "failed result omitted its correlationId"}
+    if kb_cli is None:
+        return {"code": code, "correlationId": correlation_id,
+                "queryError": "installed kb CLI is not available on the invocation PATH"}
+    try:
+        query = subprocess.run(
+            [kb_cli["path"], "logs", "query", "--correlation-id", correlation_id, "--json"],
+            cwd=str(cwd) if cwd else None,
+            env=dict(effective_env),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as query_error:
+        diagnostic = {"code": code, "correlationId": correlation_id, "queryError": str(query_error)}
+    else:
+        try:
+            query_result = json.loads(query.stdout)
+        except json.JSONDecodeError:
+            query_result = None
+        if query.returncode != 0 or not isinstance(query_result, dict) or query_result.get("ok") is not True:
+            diagnostic = {"code": code, "correlationId": correlation_id,
+                          "queryError": query.stderr.strip() or query.stdout.strip() or f"query exited {query.returncode}",
+                          "exitCode": query.returncode}
+        else:
+            diagnostic = {"code": code, "correlationId": correlation_id, "result": query_result}
+    return diagnostic
+
+
 def _resolve_invoked_executable(executable: str, cwd: str | Path | None,
                                 env: Mapping[str, str]) -> str | None:
     if os.path.dirname(executable):
@@ -754,46 +867,6 @@ def _resolve_invoked_executable(executable: str, cwd: str | Path | None,
     else:
         candidate = shutil.which(executable, path=env.get("PATH"))
     return os.path.realpath(candidate) if candidate is not None else None
-
-
-def _unexpected_error_diagnostics(argv: list[str], stdout: str, stderr: str,
-                                  cwd: str | Path | None, env: Mapping[str, str] | None) -> dict[str, Any] | None:
-    effective_env = env if env is not None else os.environ
-    kb_cli = _kb_shim_evidence(effective_env)
-    if (not argv or kb_cli is None
-            or _resolve_invoked_executable(argv[0], cwd, effective_env) != kb_cli["realpath"]):
-        return None
-    is_unexpected, correlation_id = parse_unexpected_correlation_id(stdout, stderr)
-    if not is_unexpected:
-        return None
-    if correlation_id is None:
-        return {"queryError": "KB_RUNTIME_UNEXPECTED omitted its correlationId"}
-    try:
-        query = subprocess.run(
-            [argv[0], "logs", "query", "--correlation-id", correlation_id, "--json"],
-            cwd=str(cwd) if cwd else None,
-            env=dict(effective_env),
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as query_error:
-        diagnostic = {"correlationId": correlation_id, "queryError": str(query_error)}
-    else:
-        try:
-            query_result = json.loads(query.stdout)
-        except json.JSONDecodeError:
-            query_result = None
-        if query.returncode != 0 or not isinstance(query_result, dict) or query_result.get("ok") is not True:
-            diagnostic = {"correlationId": correlation_id,
-                          "queryError": query.stderr.strip() or query.stdout.strip() or f"query exited {query.returncode}"}
-        else:
-            diagnostic = {"correlationId": correlation_id, "logs": logs_from_query_envelope(query_result)}
-    collector = _UNEXPECTED_DIAGNOSTICS.get()
-    if collector is not None:
-        collector.append(diagnostic)
-    return diagnostic
 
 
 def run_command(argv: list[str], *, cwd: str | Path | None = None,

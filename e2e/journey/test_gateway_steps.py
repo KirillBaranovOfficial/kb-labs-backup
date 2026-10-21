@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from gateway_steps import run_adapter_catalog_step, run_gateway_steps, run_llm_provider_steps
+from gateway_steps import GatewayHttpResponse, _http, run_adapter_catalog_step, run_gateway_steps, run_llm_provider_steps
 from service_steps import Journey
 from test_install_layout import create_test_install_container
 
@@ -62,6 +62,35 @@ class GatewayStepTests(unittest.TestCase):
         self.addCleanup(self.env_patcher.stop)
         self.addCleanup(self.platform_temp.cleanup)
 
+    def test_http_response_is_normalized_once_with_success_metadata_and_error_payload(self):
+        fixture_root = Path(__file__).resolve().parents[2] / "contracts" / "ux-result" / "fixtures" / "valid"
+        success_fixture = json.loads((fixture_root / "success.json").read_text(encoding="utf-8"))
+        failure_fixture = json.loads((fixture_root / "failure.json").read_text(encoding="utf-8"))
+        stream_fixture = "event: error\ndata: " + json.dumps(failure_fixture) + "\n\n"
+        responses = iter([
+            JsonResponse(200, json.dumps(success_fixture)),
+            JsonResponse(500, json.dumps(failure_fixture)),
+            JsonResponse(200, stream_fixture),
+        ])
+
+        def opener(_request, **_kwargs):
+            return next(responses)
+
+        with patch.dict(os.environ, {"KB_JOURNEY_BASE_URL": "http://gateway.test"}, clear=False):
+            success_status, success = _http("/success", token="", opener=opener)
+            error_status, failure = _http("/missing", token="", opener=opener)
+            stream_status, stream_failure = _http("/platform/v1/llm/stream", token="", opener=opener)
+
+        self.assertEqual(success_status, 200)
+        self.assertEqual(success.data, success_fixture["data"])
+        self.assertEqual(success.meta, success_fixture["meta"])
+        self.assertIsNone(success.error)
+        self.assertEqual(error_status, 500)
+        self.assertIsNone(failure.data)
+        self.assertEqual(failure.error, failure_fixture["error"])
+        self.assertEqual(stream_status, 200)
+        self.assertEqual(stream_failure.stream_error, failure_fixture["error"])
+
     def test_stream_failure_claim_requires_typed_error_and_healthy_gateway(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
@@ -75,8 +104,15 @@ class GatewayStepTests(unittest.TestCase):
             def failed(command, **_kwargs):
                 return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED", "message": "fixture failed"}}), "")
 
+            stream_arguments = []
+            health_checks = []
+
             def opener(request, **_kwargs):
                 path = request.full_url.split("gateway.test", 1)[-1]
+                if path == "/platform/v1/llm/stream":
+                    stream_arguments.append(json.loads(request.data).get("args"))
+                if path == "/health":
+                    health_checks.append(path)
                 args = json.loads(request.data).get("args") if path == "/platform/v1/llm/stream" else None
                 if path == "/platform/v1/llm/stream" and args == ["journey-provider-401"]:
                     return JsonResponse(502, json.dumps({"ok": False, "error": {
@@ -85,7 +121,11 @@ class GatewayStepTests(unittest.TestCase):
                         "correlationId": "req-test",
                     }}))
                 if path == "/platform/v1/llm/stream" and args == ["journey-provider-stream-error"]:
-                    return JsonResponse(200, 'data: partial\n\nevent: error\ndata: {"ok":false,"error":{"code":"KB_CONFIG_LLM_PROVIDER_UNAVAILABLE","message":"provider failed","hint":"kb config get platform.adapterOptions.llm.baseURL --scope platform --json","correlationId":"req-test"}}\n\n')
+                    body = 'data: partial\n\nevent: error\ndata: ' + json.dumps({"ok": False, "error": {
+                        "code": "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE", "message": "provider failed",
+                        "hint": "Check provider availability.", "correlationId": "req-test",
+                    }}) + '\n\n'
+                    return JsonResponse(200, body)
                 if path == "/platform/v1/llm/stream" and args == []:
                     return JsonResponse(400, json.dumps({"ok": False, "error": {
                         "code": "KB_RUNTIME_INPUT_INVALID", "message": "prompt required",
@@ -109,6 +149,8 @@ class GatewayStepTests(unittest.TestCase):
         statuses = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
         self.assertEqual(statuses["S-189.5"], "PASS")
         self.assertEqual(statuses["S-189.7"], "PASS")
+        self.assertIn(["case stream"], stream_arguments)
+        self.assertEqual(health_checks, ["/health", "/health"])
 
     def test_provider_steps_require_deterministic_content_in_the_json_result(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
@@ -305,16 +347,16 @@ class GatewayStepTests(unittest.TestCase):
         def fake_http(path, **_kwargs):
             paths.append(path)
             if path == "/platform/v1/unknown/resource":
-                return 404, {"code": "KB_RUNTIME_RESOURCE_NOT_FOUND"}
+                return 404, GatewayHttpResponse(error={"code": "KB_RUNTIME_RESOURCE_NOT_FOUND"})
             if path == "/platform/v1/llm/stream":
-                return 200, "data: chunk\n\n[DONE]"
+                return 200, GatewayHttpResponse(stream="data: chunk\n\n[DONE]")
             if path == "/platform/v1/analytics/track":
-                return 200, {"ok": True, "data": None, "meta": {"durationMs": 1}}
+                return 200, GatewayHttpResponse(data=None, meta={"durationMs": 1})
             if path == "/platform/v1/analytics/getEvents":
-                return 200, {"ok": True, "data": {"events": [{"type": "case.gateway.call"}]}}
+                return 200, GatewayHttpResponse(data={"events": [{"type": "case.gateway.call"}]})
             if path == "/telemetry/v1/ingest":
-                return 200, {"accepted": 500, "rejected": 0}
-            return 200, {"events": []}
+                return 200, GatewayHttpResponse(data={"accepted": 500, "rejected": 0})
+            return 200, GatewayHttpResponse(data={"events": []})
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
             "KB_JOURNEY_PROJECT_ID": "prj_fixture",
@@ -333,7 +375,7 @@ class GatewayStepTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
             "KB_JOURNEY_PROJECT_ID": "prj_fixture",
-        }, clear=False), patch("gateway_steps._http", return_value=(200, {"ok": True, "durationMs": 1})), \
+        }, clear=False), patch("gateway_steps._http", return_value=(200, GatewayHttpResponse(data=None, meta={"durationMs": 1}))), \
                 patch("gateway_steps.run_llm_provider_steps"):
             journey = Journey("local", "analytics-track-missing-data")
             run_gateway_steps(journey, token="fixture-token", project_id="project-a",
@@ -346,10 +388,10 @@ class GatewayStepTests(unittest.TestCase):
     def test_gateway_analytics_track_claim_requires_the_recorded_event_too(self):
         def fake_http(path, **_kwargs):
             if path == "/platform/v1/analytics/track":
-                return 200, {"ok": True, "data": None, "meta": {"durationMs": 1}}
+                return 200, GatewayHttpResponse(data=None, meta={"durationMs": 1})
             if path == "/platform/v1/analytics/getEvents":
-                return 200, {"ok": True, "data": {"events": [{"type": "case.gateway.call"}]}}
-            return 200, {}
+                return 200, GatewayHttpResponse(data={"events": [{"type": "case.gateway.call"}]})
+            return 200, GatewayHttpResponse(data={})
 
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,

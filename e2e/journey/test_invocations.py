@@ -15,6 +15,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 import invocations
 import redaction
+import jsonl
 
 
 def secret_environment_write_violations(source_text: str, filename: str = "<source>") -> list[str]:
@@ -131,10 +132,49 @@ class PtyInvocationTest(unittest.TestCase):
             stdout = json.dumps({"ok": False, "error": {
                 "code": "KB_RUNTIME_UNEXPECTED", "correlationId": "cli-by-name-1"}})
 
-            diagnostic = invocations._unexpected_error_diagnostics(["kb", "adapter", "list", "--json"],
-                                                                   stdout, "", root, env)
+            diagnostic = invocations._failure_log_query("command", 1,
+                                                        ["kb", "adapter", "list", "--json"],
+                                                        stdout, "", root, env)
 
-        self.assertEqual(diagnostic, {"correlationId": "cli-by-name-1", "queryError": "not-json"})
+        self.assertEqual(diagnostic, {
+            "code": "KB_RUNTIME_UNEXPECTED",
+            "correlationId": "cli-by-name-1",
+            "queryError": "not-json",
+            "exitCode": 0,
+        })
+
+    def test_http_failure_with_correlation_id_records_the_complete_platform_log_query(self):
+        with tempfile.TemporaryDirectory(prefix="journey-http-log-query-") as temp:
+            root = Path(temp)
+            target = root / "installed-kb"
+            target.write_text("#!/bin/sh\nexit 0\n")
+            target.chmod(0o755)
+            cli = root / "kb"
+            cli.symlink_to(target)
+            correlation_id = "http-failure-correlation-1"
+            query_envelope = {"ok": True, "data": {"data": {"source": "persistence", "logs": [
+                {"correlationId": correlation_id, "message": "plugin cause"},
+            ]}}}
+            env = {"PATH": str(root), "KB_JOURNEY_CLI_PATH": str(cli)}
+            failure = json.dumps({"ok": False, "error": {
+                "code": "KB_PLUGIN_COMMAND_FAILED", "correlationId": correlation_id,
+            }})
+
+            with patch.object(invocations.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [str(cli), "logs"], 0, json.dumps(query_envelope), "")) as run:
+                with invocations.invocation_context(report_root=root):
+                    invocations.record_invocation(
+                        kind="http", argv=["GET"], cwd=root, env=env, exit_code=500,
+                        stdout=failure, duration_seconds=0.1, url="http://gateway.invalid/test",
+                    )
+
+            self.assertEqual(run.call_args.args[0], [str(cli), "logs", "query", "--correlation-id", correlation_id, "--json"])
+            record = json.loads((root / "invocations/calls.jsonl").read_text())
+            self.assertEqual(record["correlated_log_query"], {
+                "code": "KB_PLUGIN_COMMAND_FAILED",
+                "correlationId": correlation_id,
+                "result": query_envelope,
+            })
 
     def test_non_cli_report_does_not_query_nested_unexpected_error_text(self):
         with tempfile.TemporaryDirectory(prefix="journey-nested-diagnostic-") as temp:
@@ -151,8 +191,8 @@ class PtyInvocationTest(unittest.TestCase):
             hint = unexpected["hint"].replace("{correlationId}", correlation_id)
             service_report = json.dumps({"message": f"{unexpected['message']} [KB_RUNTIME_UNEXPECTED]\nHint: {hint}"})
 
-            diagnostic = invocations._unexpected_error_diagnostics(
-                ["python3", "service_runner.py"], service_report, "", root, env)
+            diagnostic = invocations._failure_log_query(
+                "command", 1, ["python3", "service_runner.py"], service_report, "", root, env)
 
         self.assertIsNone(diagnostic)
 
@@ -186,6 +226,42 @@ class PtyInvocationTest(unittest.TestCase):
                 "target": str(target),
             })
             self.assertNotIn(secret, serialized)
+
+    # case: S-261.3
+    def test_recorded_jsonl_preserves_unicode_line_separators_as_one_valid_row(self):
+        with tempfile.TemporaryDirectory(prefix="journey-jsonl-unicode-") as temp:
+            root = Path(temp)
+            unusual = "NEL\x85 LS\u2028 FS\x1c"
+            with invocations.invocation_context(step_id="S-261.3", report_root=root):
+                invocations.record_invocation(
+                    kind="command", argv=["kb", "--json"], cwd=root, env={}, exit_code=0,
+                    stdout=unusual, duration_seconds=0.1,
+                )
+
+            rows = jsonl.read_jsonl(root / "invocations" / "calls.jsonl")
+
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].error)
+        self.assertEqual(rows[0].line_number, 1)
+        self.assertEqual(rows[0].value["stdout"], unusual)
+
+    def test_invocation_captures_structured_error_identity_from_json_response(self):
+        with tempfile.TemporaryDirectory(prefix="journey-error-envelope-") as temp:
+            root = Path(temp)
+            response = {"ok": False, "error": {
+                "code": "KB_PLUGIN_CONTRACT_VIOLATION", "area": "plugin", "stage": "run",
+                "message": "failure", "hint": "inspect",
+            }}
+            with invocations.invocation_context(step_id="S-010.4", report_root=root):
+                invocations.record_invocation(
+                    kind="command", argv=["kb", "--json"], cwd=root, env={}, exit_code=1,
+                    stdout=json.dumps(response), duration_seconds=0.1,
+                )
+
+            record = jsonl.read_jsonl(root / "invocations/calls.jsonl")[0].value
+            self.assertEqual(record["error_envelope"], {
+                "code": "KB_PLUGIN_CONTRACT_VIOLATION", "area": "plugin", "stage": "run",
+            })
 
     def test_template_like_data_passes_through_command_and_http_boundaries(self):
         commands = []
@@ -228,7 +304,7 @@ class PtyInvocationTest(unittest.TestCase):
 
             self.assertEqual(raised.exception.output, "")
             self.assertIn("no output received before the timeout", str(raised.exception))
-            call = json.loads((Path(temp) / "invocations/calls.jsonl").read_text())
+            call = jsonl.read_jsonl(Path(temp) / "invocations/calls.jsonl")[0].value
             self.assertEqual(call["stdout"], "")
             self.assertIn("no output received before the timeout", call["error"])
 
@@ -244,7 +320,7 @@ class PtyInvocationTest(unittest.TestCase):
             self.assertIn("confirmation prompt", raised.exception.output)
             self.assertNotIn("candidate state", str(raised.exception))
             self.assertNotIn('"candidate":"running"', str(raised.exception))
-            call = json.loads((Path(temp) / "invocations/calls.jsonl").read_text())
+            call = jsonl.read_jsonl(Path(temp) / "invocations/calls.jsonl")[0].value
             self.assertIn("confirmation prompt", call["stdout"])
             self.assertNotIn('"candidate":"running"', call["error"])
 
@@ -297,10 +373,10 @@ class ReportRedactionTest(unittest.TestCase):
                                                 "message": "apply failed",
                                                 "details": {"logPath": str(log),
                                                             "diagnosticPath": str(diagnostic)}}}
-            output = json.dumps(payload) + "\n" + json.dumps({
+            output = jsonl.encode_jsonl_records((payload, {
                 "ok": True, "data": None,
                 "meta": {"stream": {"terminal": True, "exitCode": 1}},
-            }) + "\n"
+            }))
             runner = lambda *_args, **_kwargs: subprocess.CompletedProcess(
                 args=["kb-create", "install"], returncode=1,
                 stdout=output, stderr="")
@@ -310,7 +386,7 @@ class ReportRedactionTest(unittest.TestCase):
                 invocations.run_command(["kb-create", "install", "--json"], env=env, runner=runner)
                 row_reference = invocations.invocation_link("S-001.9")
 
-            call = json.loads((root / "invocations/calls.jsonl").read_text())
+            call = jsonl.read_jsonl(root / "invocations/calls.jsonl")[0].value
             self.assertEqual(len(call["invocation_evidence"]), 2)
             self.assertIn(call["invocation_evidence"][0], row_reference)
             self.assertIn(call["invocation_evidence"][1], row_reference)
@@ -340,7 +416,7 @@ class ReportRedactionTest(unittest.TestCase):
             with invocations.invocation_context(step_id="S-001.1", report_root=root):
                 invocations.run_command(["kb-create", "start", "--json"], env=env, runner=runner)
 
-            call = json.loads((root / "invocations/calls.jsonl").read_text())
+            call = jsonl.read_jsonl(root / "invocations/calls.jsonl")[0].value
             self.assertEqual(len(call["invocation_evidence"]), 1)
             evidence = root / call["invocation_evidence"][0]
             self.assertIn("startup failed", evidence.read_text())

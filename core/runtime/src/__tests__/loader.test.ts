@@ -116,7 +116,7 @@ describe('Platform Loader', () => {
                 routing: [{ match: { severity: ['info'] }, channels: ['ops'] }],
               },
             },
-          }, ${JSON.stringify(workspaceRoot)}, undefined, undefined, { workspaceDevelopment: true });
+          }, ${JSON.stringify(workspaceRoot)}, undefined, undefined, { workspaceDevelopment: true, workspaceRoot: ${JSON.stringify(workspaceRoot)} });
           await platform.notifier.notify({ severity: 'info', title: 'loader test', body: 'bound' });
           console.log('C01_RESULT ' + JSON.stringify({ real: platform.isReal('notifier'), telegramRequests, brokerRegistrations, brokerReadyAtRegistration }));
           process.exit(0);

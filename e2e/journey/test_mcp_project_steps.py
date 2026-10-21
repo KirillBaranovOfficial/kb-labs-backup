@@ -102,12 +102,16 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         red = journey.result()
         self.assertEqual(red.status, "FAIL")
         self.assertEqual({claim["claimId"] for claim in red.case_run["claims"]}, {
-            "S-141.1", "S-141.2", "S-141.3", "S-141.4", "S-141.5", "S-141.6",
+            "S-141.1", "S-141.4", "S-141.5", "S-141.6",
         })
         self.assertEqual(
             request_mock.call_args_list[0].args[0],
             "/api/v1/projects/prj_a/rest/plugins/agents/sessions",
         )
+        self.assertEqual(red.steps[1]["status"], "BLOCKED")
+        self.assertEqual(red.steps[1]["details"]["requires"], ["step:case:S-141.1"])
+        self.assertEqual(red.steps[2]["status"], "BLOCKED")
+        self.assertEqual(red.steps[2]["details"]["requires"], ["step:case:S-141.1"])
 
         session = {"id": "session-1", "agentId": "orchestrator",
                    "task": "Summarize the project", "status": "pending"}
@@ -117,8 +121,11 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (200, {"data": {"session": session}}, {}),
             (200, {"data": {"turns": []}}, {}),
             (200, {"data": {"sessionId": "session-1", "plan": None}}, {}),
-            (404, {"error": {"message": "session-does-not-exist not found"}}, {}),
-            (404, {"error": {"code": "KB_AGENT_NOT_FOUND", "message": "Agent ID agent-does-not-exist is not registered."}}, {}),
+            (404, {"error": {
+                "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
+                "details": {"sessionId": "session-does-not-exist"},
+            }}, {}),
+            (404, {"error": {"code": "KB_AGENT_NOT_FOUND", "details": {"agentId": "agent-does-not-exist"}}}, {}),
             (404, {"error": {
                 "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
                 "message": "REST route GET /api/v1/plugins/agents/unknown-route was not found for plugin @kb-labs/agents.",

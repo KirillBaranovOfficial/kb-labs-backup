@@ -142,12 +142,19 @@ async function loadWorkspaceAdapters(
   }
 }
 
-export interface WorkspaceAdapterDiscoveryOptions {
-  /** True only when the platform config identifies this checkout as development mode. */
-  development: boolean;
-  /** Adapter package paths configured by the platform, including subpath entries. */
-  configuredPackages: readonly { packageName: string; slot: string }[];
-}
+export type WorkspaceAdapterDiscoveryOptions =
+  | {
+      /** True only when the platform config identifies this checkout as development mode. */
+      development: true;
+      /** Workspace root supplied by the CLI or service launcher. */
+      workspaceRoot: string;
+      /** Adapter package paths configured by the platform, including subpath entries. */
+      configuredPackages: readonly { packageName: string; slot: string }[];
+    }
+  | {
+      development: false;
+      configuredPackages: readonly { packageName: string; slot: string }[];
+    };
 
 /** Load a channel factory from the same package source used for platform adapters. */
 export async function loadAdapterChannelFactory(
@@ -219,7 +226,7 @@ export async function discoverAdapters(
   const discovered = new Map<string, DiscoveredAdapter>();
   await loadAdaptersFromLock(platformRoot, discovered);
   if (workspaceOptions?.development) {
-    await loadWorkspaceAdapters(platformRoot, discovered, workspaceOptions.configuredPackages);
+    await loadWorkspaceAdapters(workspaceOptions.workspaceRoot, discovered, workspaceOptions.configuredPackages);
   }
 
   return discovered;
