@@ -20,6 +20,7 @@ from studio_steps import (
     _record_playwright_case_claims,
 )
 from invocations import invocation_context
+import jsonl
 
 
 class FakeResponse:
@@ -227,8 +228,9 @@ class StudioJourneyTests(unittest.TestCase):
                 passed, _elapsed, message = run_studio_browser_step(
                     [sys.executable, "-c", "import sys; print('playwright failure'); sys.exit(7)"],
                     env, report, "local", True)
-            records = [json.loads(line) for line in
-                       (root / "reports" / "invocations" / "calls.jsonl").read_text().splitlines()]
+            invocation_records = jsonl.read_jsonl(root / "reports" / "invocations" / "calls.jsonl")
+            self.assertEqual([row.line_number for row in invocation_records if row.error is not None], [])
+            records = [row.value for row in invocation_records]
             evidence = next(record for record in records if record["argv"] and record["argv"][0] == sys.executable)
 
         self.assertFalse(passed)

@@ -15,6 +15,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 import invocations
 import redaction
+import jsonl
 
 
 def secret_environment_write_violations(source_text: str, filename: str = "<source>") -> list[str]:
@@ -187,6 +188,42 @@ class PtyInvocationTest(unittest.TestCase):
             })
             self.assertNotIn(secret, serialized)
 
+    # case: S-261.3
+    def test_recorded_jsonl_preserves_unicode_line_separators_as_one_valid_row(self):
+        with tempfile.TemporaryDirectory(prefix="journey-jsonl-unicode-") as temp:
+            root = Path(temp)
+            unusual = "NEL\x85 LS\u2028 FS\x1c"
+            with invocations.invocation_context(step_id="S-261.3", report_root=root):
+                invocations.record_invocation(
+                    kind="command", argv=["kb", "--json"], cwd=root, env={}, exit_code=0,
+                    stdout=unusual, duration_seconds=0.1,
+                )
+
+            rows = jsonl.read_jsonl(root / "invocations" / "calls.jsonl")
+
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].error)
+        self.assertEqual(rows[0].line_number, 1)
+        self.assertEqual(rows[0].value["stdout"], unusual)
+
+    def test_invocation_captures_structured_error_identity_from_json_response(self):
+        with tempfile.TemporaryDirectory(prefix="journey-error-envelope-") as temp:
+            root = Path(temp)
+            response = {"ok": False, "error": {
+                "code": "KB_PLUGIN_CONTRACT_VIOLATION", "area": "plugin", "stage": "run",
+                "message": "failure", "hint": "inspect",
+            }}
+            with invocations.invocation_context(step_id="S-010.4", report_root=root):
+                invocations.record_invocation(
+                    kind="command", argv=["kb", "--json"], cwd=root, env={}, exit_code=1,
+                    stdout=json.dumps(response), duration_seconds=0.1,
+                )
+
+            record = jsonl.read_jsonl(root / "invocations/calls.jsonl")[0].value
+            self.assertEqual(record["error_envelope"], {
+                "code": "KB_PLUGIN_CONTRACT_VIOLATION", "area": "plugin", "stage": "run",
+            })
+
     def test_template_like_data_passes_through_command_and_http_boundaries(self):
         commands = []
         result = invocations.run_command(
@@ -228,7 +265,7 @@ class PtyInvocationTest(unittest.TestCase):
 
             self.assertEqual(raised.exception.output, "")
             self.assertIn("no output received before the timeout", str(raised.exception))
-            call = json.loads((Path(temp) / "invocations/calls.jsonl").read_text())
+            call = jsonl.read_jsonl(Path(temp) / "invocations/calls.jsonl")[0].value
             self.assertEqual(call["stdout"], "")
             self.assertIn("no output received before the timeout", call["error"])
 
@@ -244,7 +281,7 @@ class PtyInvocationTest(unittest.TestCase):
             self.assertIn("confirmation prompt", raised.exception.output)
             self.assertNotIn("candidate state", str(raised.exception))
             self.assertNotIn('"candidate":"running"', str(raised.exception))
-            call = json.loads((Path(temp) / "invocations/calls.jsonl").read_text())
+            call = jsonl.read_jsonl(Path(temp) / "invocations/calls.jsonl")[0].value
             self.assertIn("confirmation prompt", call["stdout"])
             self.assertNotIn('"candidate":"running"', call["error"])
 
@@ -297,10 +334,10 @@ class ReportRedactionTest(unittest.TestCase):
                                                 "message": "apply failed",
                                                 "details": {"logPath": str(log),
                                                             "diagnosticPath": str(diagnostic)}}}
-            output = json.dumps(payload) + "\n" + json.dumps({
+            output = jsonl.encode_jsonl_records((payload, {
                 "ok": True, "data": None,
                 "meta": {"stream": {"terminal": True, "exitCode": 1}},
-            }) + "\n"
+            }))
             runner = lambda *_args, **_kwargs: subprocess.CompletedProcess(
                 args=["kb-create", "install"], returncode=1,
                 stdout=output, stderr="")
@@ -310,7 +347,7 @@ class ReportRedactionTest(unittest.TestCase):
                 invocations.run_command(["kb-create", "install", "--json"], env=env, runner=runner)
                 row_reference = invocations.invocation_link("S-001.9")
 
-            call = json.loads((root / "invocations/calls.jsonl").read_text())
+            call = jsonl.read_jsonl(root / "invocations/calls.jsonl")[0].value
             self.assertEqual(len(call["invocation_evidence"]), 2)
             self.assertIn(call["invocation_evidence"][0], row_reference)
             self.assertIn(call["invocation_evidence"][1], row_reference)
@@ -340,7 +377,7 @@ class ReportRedactionTest(unittest.TestCase):
             with invocations.invocation_context(step_id="S-001.1", report_root=root):
                 invocations.run_command(["kb-create", "start", "--json"], env=env, runner=runner)
 
-            call = json.loads((root / "invocations/calls.jsonl").read_text())
+            call = jsonl.read_jsonl(root / "invocations/calls.jsonl")[0].value
             self.assertEqual(len(call["invocation_evidence"]), 1)
             evidence = root / call["invocation_evidence"][0]
             self.assertIn("startup failed", evidence.read_text())

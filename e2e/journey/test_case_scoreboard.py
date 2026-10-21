@@ -5,6 +5,8 @@ from pathlib import Path
 
 from scoreboard import build_scoreboard, load_cases, release_claims_for_case, render_delta, render_markdown, write_scoreboards
 from service_steps import FlowGraph, Journey
+from invocations import invocation_context, record_invocation
+import jsonl
 
 
 JOURNEY_ROOT = Path(__file__).resolve().parent
@@ -138,6 +140,74 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertIn("`case:S-141.2`", markdown)
         self.assertIn(recorded_session_failure, markdown)
 
+    # case: S-261.3
+    def test_j86_roots_group_by_captured_structured_error_and_keep_no_envelope_visible(self):
+        journey = Journey("local", "x104-j86-root-groups")
+        journey.step("plugin command with a structured failure", "plugin.run",
+                     lambda: "plugin invocation failed", cases=["S-001.1"])
+        journey.step("second plugin command with the same structured failure", "plugin.run",
+                     lambda: "plugin invocation failed", cases=["S-001.2"])
+        journey.step("assertion after success", "http", lambda: "expected a result", cases=["S-001.3"])
+        steps = journey.result().steps
+        self.write_json("installer-cases-local.json", {
+            "case_run": {"mode": "local", "claims": []},
+            "steps": steps,
+        })
+        envelope = {"code": "KB_PLUGIN_CONTRACT_VIOLATION", "area": "plugin", "stage": "run"}
+        structured_failure_ids = {"case:S-001.1", "case:S-001.2"}
+        for step in steps:
+            if step["stepId"] not in structured_failure_ids:
+                continue
+            response = {"ok": False, "error": {**envelope, "message": "failure", "hint": "inspect"}}
+            with invocation_context(step_id=step["stepId"].removeprefix("case:"), report_root=self.reports):
+                record_invocation(kind="command", argv=["kb", "--json"], cwd=self.root,
+                                  env={}, exit_code=1, stdout=json.dumps(response),
+                                  duration_seconds=0.1)
+        alternate = {"ok": False, "error": {
+            "code": "KB_RUNTIME_UNEXPECTED", "area": "runtime", "stage": "run",
+            "message": "failure", "hint": "inspect",
+        }}
+        with invocation_context(step_id="S-001.1", report_root=self.reports):
+            record_invocation(kind="command", argv=["kb", "--json"], cwd=self.root,
+                              env={}, exit_code=1, stdout=json.dumps(alternate),
+                              duration_seconds=0.1)
+        with invocation_context(step_id="S-001.3", report_root=self.reports):
+            record_invocation(kind="http", argv=["GET"], cwd=self.root,
+                              env={}, exit_code=200, url="http://example.test/success",
+                              stdout=json.dumps({"ok": True, "data": {"value": "available"}}),
+                              duration_seconds=0.1)
+        self.write_json("installer-cases-local.json", {
+            "case_run": {"mode": "local", "claims": []},
+            "steps": steps,
+        })
+
+        report = build_scoreboard(self.reports, self.catalog, ["local"])
+        groups = report["rootGroups"]
+        self.assertEqual(groups[0]["error"], envelope)
+        self.assertEqual(groups[0]["rootStepIds"], ["case:S-001.1", "case:S-001.2"])
+        self.assertEqual(groups[0]["unblockedClaims"], 2)
+        self.assertEqual(groups[1]["error"], {
+            "code": "KB_RUNTIME_UNEXPECTED", "area": "runtime", "stage": "run",
+        })
+        self.assertEqual(groups[1]["unblockedClaims"], 1)
+        no_envelope_group = next(group for group in groups if group["error"] is None)
+        self.assertEqual(no_envelope_group["rootStepIds"], ["case:S-001.3"])
+        markdown = render_markdown(report)
+        self.assertIn("Root groups", markdown)
+        self.assertIn("no envelope", markdown)
+        self.assertIn("`case:S-001.3`", markdown)
+
+    # case: S-261.3
+    def test_unreadable_invocation_record_is_reported_by_line(self):
+        calls = self.reports / "invocations" / "calls.jsonl"
+        calls.parent.mkdir()
+        calls.write_text("not-json\n", encoding="utf-8")
+
+        report = build_scoreboard(self.reports, self.catalog, ["local"])
+
+        self.assertEqual(report["unreadableInvocationRows"], [1])
+        self.assertIn("invocations/calls.jsonl:1", render_markdown(report))
+
     def test_state_precondition_links_failed_state_owner_to_blocked_claim(self):
         self.write_json("service-local.json", {
             "case_run": {"mode": "local", "claims": []},
@@ -207,8 +277,9 @@ class CaseScoreboardTests(unittest.TestCase):
 
     def test_failure_summary_uses_structured_marketplace_error_and_bounds_length(self):
         fixture = JOURNEY_ROOT / "testdata" / "marketplace-install-j81.jsonl"
-        artifact_rows = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()
-                         if line.startswith("{")]
+        records = jsonl.read_jsonl(fixture)
+        self.assertEqual([row.line_number for row in records if row.error is not None], [])
+        artifact_rows = [row.value for row in records]
         invocation = next(row for row in artifact_rows
                           if row["step_id"] == "prepare update preservation baseline")
         marketplace_payload = json.loads(invocation["stdout"])["error"]

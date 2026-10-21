@@ -14,6 +14,7 @@ from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import jsonl
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
@@ -699,7 +700,7 @@ thread.join()
                 terminal = {"ok": True, "data": None, "meta": {"stream": {
                     "terminal": True, "exitCode": 0,
                 }}}
-                output = json.dumps(result_record) + "\n" + json.dumps(terminal)
+                output = jsonl.encode_jsonl_records((result_record, terminal))
             else:
                 output = json.dumps({"ok": True, "data": {}})
             return subprocess.CompletedProcess(command, returncode, output, ""), 0.0
