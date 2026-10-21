@@ -112,7 +112,6 @@ describe('marketplace-lock v3', () => {
       '@kb-labs/host-agent',
       '@kb-labs/impact',
       '@kb-labs/inbox',
-      '@kb-labs/marketplace',
       '@kb-labs/marketplace-registry',
       '@kb-labs/mind',
       '@kb-labs/policy',

@@ -24,7 +24,6 @@ describe('installed platform plugin identities', () => {
     ]);
 
     const pluginPackages = [
-      { id: '@kb-labs/marketplace', package: '@kb-labs/marketplace-entry', root: path.join(workspaceRoot, 'plugins/marketplace/entry') },
       { id: '@kb-labs/scaffold', package: '@kb-labs/scaffold', root: path.join(workspaceRoot, 'plugins/scaffold/entry') },
       { id: '@kb-labs/workflow', package: '@kb-labs/workflow-entry', root: path.join(workspaceRoot, 'plugins/workflow/entry') },
     ];

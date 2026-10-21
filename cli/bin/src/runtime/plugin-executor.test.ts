@@ -55,15 +55,15 @@ describe('plugin executor adapter errors', () => {
     executeCommandV3.mockResolvedValue(0);
     const previousGatewayUrl = process.env.KB_GATEWAY_URL;
     const manifestCmd = {
-      pkgRoot: '/platform/plugins/marketplace',
+      pkgRoot: '/platform/plugins/commit',
       manifest: {
-        id: '@kb-labs/marketplace-entry',
-        segments: ['marketplace', 'plugins', 'doctor'],
+        id: '@kb-labs/commit-entry',
+        segments: ['commit', 'status'],
         v3Manifest: {
-        id: '@kb-labs/marketplace-entry',
+        id: '@kb-labs/commit-entry',
         version: '1.0.0',
         permissions: { env: { read: ['KB_GATEWAY_URL'] } },
-        cli: { commands: [{ path: 'marketplace plugins doctor', handler: 'dist/index.js#doctor' }] },
+        cli: { commands: [{ path: 'commit status', handler: 'dist/index.js#status' }] },
         },
       },
     } as unknown as RegisteredCommand;
@@ -80,7 +80,7 @@ describe('plugin executor adapter errors', () => {
       const exitCode = await executePlugin({
         context,
         netOffset: 200,
-        commandId: 'marketplace:plugins:doctor',
+        commandId: 'commit:status',
         argv: [],
         flags: {},
         manifestCmd,
@@ -105,15 +105,15 @@ describe('plugin executor adapter errors', () => {
     const previousGatewayPort = process.env.GATEWAY_PORT;
     delete process.env.GATEWAY_PORT;
     const manifestCmd = {
-      pkgRoot: '/platform/plugins/marketplace',
+      pkgRoot: '/platform/plugins/commit',
       manifest: {
-        id: '@kb-labs/marketplace-entry',
-        segments: ['marketplace', 'plugins', 'doctor'],
+        id: '@kb-labs/commit-entry',
+        segments: ['commit', 'status'],
         v3Manifest: {
-        id: '@kb-labs/marketplace-entry',
+        id: '@kb-labs/commit-entry',
         version: '1.0.0',
         permissions: { env: { read: ['KB_GATEWAY_URL'] } },
-        cli: { commands: [{ path: 'marketplace plugins doctor', handler: 'dist/index.js#doctor' }] },
+        cli: { commands: [{ path: 'commit status', handler: 'dist/index.js#status' }] },
         },
       },
     } as unknown as RegisteredCommand;
@@ -121,7 +121,7 @@ describe('plugin executor adapter errors', () => {
     try {
       const exitCode = await executePlugin({
         context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
-        commandId: 'marketplace:plugins:doctor',
+        commandId: 'commit:status',
         argv: [],
         flags: {},
         manifestCmd,
@@ -148,15 +148,15 @@ describe('plugin executor adapter errors', () => {
     const previousGatewayPort = process.env.GATEWAY_PORT;
     process.env.GATEWAY_PORT = '4000oops';
     const manifestCmd = {
-      pkgRoot: '/platform/plugins/marketplace',
+      pkgRoot: '/platform/plugins/commit',
       manifest: {
-        id: '@kb-labs/marketplace-entry',
-        segments: ['marketplace', 'plugins', 'doctor'],
+        id: '@kb-labs/commit-entry',
+        segments: ['commit', 'status'],
         v3Manifest: {
-        id: '@kb-labs/marketplace-entry',
+        id: '@kb-labs/commit-entry',
         version: '1.0.0',
         permissions: { env: { read: ['KB_GATEWAY_URL'] } },
-        cli: { commands: [{ path: 'marketplace plugins doctor', handler: 'dist/index.js#doctor' }] },
+        cli: { commands: [{ path: 'commit status', handler: 'dist/index.js#status' }] },
         },
       },
     } as unknown as RegisteredCommand;
@@ -164,7 +164,7 @@ describe('plugin executor adapter errors', () => {
     try {
       await expect(executePlugin({
         context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
-        commandId: 'marketplace:plugins:doctor',
+        commandId: 'commit:status',
         argv: [],
         flags: {},
         manifestCmd,
