@@ -4,12 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { noopTraceContext, noopUI } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { ADAPTER_DEFAULTS } from '@kb-labs/core-platform';
 import { createProjectRegistry, resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { writeMarketplaceLock } from '@kb-labs/core-discovery';
 import { adapterBind } from '../../commands/system/adapter/bind.js';
 import { adapterList } from '../../commands/system/adapter/list.js';
 import { adapterUnbind } from '../../commands/system/adapter/unbind.js';
 import { configSet } from '../../commands/system/config/set.js';
+import { ADAPTER_CONFIG_KEYS } from '@kb-labs/core-runtime';
 
 vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => {
   const original = await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>();
@@ -57,6 +59,13 @@ function dataOf<T>(envelope: unknown): T {
   return (envelope as { data: T }).data;
 }
 
+const adapterListProjectionCases: Array<{ slot: string; key: string | undefined; projection: 'package' | 'composite' }> =
+  Object.entries(ADAPTER_CONFIG_KEYS).reduce((cases, [slot, mapping]) => {
+    if (mapping.keys.length === 0) {cases.push({ slot, key: undefined, projection: mapping.projection });}
+    for (const key of mapping.keys) {cases.push({ slot, key, projection: mapping.projection });}
+    return cases;
+  }, [] as Array<{ slot: string; key: string | undefined; projection: 'package' | 'composite' }>);
+
 function mockAdapterHealth(ctx: PluginContextV3, statuses: Array<Record<string, unknown>>): void {
   vi.spyOn(ctx.runtime, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ok: true, data: statuses }), { status: 200 }));
 }
@@ -87,6 +96,31 @@ afterEach(async () => {
 });
 
 describe('kb adapter list', () => {
+  it.each(adapterListProjectionCases)('projects effective host state for $slot from mapped key $key', async ({ slot, key, projection }) => {
+    const configured = '@kb-labs/adapters-alias-selected';
+    const adaptersConfig = key === undefined ? {} : { [key]: configured };
+    await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapters: adaptersConfig } }));
+    const { ctx, outputs } = context();
+    mockAdapterHealth(ctx, [{
+      slot,
+      mode: 'real',
+      implementation: projection === 'composite' ? 'HybridLogReader' : '@kb-labs/adapters-stale',
+      configuredPackage: '@kb-labs/adapters-stale',
+    }]);
+
+    expect(await adapterList.run(ctx, [], { json: true })).toBe(0);
+    const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
+    const expectedSlot = Object.hasOwn(ADAPTER_DEFAULTS, slot) ? slot : key;
+    const projected = adapters.find((adapter) => adapter.slot === expectedSlot);
+    expect(projected).toMatchObject({
+      slot: expectedSlot,
+      implementation: projection === 'package' && key !== undefined
+        ? configured
+        : projection === 'composite' ? 'HybridLogReader' : '@kb-labs/adapters-stale',
+      mode: expectedSlot === slot ? 'real' : 'unknown',
+    });
+  });
+
   it('resolves the platform root from the CLI module when running inside a registered project', async () => {
     vi.stubEnv('KB_PLATFORM_ROOT', '');
     const { ctx, outputs } = context();
@@ -360,6 +394,41 @@ describe('kb adapter bind', () => {
       platform: { adapters: { cache: '@kb-labs/adapters-memory-cache' } },
     });
     expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({});
+  });
+
+  // case: S-054.11
+  it('reports the selected analytics package after binding while the host still reports its prior provider', async () => {
+    await writeMarketplaceLock(platformRoot, {
+      schema: 'kb.marketplace/3', plugins: {},
+      adapters: {
+        '@kb-labs/adapters-analytics-file': {
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-analytics-file',
+          enabled: true, source: 'platform',
+        },
+      },
+    });
+    const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-analytics-file');
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-analytics-file', type: 'module', kb: { adapter: { manifest: './manifest.js' } } }));
+    await writeFile(join(packageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({
+      schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'analytics-file', name: 'Analytics File', version: '1.0.0',
+      type: 'core', implements: 'IAnalytics', networkRequired: false, defaultFor: { analytics: [] },
+    })};`);
+    const { ctx, outputs: bindOutputs } = context();
+    mockAdapterHealth(ctx, [{ slot: 'analytics', mode: 'real', implementation: '@kb-labs/adapters-analytics-sqlite', configuredPackage: '@kb-labs/adapters-analytics-sqlite' }]);
+
+    expect(await adapterBind.run(ctx, ['analytics', '@kb-labs/adapters-analytics-file'], { json: true })).toBe(0);
+    expect(dataOf<{ effectiveState: { implementation: string } }>(bindOutputs[0]).effectiveState.implementation)
+      .toBe('@kb-labs/adapters-analytics-file');
+    const outputs: unknown[] = [];
+    ctx.ui!.json = (data: unknown) => outputs.push(data);
+    expect(await adapterList.run(ctx, [], { json: true })).toBe(0);
+
+    const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
+    expect(adapters.find(({ slot }) => slot === 'analytics')).toMatchObject({
+      implementation: '@kb-labs/adapters-analytics-file',
+      mode: 'real',
+    });
   });
 
   it('accepts the camel-case vectorStore capability slot used by the runtime', async () => {

@@ -43,6 +43,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             (sdk / "dist").mkdir(parents=True)
             (sdk / "package.json").write_text(json.dumps({
                 "name": "@kb-labs/sdk",
+                "type": "module",
                 "exports": {".": {"import": "./dist/index.js"}},
                 "dependencies": {"@kb-labs/sdk-runtime-dependency": "1.0.0"},
                 "peerDependencies": {"@kb-labs/shared-testing": "^2.0.0"},
@@ -116,8 +117,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 (package_root / "dist").mkdir(parents=True)
                 (package_root / "package.json").write_text(json.dumps({
                     "name": name,
-                "type": "module",
-                "exports": {".": {"import": "./dist/index.js"}},
+                    "type": "module",
+                    "exports": {".": {"import": "./dist/index.js"}},
                 }))
                 (package_root / "dist" / "index.js").write_text("export {};\n")
 
@@ -266,6 +267,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             (sdk_root / "dist").mkdir(parents=True)
             (sdk_root / "package.json").write_text(json.dumps({
                 "name": "@kb-labs/sdk",
+                "type": "module",
                 "exports": {".": {"import": "./dist/index.js"}},
                 "peerDependencies": {"@kb-labs/shared-testing": "^2.0.0"},
                 "peerDependenciesMeta": {"@kb-labs/shared-testing": {"optional": True}},
@@ -275,6 +277,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             (workflow_entry / "dist").mkdir(parents=True)
             (workflow_entry / "package.json").write_text(json.dumps({
                 "name": "@kb-labs/workflow-entry",
+                "type": "module",
                 "exports": {".": {"import": "./dist/index.js"}},
             }))
             (workflow_entry / "dist" / "index.js").write_text("export {};\n")
@@ -522,6 +525,9 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                              "actions": [{"command": "kb adapter bind vectorStore @kb-labs/adapters-qdrant"}]}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/mind-entry":
+                    if args[3:] != ["--scope", "platform", "--json"]:
+                        (root / ".kb").mkdir(exist_ok=True)
+                        (root / ".kb" / "project-plugin-lock.json").write_text("project install")
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:3] == ["marketplace", "install", "@kb-labs/commit-entry"]:
                     project_plugins.setdefault(root.resolve(), set()).add("@kb-labs/commit-entry")
@@ -636,7 +642,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertNotIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)
             self.assertIn(("kb", "commit", "generate", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind-entry", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind-entry", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(install_root), "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(install_root)), calls)
