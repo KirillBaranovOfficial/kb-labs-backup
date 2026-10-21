@@ -28,12 +28,10 @@
 | `commit`          | @kb-labs/commit-entry             | generate · apply · push · open · reset                                                                         | AI-powered commits |
 | `devlink`         | @kb-labs/devlink-entry            | switch · status · plan · freeze · undo · backups                                                               | Cross-repo dep linking |
 | `workspace`       | built-in workspace command group         | register · status · list                                                                                       | Remote workspace agents |
-| `impact`          | @kb-labs/impact-core              | check · packages · docs                                                                                        | Change impact analysis |
 | `infra-worker`    | @kb-labs/infra-worker-core        | prepare · capture-snapshot · restore-snapshot                                                                  | Environment provisioning |
 | `marketplace`     | @kb-labs/marketplace-entry        | install · uninstall · update · sync · plugins:list/enable/disable/link/unlink/doctor/refresh                   | Plugin management |
 | `hub`             | @kb-labs/marketplace-registry-entry | publish · share · yank · deprecate                                                                             | Plugin publishing (author tools) |
 | `mind`            | @kb-labs/mind-entry               | init · verify · rag-index · rag-query · sync:add/update/delete/list/status                                    | RAG / semantic code search |
-| `policy`          | @kb-labs/policy-core              | detect · check · rules · snapshot                                                                              | Policy enforcement |
 | `qa`              | @kb-labs/qa-entry                 | run · check · stats · gate · history · trends · regressions · baseline:update/status/diff                     | Build/test quality metrics |
 | `quality`         | @kb-labs/quality-entry            | stats · health · snapshot · history · context · gate · check-layers · coupling · build-order · cycles · dead-code · check-types · check-builds · check-tests · fix-deps · visualize | Architecture analysis |
 | `release`         | @kb-labs/release-manager-cli      | plan · run · publish · rollback · report · changelog · verify · checks · build · pack · version · git         | Release pipeline |
@@ -93,7 +91,7 @@ Top-level namespaces inconsistently use nouns and verbs:
 
 | Pattern | Examples |
 |---------|---------|
-| Noun (domain/resource) | `marketplace`, `workflow`, `agent`, `quality`, `policy`, `mind` |
+| Noun (domain/resource) | `marketplace`, `workflow`, `agent`, `quality`, `mind` |
 | Verb (action) | `commit`, `review`, `release`, `scaffold` |
 
 Verb-first names like `commit` and `review` are fine as standalone commands,
@@ -117,12 +115,6 @@ expose internal terminology. Users want "search my codebase".
 `host-agent` registers both `workspace /*` and `agent /*` (register, status) — the `agent`
 subpath overlaps with the `agent` plugin's namespace. Currently works because they're different
 subcommands, but fragile.
-
-### P10 — `impact`: understated name for what it does
-
-`impact check` analyzes which packages/docs are affected by current changes. "Impact" is
-accurate but abstract. In the context of a PR or CI check, users think "what's changed"
-not "what's the impact".
 
 ---
 
@@ -230,7 +222,6 @@ Ordered by impact and effort.
 |---|------|---------|--------------|
 | R9  | `devlink` opaque name | P7 | Consider `deps` or `link` |
 | R10 | `mind` opaque name | P8 | Consider `search` or `rag` |
-| R11 | `impact` understated | P10 | Consider `diff` or `affected` |
 | R12 | `infra-worker` subcommand names (`capture-snapshot`) | P5 | `infra snapshot capture/restore` |
 
 ---

@@ -1,5 +1,7 @@
 # ТЗ: Impact Analysis Plugin
 
+Status: dropped 2026-10-21 (owner decision)
+
 ## Цель
 
 Плагин `@kb-labs/impact` анализирует изменения в workspace и показывает что затронуто: зависимые пакеты, документация, индексы. Встраивается в `dev-done` workflow как предупреждающий (не блокирующий) step.
@@ -72,7 +74,7 @@ plugins/kb-labs-impact/
 1. Маппинг: пакет → связанная документация:
    - `@kb-labs/sdk` → `CLAUDE.md` (секция SDK), `CONTRIBUTING.md`, `CLI-REFERENCE.md`
    - `@kb-labs/*-cli` → `CLI-REFERENCE.md` (автогенерируемый, напомнить regenerate)
-   - Любой новый пакет → `docs/workspace-map.json` (напомнить `pnpm map`)
+   - Любой новый пакет → обновить документацию о структуре workspace по необходимости
    - `@kb-labs/mind-*` → Mind RAG reindex
    - Workflow файлы → `DEVELOPMENT-PROCESS.md`
 2. Проверить дату последнего изменения документа vs дату изменения кода
@@ -102,7 +104,7 @@ plugins/kb-labs-impact/
     {
       "match": "__new_package__",
       "action": "regenerate",
-      "command": "pnpm map"
+      "command": "review workspace documentation"
     }
   ]
 }

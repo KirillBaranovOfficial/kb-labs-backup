@@ -97,8 +97,7 @@ describe('resolvePlan', () => {
   });
 
   it('rejects a stale plan whose versions no longer match the working tree', async () => {
-    // plan.json is committed to the repo, so a leftover from an older release
-    // is always present — it must never be adopted on version mismatch.
+    // A leftover per-run plan must never be adopted on version mismatch.
     const pkgPath = await writePackage('pkg-a', '@kb-labs/a', '2.120.0');
     await writePlan(makePlan(pkgPath));
 
@@ -132,13 +131,10 @@ describe('resolvePlan', () => {
     expect(planRelease).toHaveBeenCalledWith(expect.objectContaining({ flow: 'platform' }));
   });
 
-  // Regression for the canary release-build-candidate failure: a canary run
-  // never commits its bumped package.json files back to git (see
-  // release-prepare.yml's "Bump versions"/"Commit and tag", gated on
-  // channel == stable), so the plan.json checked out at a later commit for
-  // release-build-candidate.yml can legitimately still be a stale artifact
-  // from an older release cycle. resolvePlan() correctly rejects that stale
-  // plan and recomputes fresh — but if the caller doesn't forward its own
+  // Regression for the canary release-build-candidate failure: the candidate
+  // workspace regenerates its per-run plan, and a canary resolve may also need
+  // to recompute if the artifact no longer matches disk. resolvePlan() rejects
+  // that stale plan and recomputes fresh — but if the caller doesn't forward its own
   // `channel` into that recompute, planRelease()'s `channel = 'stable'`
   // default silently takes over and every package's -canary.<sha> suffix
   // is dropped, not just one. `release:version`'s own default `--channel`

@@ -86,7 +86,6 @@ files. They are based on the remaining `.kb` dependents inventory in
 2. **Project identity, discovery, and plugin scope:**
    `core/workspace/`, `core/project-registry/src/registry.ts`,
    `cli/commands/src/commands/system/project/show.ts`,
-   `plugins/impact/core/src/core/workspace.ts`,
    `plugins/marketplace/core/src/scope.ts`,
    `plugins/marketplace/entry/src/scope.ts`, `core/discovery/`,
    `core/runtime/src/platform-sync.ts`,
@@ -122,7 +121,7 @@ files. They are based on the remaining `.kb` dependents inventory in
 6. **Plugin-owned data and workspace permissions:**
    `plugins/review/core/`, `plugins/review/llm/`,
    `plugins/release/manager-core/`, `plugins/release/manager-cli/`,
-   `plugins/qa/entry/`, `plugins/policy/core/`,
+   `plugins/qa/entry/`,
    `plugins/scaffold/core/src/engine.ts`,
    `plugins/quality/entry/src/cli/commands/snapshot.ts`,
    `plugins/commit/contracts/src/env.ts`,
