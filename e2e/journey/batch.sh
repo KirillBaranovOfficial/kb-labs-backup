@@ -1,173 +1,228 @@
 #!/bin/sh
-# batch.sh <output-dir> [baseline-label] — the shared product-evidence journey batch.
-set -eu
+# batch.sh owns the shared producer and per-mode journey stages.
+set -u
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-OUT=${1:?usage: e2e/journey/batch.sh <output-dir> [baseline]}
-BASELINE=${2:-${BATCH_BASELINE:-j28}}
 BUILD_BASE=${KB_DEVKIT_BASE_REF:-local/main...HEAD}
-case "$OUT" in /*) ;; *) OUT="$ROOT/$OUT" ;; esac
-mkdir -p "$OUT"
-SHARED_OUT="$OUT/shared"
-mkdir -p "$SHARED_OUT"
-if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  printf 'artifact_shared=%s\nartifact_local=%s\nartifact_secured=%s\n' \
-    "$SHARED_OUT" "$OUT/local" "$OUT/secured" >> "$GITHUB_OUTPUT"
-fi
-: > "$SHARED_OUT/build.log"
-cd "$ROOT"
+BASELINE=${BATCH_BASELINE:-j28}
+SCRIPT_DIR="$ROOT/e2e/journey"
 
-commit=""
-interrupted=0
-batch_started_at=$(date +%s)
-current_stage=""
-current_stage_started=$batch_started_at
-reset_seconds=0
-build_seconds=0
-unit_seconds=0
-candidate_seconds=0
-local_seconds=0
-secured_seconds=0
-total_seconds=0
-
-start_stage() {
-  current_stage=$1
-  current_stage_started=$(date +%s)
+usage() {
+  echo "usage: batch.sh prepare <output-dir> [baseline] | mode <local|secured> <producer-artifact> <output-dir> | summarize <output-dir> <producer-artifact> <local-artifact> <secured-artifact> | <output-dir> [baseline]" >&2
+  exit 2
 }
-finish_stage() {
-  [ -n "$current_stage" ] || return 0
-  stage_finished_at=$(date +%s)
-  stage_elapsed=$((stage_finished_at - current_stage_started))
-  case "$current_stage" in
-    reset) reset_seconds=$stage_elapsed ;;
-    build) build_seconds=$stage_elapsed ;;
-    unit) unit_seconds=$stage_elapsed ;;
-    candidate) candidate_seconds=$stage_elapsed ;;
-    local) local_seconds=$stage_elapsed ;;
-    secured) secured_seconds=$stage_elapsed ;;
-  esac
-  current_stage=""
+absolute() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$ROOT" "$1" ;; esac; }
+declare_artifacts() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    printf 'artifact_shared=%s/shared\nartifact_local=%s/local\nartifact_secured=%s/secured\n' "$1" "$1" "$1" >> "$GITHUB_OUTPUT"
+  fi
 }
 write_metadata() {
-  result=$1
-  total_seconds=$(($(date +%s) - batch_started_at))
-  for metadata_mode in shared local secured; do
-    metadata_file="$SHARED_OUT/batch-metadata.json"
-    metadata_mode_json=""
-    if [ "$metadata_mode" != shared ]; then
-      [ -d "$OUT/$metadata_mode" ] || continue
-      metadata_file="$OUT/$metadata_mode/batch-metadata.json"
-      metadata_mode_json=",\"mode\":\"$metadata_mode\""
+  metadata_path=$1 metadata_mode=$2 metadata_result=$3 metadata_commit=$4 metadata_baseline=$5 metadata_build=$6
+  "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" metadata \
+    "$metadata_path" "$metadata_mode" "$metadata_result" "$metadata_commit" "$metadata_baseline" "$metadata_build" \
+    "${reset_seconds:-0}" "${build_seconds:-0}" "${unit_seconds:-0}" "${candidate_seconds:-0}" \
+    "${local_seconds:-0}" "${secured_seconds:-0}" "${total_seconds:-0}"
+}
+run_prepare() {
+  out=$(absolute "$1")
+  BASELINE=${2:-$BASELINE}
+  shared="$out/shared"
+  mkdir -p "$shared"
+  : > "$shared/build.log"
+  declare_artifacts "$out"
+  cd "$ROOT"
+  commit=$(git rev-parse HEAD)
+  "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" run \
+    "$shared/run.json" "$commit" "$BASELINE" "$BUILD_BASE"
+  printf '# Journey batch\n\n- Commit: `%s`\n- Baseline: `%s`\n- Build base: `%s`\n' "$commit" "$BASELINE" "$BUILD_BASE" > "$shared/summary.md"
+  validate_ref() {
+    if ! git rev-parse --verify --quiet "$1^{commit}" >/dev/null 2>&1; then
+      printf '\n- Failed stage: `build`\n- Stage log: `build.log`\n- Result: FAIL\n' >> "$shared/summary.md"
+      echo "affected-build base ref '$1' is missing from this checkout; next: git fetch --all --prune" >&2
+      reset_seconds=0; build_seconds=0; unit_seconds=0; candidate_seconds=0; local_seconds=0; secured_seconds=0; total_seconds=0
+      write_metadata "$shared/batch-metadata.json" shared FAIL "$commit" "$BASELINE" "$BUILD_BASE"
+      return 1
     fi
-    printf '{"commit":"%s","baseline":"%s","buildBase":"%s","result":"%s"%s,"stageDurationsSeconds":{"reset":%s,"build":%s,"unit":%s,"candidate":%s,"local":%s,"secured":%s,"total":%s}}\n' \
-      "$commit" "$BASELINE" "$BUILD_BASE" "$result" "$metadata_mode_json" \
-      "$reset_seconds" "$build_seconds" "$unit_seconds" "$candidate_seconds" \
-      "$local_seconds" "$secured_seconds" "$total_seconds" > "$metadata_file"
-  done
-}
-cleanup() {
-  status=$?
+  }
+  case "$BUILD_BASE" in
+    *...*) validate_ref "${BUILD_BASE%%...*}" || return 1; validate_ref "${BUILD_BASE#*...}" || return 1 ;;
+    *) validate_ref "$BUILD_BASE" || return 1 ;;
+  esac
+  batch_started=$(date +%s)
+  prepare_interrupted=0
+  prepare_finalized=0
+  prepare_finalize() {
+    status=$?
+    [ "$prepare_finalized" -eq 0 ] || return "$status"
+    prepare_finalized=1
+    [ "$status" -eq 0 ] || [ "$prepare_interrupted" -eq 1 ] || return "$status"
+    [ "$prepare_interrupted" -eq 1 ] && final_result=INTERRUPTED || final_result=FAIL
+    total_seconds=$(($(date +%s) - batch_started))
+    printf '\n- Result: %s\n' "$final_result" >> "$shared/summary.md"
+    write_metadata "$shared/batch-metadata.json" shared "$final_result" "$commit" "$BASELINE" "$BUILD_BASE"
+    return "$status"
+  }
+  trap prepare_finalize EXIT
+  trap 'prepare_interrupted=1; exit 129' HUP
+  trap 'prepare_interrupted=1; exit 130' INT
+  trap 'prepare_interrupted=1; exit 143' TERM
+  reset_started=$(date +%s)
+  reset_rc=0
+  "$SCRIPT_DIR/run.sh" --down > "$shared/reset.log" 2>&1 || reset_rc=$?
+  reset_seconds=$(($(date +%s) - reset_started))
+  if [ "$reset_rc" -ne 0 ]; then
+    printf '\n- Failed stage: `reset`\n- Stage log: `reset.log`\n- Result: FAIL\n' >> "$shared/summary.md"
+    result=FAIL
+    echo "journey stack reset failed; see $shared/reset.log; next: e2e/journey/run.sh --down" >&2
+    total_seconds=$(($(date +%s) - batch_started)); build_seconds=0; unit_seconds=0; candidate_seconds=0; local_seconds=0; secured_seconds=0
+    write_metadata "$shared/batch-metadata.json" shared "$result" "$commit" "$BASELINE" "$BUILD_BASE"
+    trap - EXIT HUP INT TERM
+    return 1
+  fi
+  preflight_rc=0
+  "$SCRIPT_DIR/preflight.sh" "$shared" "$BUILD_BASE" || preflight_rc=$?
+  build_seconds=0; unit_seconds=0; candidate_seconds=0
+  if [ -s "$shared/stage-durations.env" ]; then
+    . "$shared/stage-durations.env"
+    build_seconds=$build; candidate_seconds=$candidate; unit_seconds=$unit
+    rm -f "$shared/stage-durations.env"
+  fi
+  if [ "$preflight_rc" -ne 0 ]; then
+    failed_stage=${failed_stage:-build}
+    printf '\n- Failed stage: `%s`\n- Stage log: `%s.log`\n' "$failed_stage" "$failed_stage" >> "$shared/summary.md"
+    result=FAIL
+    total_seconds=$(($(date +%s) - batch_started)); local_seconds=0; secured_seconds=0
+    write_metadata "$shared/batch-metadata.json" shared "$result" "$commit" "$BASELINE" "$BUILD_BASE"
+    printf '\n- Result: FAIL\n' >> "$shared/summary.md"
+    trap - EXIT HUP INT TERM
+    echo "journey shared $failed_stage stage failed; see $shared/$failed_stage.log; next: e2e/journey/$([ "$failed_stage" = candidate ] && echo prepare-candidate.sh || echo preflight.sh)" >&2
+    return "$preflight_rc"
+  fi
+  archive="$shared/build-candidate.tar"
+  pack_started=$(date +%s)
+  if ! (
+    cd "$ROOT" &&
+    pnpm -r list --depth -1 --parseable > "$shared/workspace-packages.txt" &&
+    {
+      while IFS= read -r package_dir; do
+        case "$package_dir" in
+          "$ROOT") continue ;;
+          "$ROOT"/*) package_path=${package_dir#"$ROOT"/} ;;
+          *) echo "workspace package path is outside the checkout: $package_dir" >&2; exit 1 ;;
+        esac
+        [ ! -d "$package_path/dist" ] || printf './%s/dist\n' "$package_path" >> "$shared/archive-files.txt"
+      done < "$shared/workspace-packages.txt"
+      for item in .journey/runner-inputs .journey/release .journey/kb-create-release-index e2e/packages; do
+        [ ! -e "$item" ] || printf '%s\n' "./$item" >> "$shared/archive-files.txt"
+      done
+    } &&
+    tar -cf "$archive" -T "$shared/archive-files.txt"
+  ) > "$shared/candidate-package.log" 2>&1; then
+    pack_elapsed=$(($(date +%s) - pack_started))
+    candidate_seconds=$((candidate_seconds + pack_elapsed))
+    printf '\n- Failed stage: `candidate`\n- Stage log: `candidate-package.log`\n- Result: FAIL\n' >> "$shared/summary.md"
+    total_seconds=$(($(date +%s) - batch_started)); local_seconds=0; secured_seconds=0
+    write_metadata "$shared/batch-metadata.json" shared FAIL "$commit" "$BASELINE" "$BUILD_BASE"
+    trap - EXIT HUP INT TERM
+    echo "journey candidate artifact packaging failed; see $shared/candidate-package.log; next: tar -cf \"$archive\" -T \"$shared/archive-files.txt\"" >&2
+    return 1
+  fi
+  pack_elapsed=$(($(date +%s) - pack_started))
+  candidate_seconds=$((candidate_seconds + pack_elapsed))
+  rm -f "$shared/archive-files.txt" "$shared/workspace-packages.txt"
+  result=PASS; total_seconds=$(($(date +%s) - batch_started)); local_seconds=0; secured_seconds=0
+  write_metadata "$shared/batch-metadata.json" shared "$result" "$commit" "$BASELINE" "$BUILD_BASE"
   trap - EXIT HUP INT TERM
-  finish_stage
-  if [ "$interrupted" -eq 1 ]; then result=INTERRUPTED
-  elif [ "$status" -eq 0 ]; then result=PASS
-  else result=FAIL
+  return 0
+}
+run_mode() {
+  mode=$1 producer=$(absolute "$2") out=$(absolute "$3")
+  case "$mode" in local|secured) ;; *) usage ;; esac
+  shared="$producer/shared"; mode_dir="$out/$mode"
+  mkdir -p "$mode_dir"
+  cd "$ROOT"
+  if [ ! -s "$shared/build-candidate.tar" ]; then
+    echo "journey producer artifact is missing its build-candidate.tar; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
+    return 1
   fi
-  printf '\n- Result: %s\n' "$result" >> "$SHARED_OUT/summary.md"
-  write_metadata "$result"
-  exit "$status"
-}
-trap cleanup EXIT
-trap 'interrupted=1; exit 129' HUP
-trap 'interrupted=1; exit 130' INT
-trap 'interrupted=1; exit 143' TERM
-
-commit=$(git rev-parse HEAD)
-printf '{"commit":"%s","baseline":"%s","buildBase":"%s"}\n' "$commit" "$BASELINE" "$BUILD_BASE" > "$SHARED_OUT/run.json"
-printf '# Journey batch\n\n- Commit: `%s`\n- Baseline: `%s`\n- Build base: `%s`\n' \
-  "$commit" "$BASELINE" "$BUILD_BASE" > "$SHARED_OUT/summary.md"
-record_failure_log() {
-  printf '\n- Failed stage: `%s`\n- Stage log: `%s`\n' "$1" "$2" >> "$SHARED_OUT/summary.md"
-}
-validate_build_base_ref() {
-  build_base_ref=$1
-  if ! git rev-parse --verify --quiet "$build_base_ref^{commit}" >/dev/null 2>&1; then
-    record_failure_log build build.log
-    echo "affected-build base ref '$build_base_ref' is missing from this checkout; next: git fetch --all --prune" >&2
-    exit 1
+  if [ ! -s "$shared/batch-metadata.json" ] || [ ! -s "$shared/run.json" ]; then
+    echo "journey producer artifact is missing shared batch metadata; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
+    return 1
   fi
-}
-case "$BUILD_BASE" in
-  *...*)
-    build_base_left=${BUILD_BASE%%...*}
-    build_base_right=${BUILD_BASE#*...}
-    validate_build_base_ref "$build_base_left"
-    validate_build_base_ref "$build_base_right"
-    ;;
-  *) validate_build_base_ref "$BUILD_BASE" ;;
-esac
-rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
-rm -rf .journey/reports/invocations
-start_stage reset
-reset_rc=0
-e2e/journey/run.sh --down > "$SHARED_OUT/reset.log" 2>&1 || reset_rc=$?
-finish_stage
-if [ "$reset_rc" -ne 0 ]; then
-  record_failure_log reset reset.log
-  echo "journey stack reset failed; see $SHARED_OUT/reset.log; next: e2e/journey/run.sh --down" >&2
-  exit 1
-fi
-preflight_rc=0
-"$ROOT/e2e/journey/preflight.sh" "$SHARED_OUT" "$BUILD_BASE" || preflight_rc=$?
-if [ -s "$SHARED_OUT/stage-durations.env" ]; then
-  . "$SHARED_OUT/stage-durations.env"
-  build_seconds=$build
-  candidate_seconds=$candidate
-  unit_seconds=$unit
-  rm -f "$SHARED_OUT/stage-durations.env"
-fi
-if [ "$preflight_rc" -ne 0 ]; then
-  failure_stage=${failed_stage:-build}
-  record_failure_log "$failure_stage" "$failure_stage.log"
-  exit 1
-fi
-build_seconds=$build
-candidate_seconds=$candidate
-unit_seconds=$unit
-
-batch_rc=0
-for mode in local secured; do
-  mode_out="$OUT/$mode"
-  mkdir -p "$mode_out"
-  start_stage "$mode"
-  cp "$SHARED_OUT/reset.log" "$SHARED_OUT/build.log" "$SHARED_OUT/unit.log" "$SHARED_OUT/candidate.log" "$mode_out/"
-  scenario="service-$mode:explore"
+  if ! tar -xf "$shared/build-candidate.tar" -C "$ROOT" > "$mode_dir/archive-extract.log" 2>&1; then
+    echo "journey producer build-candidate.tar could not be extracted; see $mode_dir/archive-extract.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
+    return 1
+  fi
+  for log in reset build unit candidate release-build-output-check; do
+    if [ ! -f "$shared/$log.log" ]; then
+      echo "journey producer artifact is missing shared/$log.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
+      return 1
+    fi
+    if ! cp "$shared/$log.log" "$mode_dir/"; then
+      echo "journey producer log shared/$log.log could not be copied; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
+      return 1
+    fi
+  done
+  if ! cp "$shared/run.json" "$mode_dir/run.json"; then
+    echo "journey producer shared/run.json could not be copied; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
+    return 1
+  fi
+  run_started=$(date +%s)
   rc=0
-  KB_JOURNEY_ONLY="$scenario" e2e/journey/run.sh --no-build > "$mode_out/batch.log" 2>&1 || rc=$?
-  if [ "$rc" -ne 0 ] && grep -q '^failed to solve:' "$mode_out/batch.log"; then
-    mv "$mode_out/batch.log" "$mode_out/infra-failed.log"
+  KB_JOURNEY_ONLY="service-$mode:explore" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ] && grep -q '^failed to solve:' "$mode_dir/batch.log"; then
+    mv "$mode_dir/batch.log" "$mode_dir/infra-failed.log"
     rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
     rm -rf .journey/reports/invocations
     rc=0
-    KB_JOURNEY_ONLY="$scenario" e2e/journey/run.sh --no-build > "$mode_out/batch.log" 2>&1 || rc=$?
-    echo "INFRA: first attempt failed during docker image build; retried once" >> "$mode_out/batch.log"
+    KB_JOURNEY_ONLY="service-$mode:explore" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
+    echo "INFRA: first attempt failed during docker image build; retried once" >> "$mode_dir/batch.log"
   fi
-  printf 'exit=%s\n' "$rc" >> "$mode_out/batch.log"
-  cp -R .journey/reports/. "$mode_out/"
+  printf 'exit=%s\n' "$rc" >> "$mode_dir/batch.log"
+  if ! cp -R .journey/reports/. "$mode_dir/"; then
+    rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
+    rm -rf .journey/reports/invocations
+    echo "journey $mode mode reports could not be copied; next: rerun KB_JOURNEY_ONLY=service-$mode:explore e2e/journey/run.sh --no-build" >&2
+    return 1
+  fi
   rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
   rm -rf .journey/reports/invocations
-  finish_stage
+  duration=$(($(date +%s) - run_started))
+  result=PASS; [ "$rc" -eq 0 ] || result=FAIL
+  source_meta="$shared/batch-metadata.json"
+  "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
+    "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" || return 1
   if [ "$rc" -ne 0 ]; then
-    batch_rc=1
-    record_failure_log "$mode" "$mode/batch.log"
+    printf '\n- Failed stage: `%s`\n- Stage log: `%s/batch.log`\n' "$mode" "$mode/batch.log" >> "$mode_dir/batch.log"
+    echo "journey $mode mode failed; see $mode_dir/batch.log; next: KB_JOURNEY_ONLY=service-$mode:explore e2e/journey/run.sh --no-build" >&2
   fi
-done
-cat >> "$SHARED_OUT/summary.md" <<SUMMARY
-- Modes: local and secured
-- Reports and logs: one directory per mode
-SUMMARY
-if [ "$batch_rc" -ne 0 ]; then
-  echo "one or more journey modes failed; inspect $OUT/local/batch.log and $OUT/secured/batch.log" >&2
-  exit 1
-fi
-
-exit 0
+  return "$rc"
+}
+case "${1:-}" in
+  prepare)
+    [ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage
+    run_prepare "$2" "${3:-$BASELINE}"
+    ;;
+  mode)
+    [ "$#" -eq 4 ] || usage
+    run_mode "$2" "$3" "$4"
+    ;;
+  summarize)
+    [ "$#" -eq 5 ] || usage
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$2" "$3" "$4" "$5"
+    ;;
+  *)
+    [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
+    full_out=$(absolute "$1"); baseline=${2:-$BASELINE}
+    run_prepare "$full_out" "$baseline" || prepare_rc=$?
+    producer="$full_out"
+    if [ "${prepare_rc:-0}" -eq 0 ]; then
+      for mode in local secured; do
+        mode_out="$full_out/.artifact-$mode"
+        run_mode "$mode" "$producer" "$mode_out" || mode_rc=1
+      done
+      "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$full_out" "$producer" "$full_out/.artifact-local" "$full_out/.artifact-secured" || summary_rc=1
+    fi
+    [ "${prepare_rc:-0}" -eq 0 ] && [ "${mode_rc:-0}" -eq 0 ] && [ "${summary_rc:-0}" -eq 0 ]
+    ;;
+esac
