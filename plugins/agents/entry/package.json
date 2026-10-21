@@ -49,7 +49,6 @@
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
-    "@kb-labs/plugin-runtime": "workspace:*",
     "@kb-labs/studio-plugin-tools": "workspace:*",
     "@rspack/cli": "^2.2.8",
     "@rspack/core": "^2.2.8",

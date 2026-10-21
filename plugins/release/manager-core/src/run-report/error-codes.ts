@@ -6,7 +6,7 @@ import {
   type ErrorCatalogEntry,
   type ErrorEnvelope,
   type PlatformErrorCode,
-} from '@kb-labs/core-platform/error-envelope';
+} from '@kb-labs/sdk/errors';
 
 export type ReleaseErrorCode = Extract<PlatformErrorCode, `KB_RELEASE_${string}`>;
 

@@ -1,4 +1,4 @@
-import type { ManifestV3 } from '@kb-labs/plugin-contracts';
+import type { ManifestV3 } from '@kb-labs/sdk/contracts';
 import { defineCommandFlags } from '@kb-labs/sdk';
 
 export const manifest: ManifestV3 = {

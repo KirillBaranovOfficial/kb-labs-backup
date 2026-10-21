@@ -67,7 +67,7 @@ From `src/index.ts`:
 - `@kb-labs/setup-operations`: reusable setup operations
 - `@kb-labs/plugin-manifest`: manifest types and helpers
 - `@kb-labs/plugin-template-contracts`: public contracts for this template plugin
-- `@kb-labs/shared-cli-ui`: shared CLI UI helpers
+- `@kb-labs/sdk`: public plugin API, including shared CLI UI helpers
 - `react`, `react-dom`, `zod`
 
 ### Development

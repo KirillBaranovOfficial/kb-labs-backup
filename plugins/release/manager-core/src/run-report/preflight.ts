@@ -9,8 +9,7 @@
  */
 
 import type { ReleaseShell } from '../types';
-import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
-import type { DetailsOptionFor } from '@kb-labs/core-platform/error-envelope';
+import type { ErrorEnvelope, DetailsOptionFor } from '@kb-labs/sdk/errors';
 import {
   createReleaseError,
   type ReleaseErrorCode,

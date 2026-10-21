@@ -67,5 +67,5 @@ src/
 ## Dependencies
 
 - `@kb-labs/agent-contracts` — shared types
-- `@kb-labs/core-platform` — platform services (semantic search)
+- `@kb-labs/sdk` — public platform service types
 - `glob` — file pattern matching

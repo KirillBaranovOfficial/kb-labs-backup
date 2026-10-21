@@ -13,6 +13,7 @@ export default defineConfig({
     'hooks/index': 'src/hooks/index.ts',
     'contracts/index': 'src/contracts/index.ts',
     'types/index': 'src/types/index.ts',
+    'errors/index': 'src/errors/index.ts',
     'testing/index': 'src/testing/index.ts',
     'studio/index': 'src/studio/index.ts',
     'studio/catalog': 'src/studio/catalog.ts',

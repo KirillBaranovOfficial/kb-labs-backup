@@ -107,7 +107,7 @@ Use individual atomic tools from `@kb-labs/cli-command-kit` to build your comman
 
 - **`defineFlags`** + **`validateFlags`**: Flag schema definition and validation
 - **`runWithOptionalAnalytics`**: Analytics wrapper (optional)
-- **`TimingTracker`**: Performance tracking (from `@kb-labs/shared-cli-ui`)
+- **`TimingTracker`**: Performance tracking (from `@kb-labs/sdk`)
 - **`FlagValidationError`**: Custom error types
 
 ### Example
@@ -115,7 +115,7 @@ Use individual atomic tools from `@kb-labs/cli-command-kit` to build your comman
 ```typescript
 import { defineFlags, validateFlags, type InferFlags } from '@kb-labs/cli-command-kit/flags';
 import { runWithOptionalAnalytics } from '@kb-labs/cli-command-kit/analytics';
-import { TimingTracker } from '@kb-labs/shared-cli-ui';
+import { TimingTracker } from '@kb-labs/sdk';
 import type { CliContext } from '@kb-labs/cli-core';
 
 // Define flag schema
@@ -218,7 +218,7 @@ Use `defineCommand` for the standard benefits, but add custom tools where needed
 
 ```typescript
 import { defineCommand } from '@kb-labs/cli-command-kit';
-import { TimingTracker } from '@kb-labs/shared-cli-ui';
+import { TimingTracker } from '@kb-labs/sdk';
 
 export const run = defineCommand({
   name: 'template:hello',
