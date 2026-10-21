@@ -680,9 +680,12 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("implicit OpenAI list and doctor report its missing key", "adapter",
                  lambda: _assert_missing_openai_key(runner, base_env, project_a, platform_root, cli), cases=["S-054.8"])
     def assert_missing_vector_store() -> None:
-        install = ["marketplace", "install", "@kb-labs/mind-entry", "--json"]
+        install = ["marketplace", "install", "@kb-labs/mind-entry", "--scope", "platform", "--json"]
+        project_before = _repository_tree(project_a)
         if _json(cli(install), install).get("ok") is not True:
             raise RuntimeError("could not install the Mind plugin required by the vector-store adapter case")
+        if _repository_tree(project_a) != project_before:
+            raise RuntimeError("platform-scope Mind installation changed the registered project repository")
         _assert_missing_vector_store(runner, base_env, project_a)
     journey.step("missing vector store returns a typed bind hint", "adapter",
                  assert_missing_vector_store, cases=["S-054.6"])

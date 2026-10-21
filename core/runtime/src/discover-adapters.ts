@@ -36,6 +36,29 @@ export interface DiscoveredAdapter {
   module: Record<string, unknown> & { manifest: AdapterManifest };
 }
 
+export interface DiscoveredAdapterPath {
+  adapter: DiscoveredAdapter;
+  packagePath: string;
+  subpath: string;
+}
+
+/** Resolve a configured package path to the discovered package that owns it. */
+export function findDiscoveredAdapter(
+  adapterPath: string,
+  discovered: ReadonlyMap<string, DiscoveredAdapter>,
+): DiscoveredAdapterPath | undefined {
+  const matches = [...discovered.entries()]
+    .filter(([packagePath]) => adapterPath === packagePath || adapterPath.startsWith(`${packagePath}/`))
+    .sort(([left], [right]) => right.length - left.length);
+  const match = matches[0];
+  if (match) {
+    const [packagePath, adapter] = match;
+    const remainder = adapterPath.slice(packagePath.length);
+    return { adapter, packagePath, subpath: remainder.startsWith('/') ? remainder.slice(1) : '' };
+  }
+  return undefined;
+}
+
 /**
  * Load adapter module by file path (ESM import)
  */
@@ -245,13 +268,9 @@ export async function resolveAdapter(
 ): Promise<((config?: unknown) => unknown) | null> {
   const discovered = await discoverAdapters(platformRoot);
 
-  // Check for subpath exports (e.g., "@kb-labs/adapters-openai/embeddings")
-  const basePkgName = adapterPath.split('/').slice(0, 2).join('/');
-  const subpath = adapterPath.includes('/')
-    ? adapterPath.split('/').slice(2).join('/')
-    : null;
-
-  const adapter = discovered.get(basePkgName);
+  const resolved = findDiscoveredAdapter(adapterPath, discovered);
+  const adapter = resolved?.adapter;
+  const subpath = resolved?.subpath ?? '';
 
   if (adapter && subpath) {
     const subpathFile = path.join(adapter.pkgRoot, 'dist', `${subpath}.js`);

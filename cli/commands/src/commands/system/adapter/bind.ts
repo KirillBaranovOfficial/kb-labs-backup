@@ -1,7 +1,7 @@
 /** Bind an installed machine adapter to a platform slot. */
 
 import { configErrorEnvelope, createAdapterOptionsValidator, setUserConfigValue } from '@kb-labs/core-config';
-import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
+import { configuredAdapterForSlot, loadPlatformConfig, PlatformUserConfigSchema, projectEffectiveAdapterImplementation } from '@kb-labs/core-runtime';
 import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
@@ -18,6 +18,7 @@ type BindResult = CommandResult & {
   file?: string;
   changed?: boolean;
   dryRun?: boolean;
+  effectiveState?: { implementation: string | null };
   hint?: string;
   envelope?: ReturnType<typeof configErrorEnvelope>;
 };
@@ -28,7 +29,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
   jsonTest: { noSafeValidPath: "This command changes the platform adapter binding." },
   description: 'Bind an installed adapter to a platform slot',
   longDescription:
-    'Writes platform.adapters.<slot> in the platform configuration. The adapter package must first be installed in the platform.',
+    'Writes the platform config key mapped to the requested adapter slot. The adapter package must first be installed in the platform.',
   category: 'adapter',
   examples: generateExamples('adapter bind', 'kb', [
     { flags: {}, description: 'storage @kb-labs/adapters-fs' },
@@ -57,21 +58,32 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
     }
 
     try {
-      const validate = createAdapterOptionsValidator(['platform', 'adapters', slot], {
+      const loaded = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform' });
+      const currentAdapters = loaded.platformConfig.adapters ?? {};
+      const configuredAdapter = configuredAdapterForSlot(slot, currentAdapters);
+      if (!configuredAdapter) {
+        throw new Error(`Adapter slot ${slot} has no platform config key.`);
+      }
+      const validate = createAdapterOptionsValidator(['platform', 'adapters', configuredAdapter.key], {
         platformRoot: roots.platformRoot,
       });
       const result = await setUserConfigValue({
         filePath: await userConfigFileForScope(roots, 'platform'),
-        path: ['platform', 'adapters', slot],
+        path: ['platform', 'adapters', configuredAdapter.key],
         value: packageId,
         schema: PlatformUserConfigSchema,
         validate,
         dryRun: Boolean(flags['dry-run']),
       });
+      const adapters = result.dryRun
+        ? { ...currentAdapters, [configuredAdapter.key]: packageId }
+        : (await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform' })).platformConfig.adapters ?? {};
       return {
-
         slot,
         packageId,
+        effectiveState: {
+          implementation: projectEffectiveAdapterImplementation(slot, adapters),
+        },
         file: result.filePath,
         changed: result.changed,
         dryRun: result.dryRun,

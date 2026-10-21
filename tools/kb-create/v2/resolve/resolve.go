@@ -181,7 +181,7 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		plan.PlanHash = hash(plan)
 		return plan, nil
 	}
-	if request.SDK.Version != "" || request.SDK.Channel != "" {
+	if sdkVersion != "" {
 		sdk, found := findComponentVersion(source.SDKs, sdkVersion)
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("sdk", "sdk", sdkVersion, "SDK "+sdkVersion, "is not present in the release index")
