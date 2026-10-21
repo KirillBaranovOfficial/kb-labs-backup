@@ -420,6 +420,15 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
                                        stderr=result.stderr or ""), duration
 
 
+def installer_command(args: list[str], *, env: Mapping[str, str], secret: str,
+                      input: str | None = None) -> CompletedProcess[str]:
+    installer_env = dict(env)
+    if "--secret-env" in args:
+        store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", secret,
+                            "installer scenario password")
+    return run(args, env=installer_env, timeout=1200, input_text=input)[0]
+
+
 def _sample_pnpm_rss_for_run(pid: int) -> None:
     global MAX_PNPM_RSS_MIB
     MAX_PNPM_RSS_MIB = max(MAX_PNPM_RSS_MIB, sample_pnpm_rss(pid))
@@ -1713,12 +1722,8 @@ def _main(*, update_variant_runner=None):
                 store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
                                     "root-isolation installer password")
             return run(args, env=installer_env, timeout=1200)[0]
-        def installer_command(args: list[str]):
-            installer_env = env.copy()
-            if "--secret-env" in args:
-                store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
-                                    "installer scenario password")
-            return run(args, env=installer_env, timeout=1200)[0]
+        def installer_command_for_fixture(args: list[str], *, input: str | None = None):
+            return installer_command(args, env=env, secret=installer_secret, input=input)
         fixture_groups = ISOLATED_FIXTURE_GROUPS
         fixture_group_keys = {group: f"isolated-fixture:{group.__name__}" for group in fixture_groups}
         selected_groups = tuple(group for group in fixture_groups
@@ -1752,7 +1757,7 @@ def _main(*, update_variant_runner=None):
                     update_index=container_update_indexes["update"],
                     jump_index=container_update_indexes["jump"], canary_index=canary_index,
                     platform_root=PLATFORM, secret_value=installer_secret, registry=REGISTRY,
-                    run_command=installer_command)
+                    run_command=installer_command_for_fixture)
                 register_supplied_password_absence_step(
                     fixture_journey, Path(env["HOME"]), installer_secret)
                 return fixture_journey
@@ -1764,13 +1769,13 @@ def _main(*, update_variant_runner=None):
                 INSTALLER_CASE_GROUP: run_installer_case_group,
                 APPLY_SCENARIO_GROUP: lambda: run_apply_scenario_step(
                     mode=mode, launcher=launcher, stable_index=stable_index,
-                    platform_root=PLATFORM, run_command=installer_command),
+                    platform_root=PLATFORM, run_command=installer_command_for_fixture),
                 INVALID_REQUEST_GROUP: lambda: run_invalid_request_step(
                     mode=mode, launcher=launcher, stable_index=stable_index,
-                    platform_root=PLATFORM, run_command=installer_command),
+                    platform_root=PLATFORM, run_command=installer_command_for_fixture),
                 MISSING_PROJECT_REQUEST_GROUP: lambda: run_missing_project_request_steps(
                     mode=mode, launcher=launcher, stable_index=stable_index,
-                    home=HOME, run_command=installer_command),
+                    home=HOME, run_command=installer_command_for_fixture),
             }
 
             def execute_fixture_group(group):

@@ -382,9 +382,6 @@ func newInstallationWithRoot(t *testing.T, launcher, fakehost, root, kbHome stri
 	if err := os.WriteFile(filepath.Join(root, "state", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "current", ".kb", "marketplace.lock"), []byte("old package set\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv(host.KBHomeEnv, kbHome)
 	state, err := host.StateHome()
 	if err != nil {

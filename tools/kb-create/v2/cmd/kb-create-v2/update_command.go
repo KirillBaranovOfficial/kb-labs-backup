@@ -14,10 +14,12 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/create/v2/artifacts"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/logs"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
@@ -113,6 +115,11 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		return updateCommandResult{OK: true, Operation: "update", Receipt: active, HostRestarted: false, AlreadyUpToDate: true,
 			ProjectRegistrationNotice: registrationNotice}, nil
 	}
+	plan, failure = planUpdateWithMarketplaceLock(activeRoot, plan, resolved.Catalog, input.RetryCommand)
+	if failure != nil {
+		return updateCommandResult{}, failure
+	}
+	resolved.Plan = plan
 	request, changed, err := requestWithGeneratedSecrets(plan.Request, plan.Artifacts)
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the install request could not include generated secrets.", "rerun `kb-create install` with the selected platform manifest", err)
@@ -151,6 +158,34 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	}
 	result.UpdateSummary = &updateSummary
 	return result, nil
+}
+
+func planUpdateWithMarketplaceLock(activeRoot string, plan contracts.ResolvedInstallPlan,
+	source catalog.Catalog, retryCommand string) (contracts.ResolvedInstallPlan, *diag.Diag) {
+	request := plan.Request
+	changed, err := marketplace.PreserveInstalledComponents(activeRoot, &request)
+	if err != nil {
+		doctor := contracts.ShellCommand("kb-create", "doctor", "--platform-root", activeRoot, "--json")
+		failure := contracts.NewDiag(contracts.CodeUpdateIncompatible,
+			"the active marketplace installation could not be read for update staging",
+			"inspect the installation with `"+doctor+"`, then retry `"+retryCommand+"`", err)
+		return contracts.ResolvedInstallPlan{}, failure
+	}
+	if !changed {
+		return plan, nil
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		failure := contracts.NewDiag(contracts.CodeUpdateIncompatible,
+			"the update request with installed marketplace packages could not be encoded",
+			"retry `"+retryCommand+"` with the same request", err)
+		return contracts.ResolvedInstallPlan{}, failure
+	}
+	response := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion})
+	if !response.OK {
+		return contracts.ResolvedInstallPlan{}, updateCompatibilityDiag(response.Error)
+	}
+	return *response.Plan, nil
 }
 
 func updateSecretDiagnostic(root, secret, index, requestFile string) *diag.Diag {
@@ -297,6 +332,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: correlationID, Secrets: &store}
 	deps.PreserveGeneratedConfig = true
 	deps.VerificationConfigRoot = activeRoot
+	deps.MarketplaceLockSourceRoot = activeRoot
 	if runtimeOverrides != nil {
 		if runtimeOverrides.Artifacts != nil {
 			deps.Artifacts = runtimeOverrides.Artifacts

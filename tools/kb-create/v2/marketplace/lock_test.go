@@ -24,7 +24,7 @@ func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 		{ID: "@kb-labs/adapters-sqlite", Kind: "adapter", Package: "@kb-labs/adapters-sqlite", Version: "4.5.6"},
 	}
 
-	if err := WriteLock(root, artifacts, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)); err != nil {
+	if err := WriteLock(root, root, artifacts, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("WriteLock: %v", err)
 	}
 
@@ -71,6 +71,48 @@ func TestReadLockRejectsPluginWithoutPackage(t *testing.T) {
 	}
 }
 
+func TestPreserveInstalledComponentsAddsMarketplaceLockEntriesToUpdateRequest(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".kb"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeRaw(t, root, Lock{
+		Schema: Schema,
+		Plugins: map[string]Item{
+			"commit": {Version: "1.2.3", Package: "@kb-labs/commit-entry", Source: "platform", Enabled: true},
+		},
+		Adapters: map[string]Item{
+			"vibeproxy": {Version: "2.0.0", Source: "platform", Enabled: true},
+		},
+	})
+	request := contracts.InstallRequest{
+		Plugins:  []contracts.ComponentRequest{{ID: "requested-plugin"}},
+		Adapters: []contracts.ComponentRequest{{ID: "openai"}, {ID: "vibeproxy"}},
+	}
+
+	if _, err := PreserveInstalledComponents(root, &request); err != nil {
+		t.Fatalf("PreserveInstalledComponents: %v", err)
+	}
+
+	pluginIDs := make(map[string]bool)
+	for _, component := range request.Plugins {
+		pluginIDs[component.ID] = true
+	}
+	adapterIDs := make(map[string]bool)
+	for _, component := range request.Adapters {
+		adapterIDs[component.ID] = true
+	}
+	if !pluginIDs["commit"] || !pluginIDs["requested-plugin"] {
+		t.Errorf("plugins = %+v; marketplace lock entry and existing request must both remain", request.Plugins)
+	}
+	if !adapterIDs["openai"] || !adapterIDs["vibeproxy"] {
+		t.Errorf("adapters = %+v; installed and requested adapters must both remain", request.Adapters)
+	}
+	if len(request.Adapters) != 2 {
+		t.Errorf("adapters = %+v; an existing request must not be duplicated", request.Adapters)
+	}
+}
+
 func TestWriteLock_PreservesDisabledAcrossReapply(t *testing.T) {
 	root := t.TempDir()
 	writePackageJSON(t, root, "@kb-labs/plugin-commit", `{"name":"@kb-labs/plugin-commit"}`)
@@ -78,7 +120,7 @@ func TestWriteLock_PreservesDisabledAcrossReapply(t *testing.T) {
 		{ID: "@kb-labs/plugin-commit", Kind: "plugin", Package: "@kb-labs/plugin-commit", Version: "1.0.0"},
 	}
 	now := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-	if err := WriteLock(root, artifacts, now); err != nil {
+	if err := WriteLock(root, root, artifacts, now); err != nil {
 		t.Fatalf("first WriteLock: %v", err)
 	}
 
@@ -91,7 +133,7 @@ func TestWriteLock_PreservesDisabledAcrossReapply(t *testing.T) {
 	writeRaw(t, root, lock)
 
 	// A re-apply with the same artifact must not silently re-enable it.
-	if err := WriteLock(root, artifacts, now.Add(time.Hour)); err != nil {
+	if err := WriteLock(root, root, artifacts, now.Add(time.Hour)); err != nil {
 		t.Fatalf("second WriteLock: %v", err)
 	}
 	after := readBack(t, root)
@@ -100,12 +142,37 @@ func TestWriteLock_PreservesDisabledAcrossReapply(t *testing.T) {
 	}
 }
 
+func TestWriteLockUpdatePreservesEnabledStateFromActiveRoot(t *testing.T) {
+	activeRoot := t.TempDir()
+	targetRoot := t.TempDir()
+	writePackageJSON(t, activeRoot, "@kb-labs/plugin-commit", `{"name":"@kb-labs/plugin-commit"}`)
+	writePackageJSON(t, targetRoot, "@kb-labs/plugin-commit", `{"name":"@kb-labs/plugin-commit"}`)
+	artifacts := []contracts.Artifact{{
+		ID: "commit", Kind: "plugin", Package: "@kb-labs/plugin-commit", Version: "1.0.0",
+	}}
+	if err := WriteLock(activeRoot, activeRoot, artifacts, time.Now()); err != nil {
+		t.Fatalf("write active lock: %v", err)
+	}
+	lock := readBack(t, activeRoot)
+	entry := lock.Plugins["commit"]
+	entry.Enabled = false
+	lock.Plugins["commit"] = entry
+	writeRaw(t, activeRoot, lock)
+
+	if err := WriteLock(targetRoot, activeRoot, artifacts, time.Now()); err != nil {
+		t.Fatalf("write target lock from active root: %v", err)
+	}
+	if readBack(t, targetRoot).Plugins["commit"].Enabled {
+		t.Fatal("update enabled a plugin that was disabled in the active marketplace lock")
+	}
+}
+
 func TestWriteLock_NoDiscoverableArtifacts_NoFileWritten(t *testing.T) {
 	root := t.TempDir()
 	artifacts := []contracts.Artifact{
 		{ID: "@kb-labs/platform-core", Kind: "platform", Package: "@kb-labs/platform-core", Version: "1.0.0"},
 	}
-	if err := WriteLock(root, artifacts, time.Now()); err != nil {
+	if err := WriteLock(root, root, artifacts, time.Now()); err != nil {
 		t.Fatalf("WriteLock: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".kb", "marketplace.lock")); !os.IsNotExist(err) {
@@ -151,7 +218,7 @@ func writePackageJSON(t *testing.T, root, packageName, contents string) {
 func TestWriteLockRegistersPlatformMembersThatArePlugins(t *testing.T) {
 	root := t.TempDir()
 	writePackageJSON(t, root, "@kb/workflow-entry", `{"name":"@kb/workflow-entry"}`)
-	err := WriteLock(root, []contracts.Artifact{
+	err := WriteLock(root, root, []contracts.Artifact{
 		{ID: "workflow", Kind: "platform-member", Registry: "plugin", Package: "@kb/workflow-entry", Version: "2.0.0"},
 		{ID: "gateway", Kind: "platform-member", Package: "@kb/gateway", Version: "2.0.0"},
 	}, time.Now())
@@ -169,7 +236,7 @@ func TestWriteLockUsesInstalledPackageJSONIntegrity(t *testing.T) {
 	root := t.TempDir()
 	packageJSON := `{"name":"@kb-labs/workflow-entry","version":"2.0.0"}`
 	writePackageJSON(t, root, "@kb-labs/workflow-entry", packageJSON)
-	if err := WriteLock(root, []contracts.Artifact{{
+	if err := WriteLock(root, root, []contracts.Artifact{{
 		ID: "workflow", Kind: "platform-member", Registry: "plugin",
 		Package: "@kb-labs/workflow-entry", Version: "2.0.0", SHA256: strings.Repeat("a", 64),
 	}}, time.Now()); err != nil {

@@ -134,6 +134,24 @@ def build_wizard_pty_fixture(binary: Path) -> None:
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
+    def test_installer_command_forwards_input_to_the_shared_command_runner(self):
+        runner = importlib.import_module("runner")
+        received = {}
+
+        def capture(args, *, env, timeout, input_text):
+            received.update(args=args, env=env, timeout=timeout, input_text=input_text)
+            return "result", 0.1
+
+        with patch.object(runner, "run", capture):
+            result = runner.installer_command(
+                ["kb-create", "install"], env={"PATH": "/bin"}, secret="journey-admin-secret",
+                input="installer response\n",
+            )
+
+        self.assertEqual(result, "result")
+        self.assertEqual(received["input_text"], "installer response\n")
+        self.assertEqual(received["timeout"], 1200)
+
     def test_confirmation_hint_preserves_invocation_arguments_and_adds_yes(self):
         runner = importlib.import_module("runner")
         invocation = ["/tmp/bin/kb-create", "uninstall", "--platform-root", "/tmp/a b",

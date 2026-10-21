@@ -37,6 +37,7 @@ class PtyReadinessUnsupported(RuntimeError):
 
 
 _LINUX_READ_SYSCALLS = {"x86_64": 0, "amd64": 0, "aarch64": 63, "arm64": 63}
+MAX_ERROR_LOG_BYTES = 1024 * 1024
 
 
 def _parse_proc_stat(stat: str) -> tuple[int, int, int, str] | None:
@@ -629,8 +630,9 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         shim = _kb_shim_evidence(effective_env)
         if shim is not None:
             record["kb_shim"] = shim
-    if invocation_evidence is None and kind == "command" and exit_code not in (None, 0):
-        invocation_evidence = _capture_typed_error_files(argv, stdout, stderr, exit_code, effective_env)
+    if exit_code not in (None, 0):
+        captured = _capture_typed_error_files(kind, argv, stdout, stderr, exit_code, effective_env)
+        invocation_evidence = list(dict.fromkeys([*(invocation_evidence or []), *captured]))
     if invocation_evidence:
         record["invocation_evidence"] = invocation_evidence
     if correlated_log_query:
@@ -669,9 +671,9 @@ def _kb_shim_evidence(env: Mapping[str, str]) -> dict[str, str] | None:
     return {"path": absolute_path, "realpath": realpath, "target": target}
 
 
-def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,
+def _capture_typed_error_files(kind: str, argv: list[str], stdout: str, stderr: str,
                                exit_code: int, env: Mapping[str, str] | None) -> list[str]:
-    """Copy existing diagnostic files named by a typed error into the run report."""
+    """Copy bounded, redacted files named by failed structured error details."""
     root = _REPORT_ROOT.get()
     if root is None:
         configured = journey_value("KB_JOURNEY_INVOCATIONS")
@@ -681,7 +683,7 @@ def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,
     output = stdout or stderr
     try:
         result = None
-        if argv and Path(argv[0]).name == "kb-create" and len(argv) > 1:
+        if kind == "command" and argv and Path(argv[0]).name == "kb-create" and len(argv) > 1:
             process_result = CompletedProcess(argv, exit_code, stdout, stderr)
             result = read_kb_create_cli_result(argv[1], process_result)
         else:
@@ -693,7 +695,8 @@ def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,
     if not isinstance(details, dict):
         return []
     paths = []
-    for value in details.values():
+    ordered_paths = [details.get("logPath"), *details.values()]
+    for value in ordered_paths:
         if not isinstance(value, str):
             continue
         candidate = Path(value)
@@ -712,9 +715,14 @@ def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,
     references = []
     for ordinal, source in enumerate(paths, 1):
         try:
-            contents = source.read_text(errors="replace")
+            with source.open("rb") as stream:
+                data = stream.read(MAX_ERROR_LOG_BYTES + 1)
         except OSError:
             continue
+        truncated = len(data) > MAX_ERROR_LOG_BYTES
+        contents = data[:MAX_ERROR_LOG_BYTES].decode("utf-8", errors="replace")
+        if truncated:
+            contents += "\n[truncated by journey evidence limit]\n"
         target = root / "invocations" / "evidence" / f"{invocation_number:04d}-{ordinal:02d}-{source.name}"
         write_report_text(target, contents, env=env)
         references.append(str(target.relative_to(root)))

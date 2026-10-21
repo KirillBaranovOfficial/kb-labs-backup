@@ -30,10 +30,13 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/internal/testfixtures"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/transport"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -756,9 +759,8 @@ func TestUpdateCommandKeepsRunningHostOnPreviousVersionAndReportsPendingRestart(
 		t.Fatal(err)
 	}
 	oldLockPath := filepath.Join(oldRoot, ".kb", "marketplace.lock")
-	oldLockBefore, lockErr := os.ReadFile(oldLockPath)
-	if lockErr != nil {
-		t.Fatal(lockErr)
+	if _, lockErr := os.Stat(oldLockPath); !os.IsNotExist(lockErr) {
+		t.Fatalf("fixture unexpectedly contains a marketplace lock: %v", lockErr)
 	}
 	oldConfigPath := filepath.Join(oldRoot, ".kb", "kb.config.jsonc")
 	oldConfigBefore, configErr := os.ReadFile(oldConfigPath)
@@ -776,8 +778,8 @@ func TestUpdateCommandKeepsRunningHostOnPreviousVersionAndReportsPendingRestart(
 	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
 		t.Fatalf("shared state changed during successful staged update:\nbefore=%#v\nafter=%#v", stateBefore, after)
 	}
-	if got, err := os.ReadFile(oldLockPath); err != nil || !reflect.DeepEqual(got, oldLockBefore) {
-		t.Fatalf("old host marketplace lock view changed: %v", err)
+	if _, err := os.Stat(oldLockPath); !os.IsNotExist(err) {
+		t.Fatalf("update created a marketplace lock in the still-running old host root: %v", err)
 	}
 	if got, err := os.ReadFile(oldConfigPath); err != nil || !reflect.DeepEqual(got, oldConfigBefore) {
 		t.Fatalf("old host config view changed: %v", err)
@@ -1620,6 +1622,82 @@ console.log(JSON.stringify({ id: installed.id, version: installed.version }));
 	}
 }
 
+func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T) {
+	root := t.TempDir()
+	const adapterID = "@kb-labs/adapters-vibeproxy"
+	const pluginID = "commit-entry"
+	for _, packageName := range []string{adapterID, "@kb-labs/commit-entry"} {
+		packageJSON := filepath.Join(root, "node_modules", filepath.FromSlash(packageName), "package.json")
+		if err := os.MkdirAll(filepath.Dir(packageJSON), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		encodedPackage, err := json.Marshal(map[string]string{"name": packageName, "version": "1.0.0"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(packageJSON, encodedPackage, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := marketplace.WriteLock(root, root, []contracts.Artifact{
+		{ID: adapterID, Kind: "adapter", Package: adapterID, Version: "1.0.0"},
+		{ID: pluginID, Kind: "plugin", Package: "@kb-labs/commit-entry", Version: "1.0.0"},
+	}, time.Now()); err != nil {
+		t.Fatalf("write active marketplace lock: %v", err)
+	}
+
+	var source catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("1.0.0", "1.0.0", goruntime.GOOS, goruntime.GOARCH), &source); err != nil {
+		t.Fatal(err)
+	}
+	source.Adapters = append(source.Adapters, catalog.Adapter{Component: catalog.Component{
+		ID: adapterID, Version: "1.0.0", Package: adapterID, Tarball: "https://example.test/vibeproxy.tgz", SHA256: "vibeproxy",
+	}})
+	source.Plugins = append(source.Plugins, catalog.Component{
+		ID: pluginID, Version: "1.0.0", Package: "@kb-labs/commit-entry",
+		Tarball: "https://example.test/commit-entry.tgz", SHA256: "commit-entry",
+	})
+	source, err := testfixtures.SealCatalog(source)
+	if err != nil {
+		t.Fatalf("seal update release index: %v", err)
+	}
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema,
+		Platform: contracts.VersionSelector{Version: "1.0.0"}, SDK: contracts.VersionSelector{Version: "1.0.0"},
+		ServiceProfile: "default", PlatformRoot: root}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion})
+	if !initial.OK {
+		t.Fatalf("initial plan: %#v", initial.Error)
+	}
+	updated, failure := planUpdateWithMarketplaceLock(root, *initial.Plan, source, "kb-create update --platform-root "+root)
+	if failure != nil {
+		t.Fatalf("plan with active marketplace lock: code=%s reason=%s details=%v", failure.Code, failure.Reason, failure.Meta)
+	}
+	foundAdapter, foundPlugin := false, false
+	for _, artifact := range updated.Artifacts {
+		if artifact.ID == adapterID && artifact.Kind == "adapter" {
+			foundAdapter = true
+		}
+		if artifact.ID == pluginID && artifact.Kind == "plugin" {
+			foundPlugin = true
+		}
+	}
+	if !foundAdapter || !foundPlugin {
+		t.Fatalf("updated plan artifacts omitted installed adapter %s: %+v", adapterID, updated.Artifacts)
+	}
+
+	withoutAdapter := source
+	withoutAdapter.Adapters = nil
+	_, failure = planUpdateWithMarketplaceLock(root, *initial.Plan, withoutAdapter,
+		"kb-create update --platform-root "+root)
+	if failure == nil || failure.Code != contracts.CodeUpdateIncompatible || failure.Meta["id"] != adapterID {
+		t.Fatalf("missing installed adapter failure = %#v; want typed refusal naming %s", failure, adapterID)
+	}
+}
+
 func updateTestRetryInvocation(t *testing.T, indexPath, requestPath, platformRoot string) string {
 	t.Helper()
 	root := &cobra.Command{Use: "kb-create"}
@@ -1809,9 +1887,8 @@ func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldLockPath := filepath.Join(oldRoot, ".kb", "marketplace.lock")
-	oldLockBefore, err := os.ReadFile(oldLockPath)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(oldLockPath); !os.IsNotExist(err) {
+		t.Fatalf("fixture unexpectedly contains a marketplace lock: %v", err)
 	}
 	receiptBefore, err := os.ReadFile(receipt.Path(platformRootForTest(t, inst.root)))
 	if err != nil {
@@ -1877,8 +1954,8 @@ func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
 		t.Fatalf("shared state changed during failed staged update:\nbefore=%#v\nafter=%#v", stateBefore, after)
 	}
-	if got, err := os.ReadFile(oldLockPath); err != nil || !reflect.DeepEqual(got, oldLockBefore) {
-		t.Fatalf("old host marketplace lock view changed after failed update: %v", err)
+	if _, err := os.Stat(oldLockPath); !os.IsNotExist(err) {
+		t.Fatalf("failed update created a marketplace lock in the still-running old host root: %v", err)
 	}
 	receiptAfter, err := os.ReadFile(receipt.Path(platformRootForTest(t, inst.root)))
 	if err != nil || string(receiptAfter) != string(receiptBefore) {

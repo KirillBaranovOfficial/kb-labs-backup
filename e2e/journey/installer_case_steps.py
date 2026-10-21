@@ -1238,6 +1238,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
     def install_and_show() -> None:
         nonlocal installed
         platform_root.parent.mkdir(parents=True, exist_ok=True)
+        platform_root.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True, exist_ok=True)
         try:
             result = run_command([launcher, "install", "--json", "--index", str(stable_index),
@@ -1534,7 +1535,7 @@ def _snapshot_installation_owned_tree(root: Path) -> dict[str, tuple[str, bytes 
     shared_platform_paths = (Path(layout["platformDataRoot"]["platformPath"]).parts,)
     shared_platform_paths += tuple(Path(item["platformPath"]).parts for item in layout.get("sharedRuntimePaths", []))
     version_root = Path(layout["versionRoots"]["path"]).parts
-    version_state_paths = tuple(Path(path).parts for path in layout.get("versionStatePaths", []))
+    version_state_paths = tuple(Path(entry["path"]).parts for entry in layout.get("versionStatePaths", []))
     version_state_paths += shared_platform_paths
     snapshot = snapshot_tree(root)
     return {
@@ -2576,6 +2577,11 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
 
     def refuse_start_for_other_root() -> None:
         try:
+            cleanup_installer_fixture_root(root, launcher, run_command)
+            _seed_installed_fixture(root, launcher=launcher, index=stable_index,
+                                    run_command=run_command, label="cross-root start fixture",
+                                    gateway_url=unused_loopback_gateway_url())
+            stop_installer_fixture_host(root, launcher, run_command)
             lifecycle = InstallerHostLifecycle(launcher, run_command)
             with lifecycle.preserve([platform_root]):
                 result = run_command([launcher, "start", "--platform-root", str(root), "--json"])

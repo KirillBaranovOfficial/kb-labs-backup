@@ -102,7 +102,7 @@ def layout_owned_path_literals(source: str, layout: dict) -> list[str]:
     paths.update((layout["platformDataRoot"]["platformPath"], layout["platformDataRoot"]["statePath"]))
     for projection in layout["sharedRuntimePaths"]:
         paths.update((projection["platformPath"], projection["statePath"]))
-    paths.update(layout["versionStatePaths"])
+    paths.update(entry["path"] for entry in layout["versionStatePaths"])
     paths.update(layout["runtimeStatePaths"])
     paths.update(value for key, value in layout["installerRecords"].items() if key != "snapshotRetention")
 
@@ -830,6 +830,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 calls.append(args)
                 if args[1] == "install":
                     install_root = Path(args[args.index("--platform-root") + 1])
+                    self.assertTrue(install_root.is_dir(), "JSON installer fixture root must exist before install")
                     try:
                         active = active_platform_root(install_root)
                     except FileNotFoundError:
@@ -1706,6 +1707,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             calls = []
             primary_running = True
             fixture_running = {}
+            installed_at_cross_root_start = False
 
             def run_command(args):
                 nonlocal primary_running
@@ -1727,6 +1729,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     primary_running = True
                     output = {"ok": True, "data": {"operation": "start"}}
                 elif args[1] == "start":
+                    requested_root = Path(args[args.index("--platform-root") + 1])
+                    nonlocal installed_at_cross_root_start
+                    installed_at_cross_root_start = (requested_root / "current/.kb/v2/receipt.json").is_file()
+                    if not installed_at_cross_root_start:
+                        output = {"ok": False, "error": {"code": "KB_INSTALL_LAYOUT_UNSUPPORTED",
+                                   "message": "the requested platform root has no installed receipt",
+                                   "hint": "install the platform before starting it"}}
+                        return subprocess.CompletedProcess(args, 1, json.dumps(output), "")
                     output = {"ok": False, "error": {"code": "KB_HOST_ALREADY_RUNNING",
                                "message": f"The KB Labs host for platform root {source.resolve()} is already running (pid 42).",
                                "hint": f"Stop that platform first with `kb-create stop --platform-root {shlex.quote(str(source.resolve()))}`.",
@@ -1759,7 +1769,12 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[0].status, "PASS")
         self.assertEqual(journey.steps[1].cases, ["S-025.8"])
         self.assertEqual(journey.steps[1].status, "PASS")
-        self.assertEqual(len(calls), 17)
+        isolated_installs = [call for call in calls if call[1] == "install"
+                             and "s025-root-isolation" in call[call.index("--platform-root") + 1]]
+        self.assertEqual(len(isolated_installs), 2,
+                         "S-025.8 must create its own installed fixture when selected independently")
+        start_call = next(call for call in calls if call[1] == "start")
+        self.assertTrue(installed_at_cross_root_start)
         self.assertEqual(calls[0][1], "install")
         self.assertIn("--gateway-url", calls[0])
         self.assertNotEqual(calls[0][calls[0].index("--gateway-url") + 1], "http://127.0.0.1:4100")
