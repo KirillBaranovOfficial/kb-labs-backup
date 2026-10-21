@@ -143,6 +143,63 @@ class PtyInvocationTest(unittest.TestCase):
             "exitCode": 0,
         })
 
+    def test_explicit_installed_cli_invocation_queries_that_platform_without_path_lookup(self):
+        with tempfile.TemporaryDirectory(prefix="journey-kb-explicit-path-") as temp:
+            root = Path(temp)
+            target = root / "installed-kb"
+            target.write_text("#!/bin/sh\nexit 0\n")
+            target.chmod(0o755)
+            cli = root / "kb"
+            cli.symlink_to(target)
+            correlation_id = "explicit-path-correlation-1"
+            query_envelope = {"ok": True, "data": {"data": {"logs": [
+                {"correlationId": correlation_id, "message": "target platform failure"},
+            ]}}}
+            env = {"PATH": "/usr/bin:/bin", "KB_JOURNEY_CLI_PATH": str(cli)}
+            failure = json.dumps({"ok": False, "error": {
+                "code": "KB_RUNTIME_UNEXPECTED", "correlationId": correlation_id,
+            }})
+
+            with patch.object(invocations.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [str(target), "logs"], 0, json.dumps(query_envelope), "")) as run:
+                diagnostic = invocations._failure_log_query(
+                    "command", 1, [str(cli), "adapter", "list", "--json"],
+                    failure, "", root, env)
+
+        self.assertEqual(run.call_args.args[0], [str(target), "logs", "query", "--correlation-id", correlation_id, "--json"])
+        self.assertEqual(diagnostic, {
+            "code": "KB_RUNTIME_UNEXPECTED",
+            "correlationId": correlation_id,
+            "result": query_envelope,
+        })
+
+    def test_kb_create_failure_does_not_query_platform_logs(self):
+        with tempfile.TemporaryDirectory(prefix="journey-kb-create-log-query-") as temp:
+            root = Path(temp)
+            target = root / "installed-kb"
+            target.write_text("#!/bin/sh\nexit 0\n")
+            target.chmod(0o755)
+            installer = root / "kb-create"
+            installer.write_text("#!/bin/sh\nexit 0\n")
+            installer.chmod(0o755)
+            cli = root / "kb"
+            cli.symlink_to(target)
+            env = {"PATH": str(root), "KB_JOURNEY_CLI_PATH": str(cli)}
+            failure = json.dumps({"ok": False, "error": {
+                "code": "KB_INSTALL_OPERATION_FAILED", "correlationId": "installer-correlation-1",
+            }})
+            with patch.object(invocations.subprocess, "run") as run:
+                diagnostic = invocations._failure_log_query(
+                    "command", 1, [str(installer), "install", "--json"],
+                    failure, "", root, env)
+
+        self.assertIsNone(diagnostic)
+        run.assert_not_called()
+
+    def test_json_report_writer_does_not_accept_append_mode(self):
+        import inspect
+        self.assertNotIn("append", inspect.signature(invocations.write_report_json).parameters)
+
     def test_http_failure_with_correlation_id_records_the_complete_platform_log_query(self):
         with tempfile.TemporaryDirectory(prefix="journey-http-log-query-") as temp:
             root = Path(temp)

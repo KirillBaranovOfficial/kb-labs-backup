@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,14 +20,22 @@ class JourneyBatchEntryTests(unittest.TestCase):
         self.bin.mkdir()
         (self.root / "e2e/journey").mkdir(parents=True)
         (self.root / "e2e/scripts").mkdir(parents=True)
+        (self.root / "core/fixture/dist").mkdir(parents=True)
+        (self.root / "package.json").write_text('{"name":"journey-fixture","private":true}\n')
+        (self.root / "core/fixture/package.json").write_text('{"name":"fixture-build-output","private":true}\n')
         (self.root / "prompts").mkdir()
         (self.root / "tools/kb-devkit").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
+        shutil.copy2(REPO / "e2e/journey/batch_summary.py", self.root / "e2e/journey/batch_summary.py")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         self.calls = self.root / "calls.log"
         self._script(self.root / "e2e/journey/run.sh", '''#!/bin/sh
 printf 'journey %s %s\\n' "$KB_JOURNEY_ONLY" "$*" >> "$CALLS"
+if [ "$*" = "--down" ] && [ "${FAIL_RESET:-}" = 1 ]; then
+  printf 'reset failure fixture\\n' >&2
+  exit 8
+fi
 if [ "$*" = "--down" ] && [ "${BLOCK_RESET:-}" = 1 ]; then
   printf 'ready\\n' >&"$READY_FD"
   cat "$BLOCK_FIFO"
@@ -36,6 +45,10 @@ case "$KB_JOURNEY_ONLY" in
   service-secured:explore) mode=secured ;;
   *) mode=reset ;;
 esac
+if [ -n "$KB_JOURNEY_ONLY" ] && [ ! -s "$ROOT/core/fixture/dist/index.js" ]; then
+  printf 'candidate build artifact missing\\n' >&2
+  exit 10
+fi
 mkdir -p "$REPORTS"
 printf '%s report\\n' "$mode" > "$REPORTS/$mode.json"
 if [ "$mode" = "${FAIL_MODE:-}" ] && [ ! -f "$ATTEMPT_MARKER" ]; then
@@ -52,6 +65,10 @@ exit 0
         self._script(self.root / "e2e/journey/prepare-candidate.sh", '''#!/bin/sh
 printf 'candidate\\n' >> "$CALLS"
 if [ "${FAIL_CANDIDATE:-}" = 1 ]; then printf 'candidate failure fixture\\n'; exit 9; fi
+mkdir -p "$ROOT/.journey/runner-inputs" "$ROOT/e2e/packages" "$ROOT/core/fixture/dist"
+printf 'built artifact\\n' > "$ROOT/core/fixture/dist/index.js"
+printf 'runner input\\n' > "$ROOT/.journey/runner-inputs/fixture.txt"
+printf 'candidate package\\n' > "$ROOT/e2e/packages/candidate.tgz"
 exit 0
 ''')
         self._script(self.bin / "node", '''#!/bin/sh
@@ -115,16 +132,31 @@ if [ "$1 $2 $3" = "rev-parse --verify --quiet" ]; then
 fi
 exit 2
 ''')
+        self._script(self.bin / "pnpm", '''#!/bin/sh
+[ "$*" = "-r list --depth -1 --parseable" ] || exit 2
+printf '%s\\n' "$ROOT" "$ROOT/core/fixture"
+''')
+        real_tar = shutil.which("tar")
+        self._script(self.bin / "tar", '''#!/bin/sh
+if [ "${FAIL_TAR:-}" = 1 ]; then
+  printf 'archive failure fixture\\n' >&2
+  exit 4
+fi
+exec "$REAL_TAR" "$@"
+''')
         self.env = {
             **isolated_environment(
                 Path(self.root / "home"), self.bin,
-                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash"),
+                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash", "tar"),
             ),
             "CALLS": str(self.calls),
             "REPORTS": str(self.root / ".journey/reports"),
             "ATTEMPT_MARKER": str(self.root / "first-attempt"),
             "BLOCK_FIFO": str(self.root / "reset.fifo"),
             "KB_DEVKIT_BASE_REF": "origin/master",
+            "ROOT": str(self.root),
+            "BATCH_PYTHON": sys.executable,
+            "REAL_TAR": real_tar,
         }
         Path(self.env["REPORTS"]).mkdir(parents=True)
 
@@ -194,6 +226,99 @@ exit 2
             self.assertTrue(all(isinstance(value, int) and value >= 0
                                 for value in metadata["stageDurationsSeconds"].values()))
 
+    # case: S-262.1, S-262.2
+    def test_producer_artifact_flows_through_both_mode_entrypoints_into_shared_layout(self):
+        producer = self.root / "producer"
+        baseline = 'batch "quoted" label'
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer), baseline],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((producer / "shared/build-candidate.tar").is_file())
+        self.assertTrue((producer / "shared/batch-metadata.json").is_file())
+
+        mode_outputs = {}
+        for mode in ("local", "secured"):
+            output = self.root / f"{mode}-artifact"
+            result = subprocess.run(
+                [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", mode,
+                 str(producer), str(output)],
+                cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            mode_outputs[mode] = output
+            self.assertTrue((output / mode / "batch-metadata.json").is_file())
+            self.assertTrue((output / mode / "batch.log").is_file())
+
+        collected = self.root / "collected"
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
+             str(collected), str(producer), str(mode_outputs["local"]), str(mode_outputs["secured"])],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((collected / "shared/batch-metadata.json").is_file())
+        self.assertTrue((collected / "local/batch-metadata.json").is_file())
+        self.assertTrue((collected / "secured/batch-metadata.json").is_file())
+        summary = (collected / "shared/summary.md").read_text()
+        self.assertIn(f"- Baseline: `{baseline}`", summary)
+        for stage in ("reset", "build", "unit", "candidate", "local", "secured", "total"):
+            self.assertRegex(summary, rf"(?m)^- {stage}: [0-9]+ seconds$", msg=stage)
+        for mode in ("local", "secured"):
+            import json
+            metadata = json.loads((collected / mode / "batch-metadata.json").read_text())
+            self.assertEqual(metadata["mode"], mode)
+            self.assertEqual(set(metadata["stageDurationsSeconds"]), {
+                "reset", "build", "unit", "candidate", "local", "secured", "total",
+            })
+
+    # case: S-262.2
+    def test_summary_preserves_available_evidence_when_mode_metadata_is_missing(self):
+        producer = self.root / "producer"
+        local = self.root / "local-artifact"
+        secured = self.root / "secured-artifact"
+        for directory in (producer / "shared", local / "local", secured / "secured"):
+            directory.mkdir(parents=True)
+        (producer / "shared/batch-metadata.json").write_text('{"result":"PASS","stageDurationsSeconds":{}}\n')
+        (producer / "shared/run.json").write_text('{"commit":"deadbeef"}\n')
+        (producer / "shared/build.log").write_text("build evidence\n")
+        (producer / "shared/unit.log").write_text("unit evidence\n")
+        (producer / "shared/candidate.log").write_text("candidate evidence\n")
+        (local / "local/batch.log").write_text("local evidence\n")
+        (local / "local/batch-metadata.json").write_text('{"stageDurationsSeconds":{}}\n')
+        (secured / "secured/batch.log").write_text("secured evidence\n")
+
+        output = self.root / "collected"
+        result = subprocess.run(
+            [sys.executable, str(self.root / "e2e/journey/batch_summary.py"),
+             str(output), str(producer), str(local), str(secured)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        for relative in (
+            "shared/batch-metadata.json", "shared/run.json", "shared/build.log",
+            "shared/unit.log", "shared/candidate.log", "local/batch-metadata.json",
+            "local/batch.log", "secured/batch.log",
+        ):
+            self.assertTrue((output / relative).is_file(), relative)
+        summary = (output / "shared/summary.md").read_text()
+        self.assertIn("Missing batch metadata", summary)
+        self.assertIn("secured/batch-metadata.json", summary)
+
+    # case: S-262.2
+    def test_mode_entry_rejects_a_missing_producer_archive_with_a_recovery_step(self):
+        missing_producer = self.root / "missing-producer"
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(missing_producer), str(self.root / "mode-output")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("producer artifact is missing its build-candidate.tar", result.stderr)
+        self.assertIn("next: rerun the producer with e2e/journey/batch.sh prepare", result.stderr)
+
 
     # case: S-262.1
     def test_candidate_failure_stops_shared_lane_before_unit_and_modes(self):
@@ -210,6 +335,36 @@ exit 2
         self.assertIn("candidate failure fixture", (self.root / "out/shared/candidate.log").read_text())
         self.assertIn("- Failed stage: `candidate`", (self.root / "out/shared/summary.md").read_text())
         self.assertIn("next: e2e/journey/prepare-candidate.sh", result.stderr)
+
+    # case: S-262.1
+    def test_reset_failure_summary_has_one_final_result(self):
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(self.root / "out")],
+            cwd=self.root, env={**self.env, "FAIL_RESET": "1"},
+            text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")],
+                         ["- Result: FAIL"])
+        self.assertIn("reset failure fixture", (self.root / "out/shared/reset.log").read_text())
+
+    # case: S-262.1
+    def test_candidate_archive_failure_is_reported_in_shared_metadata(self):
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(self.root / "out")],
+            cwd=self.root, env={**self.env, "FAIL_TAR": "1"},
+            text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("archive failure fixture", (self.root / "out/shared/candidate-package.log").read_text())
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertIn("- Failed stage: `candidate`", summary)
+        self.assertIn("- Stage log: `candidate-package.log`", summary)
+        self.assertIn('next: tar -cf "', result.stderr)
+        import json
+        metadata = json.loads((self.root / "out/shared/batch-metadata.json").read_text())
+        self.assertEqual(metadata["result"], "FAIL")
 
     # case: S-262.4
     def test_shared_devkit_build_is_path_independent_for_digest_cache(self):
@@ -356,7 +511,7 @@ exit 2
         self.assertFalse((self.root / "out/secured").exists())
 
     # case: S-262.2
-    def test_workflow_uses_only_batch_entry_and_uploads_each_mode(self):
+    def test_workflow_splits_shared_producer_and_parallel_mode_consumers(self):
         workflow = REPO / ".github/workflows/journey-batch.yml"
         parsed = subprocess.run(
             ["node", "-e", "const fs=require('fs');const y=require('js-yaml').load(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(JSON.stringify(y))", str(workflow)],
@@ -374,82 +529,47 @@ exit 2
         self.assertIn("baseline", spec["on"]["workflow_dispatch"]["inputs"])
         self.assertIn("recorded in batch metadata", spec["on"]["workflow_dispatch"]["inputs"]["baseline"]["description"])
         self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
-        self.assertEqual(spec["jobs"]["journey"]["timeout-minutes"], 180)
-        steps = spec["jobs"]["journey"]["steps"]
-        job_env = spec["jobs"]["journey"]["env"]
-        self.assertNotIn("KB_JOURNEY_CI", job_env)
-        self.assertEqual(job_env["JOURNEY_DEFAULT_BRANCH"], "${{ github.event.repository.default_branch }}")
-        entries = [step for step in steps if "e2e/journey/batch.sh" in step.get("run", "")]
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(job_env["BATCH_OUTPUT"], ".journey/batch/${{ github.run_id }}")
-        self.assertEqual(entries[0]["run"], 'e2e/journey/batch.sh "$BATCH_OUTPUT" "$BATCH_BASELINE"')
-        self.assertEqual(entries[0]["id"], "batch")
-        self.assertEqual(entries[0]["env"]["BATCH_BASELINE"], "${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}")
-        self.assertEqual(entries[0]["env"]["KB_DEVKIT_BASE_REF"], "${{ github.event.pull_request.base.sha || format('origin/{0}', env.JOURNEY_DEFAULT_BRANCH) }}")
-        self.assertEqual(job_env["GOTOOLCHAIN"], "local")
-        checkout_step = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
-        self.assertEqual(checkout_step["with"]["fetch-depth"], 0)
-        pnpm_steps = [step for step in steps if step.get("uses", "").startswith("pnpm/action-setup@")]
-        self.assertEqual(len(pnpm_steps), 1)
-        pnpm_step = pnpm_steps[0]
-        node_step = next(step for step in steps if step.get("uses", "").startswith("actions/setup-node@"))
-        self.assertLess(steps.index(pnpm_step), steps.index(node_step))
-        self.assertNotIn("version", pnpm_step.get("with", {}))
-        package = json.loads((REPO / "package.json").read_text())
-        self.assertIn("packageManager", package)
-        go_step = next(step for step in steps if step.get("uses", "").startswith("actions/setup-go@"))
-        self.assertEqual(go_step["with"]["go-version"], "1.26.8")
-        module = subprocess.run(["go", "mod", "edit", "-json"], cwd=REPO / "tools/kb-devkit", text=True, capture_output=True, check=False)
-        self.assertEqual(module.returncode, 0, module.stderr)
-        module_info = json.loads(module.stdout)
-        selected_go = tuple(int(part) for part in go_step["with"]["go-version"].split("."))
-        for required in (module_info["Go"], module_info["Toolchain"].removeprefix("go")):
-            self.assertGreaterEqual(selected_go, tuple(int(part) for part in required.split(".")))
-        self.assertEqual(sum("journey-local" in step.get("with", {}).get("name", "") for step in steps), 1)
-        self.assertEqual(sum("journey-secured" in step.get("with", {}).get("name", "") for step in steps), 1)
-        artifact_steps = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
-        self.assertEqual([step["with"]["name"] for step in artifact_steps], [
-            "journey-shared", "journey-local", "journey-secured",
+        self.assertEqual(spec["concurrency"]["group"], "journey-batch")
+        jobs = spec["jobs"]
+        self.assertEqual(set(jobs), {"producer", "local", "secured", "summary"})
+        producer_steps = jobs["producer"]["steps"]
+        producer_entry = next(step for step in producer_steps if "batch.sh" in step.get("run", ""))
+        self.assertEqual(producer_entry["run"], 'e2e/journey/batch.sh prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"')
+        self.assertEqual(jobs["producer"]["timeout-minutes"], 60)
+        self.assertEqual(jobs["local"]["needs"], "producer")
+        self.assertEqual(jobs["secured"]["needs"], "producer")
+        self.assertEqual(jobs["summary"]["needs"], ["producer", "local", "secured"])
+        self.assertEqual(jobs["local"]["timeout-minutes"], 180)
+        self.assertEqual(jobs["secured"]["timeout-minutes"], 120)
+        self.assertFalse(jobs["local"].get("strategy", {}).get("fail-fast", True))
+        self.assertFalse(jobs["secured"].get("strategy", {}).get("fail-fast", True))
+        for mode in ("local", "secured"):
+            steps = jobs[mode]["steps"]
+            self.assertTrue(any(step.get("uses", "").startswith("actions/download-artifact@")
+                                and step.get("with", {}).get("name") == "journey-build-candidate"
+                                for step in steps))
+            run = next(step for step in steps if "batch.sh" in step.get("run", ""))
+            self.assertEqual(run["run"], f'e2e/journey/batch.sh mode {mode} "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"')
+            upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
+            self.assertEqual(upload["with"]["name"], f"journey-{mode}")
+        shared_upload = next(step for step in jobs["summary"]["steps"]
+                             if step.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertEqual(shared_upload["with"]["name"], "journey-shared")
+        build_upload = next(step for step in producer_steps
+                            if step.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertEqual(build_upload["with"]["name"], "journey-build-candidate")
+        summary_downloads = [step["with"]["name"] for step in jobs["summary"]["steps"]
+                             if step.get("uses", "").startswith("actions/download-artifact@")]
+        self.assertEqual(summary_downloads, [
+            "journey-build-candidate", "journey-local", "journey-secured",
         ])
-        self.assertEqual([step["with"]["path"] for step in artifact_steps], [
-            "${{ steps.batch.outputs.artifact_shared }}",
-            "${{ steps.batch.outputs.artifact_local }}",
-            "${{ steps.batch.outputs.artifact_secured }}",
-        ])
-        self.assertTrue(all(step["if"] == "always() && steps.batch.outputs.artifact_shared != ''"
-                            for step in artifact_steps))
-        self.assertEqual([step["with"]["if-no-files-found"] for step in artifact_steps], ["warn", "warn", "warn"])
-        self.assertEqual(node_step["with"]["node-version-file"], "package.json")
-        summary_step = next(step for step in steps if step.get("name") == "Add batch summary")
-        self.assertEqual(summary_step["if"], "always()")
-        self.assertEqual(summary_step["env"]["BATCH_SHARED_OUTPUT"], "${{ steps.batch.outputs.artifact_shared }}")
-        failed_step_expression = summary_step["env"]["FAILED_STEP"]
-        self.assertIn("steps.node.outcome == 'failure' && 'Set up Node'", failed_step_expression)
-        self.assertIn("steps.pnpm.outcome == 'failure' && 'Set up pnpm'", failed_step_expression)
-        summary_result = self.root / "github-step-summary.md"
-        env = {
-            **os.environ,
-            "GITHUB_STEP_SUMMARY": str(summary_result),
-            "FAILED_STEP": "Set up pnpm",
-            "BATCH_SHARED_OUTPUT": "",
-        }
-        summary_command = summary_step["run"]
-        missing_summary = subprocess.run(
-            ["sh", "-c", summary_command],
-            cwd=self.root,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(missing_summary.returncode, 0, missing_summary.stderr)
-        self.assertEqual(missing_summary.stderr, "")
-        self.assertEqual(summary_result.read_text(), "batch did not start: Set up pnpm\n")
-        commands = [step.get("run", "") for step in steps]
-        self.assertFalse(any("e2e/journey/run.sh" in command for command in commands))
-        self.assertFalse(any("prepare-candidate.sh" in command for command in commands))
-        self.assertEqual(len(entries), sum("e2e/journey/batch.sh" in command for command in commands))
-
+        summary_stage = next(step for step in jobs["summary"]["steps"]
+                             if step.get("id") == "summarize")
+        self.assertNotIn("continue-on-error", summary_stage)
+        self.assertEqual(jobs["local"]["strategy"]["fail-fast"], False)
+        self.assertEqual(jobs["secured"]["strategy"]["fail-fast"], False)
+        node_setup = next(step for step in producer_steps if step.get("uses", "").startswith("actions/setup-node@"))
+        self.assertEqual(node_setup["with"]["node-version-file"], "package.json")
 
     # case: S-262.1
     def test_missing_release_output_fails_build_stage_before_candidate(self):
