@@ -26,11 +26,6 @@
       "enabled": true,
       "source": "local"
     },
-    "@kb-labs/host-agent": {
-      "link": "./plugins/host-agent/entry",
-      "enabled": true,
-      "source": "local"
-    },
     "@kb-labs/impact": {
       "link": "./plugins/impact/core",
       "enabled": true,
@@ -93,6 +88,11 @@
     },
     "@kb-labs/steward": {
       "link": "./plugins/steward/entry",
+      "enabled": true,
+      "source": "local"
+    },
+    "@kb-labs/viewer": {
+      "link": "./plugins/viewer/entry",
       "enabled": true,
       "source": "local"
     },
@@ -282,6 +282,13 @@
       "version": "2.120.1",
       "integrity": "sha256-u0XR/7vXjSz7nANDrVwuoPUeRfKxGM1zpxiDnTerSCk=",
       "resolvedPath": "./adapters/diskio",
+      "enabled": true,
+      "source": "platform"
+    },
+    "@kb-labs/notifier-router": {
+      "version": "2.120.1",
+      "integrity": "sha256-Tz8zlhkUiQqlXIbUPbWCh8kKkx5ypqaH7z0POXvHrnY=",
+      "resolvedPath": "./adapters/notifier-router",
       "enabled": true,
       "source": "platform"
     }

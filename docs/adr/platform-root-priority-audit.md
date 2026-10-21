@@ -14,7 +14,7 @@
 | `core/runtime/src/service-bootstrap.ts:206-212` | Передаёт `projectRoot` как cwd для адаптеров, `platformRoot` отдельно |
 | `cli/bin/src/runtime/platform-init.ts:135-139` | Аналогично service-bootstrap — оба root переданы правильно |
 | `plugins/workflow/daemon/src/bootstrap.ts:31-36` | Явно читает `KB_PROJECT_ROOT` из env, используется для рабочих директорий |
-| `plugins/state/daemon/src/bootstrap.ts` | Минимальный bootstrap, не читает конкретные директории — корректно |
+| `services/state/daemon/src/bootstrap.ts` | Минимальный bootstrap, не читает конкретные директории — корректно |
 | `core/runtime/src/discover-adapters.ts:128-133` | Логика merge: projectRoot загружается первым с `overwrite=true`, платформа заполняет пробелы |
 
 ---
@@ -170,7 +170,7 @@ export async function bootstrap(projectRoot: string = process.cwd()): Promise<vo
 
 ## Не проверено
 
-- `plugins/host-agent/` — bootstrap
+- `services/host-agent/` — bootstrap
 - `plugins/infra-worker/` — bootstrap  
 - `adapters/storage-*/`, `adapters/llm-*/` — внутренняя логика путей
 - `core/registry/src/` — полная логика createRegistry

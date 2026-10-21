@@ -7,7 +7,7 @@
     { "name": "@kb-labs/core-runtime",     "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-core/packages/core-runtime" },
     { "name": "@kb-labs/core-contracts",   "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-core/packages/core-contracts" },
     { "name": "@kb-labs/shared-cli-ui",    "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-shared/packages/shared-cli-ui" },
-    { "name": "@kb-labs/core-state-daemon","localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-core/packages/core-state-daemon" }
+    { "name": "@kb-labs/core-state-daemon","localPath": "/Users/you/kb-labs-workspace/services/state/daemon" }
   ],
   "services": [
     { "id": "rest",        "pkg": "@kb-labs/rest-api-app",    "description": "REST API (port 5050)",          "default": true, "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-rest-api/apps/rest-api" },

@@ -27,7 +27,7 @@
 | `clickup`         | @kb-labs/clickup-entry            | workspace · task:search/get/create/update/delete/comment-list/comment-add · space:create/update/delete · folder:create/update/delete · list:create/update/delete/tasks/statuses | External integration |
 | `commit`          | @kb-labs/commit-entry             | generate · apply · push · open · reset                                                                         | AI-powered commits |
 | `devlink`         | @kb-labs/devlink-entry            | switch · status · plan · freeze · undo · backups                                                               | Cross-repo dep linking |
-| `workspace`       | @kb-labs/host-agent-entry         | register · status · list                                                                                       | Remote workspace agents |
+| `workspace`       | built-in workspace command group         | register · status · list                                                                                       | Remote workspace agents |
 | `impact`          | @kb-labs/impact-core              | check · packages · docs                                                                                        | Change impact analysis |
 | `infra-worker`    | @kb-labs/infra-worker-core        | prepare · capture-snapshot · restore-snapshot                                                                  | Environment provisioning |
 | `marketplace`     | @kb-labs/marketplace-entry        | install · uninstall · update · sync · plugins:list/enable/disable/link/unlink/doctor/refresh                   | Plugin management |

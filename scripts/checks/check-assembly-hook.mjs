@@ -47,7 +47,7 @@ function findBootstrapFiles() {
       const candidates = [
         join(pkgDir, 'app', 'src', 'bootstrap.ts'),
         join(pkgDir, 'daemon', 'src', 'bootstrap.ts'),
-        // nested daemon (e.g. plugins/state/daemon/core-state-daemon/src/bootstrap.ts)
+        // nested daemon (e.g. services/state/daemon/core-state-daemon/src/bootstrap.ts)
         ...findNestedBootstraps(pkgDir),
       ];
 
