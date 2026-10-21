@@ -28,6 +28,8 @@
     { "name": "@kb-labs/studio-ui-core" },
     { "name": "@kb-labs/studio-ui-kit" },
     { "name": "@kb-labs/core-state-daemon" },
+    { "name": "@kb-labs/core-workspace" },
+    { "name": "@kb-labs/host-agent-app" },
     { "name": "@kb-labs/adapters-kblabs-gateway" }
   ],
   "services": [

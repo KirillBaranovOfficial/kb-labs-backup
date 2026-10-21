@@ -41,7 +41,7 @@ environment, and credentials — from anywhere a Gateway can reach.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/host-agent-entry
+kb workspace register --gateway https://gateway.example.com
 ```
 
 ---
@@ -78,7 +78,7 @@ kb workspace list --gateway https://gateway.kblabs.dev
 | `kb workspace status` | Show connection status |
 | `kb workspace list` | List all connected agents |
 
-`kb agent register / status` are legacy aliases for the same commands.
+The Workspace Agent command group is built into the platform CLI.
 
 **`workspace register` flags**
 

@@ -238,7 +238,7 @@
         { "slug": "services/marketplace",     "type": "manual", "owners": ["plugins/marketplace/**", "core/extension-store/**", "core/discovery/src/marketplace-lock.ts", "cli/commands/src/commands/system/adapter/**", "core/runtime/src/platform-data-root.ts", "adapters/fs/src/manifest.ts"] },
         { "slug": "services/rest-api",        "type": "hybrid", "owners": ["services/rest-api/app/src/**"] },
         { "slug": "services/studio",          "type": "manual", "owners": ["studio/app/**"] },
-        { "slug": "services/host-agent",      "type": "manual", "owners": ["plugins/host-agent/**", "adapters/workspace-agent/**"] },
+        { "slug": "services/host-agent",      "type": "manual", "owners": ["services/host-agent/**", "services/gateway-host-agent/**", "adapters/workspace-agent/**"] },
         { "slug": "services/workflow-daemon", "type": "manual", "owners": ["plugins/workflow/daemon/**", "plugins/workflow/contracts/src/cron.ts", "plugins/workflow/contracts/src/rest-api.ts", "plugins/workflow/entry/src/commands/crons-*.ts", "plugins/workflow/engine/src/state-store.ts", "services/host/app/src/project-runtime/workflow-schedules.ts"] }
       ]
     },

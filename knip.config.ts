@@ -109,16 +109,16 @@ const config: KnipConfig = {
       // so api/index.ts is genuinely unused — leave it in results
       entry: ['src/index.ts'],
     },
-    'plugins/state/daemon': {
+    'services/state/daemon': {
       entry: ['src/index.ts', 'src/bin.ts'],
     },
-    'plugins/state/daemon/core-state-daemon': {
+    'services/state/daemon/core-state-daemon': {
       entry: ['src/index.ts', 'src/bin.ts'],
     },
-    'plugins/host-agent/app': {
+    'services/host-agent/app': {
       entry: ['src/index.ts'],
     },
-    'plugins/host-agent/app/host-agent-app': {
+    'services/host-agent/app': {
       entry: ['src/index.ts', 'src/daemon.ts'],
     },
 

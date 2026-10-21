@@ -1066,6 +1066,12 @@ importers:
       '@kb-labs/gateway-contracts':
         specifier: workspace:*
         version: link:../../services/gateway/contracts
+      '@kb-labs/host-agent-client':
+        specifier: workspace:*
+        version: link:../../services/host-agent/client
+      '@kb-labs/host-agent-transport':
+        specifier: workspace:*
+        version: link:../../services/host-agent/transport
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts
@@ -2370,7 +2376,7 @@ importers:
     devDependencies:
       '@kb-labs/core-state-daemon':
         specifier: workspace:*
-        version: link:../../plugins/state/daemon
+        version: link:../../services/state/daemon
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared
@@ -3359,225 +3365,6 @@ importers:
         version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
       typescript:
         specifier: ^5.6.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/host-agent/app:
-    dependencies:
-      '@kb-labs/core-runtime':
-        specifier: workspace:*
-        version: link:../../../core/runtime
-      '@kb-labs/host-agent-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@kb-labs/host-agent-core':
-        specifier: workspace:*
-        version: link:../core
-      '@kb-labs/host-agent-fs':
-        specifier: workspace:*
-        version: link:../fs
-      '@kb-labs/host-agent-transport':
-        specifier: workspace:*
-        version: link:../transport
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../core/plugin-contracts
-      '@kb-labs/plugin-runtime':
-        specifier: workspace:*
-        version: link:../../../core/plugin-runtime
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      rimraf:
-        specifier: ^6
-        version: 6.1.3
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/host-agent/client:
-    dependencies:
-      '@kb-labs/host-agent-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@kb-labs/host-agent-transport':
-        specifier: workspace:*
-        version: link:../transport
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      rimraf:
-        specifier: ^6
-        version: 6.1.3
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/host-agent/contracts:
-    dependencies:
-      zod:
-        specifier: ^3.25.76
-        version: 3.25.76
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      rimraf:
-        specifier: ^6
-        version: 6.1.3
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/host-agent/core:
-    dependencies:
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/gateway-contracts':
-        specifier: workspace:*
-        version: link:../../../services/gateway/contracts
-      '@kb-labs/host-agent-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@kb-labs/host-agent-transport':
-        specifier: workspace:*
-        version: link:../transport
-      ws:
-        specifier: '>=8.21.0'
-        version: 8.21.0
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/ws':
-        specifier: ^8.5.13
-        version: 8.18.1
-      rimraf:
-        specifier: ^6
-        version: 6.1.3
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/host-agent/entry:
-    dependencies:
-      '@kb-labs/host-agent-client':
-        specifier: workspace:*
-        version: link:../client
-      '@kb-labs/host-agent-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@kb-labs/host-agent-transport':
-        specifier: workspace:*
-        version: link:../transport
-    devDependencies:
-      '@kb-labs/cli-runtime':
-        specifier: workspace:*
-        version: link:../../../cli/runtime
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
-      '@kb-labs/shared-testing-e2e':
-        specifier: workspace:*
-        version: link:../../../shared/testing-e2e
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      eslint:
-        specifier: ^9
-        version: 9.39.4(jiti@2.6.1)
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/host-agent/fs:
-    dependencies:
-      '@kb-labs/host-agent-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      rimraf:
-        specifier: ^6
-        version: 6.1.3
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/host-agent/transport:
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      rimraf:
-        specifier: ^6
-        version: 6.1.3
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
@@ -5165,67 +4952,6 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.4)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.4)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
-  plugins/state/daemon:
-    dependencies:
-      '@fastify/swagger':
-        specifier: '>=9.5.1'
-        version: 9.7.0
-      '@fastify/swagger-ui':
-        specifier: ^5.2.0
-        version: 5.2.5
-      '@kb-labs/core-contracts':
-        specifier: workspace:*
-        version: link:../../../core/contracts
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/core-runtime':
-        specifier: workspace:*
-        version: link:../../../core/runtime
-      '@kb-labs/core-state-broker':
-        specifier: workspace:*
-        version: link:../../../core/state-broker
-      '@kb-labs/core-sys':
-        specifier: workspace:*
-        version: link:../../../core/sys
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../core/plugin-contracts
-      '@kb-labs/plugin-runtime':
-        specifier: workspace:*
-        version: link:../../../core/plugin-runtime
-      '@kb-labs/shared-daemon':
-        specifier: workspace:*
-        version: link:../../../shared/daemon
-      '@kb-labs/shared-http':
-        specifier: workspace:*
-        version: link:../../../shared/http
-      fastify:
-        specifier: '>=5.12.2'
-        version: 5.12.5
-      fastify-type-provider-zod:
-        specifier: ^4.0.2
-        version: 4.0.2(fastify@5.12.5)(zod@4.3.6)
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
   plugins/steward/contracts:
     dependencies:
       zod:
@@ -6045,6 +5771,65 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
+  services/gateway-host-agent/contracts:
+    dependencies:
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      rimraf:
+        specifier: ^6
+        version: 6.1.3
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/gateway-host-agent/core:
+    dependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
+      '@kb-labs/gateway-contracts':
+        specifier: workspace:*
+        version: link:../../gateway/contracts
+      '@kb-labs/host-agent-contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@kb-labs/host-agent-transport':
+        specifier: workspace:*
+        version: link:../../host-agent/transport
+      ws:
+        specifier: '>=8.21.0'
+        version: 8.21.1
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
+      rimraf:
+        specifier: ^6
+        version: 6.1.3
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
   services/gateway/app:
     dependencies:
       '@fastify/cookie':
@@ -6254,10 +6039,10 @@ importers:
     dependencies:
       '@kb-labs/host-agent-contracts':
         specifier: workspace:*
-        version: link:../../../plugins/host-agent/contracts
+        version: link:../../gateway-host-agent/contracts
       '@kb-labs/host-agent-core':
         specifier: workspace:*
-        version: link:../../../plugins/host-agent/core
+        version: link:../../gateway-host-agent/core
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../../core/plugin-contracts
@@ -6280,6 +6065,123 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.4)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.4)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/host-agent/app:
+    dependencies:
+      '@kb-labs/core-runtime':
+        specifier: workspace:*
+        version: link:../../../core/runtime
+      '@kb-labs/host-agent-contracts':
+        specifier: workspace:*
+        version: link:../../gateway-host-agent/contracts
+      '@kb-labs/host-agent-core':
+        specifier: workspace:*
+        version: link:../../gateway-host-agent/core
+      '@kb-labs/host-agent-fs':
+        specifier: workspace:*
+        version: link:../fs
+      '@kb-labs/host-agent-transport':
+        specifier: workspace:*
+        version: link:../transport
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
+      '@kb-labs/plugin-runtime':
+        specifier: workspace:*
+        version: link:../../../core/plugin-runtime
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/node':
+        specifier: ^24.3.3
+        version: 24.19.0
+      rimraf:
+        specifier: ^6
+        version: 6.1.3
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/host-agent/client:
+    dependencies:
+      '@kb-labs/host-agent-contracts':
+        specifier: workspace:*
+        version: link:../../gateway-host-agent/contracts
+      '@kb-labs/host-agent-transport':
+        specifier: workspace:*
+        version: link:../transport
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/node':
+        specifier: ^24.3.3
+        version: 24.19.0
+      rimraf:
+        specifier: ^6
+        version: 6.1.3
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/host-agent/fs:
+    dependencies:
+      '@kb-labs/host-agent-contracts':
+        specifier: workspace:*
+        version: link:../../gateway-host-agent/contracts
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/node':
+        specifier: ^24.3.3
+        version: 24.19.0
+      rimraf:
+        specifier: ^6
+        version: 6.1.3
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/host-agent/transport:
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/node':
+        specifier: ^24.3.3
+        version: 24.19.0
+      rimraf:
+        specifier: ^6
+        version: 6.1.3
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
   services/host/app:
     dependencies:
@@ -6306,7 +6208,7 @@ importers:
         version: link:../../../core/runtime
       '@kb-labs/core-state-daemon':
         specifier: workspace:*
-        version: link:../../../plugins/state/daemon
+        version: link:../../state/daemon
       '@kb-labs/gateway-app':
         specifier: workspace:*
         version: link:../../gateway/app
@@ -6691,6 +6593,67 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.4)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.4)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/state/daemon:
+    dependencies:
+      '@fastify/swagger':
+        specifier: '>=9.5.1'
+        version: 9.7.0
+      '@fastify/swagger-ui':
+        specifier: ^5.2.0
+        version: 5.2.5
+      '@kb-labs/core-contracts':
+        specifier: workspace:*
+        version: link:../../../core/contracts
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
+      '@kb-labs/core-runtime':
+        specifier: workspace:*
+        version: link:../../../core/runtime
+      '@kb-labs/core-state-broker':
+        specifier: workspace:*
+        version: link:../../../core/state-broker
+      '@kb-labs/core-sys':
+        specifier: workspace:*
+        version: link:../../../core/sys
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
+      '@kb-labs/plugin-runtime':
+        specifier: workspace:*
+        version: link:../../../core/plugin-runtime
+      '@kb-labs/shared-daemon':
+        specifier: workspace:*
+        version: link:../../../shared/daemon
+      '@kb-labs/shared-http':
+        specifier: workspace:*
+        version: link:../../../shared/http
+      fastify:
+        specifier: '>=5.12.2'
+        version: 5.12.5
+      fastify-type-provider-zod:
+        specifier: ^4.0.2
+        version: 4.0.2(fastify@5.12.5)(zod@4.3.6)
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/node':
+        specifier: ^24.3.3
+        version: 24.19.0
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
   shared/cli-ui:
     dependencies:
@@ -17977,7 +17940,7 @@ snapshots:
       '@fastify/reply-from': 12.6.2
       fast-querystring: 1.1.2
       fastify-plugin: 5.1.0
-      ws: 8.21.0
+      ws: 8.21.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate

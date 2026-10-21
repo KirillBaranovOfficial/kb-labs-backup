@@ -129,7 +129,7 @@ files. They are based on the remaining `.kb` dependents inventory in
    `plugins/commit/entry/src/lifecycle/setup.ts`,
    `plugins/qa/contracts/src/constants.ts`,
    `plugins/quality/contracts/src/constants.ts`,
-   `plugins/host-agent/fs/`, `plugins/mind/entry/src/manifest.ts`, and
+   `services/host-agent/fs/`, `plugins/mind/entry/src/manifest.ts`, and
    `plugins/steward/entry/src/manifest.ts`. Give each plugin project-scoped
    state through platform services; revise repository filesystem permissions
    to match each plugin's remaining user-file behavior.

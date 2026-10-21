@@ -33,6 +33,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
             REPO / "e2e/scripts/check-frozen-lockfile.sh",
             self.root / "e2e/scripts/check-frozen-lockfile.sh",
         )
+        shutil.copy2(REPO / "e2e/scripts/build-pack-extras.mjs", self.root / "e2e/scripts/build-pack-extras.mjs")
         self.calls = self.root / "calls.log"
         self._script(self.root / "e2e/journey/run.sh", '''#!/bin/sh
 printf 'journey %s %s\\n' "$KB_JOURNEY_ONLY" "$*" >> "$CALLS"
@@ -76,6 +77,9 @@ printf 'candidate package\\n' > "$ROOT/e2e/packages/candidate.tgz"
 exit 0
 ''')
         self._script(self.bin / "node", '''#!/bin/sh
+case "$*" in
+  *build-pack-extras.mjs*) exit 0 ;;
+esac
 case "$*" in
   *--build-outputs*)
     printf 'build-output-check\\n' >> "$CALLS"

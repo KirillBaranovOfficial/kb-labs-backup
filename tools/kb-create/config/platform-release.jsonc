@@ -19,6 +19,7 @@
       },
       "serviceTransport": {
         "services": {
+          "gateway": { "url": "http://127.0.0.1:4000" },
           "rest": { "url": "http://127.0.0.1:5050" },
           "workflow": { "url": "http://127.0.0.1:7778" },
           "marketplace": { "url": "http://127.0.0.1:5070" },
@@ -71,7 +72,8 @@
               "platformRequires": ["llm"],
               "platformMembers": [
                 "@kb-labs/cli-bin",
-                "@kb-labs/core-workspace"
+                "@kb-labs/core-workspace",
+                "@kb-labs/host-agent-app"
               ]
             }
           }

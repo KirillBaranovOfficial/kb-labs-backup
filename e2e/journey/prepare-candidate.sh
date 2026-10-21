@@ -13,6 +13,7 @@ COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
   bash "$ROOT/e2e/scripts/check-frozen-lockfile.sh"
 )
 
+node "$ROOT/e2e/scripts/build-pack-extras.mjs" "$ROOT"
 node "$ROOT/e2e/scripts/validate-package-outputs.mjs" --build-outputs "$ROOT"
 
 bash "$ROOT/e2e/journey/stage-runner-inputs.sh"

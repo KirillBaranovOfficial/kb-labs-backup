@@ -20,6 +20,7 @@ import { configShow, configGet, configSet } from './config';
 import { projectAdd, projectList, projectShow, projectRemove } from './project';
 import { mcpConfig } from './mcp';
 import { adapterBind, adapterList, adapterUnbind } from './adapter';
+import { workspaceAgentGroup } from './workspace-agent';
 
 /**
  * Info Commands Group
@@ -131,3 +132,6 @@ export const adapterGroup = defineSystemCommandGroup('adapter', 'Adapter install
   adapterBind,
   adapterUnbind,
 ]);
+
+/** Workspace Agent registration and connection commands. */
+export const workspaceGroup = workspaceAgentGroup;

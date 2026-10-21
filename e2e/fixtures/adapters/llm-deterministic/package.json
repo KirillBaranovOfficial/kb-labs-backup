@@ -15,6 +15,7 @@
     "requiredOutputs": ["./dist/manifest.json"]
   },
   "scripts": {
+    "build": "node ./build.mjs",
     "test": "node --test"
   },
   "license": "UNLICENSED"
