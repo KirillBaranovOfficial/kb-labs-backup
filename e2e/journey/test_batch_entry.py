@@ -29,6 +29,10 @@ class JourneyBatchEntryTests(unittest.TestCase):
         shutil.copy2(REPO / "e2e/journey/batch_summary.py", self.root / "e2e/journey/batch_summary.py")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
+        shutil.copy2(
+            REPO / "e2e/scripts/check-frozen-lockfile.sh",
+            self.root / "e2e/scripts/check-frozen-lockfile.sh",
+        )
         self.calls = self.root / "calls.log"
         self._script(self.root / "e2e/journey/run.sh", '''#!/bin/sh
 printf 'journey %s %s\\n' "$KB_JOURNEY_ONLY" "$*" >> "$CALLS"
@@ -83,6 +87,9 @@ case "$*" in
     ;;
 esac
 exit 2
+''')
+        self._script(self.bin / "corepack", '''#!/bin/sh
+exit 0
 ''')
         self._script(self.bin / "python3", '''#!/bin/sh
 printf 'unit\\n' >> "$CALLS"

@@ -5,8 +5,12 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { releasePackageNames } from '../platform/journey-update-packages.mjs';
 import registryManifest from '../platform/registry-manifest.json' with { type: 'json' };
+import { readPlatformReleaseConfig, releaseArtifactPackageNames } from '../../tools/kb-create/scripts/platform-release-config.mjs';
+
+function releasePlatformMembers(workspaceRoot) {
+  return readPlatformReleaseConfig(join(workspaceRoot, 'tools/kb-create/config/platform-release.jsonc')).platformMembers;
+}
 
 export function buildCommand(packageName) {
   return `corepack pnpm -r --filter "${packageName}..." --workspace-concurrency=2 build`;
@@ -94,9 +98,9 @@ function workspacePaths(directory, root = directory, paths = []) {
   return paths;
 }
 
-export function validateReleaseBuildOutputs(packages, releaseManifest = registryManifest) {
+export function validateReleaseBuildOutputs(packages, releaseManifest = registryManifest, platformMembers) {
   const failures = [];
-  for (const name of releasePackageNames(releaseManifest)) {
+  for (const name of releaseArtifactPackageNames(releaseManifest, platformMembers)) {
     const source = packages.get(name);
     if (!source) throw new Error(`release package is not registered in the workspace: ${name}`);
     const paths = workspacePaths(source.directory);
@@ -323,10 +327,11 @@ async function main() {
       process.stderr.write('Usage: validate-package-outputs.mjs --build-outputs <workspace-root>\n');
       return 2;
     }
-    const failures = validateReleaseBuildOutputs(workspacePackages(workspaceRoot));
+    const platformMembers = releasePlatformMembers(workspaceRoot);
+    const failures = validateReleaseBuildOutputs(workspacePackages(workspaceRoot), registryManifest, platformMembers);
     for (const failure of failures) process.stderr.write(`${failure.message}\n`);
     if (failures.length > 0) return 1;
-    process.stdout.write(`Validated declared build outputs for ${releasePackageNames(registryManifest).length} release packages\n`);
+    process.stdout.write(`Validated declared build outputs for ${releaseArtifactPackageNames(registryManifest, platformMembers).length} release packages\n`);
     return 0;
   }
   const directory = process.argv[2];

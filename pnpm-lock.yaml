@@ -4168,6 +4168,9 @@ importers:
 
   plugins/marketplace/entry:
     dependencies:
+      '@kb-labs/core-workspace':
+        specifier: workspace:*
+        version: link:../../../core/workspace
       '@kb-labs/marketplace-contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -4175,9 +4178,6 @@ importers:
       '@kb-labs/cli-runtime':
         specifier: workspace:*
         version: link:../../../cli/runtime
-      '@kb-labs/core-workspace':
-        specifier: workspace:*
-        version: link:../../../core/workspace
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
@@ -5104,9 +5104,6 @@ importers:
       '@kb-labs/cli-runtime':
         specifier: workspace:*
         version: link:../../../cli/runtime
-      '@kb-labs/core-workspace':
-        specifier: workspace:*
-        version: link:../../../core/workspace
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
@@ -7308,54 +7305,6 @@ importers:
       '@fontsource/geist-sans':
         specifier: ^5.3.0
         version: 5.3.0
-      '@kb-labs/agent-contracts':
-        specifier: workspace:*
-        version: link:../../plugins/agents/contracts
-      '@kb-labs/core-contracts':
-        specifier: workspace:*
-        version: link:../../core/contracts
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../core/plugin-contracts
-      '@kb-labs/qa-contracts':
-        specifier: workspace:*
-        version: link:../../plugins/qa/contracts
-      '@kb-labs/quality-contracts':
-        specifier: workspace:*
-        version: link:../../plugins/quality/contracts
-      '@kb-labs/release-manager-contracts':
-        specifier: workspace:*
-        version: link:../../plugins/release/manager-contracts
-      '@kb-labs/rest-api-contracts':
-        specifier: workspace:*
-        version: link:../../services/rest-api/contracts
-      '@kb-labs/studio-data-client':
-        specifier: workspace:*
-        version: link:../data-client
-      '@kb-labs/studio-devtools':
-        specifier: workspace:*
-        version: link:../devtools
-      '@kb-labs/studio-event-bus':
-        specifier: workspace:*
-        version: link:../event-bus
-      '@kb-labs/studio-federation':
-        specifier: workspace:*
-        version: link:../federation
-      '@kb-labs/studio-hooks':
-        specifier: workspace:*
-        version: link:../hooks
-      '@kb-labs/studio-plugin-tools':
-        specifier: workspace:*
-        version: link:../plugin-tools
-      '@kb-labs/studio-ui-core':
-        specifier: workspace:*
-        version: link:../ui-core
-      '@kb-labs/studio-ui-kit':
-        specifier: workspace:*
-        version: link:../ui-kit
-      '@kb-labs/workflow-contracts':
-        specifier: workspace:*
-        version: link:../../plugins/workflow/contracts
       '@tanstack/react-query':
         specifier: ^5.62.23
         version: 5.97.0(react@19.2.5)
@@ -7408,9 +7357,57 @@ importers:
         specifier: ^5.0.2
         version: 5.0.12(@types/react@19.2.14)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
     devDependencies:
+      '@kb-labs/agent-contracts':
+        specifier: workspace:*
+        version: link:../../plugins/agents/contracts
+      '@kb-labs/core-contracts':
+        specifier: workspace:*
+        version: link:../../core/contracts
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../core/plugin-contracts
+      '@kb-labs/qa-contracts':
+        specifier: workspace:*
+        version: link:../../plugins/qa/contracts
+      '@kb-labs/quality-contracts':
+        specifier: workspace:*
+        version: link:../../plugins/quality/contracts
+      '@kb-labs/release-manager-contracts':
+        specifier: workspace:*
+        version: link:../../plugins/release/manager-contracts
+      '@kb-labs/rest-api-contracts':
+        specifier: workspace:*
+        version: link:../../services/rest-api/contracts
+      '@kb-labs/studio-data-client':
+        specifier: workspace:*
+        version: link:../data-client
+      '@kb-labs/studio-devtools':
+        specifier: workspace:*
+        version: link:../devtools
+      '@kb-labs/studio-event-bus':
+        specifier: workspace:*
+        version: link:../event-bus
+      '@kb-labs/studio-federation':
+        specifier: workspace:*
+        version: link:../federation
+      '@kb-labs/studio-hooks':
+        specifier: workspace:*
+        version: link:../hooks
+      '@kb-labs/studio-plugin-tools':
+        specifier: workspace:*
+        version: link:../plugin-tools
+      '@kb-labs/studio-ui-core':
+        specifier: workspace:*
+        version: link:../ui-core
+      '@kb-labs/studio-ui-kit':
+        specifier: workspace:*
+        version: link:../ui-kit
+      '@kb-labs/workflow-contracts':
+        specifier: workspace:*
+        version: link:../../plugins/workflow/contracts
       '@module-federation/enhanced':
         specifier: ^2.3.3
         version: 2.3.3(@rspack/core@2.1.2(@module-federation/runtime-tools@2.3.3))(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.9.3)(webpack@5.106.1(@swc/core@1.15.33)(esbuild@0.28.1)(postcss@8.5.23))

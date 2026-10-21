@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { releasePackageNames } from '../../e2e/platform/journey-update-packages.mjs';
+import { readPlatformReleaseConfig, releaseArtifactPackageNames } from '../../tools/kb-create/scripts/platform-release-config.mjs';
 
 async function main() {
   const input = JSON.parse(await readStdin());
@@ -14,7 +14,8 @@ async function main() {
     const registryPath = path.join(root, 'e2e/platform/registry-manifest.json');
     try {
       const manifest = JSON.parse(readFileSync(registryPath, 'utf8'));
-      for (const issue of releaseBuildGraphIssues(manifest, input.workspace.packages)) {
+      const config = readPlatformReleaseConfig(path.join(root, 'tools/kb-create/config/platform-release.jsonc'));
+      for (const issue of releaseBuildGraphIssues(manifest, config.platformMembers, input.workspace.packages)) {
         issues.push({ check: 'release-build-graph', severity: 'error', message: issue.message, file: registryPath });
       }
     } catch (error) {
@@ -26,10 +27,10 @@ async function main() {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) await main();
 
-export function releaseBuildGraphIssues(manifest, packages) {
+export function releaseBuildGraphIssues(manifest, platformMembers, packages) {
   const byName = new Map(packages.map((pkg) => [pkg.name, pkg]));
   const issues = [];
-  for (const name of releasePackageNames(manifest)) {
+  for (const name of releaseArtifactPackageNames(manifest, platformMembers)) {
     const pkg = byName.get(name);
     if (!pkg) {
       issues.push({ message: `${name} is selected by the release registry but is absent from devkit workspace discovery; add its package category to devkit.yaml, then rerun \`kb-devkit check\`.` });

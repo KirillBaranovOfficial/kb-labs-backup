@@ -5,18 +5,10 @@ import { existsSync } from 'node:fs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
 import { invokePackageProvenanceOwner } from './package-provenance.mjs';
 import { fileURLToPath } from 'node:url';
+import { releaseArtifactPackageNames } from '../../tools/kb-create/scripts/platform-release-config.mjs';
 
-export function releasePackageNames(manifest = registryManifest) {
-  return [...new Set([
-    ...(manifest.core ?? []).map(item => item.name),
-    ...(manifest.services ?? []).map(item => item.pkg),
-    ...(manifest.plugins ?? []).map(item => item.pkg),
-    ...(manifest.adapters ?? []).map(item => item.name),
-  ].filter(Boolean))];
-}
-
-export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest = registryManifest, digestTool) {
-  const wanted = new Set(releasePackageNames(releaseManifest));
+export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest, digestTool, platformMembers) {
+  const wanted = new Set(releaseArtifactPackageNames(releaseManifest, platformMembers));
   const packages = [];
   for (const filename of readdirSync(resolve(packagesDir)).filter(name => name.endsWith('.tgz')).sort()) {
     const path = join(resolve(packagesDir), filename);
@@ -40,9 +32,9 @@ export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest
 // publishDir so the local registry can serve them.
 export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion,
   { publishDir, failingServicePackage, requiredConfigPackage, requiredConfig, digestTool,
-    registryManifest: releaseManifest = registryManifest } = {}) {
+    registryManifest: releaseManifest = registryManifest, platformMembers } = {}) {
   if (!digestTool) throw new Error('kb-create-release-index owner is required');
-  const versionedPackages = new Set(releasePackageNames(releaseManifest));
+  const versionedPackages = new Set(releaseArtifactPackageNames(releaseManifest, platformMembers));
   if (requiredConfig && !versionedPackages.has(requiredConfigPackage)) {
     throw new Error(`staged requirement package is absent from the release manifest: ${requiredConfigPackage}`);
   }
@@ -159,6 +151,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const baseVersion = value('--base-version');
   const packagesDir = value('--packages-dir');
   const digestTool = value('--digest-tool');
-  if (!baseVersion || !packagesDir || !digestTool) throw new Error('usage: journey-update-packages.mjs --base-version <version> --packages-dir <dir> --digest-tool <kb-create-release-index>');
-  process.stdout.write(`${deriveCandidateVersion(baseVersion, packagesDir, registryManifest, digestTool)}\n`);
+  const membersArgument = value('--platform-members');
+  if (!baseVersion || !packagesDir || !digestTool || !membersArgument) throw new Error('usage: journey-update-packages.mjs --base-version <version> --packages-dir <dir> --digest-tool <kb-create-release-index> --platform-members <comma-separated-package-names>');
+  process.stdout.write(`${deriveCandidateVersion(baseVersion, packagesDir, registryManifest, digestTool, membersArgument.split(',').filter(Boolean))}\n`);
 }

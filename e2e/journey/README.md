@@ -1,5 +1,11 @@
 # Fresh install journey runner
 
+For a retained local install from the current candidate, use
+`bash e2e/journey/prepare-isolated-installed-root.sh` from the repository root.
+It invokes `prepare-candidate.sh`, plans an explicit non-default Gateway URL
+and verifies the complete service-port graph before installation. The output
+includes the isolated HOME and the commands to stop and remove the root.
+
 `run.sh` installs a candidate platform into a fresh container HOME, exercises
 it, and uninstalls it before the container exits. The service modes also run
 HTTP capability checks and a Studio browser journey while the gateway is still
