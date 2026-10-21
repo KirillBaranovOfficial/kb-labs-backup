@@ -28,7 +28,6 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/sdk": "workspace:*",
     "execa": "^9.5.3"
   },
   "devDependencies": {
@@ -38,7 +37,8 @@
     "tsup": "^8.5.0",
     "typescript": "^5",
     "vitest": "^4.1.11",
-    "@kb-labs/cli-runtime": "workspace:*"
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
     "node": "24.x",
@@ -49,6 +49,7 @@
   },
   "sideEffects": false,
   "peerDependencies": {
-    "@kb-labs/cli-runtime": "workspace:*"
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
   }
 }

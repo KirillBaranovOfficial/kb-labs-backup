@@ -36,7 +36,6 @@
   },
   "dependencies": {
     "@kb-labs/impact-contracts": "workspace:*",
-    "@kb-labs/sdk": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -46,7 +45,8 @@
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.11",
-    "@kb-labs/core-project-registry": "workspace:*"
+    "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
     "node": "24.x",
@@ -57,6 +57,7 @@
   },
   "sideEffects": false,
   "peerDependencies": {
-    "@kb-labs/core-project-registry": "workspace:*"
+    "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
   }
 }

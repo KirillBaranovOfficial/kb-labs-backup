@@ -33,6 +33,42 @@ const logContext = {
 };
 
 describe('normalizePluginHandlerFailure', () => {
+  // S-243.8: module-load failures keep the catalogued plugin/command/specifier contract.
+  it('classifies handler module resolution failures as plugin load failures', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const serializedError = {
+      name: 'Error',
+      message: "Cannot find package '@kb-labs/shared-command-kit'",
+      moduleResolution: {
+        code: 'ERR_MODULE_NOT_FOUND' as const,
+        specifier: '@kb-labs/shared-command-kit',
+      },
+    };
+    const executionEnvelope = createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+      correlationId: 'module-load-correlation',
+      details: {
+        plugin: '@kb-labs/commit', command: 'commit reset', failureReason: 'failed unexpectedly',
+      },
+    });
+
+    const envelope = normalizePluginHandlerFailure(executionEnvelope, {
+      pluginId: '@kb-labs/commit', command: 'commit reset', correlationId: 'module-load-correlation',
+      pluginVersion: '2.122.1', serializedError, executionEnvelope,
+      logger: loggerFor(records), logContext,
+    });
+
+    expect(envelope).toMatchObject({
+      code: 'KB_PLUGIN_LOAD_FAILED',
+      correlationId: 'module-load-correlation',
+      details: {
+        plugin: '@kb-labs/commit', command: 'commit reset',
+        specifier: '@kb-labs/shared-command-kit',
+      },
+    });
+    expect(envelope.hint).toBeTruthy();
+    expect(envelope.message).not.toContain('malformed error field');
+  });
+
   it.each([
     new ErrorEnvelopeError(createProductErrorEnvelope({
       code: 'MIND_NOT_FOUND', retryable: false, message: 'Mind result was not found.',

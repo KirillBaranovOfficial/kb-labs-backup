@@ -94,6 +94,21 @@ function failureReason(error: unknown): FailureReason {
   return 'failed unexpectedly';
 }
 
+function missingModuleSpecifier(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+  if ('moduleResolution' in error && typeof error.moduleResolution === 'object' && error.moduleResolution !== null &&
+      'specifier' in error.moduleResolution && typeof error.moduleResolution.specifier === 'string') {
+    return error.moduleResolution.specifier;
+  }
+  if ('code' in error && (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'MODULE_NOT_FOUND') &&
+      'specifier' in error && typeof error.specifier === 'string' && error.specifier.length > 0) {
+    return error.specifier;
+  }
+  return undefined;
+}
+
 function asError(error: SerializedError): Error {
   const logError = new Error(error.message);
   logError.name = error.name;
@@ -174,7 +189,15 @@ export function normalizePluginHandlerFailure(
   const malformedReturn = Boolean(invalidEnvelopeIssue) ||
     Boolean(context.returnedFailure && !typedEnvelope) ||
     canonicalEnvelope?.code === 'KB_PLUGIN_CONTRACT_VIOLATION';
-  const rawEnvelope = malformedReturn
+  const specifier = context.returnedFailure
+    ? undefined
+    : missingModuleSpecifier(context.serializedError) ?? missingModuleSpecifier(envelopeCandidate);
+  const rawEnvelope = specifier
+    ? createErrorEnvelope('KB_PLUGIN_LOAD_FAILED', {
+        correlationId: context.correlationId,
+        details: { plugin: context.pluginId, command: context.command, specifier },
+      })
+    : malformedReturn
     ? createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
         correlationId: context.correlationId,
         message: `Plugin ${context.pluginId} command ${context.command} returned malformed error field "${malformedField}".`,

@@ -30,12 +30,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/cli-runtime": "workspace:*",
-    "@kb-labs/core-workspace": "workspace:*",
     "@kb-labs/scaffold-contracts": "workspace:*",
-    "@kb-labs/scaffold-core": "workspace:*",
-    "@kb-labs/sdk": "workspace:*",
-    "@kb-labs/shared-cli-ui": "workspace:*"
+    "@kb-labs/scaffold-core": "workspace:*"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
@@ -46,7 +42,11 @@
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-workspace": "workspace:*",
+    "@kb-labs/sdk": "workspace:*",
+    "@kb-labs/shared-cli-ui": "workspace:*"
   },
   "engines": {
     "node": "24.x",
@@ -55,5 +55,11 @@
   "kb": {
     "manifest": "./dist/manifest.js"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "peerDependencies": {
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-workspace": "workspace:*",
+    "@kb-labs/sdk": "workspace:*",
+    "@kb-labs/shared-cli-ui": "workspace:*"
+  }
 }
