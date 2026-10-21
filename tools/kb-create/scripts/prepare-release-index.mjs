@@ -9,7 +9,14 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { isPlatformPackage } from '../../../core/plugin-runtime/src/platform-resolve/platform-package.js';
+import {
+  DEFAULT_HOST_PACKAGE,
+  DEFAULT_PLATFORM_PACKAGE,
+  DEFAULT_SDK_PACKAGE,
+  configuredAdapterPackages,
+  platformPackageRoots,
+  shippedPlatformPackageSet,
+} from './platform-release-config.mjs';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -29,8 +36,8 @@ const output = resolve(required('--output'));
 const flow = required('--flow');
 const channel = value('--channel') ?? 'stable';
 const registry = value('--registry') ?? 'https://registry.npmjs.org';
-const platformPackage = value('--platform-package') ?? '@kb-labs/core-runtime';
-const sdkPackage = value('--sdk-package') ?? '@kb-labs/sdk';
+const platformPackage = value('--platform-package') ?? DEFAULT_PLATFORM_PACKAGE;
+const sdkPackage = value('--sdk-package') ?? DEFAULT_SDK_PACKAGE;
 const binaryManifestPath = value('--binary-manifest') ? resolve(value('--binary-manifest')) : undefined;
 if (flow === 'platform' && !binaryManifestPath) throw new Error('--binary-manifest is required for the unified platform release-index');
 const minLauncherVersion = value('--min-launcher-version');
@@ -57,7 +64,7 @@ const platformMemberPackages = (value('--platform-member-packages') ?? '')
 // index declares it, and the launcher has no other way to start a platform. The
 // host package is a platform member, its executable comes from its own bin, and
 // a recovery tool (kb-create doctor --recover) is declared only when it ships.
-const hostPackage = value('--host-package') ?? '@kb-labs/host-app';
+const hostPackage = value('--host-package') ?? DEFAULT_HOST_PACKAGE;
 const hostHealthURL = value('--host-health-url') ?? 'http://127.0.0.1:4000/health';
 
 const readStage = directory => {
@@ -81,23 +88,7 @@ const resolvedPlatformVersion = platform.version;
 // travel with the platform members.  Resolve subpath exports (for example
 // "@scope/adapter/kv") back to their staged package, and fail closed when the
 // release plan did not produce that package.
-const stagedPackageForAdapter = configuredPackage => {
-  const matches = stage
-    .filter(item => configuredPackage === item.name || configuredPackage.startsWith(`${item.name}/`))
-    .sort((left, right) => right.name.length - left.name.length);
-  if (matches.length === 0) {
-    throw new Error(`configured platform adapter ${configuredPackage} is absent from stage manifest`);
-  }
-  return matches[0].name;
-};
-const configuredPlatformAdapterPackages = platformAdapterConfig
-  ? [...new Set(Object.values(platformAdapterConfig).map(configuredPackage => {
-      if (typeof configuredPackage !== 'string' || configuredPackage.length === 0) {
-        throw new Error('platform adapter configuration must contain package strings');
-      }
-      return stagedPackageForAdapter(configuredPackage);
-    }))]
-  : [];
+const configuredPlatformAdapterPackages = configuredAdapterPackages(platformAdapterConfig, byName);
 // Keep the bindings and options for precisely the required platform slots in
 // the release index. This makes fresh-install defaults travel with the same
 // capability list the resolver uses to produce provider bindings.
@@ -299,53 +290,30 @@ for (const item of stage) {
 const sdkPackageJSON = packageJSONFor(sdk);
 const sdkPlatformRange = sdkPackageJSON.peerDependencies?.[platformPackage];
 if (!sdkPlatformRange) throw new Error(`${sdkPackage} does not declare a peer dependency on ${platformPackage}`);
-const sdkRuntimePeerPackages = Object.entries(sdkPackageJSON.peerDependencies ?? {})
-  .filter(([name]) => name !== platformPackage && sdkPackageJSON.peerDependenciesMeta?.[name]?.optional !== true)
-  .map(([name]) => name);
-
 // The SDK package manifest is the owner of its required runtime peers. Include
 // each required peer as a platform member so the installed platform root can
 // provide the shared copy to every plugin. Optional peers remain consumer-owned.
-const platformMemberRoots = new Set([
-  ...services.map(service => service.packageName),
+const platformMemberRoots = platformPackageRoots({
+  servicePackages: services.map(service => service.packageName),
   hostPackage,
-  ...platformMemberPackages,
-  ...configuredPlatformAdapterPackages,
-  ...sdkRuntimePeerPackages,
-  sdk.name,
-]);
-const dependencyClosureCache = new Map();
-const dependencyClosureFor = packageName => {
-  if (dependencyClosureCache.has(packageName)) return dependencyClosureCache.get(packageName);
-  const closure = new Set([packageName]);
-  dependencyClosureCache.set(packageName, closure);
-  const item = byName.get(packageName);
-  if (!item) return closure;
-  const packageJSON = packageJSONFor(item);
-  const dependencies = [
-    ...Object.keys(packageJSON.dependencies ?? {}),
-    ...Object.keys(packageJSON.optionalDependencies ?? {}),
-  ];
-  for (const dependency of dependencies) {
-    if (!dependency.startsWith('@kb-labs/')) continue;
-    for (const transitive of dependencyClosureFor(dependency)) closure.add(transitive);
-  }
-  return closure;
-};
+  platformMembers: platformMemberPackages,
+  adapterPackages: configuredPlatformAdapterPackages,
+  platformPackage,
+  sdkPackage: sdk.name,
+  sdkManifest: sdkPackageJSON,
+});
 const platformMemberArtifacts = new Set(platformMemberRoots);
-// Platform members and the SDK are installed into one platform node_modules
-// tree. Derive peer availability from that exact sealed package graph; mere
-// presence in the release stage does not make a peer available to consumers.
-const platformProvidedPackages = new Set();
-platformProvidedPackages.add(platformPackage);
-for (const packageName of platformMemberRoots) {
-  for (const dependency of dependencyClosureFor(packageName)) {
-    if (byName.has(dependency)) platformProvidedPackages.add(dependency);
-  }
-}
-const platformPackageClosure = [...platformProvidedPackages];
+// The release graph is the owner for peer availability. It includes the exact
+// staged dependency closure of the packages installed with the platform.
+const platformManifests = new Map(stage.map(item => [item.name, packageJSONFor(item)]));
+const platformProvidedPackages = shippedPlatformPackageSet(
+  platformMemberRoots,
+  platformManifests,
+  platformPackage,
+);
+const platformPackageNames = [...platformProvidedPackages];
 const platformPeerViolations = [];
-const packagesWithPlatformPeers = new Set([...platformPackageClosure, ...stage.map(item => item.name)]);
+const packagesWithPlatformPeers = new Set([...platformPackageNames, ...stage.map(item => item.name)]);
 for (const packageName of packagesWithPlatformPeers) {
   const item = byName.get(packageName);
   if (!item) continue;
@@ -355,11 +323,11 @@ for (const packageName of packagesWithPlatformPeers) {
     .filter(([, metadata]) => metadata?.optional === true)
     .map(([name]) => name));
   for (const peer of peers) {
-    if (!isPlatformPackage(peer) || optionalPeers.has(peer) || platformProvidedPackages.has(peer)) continue;
+    if (!platformManifests.has(peer) || optionalPeers.has(peer) || platformProvidedPackages.has(peer)) continue;
     platformPeerViolations.push(`${packageName} declares platform peer ${peer}, which the platform package graph does not provide`);
   }
 }
-for (const packageName of platformPackageClosure) {
+for (const packageName of platformPackageNames) {
   const item = byName.get(packageName);
   // Preserve the host-specific validation below, which reports the release
   // contract violation with its actionable package role.

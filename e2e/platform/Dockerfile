@@ -50,6 +50,8 @@ COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
 COPY e2e/platform/release-index-version.mjs /src/release-index-version.mjs
 COPY tools/kb-create/scripts/prepare-binary-manifest.mjs /src/kb-create/scripts/prepare-binary-manifest.mjs
 COPY tools/kb-create/scripts/prepare-release-index.mjs /src/kb-create/scripts/prepare-release-index.mjs
+COPY tools/kb-create/scripts/platform-release-config.mjs /src/kb-create/scripts/platform-release-config.mjs
+COPY tools/kb-create/scripts/platform-release-config.mjs /tools/kb-create/scripts/platform-release-config.mjs
 COPY tools/kb-create/config/platform-release.jsonc /src/platform-release.jsonc
 COPY --from=go-builder /out/kb-create-linux-amd64 /out/binaries/kb-create-linux-amd64
 COPY --from=go-builder /out/kb-create-linux-arm64 /out/binaries/kb-create-linux-arm64

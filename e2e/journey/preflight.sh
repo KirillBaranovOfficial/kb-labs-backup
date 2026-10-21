@@ -44,6 +44,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 cd "$ROOT"
 
+bash e2e/scripts/check-frozen-lockfile.sh
+
 stage_started=$(date +%s)
 if ! (cd tools/kb-devkit && go build -trimpath -o "$work/kb-devkit" .) > "$OUT/build.log" 2>&1; then
   build_seconds=$(( $(date +%s) - stage_started ))

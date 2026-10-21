@@ -44,7 +44,6 @@
     "typescript": "^5.6.3",
     "vitest": "^4.1.11",
     "@kb-labs/cli-runtime": "workspace:*",
-    "@kb-labs/core-workspace": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "@kb-labs/shared-cli-ui": "workspace:*"
   },
@@ -58,7 +57,6 @@
   "sideEffects": false,
   "peerDependencies": {
     "@kb-labs/cli-runtime": "workspace:*",
-    "@kb-labs/core-workspace": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "@kb-labs/shared-cli-ui": "workspace:*"
   }

@@ -39,7 +39,6 @@
     "vitest": "^4.1.11",
     "@kb-labs/shared-cli-ui": "workspace:*",
     "@kb-labs/cli-runtime": "workspace:*",
-    "@kb-labs/core-workspace": "workspace:*",
     "@kb-labs/sdk": "workspace:*"
   },
   "engines": {

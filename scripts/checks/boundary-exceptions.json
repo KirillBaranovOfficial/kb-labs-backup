@@ -127,6 +127,6 @@
     {"rule":"mutate-json-flag","package":"plugins/marketplace/entry","target":"marketplace uninstall","since":"2026-09-26","reason":"Mutating command declares no --json flag (06-command-naming.md section 3); predates the lint. Add a json flag."},
     {"rule":"mutate-json-flag","package":"plugins/marketplace/entry","target":"marketplace update","since":"2026-09-26","reason":"Mutating command declares no --json flag (06-command-naming.md section 3); predates the lint. Add a json flag."},
     {"rule":"mutate-json-flag","package":"plugins/policy/core","target":"policy snapshot","since":"2026-09-26","reason":"Mutating command declares no --json flag (06-command-naming.md section 3); predates the lint. Add a json flag."},
-    {"rule":"plugin-core-import","package":"plugins/marketplace/entry","target":"@kb-labs/core-workspace","since":"2026-09-26","reason":"SDK gap: the API is not exported by @kb-labs/sdk (docs/ARCHITECTURE-BOUNDARIES.md, Priority 2). Fix by extending the SDK, then switch the import."},
+    {"rule":"plugin-core-import","package":"plugins/marketplace/entry","target":"@kb-labs/core-workspace","since":"2026-09-26","reason":"SDK gap: the API is not exported by @kb-labs/sdk (docs/ARCHITECTURE-BOUNDARIES.md, Priority 2). Fix by extending the SDK, then switch the import."}
   ]
 }

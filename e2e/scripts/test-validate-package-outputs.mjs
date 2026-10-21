@@ -3,10 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { buildCommand, failureMessage, inspectPackedFixture, validatePackageContents, validatePackedSource, validateTarballAgainstWorkspace, validateReleaseBuildOutputs, validateWorkspacePackageContents } from './validate-package-outputs.mjs';
 import registryManifest from '../platform/registry-manifest.json' with { type: 'json' };
-import { releasePackageNames } from '../platform/journey-update-packages.mjs';
+import { readPlatformReleaseConfig, releaseArtifactPackageNames } from '../../tools/kb-create/scripts/platform-release-config.mjs';
 
 test('rejects a packed manifest that diverges from the source package manifest', () => {
   const source = {
@@ -100,7 +101,7 @@ test('release preflight requires dist even when files is only an npm inclusion f
   writeFileSync(join(packageDirectory, 'package.json'), JSON.stringify(manifest));
   const failures = validateReleaseBuildOutputs(new Map([
     [manifest.name, { directory: packageDirectory, manifest }],
-  ]), { core: [{ name: manifest.name }] });
+  ]), { core: [{ name: manifest.name }] }, []);
   assert.deepEqual(failures, [{
     packageName: manifest.name,
     message: 'ERROR: @kb-labs/example is missing required release output dist before packing. ' +
@@ -254,7 +255,9 @@ test('preflight rejects missing declared workspace outputs before pnpm pack', ()
 });
 
 test('release package set excludes the source-only devkit tooling package', () => {
-  assert.equal(releasePackageNames(registryManifest).includes('@kb-labs/devkit'), false);
+  const platformMembers = readPlatformReleaseConfig(fileURLToPath(new URL('../../tools/kb-create/config/platform-release.jsonc', import.meta.url))).platformMembers;
+  assert.equal(releaseArtifactPackageNames(registryManifest, platformMembers).includes('@kb-labs/devkit'), false);
+  assert.equal(releaseArtifactPackageNames(registryManifest, platformMembers).includes('@kb-labs/core-workspace'), true);
 });
 
 
@@ -267,7 +270,7 @@ test('release build preflight reports a missing dist output and exact package bu
   writeFileSync(join(packageDirectory, 'package.json'), JSON.stringify(manifest));
   const failures = validateReleaseBuildOutputs(new Map([
     [manifest.name, { directory: packageDirectory, manifest }],
-  ]), { core: [{ name: manifest.name }] });
+  ]), { core: [{ name: manifest.name }] }, []);
   assert.deepEqual(failures, [
     {
       packageName: manifest.name,
