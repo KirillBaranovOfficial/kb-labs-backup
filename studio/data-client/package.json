@@ -20,7 +20,6 @@
     "dev": "tsup --config tsup.config.ts --watch",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
-    "prebuild": "pnpm clean",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit"

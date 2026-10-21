@@ -25,8 +25,11 @@ type Executor struct {
 	wsRoot             string
 	logRoot            string
 	liveOutput         bool // stream stdout/stderr while running
+	onHeartbeat        func(packageName, taskName string, elapsed time.Duration)
 	runtimeFingerprint string
 }
+
+const taskHeartbeatInterval = 30 * time.Second
 
 // NewExecutor creates an Executor backed by the given cache stores.
 func NewExecutor(objects cache.ObjectStore, manifests *cache.ManifestStore, states *cache.StateStore, wsRoot, cacheRoot string, liveOutput bool) *Executor {
@@ -101,7 +104,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	}
 
 	// 3. Run command.
-	stdout, stderr, exitCode, runErr := e.runCommand(def.Command, pkg.Dir)
+	stdout, stderr, exitCode, runErr := e.runCommand(def.Command, pkg.Dir, pkg.Name, def.Name, taskHeartbeatInterval)
 	elapsed := time.Since(start)
 
 	result := TaskResult{
@@ -224,13 +227,13 @@ func containsInput(inputs []string, wanted string) bool {
 
 // runCommand executes a shell command in dir, returning stdout, stderr, exit code.
 // If e.liveOutput is true, output is also streamed to os.Stdout/os.Stderr in real time.
-func (e *Executor) runCommand(command, dir string) (stdout, stderr string, exitCode int, err error) {
+func (e *Executor) runCommand(command, dir, packageName, taskName string, heartbeatInterval time.Duration) (stdout, stderr string, exitCode int, err error) {
 	parts := splitCommand(command)
 	if len(parts) == 0 {
 		return "", "", 1, fmt.Errorf("empty command")
 	}
 
-	bin := resolveBin(parts[0], e.wsRoot)
+	bin := resolveBin(parts[0], e.wsRoot, dir)
 
 	var outBuf, errBuf bytes.Buffer
 
@@ -248,7 +251,34 @@ func (e *Executor) runCommand(command, dir string) (stdout, stderr string, exitC
 		"NODE_PATH="+filepath.Join(e.wsRoot, "node_modules"),
 	)
 
-	runErr := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return "", "", 1, err
+	}
+	started := time.Now()
+	wait := make(chan error, 1)
+	go func() { wait <- cmd.Wait() }()
+	var runErr error
+	if e.onHeartbeat == nil || heartbeatInterval <= 0 {
+		runErr = <-wait
+	} else {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case runErr = <-wait:
+				goto finished
+			case <-ticker.C:
+				select {
+				case runErr = <-wait:
+					goto finished
+				default:
+					e.onHeartbeat(packageName, taskName, time.Since(started))
+				}
+			}
+		}
+	}
+
+finished:
 	exitCode = 0
 	if cmd.ProcessState != nil {
 		exitCode = cmd.ProcessState.ExitCode()
@@ -350,11 +380,18 @@ func matchGlobParts(patParts, pathParts []string) bool {
 }
 
 // resolveBin finds binary in workspace node_modules/.bin or PATH.
-func resolveBin(name, wsRoot string) string {
+func resolveBin(name, wsRoot, packageDir string) string {
 	// Handle compound commands like "eslint src/" — name is just "eslint".
-	candidate := filepath.Join(wsRoot, "node_modules", ".bin", name)
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate
+	if filepath.IsAbs(name) {
+		return name
+	}
+	for _, candidate := range []string{
+		filepath.Join(packageDir, "node_modules", ".bin", name),
+		filepath.Join(wsRoot, "node_modules", ".bin", name),
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
 	}
 	if p, err := exec.LookPath(name); err == nil {
 		return p

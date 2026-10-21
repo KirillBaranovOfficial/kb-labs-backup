@@ -43,7 +43,6 @@
     "dev": "tsup --config tsup.config.ts --watch",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint . --fix",
-    "pretype-check": "pnpm --filter @kb-labs/commit-core build",
     "test": "vitest run --passWithNoTests",
     "test:all": "vitest run && vitest run tests/benchmarks/commit-type-accuracy.test.ts",
     "test:benchmarks": "KB_COMMIT_BENCHMARK_SAVE=1 vitest run tests/benchmarks/commit-type-accuracy.test.ts",

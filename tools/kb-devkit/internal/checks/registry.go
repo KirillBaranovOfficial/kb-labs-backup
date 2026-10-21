@@ -1,7 +1,11 @@
 package checks
 
-import "github.com/kb-labs/devkit/internal/config"
-import "github.com/kb-labs/devkit/internal/workspace"
+import (
+	"sort"
+
+	"github.com/kb-labs/devkit/internal/config"
+	"github.com/kb-labs/devkit/internal/workspace"
+)
 
 var defaultRules []Rule
 
@@ -53,9 +57,19 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 			scope:         c.Scope,
 			workspaceRoot: workspaceRoot,
 			checkConfig:   packCfg,
+			graphTasks:    graphTaskNames(cfg.Tasks),
 		})
 	}
 	return r
+}
+
+func graphTaskNames(tasks map[string]config.TaskConfig) []string {
+	names := make([]string, 0, len(tasks))
+	for name := range tasks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Register adds a custom rule to the registry.

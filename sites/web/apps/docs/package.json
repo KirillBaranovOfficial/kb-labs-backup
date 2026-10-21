@@ -3,9 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "prebuild": "pnpm --filter @kb-labs/studio-ui-kit build && pnpm --filter @kb-labs/sdk build",
     "build": "next build",
-    "predev": "pnpm --filter @kb-labs/studio-ui-kit build && pnpm --filter @kb-labs/sdk build",
     "dev": "next dev -p 3001",
     "docs:source-check": "node scripts/docs-source-check.mjs",
     "docs:source-sync": "node scripts/docs-source-check.mjs --write",
