@@ -79,6 +79,13 @@ describe('platform resolve hook', () => {
     pluginDir = join(entry, 'node_modules', 'my-plugin');
     write(join(pluginDir, 'package.json'), JSON.stringify({ name: 'my-plugin', version: '1.0.0' }));
     writePackage(pluginDir, '@kb-labs/sdk', 'private');
+    // A store entry can contain a platform package copy whose runtime graph is
+    // incomplete. The resolver must never evaluate this nested implementation
+    // when the platform root has the package.
+    write(join(pluginDir, 'node_modules', '@kb-labs', 'sdk', 'index.mjs'),
+      `export const copy = 'private'; throw new Error('nested SDK copy must not load');\n`);
+    write(join(pluginDir, 'node_modules', '@kb-labs', 'sdk', 'index.cjs'),
+      `exports.copy = 'private'; throw new Error('nested SDK copy must not load');\n`);
     writePackage(pluginDir, '@kb-labs/core-runtime', 'private');
     writePackage(pluginDir, '@kb-labs/commit-core', 'private');
     // Only the plugin has this one; the host does not provide it.
@@ -142,9 +149,8 @@ describe('platform resolve hook', () => {
     createRequire(join(pluginDir, 'x.cjs'))(fresh(file)) as { seen: Record<string, string>; copy?: string };
   const load = (file: string) => nativeImport(pathToFileURL(fresh(file)).href);
 
-  it('without the hook, the plugin resolves its own nested copy (the problem)', async () => {
-    const plain = await load('plain.mjs');
-    expect(plain.copy).toBe('private');
+  it('without the hook, the broken nested platform copy fails to load', async () => {
+    await expect(load('plain.mjs')).rejects.toThrow('nested SDK copy must not load');
   });
 
   it('ESM: resolves platform packages to the host copy and leaves plugin packages alone', async () => {
@@ -232,7 +238,7 @@ describe('platform resolve hook', () => {
     installPlatformResolveHook({ platformRoot }).deregister();
     // A fresh file, so the ESM cache cannot answer for the earlier plain import.
     write(join(pluginDir, 'after.mjs'), `export { copy } from '@kb-labs/sdk';\n`);
-    expect((await load('after.mjs')).copy).toBe('private');
+    await expect(load('after.mjs')).rejects.toThrow('nested SDK copy must not load');
   });
 });
 
