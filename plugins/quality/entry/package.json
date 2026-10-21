@@ -36,10 +36,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/quality-contracts": "workspace:*",
     "@kb-labs/quality-core": "workspace:*",
-    "@kb-labs/sdk": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -57,7 +55,9 @@
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@kb-labs/plugin-contracts": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
     "node": "24.x",
@@ -72,7 +72,9 @@
     "antd": "^5.21.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.0.0"
+    "react-router-dom": "^7.0.0",
+    "@kb-labs/plugin-contracts": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
   },
   "peerDependenciesMeta": {
     "react": {

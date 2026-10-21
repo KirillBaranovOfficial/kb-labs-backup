@@ -2665,9 +2665,6 @@ importers:
       '@kb-labs/agent-tracing':
         specifier: workspace:*
         version: link:../tracing
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       '@tanstack/react-query':
         specifier: ^5.0.0
         version: 5.97.0(react@19.2.5)
@@ -2687,6 +2684,9 @@ importers:
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../../core/plugin-runtime
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/studio-plugin-tools':
         specifier: workspace:*
         version: link:../../../studio/plugin-tools
@@ -3045,16 +3045,16 @@ importers:
       '@kb-labs/clickup-core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
       '@kb-labs/shared-command-kit':
         specifier: workspace:*
         version: link:../../../shared/command-kit
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e
@@ -3153,9 +3153,6 @@ importers:
       '@kb-labs/commit-core':
         specifier: workspace:*
         version: link:../core
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       '@tanstack/react-query':
         specifier: ^5.0.0
         version: 5.97.0(react@19.2.5)
@@ -3178,6 +3175,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/studio-plugin-tools':
         specifier: workspace:*
         version: link:../../../studio/plugin-tools
@@ -3285,13 +3285,13 @@ importers:
       '@kb-labs/devlink-core':
         specifier: workspace:*
         version: link:../core
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2
@@ -3341,13 +3341,13 @@ importers:
       '@kb-labs/github-contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2
@@ -3505,9 +3505,6 @@ importers:
       '@kb-labs/host-agent-transport':
         specifier: workspace:*
         version: link:../transport
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
     devDependencies:
       '@kb-labs/cli-runtime':
         specifier: workspace:*
@@ -3515,6 +3512,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e
@@ -3616,9 +3616,6 @@ importers:
       '@kb-labs/impact-contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -3629,6 +3626,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2
@@ -3715,16 +3715,16 @@ importers:
       '@kb-labs/inbox-core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
       '@kb-labs/shared-command-kit':
         specifier: workspace:*
         version: link:../../../shared/command-kit
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e
@@ -3777,12 +3777,6 @@ importers:
       '@kb-labs/infra-worker-contracts':
         specifier: workspace:*
         version: link:../plugin-template-contracts
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../core/plugin-contracts
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       react:
         specifier: ^19.0.0
         version: 19.2.5
@@ -3793,9 +3787,15 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../../core/plugin-runtime
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2
@@ -3956,9 +3956,6 @@ importers:
 
   plugins/marketplace-registry/entry:
     dependencies:
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       execa:
         specifier: ^9.5.3
         version: 9.6.1
@@ -3969,6 +3966,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e
@@ -4168,22 +4168,22 @@ importers:
 
   plugins/marketplace/entry:
     dependencies:
+      '@kb-labs/marketplace-contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
       '@kb-labs/cli-runtime':
         specifier: workspace:*
         version: link:../../../cli/runtime
       '@kb-labs/core-workspace':
         specifier: workspace:*
         version: link:../../../core/workspace
-      '@kb-labs/marketplace-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
-    devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/shared-cli-ui':
         specifier: workspace:*
         version: link:../../../shared/cli-ui
@@ -4304,13 +4304,13 @@ importers:
       '@kb-labs/mind-core':
         specifier: workspace:*
         version: link:../core
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2
@@ -4354,9 +4354,6 @@ importers:
       '@kb-labs/policy-contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       semver:
         specifier: ^7.6.3
         version: 7.7.4
@@ -4367,6 +4364,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2
@@ -4444,18 +4444,12 @@ importers:
 
   plugins/qa/entry:
     dependencies:
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../core/plugin-contracts
       '@kb-labs/qa-contracts':
         specifier: workspace:*
         version: link:../contracts
       '@kb-labs/qa-core':
         specifier: workspace:*
         version: link:../core
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       js-yaml:
         specifier: ^4.3.2
         version: 4.3.2
@@ -4466,9 +4460,15 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../../core/plugin-runtime
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/studio-plugin-tools':
         specifier: workspace:*
         version: link:../../../studio/plugin-tools
@@ -4576,18 +4576,12 @@ importers:
       '@ant-design/icons':
         specifier: ^5.4.0
         version: 5.6.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../core/plugin-contracts
       '@kb-labs/quality-contracts':
         specifier: workspace:*
         version: link:../contracts
       '@kb-labs/quality-core':
         specifier: workspace:*
         version: link:../core
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       '@tanstack/react-query':
         specifier: ^5.0.0
         version: 5.97.0(react@19.2.5)
@@ -4604,9 +4598,15 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../../core/plugin-runtime
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/studio-plugin-tools':
         specifier: workspace:*
         version: link:../../../studio/plugin-tools
@@ -4735,9 +4735,6 @@ importers:
       '@kb-labs/release-manager-core':
         specifier: workspace:*
         version: link:../manager-core
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       '@kb-labs/studio-plugin-tools':
         specifier: workspace:*
         version: link:../../../studio/plugin-tools
@@ -4760,6 +4757,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@rspack/cli':
         specifier: ^2.2.8
         version: 2.2.8(@rspack/core@2.2.8(@module-federation/runtime-tools@2.3.3))(@rspack/dev-server@2.1.0(@rspack/core@2.2.8(@module-federation/runtime-tools@2.3.3)))
@@ -4949,12 +4949,6 @@ importers:
       '@kb-labs/review-core':
         specifier: workspace:*
         version: link:../core
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
-      '@kb-labs/shared-cli-ui':
-        specifier: workspace:*
-        version: link:../../../shared/cli-ui
       chalk:
         specifier: ^5.3.0
         version: 5.6.2
@@ -4962,6 +4956,12 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
+      '@kb-labs/shared-cli-ui':
+        specifier: workspace:*
+        version: link:../../../shared/cli-ui
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e
@@ -5094,31 +5094,31 @@ importers:
 
   plugins/scaffold/entry:
     dependencies:
-      '@kb-labs/cli-runtime':
-        specifier: workspace:*
-        version: link:../../../cli/runtime
-      '@kb-labs/core-workspace':
-        specifier: workspace:*
-        version: link:../../../core/workspace
       '@kb-labs/scaffold-contracts':
         specifier: workspace:*
         version: link:../contracts
       '@kb-labs/scaffold-core':
         specifier: workspace:*
         version: link:../core
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
-      '@kb-labs/shared-cli-ui':
-        specifier: workspace:*
-        version: link:../../../shared/cli-ui
     devDependencies:
+      '@kb-labs/cli-runtime':
+        specifier: workspace:*
+        version: link:../../../cli/runtime
+      '@kb-labs/core-workspace':
+        specifier: workspace:*
+        version: link:../../../core/workspace
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../../core/plugin-contracts
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
+      '@kb-labs/shared-cli-ui':
+        specifier: workspace:*
+        version: link:../../../shared/cli-ui
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e
@@ -5142,10 +5142,6 @@ importers:
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
   plugins/site-tools/entry:
-    dependencies:
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
@@ -5153,6 +5149,9 @@ importers:
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../../core/plugin-contracts
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.4
@@ -5288,12 +5287,6 @@ importers:
 
   plugins/steward/entry:
     dependencies:
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
-      '@kb-labs/shared-command-kit':
-        specifier: workspace:*
-        version: link:../../../shared/command-kit
       '@kb-labs/steward-contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -5304,6 +5297,12 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
+      '@kb-labs/shared-command-kit':
+        specifier: workspace:*
+        version: link:../../../shared/command-kit
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
@@ -5740,9 +5739,6 @@ importers:
 
   plugins/workflow/entry:
     dependencies:
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       '@kb-labs/workflow-contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -5777,6 +5773,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e

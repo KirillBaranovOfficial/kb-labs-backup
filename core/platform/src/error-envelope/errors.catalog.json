@@ -1558,7 +1558,11 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Plugin {plugin} could not be loaded.",
-      "hint": "Run \"kb marketplace plugins doctor\" to see the manifest or dependency problem."
+      "hint": "Run \"kb marketplace plugins doctor\" to see the manifest or dependency problem.",
+      "structuredDetailFields": [
+        "command",
+        "specifier"
+      ]
     },
     {
       "code": "KB_PLUGIN_NAMESPACE_RESERVED",

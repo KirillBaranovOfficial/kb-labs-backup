@@ -14,6 +14,10 @@ export interface SerializedError {
   message: string;
   stack?: string;
   cause?: SerializedError;
+  moduleResolution?: {
+    code: 'ERR_MODULE_NOT_FOUND' | 'MODULE_NOT_FOUND';
+    specifier: string;
+  };
 }
 
 /** Reconstructed IPC failure that preserves both its public envelope and source diagnostics. */
@@ -34,11 +38,13 @@ export function serializeError(value: unknown): SerializedError {
   if (value instanceof SerializedErrorEnvelopeError) return value.serializedError;
   if (value instanceof Error) {
     const cause = value.cause === undefined ? undefined : serializeError(value.cause);
+    const moduleResolution = moduleResolutionOf(value);
     return {
       name: value.name || 'Error',
       message: value.message,
       ...(value.stack ? { stack: value.stack } : {}),
       ...(cause ? { cause } : {}),
+      ...(moduleResolution ? { moduleResolution } : {}),
     };
   }
 
@@ -48,6 +54,15 @@ export function serializeError(value: unknown): SerializedError {
     name: 'NonErrorThrown',
     message: typeof value === 'string' ? value : String(value),
   };
+}
+
+function moduleResolutionOf(error: Error): SerializedError['moduleResolution'] {
+  const candidate = error as Error & { code?: unknown; specifier?: unknown };
+  if ((candidate.code === 'ERR_MODULE_NOT_FOUND' || candidate.code === 'MODULE_NOT_FOUND') &&
+      typeof candidate.specifier === 'string' && candidate.specifier.length > 0) {
+    return { code: candidate.code, specifier: candidate.specifier };
+  }
+  return undefined;
 }
 
 function isSerializedError(value: unknown): value is SerializedError {

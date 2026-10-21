@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/marketplace-entry",
-  "description": "Marketplace CLI plugin — commands for managing plugins, adapters, and other marketplace entities",
+  "description": "Marketplace CLI plugin \u2014 commands for managing plugins, adapters, and other marketplace entities",
   "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
@@ -28,10 +28,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/cli-runtime": "workspace:*",
-    "@kb-labs/core-workspace": "workspace:*",
-    "@kb-labs/marketplace-contracts": "workspace:*",
-    "@kb-labs/sdk": "workspace:*"
+    "@kb-labs/marketplace-contracts": "workspace:*"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
@@ -40,7 +37,10 @@
     "tsup": "^8.5.0",
     "typescript": "^5",
     "vitest": "^4.1.11",
-    "@kb-labs/shared-cli-ui": "workspace:*"
+    "@kb-labs/shared-cli-ui": "workspace:*",
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-workspace": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
     "node": "24.x",
@@ -51,6 +51,9 @@
   },
   "sideEffects": false,
   "peerDependencies": {
-    "@kb-labs/shared-cli-ui": "workspace:*"
+    "@kb-labs/shared-cli-ui": "workspace:*",
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-workspace": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
   }
 }

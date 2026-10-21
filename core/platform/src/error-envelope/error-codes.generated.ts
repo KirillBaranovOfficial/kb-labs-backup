@@ -654,7 +654,7 @@ export interface CatalogDetailsFor {
   "KB_PLUGIN_CRASHED": { "plugin": string };
   "KB_PLUGIN_INSTALL_FAILED": { "plugin": string };
   "KB_PLUGIN_INTEGRITY_MISMATCH": { "actual": string; "expected": string; "plugin": string };
-  "KB_PLUGIN_LOAD_FAILED": { "plugin": string };
+  "KB_PLUGIN_LOAD_FAILED": { "plugin": string; "command"?: string; "specifier"?: string };
   "KB_PLUGIN_NAMESPACE_RESERVED": { "namespace": string };
   "KB_PLUGIN_NAMESPACE_TAKEN": { "namespace": string; "owner": string };
   "KB_PLUGIN_NOT_FOUND": { "plugin": string };
@@ -2467,7 +2467,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_PLUGIN_CRASHED": [],
   "KB_PLUGIN_INSTALL_FAILED": [],
   "KB_PLUGIN_INTEGRITY_MISMATCH": [],
-  "KB_PLUGIN_LOAD_FAILED": [],
+  "KB_PLUGIN_LOAD_FAILED": ["command","specifier"],
   "KB_PLUGIN_NAMESPACE_RESERVED": [],
   "KB_PLUGIN_NAMESPACE_TAKEN": [],
   "KB_PLUGIN_NOT_FOUND": [],

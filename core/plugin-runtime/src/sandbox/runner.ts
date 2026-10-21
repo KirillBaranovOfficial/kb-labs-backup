@@ -34,6 +34,7 @@ import { rehydrateWSInput } from '../ws/sender.js';
 import type { WSInputReference } from '@kb-labs/plugin-contracts';
 import { executeCleanup, type PluginInvokerFn, type EventEmitterFn } from '../api/index.js';
 import type { LoadedMiddleware } from '../platform/pipeline.js';
+import { installPlatformResolveHook } from '../platform-resolve/index.js';
 
 /**
  * Create execution metadata from descriptor and timing
@@ -136,6 +137,14 @@ export async function runInProcess<T = unknown>(
         from: originalSource?.product,
         to: descriptor.pluginId,
       });
+    }
+
+    // Plugin code can be outside the installed platform tree (for example, a
+    // Marketplace store entry). Resolve its platform packages from the one
+    // platform copy in this process before importing the handler.
+    const platformRoot = process.env.KB_PLATFORM_ROOT;
+    if (platformRoot) {
+      installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }
 
     // Import and execute handler

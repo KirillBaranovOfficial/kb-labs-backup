@@ -40,7 +40,6 @@
     "@kb-labs/release-manager-checks": "workspace:*",
     "@kb-labs/release-manager-contracts": "workspace:*",
     "@kb-labs/release-manager-core": "workspace:*",
-    "@kb-labs/sdk": "workspace:*",
     "@kb-labs/studio-plugin-tools": "workspace:*",
     "glob": "^11.0.0",
     "globby": "^11.0.0",
@@ -61,7 +60,8 @@
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
     "node": "24.x",
@@ -72,7 +72,8 @@
   },
   "peerDependencies": {
     "react": "^19.0.0",
-    "react-router-dom": ">=6.0.0"
+    "react-router-dom": ">=6.0.0",
+    "@kb-labs/sdk": "workspace:*"
   },
   "repository": {
     "type": "git",
