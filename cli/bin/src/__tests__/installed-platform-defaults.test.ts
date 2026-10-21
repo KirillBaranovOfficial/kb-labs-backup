@@ -431,9 +431,6 @@ describe('installed platform adapter defaults', () => {
     expect(initialized.status, initialized.stderr).toBe(0);
     const gitRepositories = new Set([projectRoot]);
     await symlink(versionRoot, platformRoot, 'dir');
-    const platformPackages = path.join(versionRoot, 'node_modules', '@kb-labs');
-    await mkdir(platformPackages, { recursive: true });
-    await symlink(path.join(workspaceRoot, 'sdk/sdk'), path.join(platformPackages, 'sdk'), 'dir');
     await writeFile(
       path.join(versionRoot, '.kb', 'v2', 'platform-layout.json'),
       await readFile(path.join(workspaceRoot, 'tools/kb-create/v2/contracts/platform-layout.json')),
