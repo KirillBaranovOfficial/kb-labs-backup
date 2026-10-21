@@ -1,9 +1,13 @@
 package engine
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kb-labs/devkit/internal/cache"
 	"github.com/kb-labs/devkit/internal/config"
@@ -73,7 +77,7 @@ func TestRunE2ECachesAndRestoresOutputs(t *testing.T) {
 	}
 
 	summary := second.Summary()
-	if summary.Scheduled != 1 || summary.Cached != 1 || summary.Passed != 0 || summary.Failed != 0 || summary.Skipped != 0 {
+	if summary.Scheduled != 1 || summary.Cached != 1 || summary.Passed != 0 || summary.Failed != 0 || summary.Blocked != 0 || summary.NotAffected != 0 {
 		t.Fatalf("unexpected summary: %+v", summary)
 	}
 }
@@ -118,7 +122,7 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	if second.OK || len(second.Results) != 1 || second.Results[0].Cached {
 		t.Fatalf("second run = %+v, want a fresh failed execution", second)
 	}
-	if summary := second.Summary(); summary.Scheduled != 1 || summary.Passed != 0 || summary.Failed != 1 || summary.Cached != 0 || summary.Skipped != 0 {
+	if summary := second.Summary(); summary.Scheduled != 1 || summary.Passed != 0 || summary.Failed != 1 || summary.Cached != 0 || summary.Blocked != 0 || summary.NotAffected != 0 {
 		t.Fatalf("second summary = %+v, want total=1 passed=0 failed=1 cached=0", summary)
 	}
 	if err := os.WriteFile(filepath.Join(root, "packages", "dependency.ready"), nil, 0o644); err != nil {
@@ -129,7 +133,7 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	if !third.OK || len(third.Results) != 1 || third.Results[0].Cached {
 		t.Fatalf("third run = %+v, want a fresh successful execution", third)
 	}
-	if summary := third.Summary(); summary.Scheduled != 1 || summary.Passed != 1 || summary.Failed != 0 || summary.Cached != 0 || summary.Skipped != 0 {
+	if summary := third.Summary(); summary.Scheduled != 1 || summary.Passed != 1 || summary.Failed != 0 || summary.Cached != 0 || summary.Blocked != 0 || summary.NotAffected != 0 {
 		t.Fatalf("third summary = %+v, want total=1 passed=1 failed=0 cached=0", summary)
 	}
 
@@ -146,11 +150,12 @@ func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing
 	writePkg(t, filepath.Join(root, "packages", "core"), `{"name":"@fixture/core"}`)
 	writePkg(t, filepath.Join(root, "packages", "middle"), `{"name":"@fixture/middle","dependencies":{"@fixture/core":"workspace:*"}}`)
 	writePkg(t, filepath.Join(root, "packages", "app"), `{"name":"@fixture/app","dependencies":{"@fixture/middle":"workspace:*"}}`)
-	app := filepath.Join(root, "packages", "app")
+	writePkg(t, filepath.Join(root, "packages", "independent"), `{"name":"@fixture/independent"}`)
+	writePkg(t, filepath.Join(root, "packages", "untouched"), `{"name":"@fixture/untouched"}`)
 
 	cfg := testConfig([]config.NamedCategory{
 		{Name: "core", Category: config.CategoryConfig{Match: []string{"packages/core"}, Preset: "node-lib"}},
-		{Name: "libraries", Category: config.CategoryConfig{Match: []string{"packages/middle", "packages/app"}, Preset: "node-lib"}},
+		{Name: "libraries", Category: config.CategoryConfig{Match: []string{"packages/middle", "packages/app", "packages/independent", "packages/untouched"}, Preset: "node-lib"}},
 	})
 	cfg.Tasks = map[string]config.TaskConfig{
 		"build": {
@@ -161,33 +166,78 @@ func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing
 	ws := mustWorkspace(t, root, cfg)
 	var selected []workspace.Package
 	for _, pkg := range ws.Packages {
-		if pkg.Dir == app {
+		if pkg.Dir != filepath.Join(root, "packages", "untouched") {
 			selected = append(selected, pkg)
 		}
 	}
-	if len(selected) != 1 {
-		t.Fatalf("selected app packages = %+v; want one", selected)
+	if len(selected) != 4 {
+		t.Fatalf("selected packages = %+v; want core, middle, app, and independent", selected)
 	}
 
 	result, err := Run(ws, cfg, RunOptions{
 		Tasks:     []string{"build"},
 		Packages:  selected,
+		Affected:  true,
 		WSRoot:    root,
 		CacheRoot: filepath.Join(root, ".kb", "devkit-cache"),
 	})
-	if err != nil || result.OK || len(result.Results) != 1 {
-		t.Fatalf("failed dependency run = %+v, error = %v; want one failed root task", result, err)
+	if err != nil || result.OK || len(result.Results) != 2 {
+		t.Fatalf("failed dependency run = %+v, error = %v; want failed root and independent result", result, err)
 	}
 	summary := result.Summary()
-	if summary.Scheduled != 3 || summary.Passed != 0 || summary.Cached != 0 || summary.Failed != 1 || summary.Skipped != 2 {
-		t.Fatalf("failed dependency summary = %+v; want scheduled=3 failed=1 skipped=2", summary)
+	if summary.Scheduled != 4 || summary.Passed != 1 || summary.Cached != 0 || summary.Failed != 1 || summary.Blocked != 2 || summary.NotAffected != 1 {
+		t.Fatalf("failed dependency summary = %+v; want scheduled=4 passed=1 failed=1 blocked=2 notAffected=1", summary)
 	}
-	if summary.Passed+summary.Cached+summary.Failed+summary.Skipped != summary.Scheduled {
+	if summary.Passed+summary.Cached+summary.Failed+summary.Blocked != summary.Scheduled {
 		t.Fatalf("summary counts do not partition scheduled tasks: %+v", summary)
 	}
-	if len(summary.BlockedTasks) != 1 || summary.BlockedTasks[0].Package != "@fixture/core" ||
-		summary.BlockedTasks[0].Task != "build" || summary.BlockedTasks[0].Dependents != 2 {
-		t.Fatalf("blocked task details = %+v; want @fixture/core:build blocked 2 dependents", summary.BlockedTasks)
+	blocked := make(map[string]string, len(summary.BlockedTasks))
+	for _, task := range summary.BlockedTasks {
+		blocked[task.Package] = task.BlockedByPackage + ":" + task.BlockedByTask
+	}
+	if blocked["@fixture/middle"] != "@fixture/core:build" || blocked["@fixture/app"] != "@fixture/core:build" {
+		t.Fatalf("blocked task details = %+v; want middle and app blocked-by @fixture/core:build", summary.BlockedTasks)
+	}
+	independentPassed := false
+	for _, task := range result.Results {
+		if task.Package == "@fixture/independent" && task.OK {
+			independentPassed = true
+		}
+	}
+	if result.NotAffected != 1 || !independentPassed {
+		t.Fatalf("result = %+v; want independent branch passed and one not-affected task", result)
+	}
+}
+
+// case: S-179.19
+func TestRunIncludesDeclaredTaskDependenciesWhenOnlyTheDependentWasRequested(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	writePkg(t, filepath.Join(root, "packages", "package"), `{"name":"@fixture/package"}`)
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "package", Category: config.CategoryConfig{Match: []string{"packages/package"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"prepare": {{Command: `sh -c "printf ready > prepared.txt"`}},
+		"build":   {{Command: `sh -c "test -f prepared.txt"`, Deps: []string{"prepare"}}},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	nodes, err := buildDAG(ws.Packages, []string{"build"}, cfg, ws)
+	if err != nil {
+		t.Fatalf("buildDAG error: %v", err)
+	}
+	buildNode := nodes[nodeKey{pkg: "@fixture/package", task: "build"}]
+	if len(buildNode.deps) != 1 || buildNode.deps[0] != (nodeKey{pkg: "@fixture/package", task: "prepare"}) {
+		t.Fatalf("build dependencies = %+v; want same-package prepare task", buildNode.deps)
+	}
+	result, err := Run(ws, cfg, RunOptions{
+		Tasks: []string{"build"}, WSRoot: root, CacheRoot: filepath.Join(root, ".kb", "devkit-cache"), Concurrency: 1,
+	})
+	if err != nil || !result.OK || len(result.Results) != 2 {
+		t.Fatalf("Run = %+v, error = %v; want prepare then build", result, err)
+	}
+	if result.Results[0].Task != "prepare" || result.Results[1].Task != "build" {
+		t.Fatalf("task results = %+v; want prepare before build", result.Results)
 	}
 }
 
@@ -424,8 +474,7 @@ func TestRunMarksNotExecutedPackagesAsDirty(t *testing.T) {
 		t.Fatal("both packages should be CLEAN after phase 1")
 	}
 
-	// Phase 2: core fails → app (in a later layer) never runs.
-	// app was CLEAN; scheduler hard stop must mark it DIRTY.
+	// Phase 2: core fails → app is blocked and must be marked DIRTY for retry.
 	cfg.Tasks["build"] = config.TaskConfig{{Command: `sh -c "exit 1"`, Deps: []string{"^build"}}}
 	r2, err := Run(ws, cfg, RunOptions{
 		Tasks: []string{"build"}, WSRoot: root, CacheRoot: cacheRoot, Concurrency: 1, NoCache: true,
@@ -441,9 +490,9 @@ func TestRunMarksNotExecutedPackagesAsDirty(t *testing.T) {
 	if !ss.IsDirty("@kb/core", "build") {
 		t.Fatal("@kb/core:build should be DIRTY (actually failed)")
 	}
-	// app: was CLEAN, skipped by scheduler hard stop → must be DIRTY
+	// app: was CLEAN, blocked by the failed dependency → must be DIRTY
 	if !ss.IsDirty("@kb/app", "build") {
-		t.Fatal("@kb/app:build should be DIRTY (was CLEAN but skipped due to hard stop)")
+		t.Fatal("@kb/app:build should be DIRTY (was CLEAN but blocked by dependency failure)")
 	}
 }
 
@@ -531,4 +580,102 @@ func writeEngineFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+// case: S-179.41
+func TestRunEmitsTaskResultBeforeSlowPeerCompletes(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	writePkg(t, filepath.Join(root, "packages", "slow"), `{"name":"@fixture/slow"}`)
+	writePkg(t, filepath.Join(root, "packages", "fast"), `{"name":"@fixture/fast"}`)
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "slow", Category: config.CategoryConfig{Match: []string{"packages/slow"}, Preset: "node-lib"}},
+		{Name: "fast", Category: config.CategoryConfig{Match: []string{"packages/fast"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {
+			{Categories: []string{"slow"}, Command: `sh -c "sleep 12"`},
+			{Categories: []string{"fast"}, Command: `sh -c "sleep 0.05"`},
+		},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	resultReader, resultWriter := io.Pipe()
+	completionLines := make(chan string, 2)
+	go func() {
+		scanner := bufio.NewScanner(resultReader)
+		for scanner.Scan() {
+			completionLines <- scanner.Text()
+		}
+		close(completionLines)
+	}()
+	slowFinished := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err := Run(ws, cfg, RunOptions{
+			Tasks: []string{"build"}, WSRoot: root, CacheRoot: filepath.Join(root, ".kb", "devkit-cache"), Concurrency: 2,
+			OnResult: func(result TaskResult, _, _ int) {
+				if _, err := fmt.Fprintf(resultWriter, "%s:%s\n", result.Package, result.Task); err != nil {
+					t.Errorf("write completion line: %v", err)
+				}
+				if result.Package == "@fixture/slow" {
+					close(slowFinished)
+				}
+			},
+		})
+		_ = resultWriter.Close()
+		if err != nil {
+			t.Errorf("Run error: %v", err)
+		}
+	}()
+	t.Cleanup(func() { <-done })
+	select {
+	case line := <-completionLines:
+		if line != "@fixture/fast:build" {
+			t.Fatalf("first completion line = %q, want the fast task", line)
+		}
+		select {
+		case <-slowFinished:
+			t.Fatal("slow subprocess completed before the fast task's output line")
+		default:
+		}
+	case <-done:
+		t.Fatal("Run completed without emitting the fast task result while the slow task was still running")
+	case <-time.After(8 * time.Second):
+		t.Fatal("fast task completion output was not emitted before the slow subprocess completed")
+	}
+	<-done
+}
+
+// case: S-179.41
+func TestExecutorEmitsHeartbeatBeforeSlowSubprocessCompletes(t *testing.T) {
+	root := t.TempDir()
+	store, err := cache.NewLocalStore(filepath.Join(root, ".kb", "devkit-cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := NewExecutor(store, cache.NewManifestStore(filepath.Join(root, ".kb", "devkit-cache")), cache.NewStateStore(filepath.Join(root, ".kb", "devkit-cache")), root, filepath.Join(root, ".kb", "devkit-cache"), false)
+	heartbeat := make(chan string, 1)
+	exec.onHeartbeat = func(packageName, taskName string, elapsed time.Duration) {
+		select {
+		case heartbeat <- fmt.Sprintf("%s:%s elapsed %s", packageName, taskName, elapsed.Round(time.Millisecond)):
+		default:
+		}
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _, _ = exec.runCommand(`sh -c "sleep 1"`, root, "@fixture/slow", "build", 100*time.Millisecond)
+	}()
+	select {
+	case line := <-heartbeat:
+		if line == "" {
+			t.Fatal("heartbeat line was empty")
+		}
+	case <-done:
+		t.Fatal("slow subprocess completed before its heartbeat")
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("heartbeat was not emitted before the slow subprocess completed")
+	}
+	<-done
 }

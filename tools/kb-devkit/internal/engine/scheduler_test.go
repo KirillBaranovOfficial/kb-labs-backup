@@ -62,6 +62,9 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 	}
 
 	for key, node := range nodes {
+		if key.task != "build" {
+			continue
+		}
 		def := ResolveTaskDef(cfg, "build", node.pkg.Category)
 		if def == nil || !containsTask(def.Deps, "^build") {
 			continue

@@ -110,7 +110,11 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 	}
 	cfg := &config.DevkitConfig{
 		Presets: map[string]config.Preset{"typescript": {Language: "typescript"}},
-		Custom:  []config.CustomCheck{{Name: "workspace-check", Run: scriptPath, On: []string{"check"}, Scope: "workspace"}},
+		Tasks: map[string]config.TaskConfig{
+			"verify": {{Command: "true"}},
+			"build":  {{Command: "true"}},
+		},
+		Custom: []config.CustomCheck{{Name: "workspace-check", Run: scriptPath, On: []string{"check"}, Scope: "workspace"}},
 	}
 	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{
 		{Name: "@acme/adapter", Dir: filepath.Join(root, "adapters", "adapter"), Category: "adapter", Preset: "typescript", Language: "typescript", RelPath: "adapters/adapter"},
@@ -121,7 +125,8 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 		t.Fatalf("workspace check calls = %q, want one invocation", got)
 	}
 	var input struct {
-		Workspace struct {
+		GraphTasks []string `json:"graphTasks"`
+		Workspace  struct {
 			Root     string `json:"root"`
 			Packages []struct {
 				Name        string `json:"name"`
@@ -136,6 +141,9 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 	}
 	if input.Workspace.Root != root || len(input.Workspace.Packages) != 2 {
 		t.Fatalf("workspace input = %#v, want root and both discovered packages", input.Workspace)
+	}
+	if len(input.GraphTasks) != 2 || input.GraphTasks[0] != "build" || input.GraphTasks[1] != "verify" {
+		t.Fatalf("graph tasks = %#v, want sorted keys from DevkitConfig.Tasks", input.GraphTasks)
 	}
 	if input.Workspace.Packages[0].Category != "adapter" || input.Workspace.Packages[1].Category != "ts-lib" {
 		t.Fatalf("package categories = %#v, want resolved devkit categories", input.Workspace.Packages)
