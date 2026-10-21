@@ -78,17 +78,18 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 		return strings.Count(string(data), "run\n")
 	}
 	assertCounts := func(summary struct {
-		Scheduled int `json:"scheduled"`
-		Passed    int `json:"passed"`
-		Cached    int `json:"cached"`
-		Failed    int `json:"failed"`
-		Skipped   int `json:"skipped"`
-	}, total, passed, cached, failed, skipped int) {
+		Scheduled   int `json:"scheduled"`
+		Passed      int `json:"passed"`
+		Cached      int `json:"cached"`
+		Failed      int `json:"failed"`
+		Blocked     int `json:"blocked"`
+		NotAffected int `json:"notAffected"`
+	}, total, passed, cached, failed, blocked, notAffected int) {
 		t.Helper()
-		if summary.Scheduled != total || summary.Passed != passed || summary.Cached != cached || summary.Failed != failed || summary.Skipped != skipped {
-			t.Fatalf("summary = %+v, want total=%d passed=%d cached=%d failed=%d skipped=%d", summary, total, passed, cached, failed, skipped)
+		if summary.Scheduled != total || summary.Passed != passed || summary.Cached != cached || summary.Failed != failed || summary.Blocked != blocked || summary.NotAffected != notAffected {
+			t.Fatalf("summary = %+v, want total=%d passed=%d cached=%d failed=%d blocked=%d notAffected=%d", summary, total, passed, cached, failed, blocked, notAffected)
 		}
-		if summary.Passed+summary.Cached+summary.Failed+summary.Skipped != summary.Scheduled {
+		if summary.Passed+summary.Cached+summary.Failed+summary.Blocked != summary.Scheduled {
 			t.Fatalf("summary counts do not partition total: %+v", summary)
 		}
 	}
@@ -97,7 +98,7 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 	code, human, stderr := run()
 	if code != 1 || !strings.Contains(string(human), "@fixture/core") ||
 		!strings.Contains(string(human), "0 passed") || !strings.Contains(string(human), "0 cached") ||
-		!strings.Contains(string(human), "1 failed") || !strings.Contains(string(human), "2 skipped") {
+		!strings.Contains(string(human), "1 failed") || !strings.Contains(string(human), "2 blocked") {
 		t.Fatalf("first human failure: exit=%d stdout=%s stderr=%s", code, human, stderr)
 	}
 	if readRunCount() != 1 {
@@ -124,11 +125,12 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 				LogPath string `json:"logPath"`
 			} `json:"results"`
 			Summary struct {
-				Scheduled int `json:"scheduled"`
-				Passed    int `json:"passed"`
-				Cached    int `json:"cached"`
-				Failed    int `json:"failed"`
-				Skipped   int `json:"skipped"`
+				Scheduled   int `json:"scheduled"`
+				Passed      int `json:"passed"`
+				Cached      int `json:"cached"`
+				Failed      int `json:"failed"`
+				Blocked     int `json:"blocked"`
+				NotAffected int `json:"notAffected"`
 			} `json:"summary"`
 		} `json:"data"`
 	}
@@ -151,7 +153,7 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 	if log, err := exec.Command("cat", failed.LogPath).Output(); err != nil || !strings.Contains(string(log), "command exited with code 1") {
 		t.Fatalf("read failed task log with its recovery action at %q = %q, error = %v", failed.LogPath, log, err)
 	}
-	assertCounts(failure.Data.Summary, 3, 0, 0, 1, 2)
+	assertCounts(failure.Data.Summary, 3, 0, 0, 1, 2, 0)
 	if readRunCount() != 2 {
 		t.Fatalf("unchanged failure execution count = %d, want 2", readRunCount())
 	}
@@ -161,7 +163,7 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 	}
 	code, human, stderr = run()
 	if code != 0 || !strings.Contains(string(human), "3 passed") || !strings.Contains(string(human), "0 cached") ||
-		!strings.Contains(string(human), "0 failed") || !strings.Contains(string(human), "0 skipped") {
+		!strings.Contains(string(human), "0 failed") || !strings.Contains(string(human), "0 blocked") {
 		t.Fatalf("recovered human run: exit=%d stdout=%s stderr=%s", code, human, stderr)
 	}
 	code, output, stderr = run("--json")
@@ -175,11 +177,12 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 				Cached bool `json:"cached"`
 			} `json:"results"`
 			Summary struct {
-				Scheduled int `json:"scheduled"`
-				Passed    int `json:"passed"`
-				Cached    int `json:"cached"`
-				Failed    int `json:"failed"`
-				Skipped   int `json:"skipped"`
+				Scheduled   int `json:"scheduled"`
+				Passed      int `json:"passed"`
+				Cached      int `json:"cached"`
+				Failed      int `json:"failed"`
+				Blocked     int `json:"blocked"`
+				NotAffected int `json:"notAffected"`
 			} `json:"summary"`
 		} `json:"data"`
 	}
@@ -194,7 +197,7 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 			t.Fatalf("successful task was not cached in final run: %+v", success.Data.Results)
 		}
 	}
-	assertCounts(success.Data.Summary, 3, 0, 3, 0, 0)
+	assertCounts(success.Data.Summary, 3, 0, 3, 0, 0, 0)
 }
 
 // case: S-179.23
@@ -237,8 +240,9 @@ func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing
 	humanOutput, humanErr := humanCommand.Output()
 	humanExit, humanFailed := humanErr.(*exec.ExitError)
 	if !humanFailed || humanExit.ExitCode() != 1 || !strings.Contains(string(humanOutput), "3 scheduled") ||
-		!strings.Contains(string(humanOutput), "1 failed") || !strings.Contains(string(humanOutput), "2 skipped") ||
-		!strings.Contains(string(humanOutput), "@fixture/core:build blocked 2 dependents") {
+		!strings.Contains(string(humanOutput), "1 failed") || !strings.Contains(string(humanOutput), "2 blocked") ||
+		!strings.Contains(string(humanOutput), "@fixture/middle:build blocked-by @fixture/core:build") ||
+		!strings.Contains(string(humanOutput), "@fixture/app:build blocked-by @fixture/core:build") {
 		var humanStderr []byte
 		if humanExit != nil {
 			humanStderr = humanExit.Stderr
@@ -258,15 +262,17 @@ func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing
 		} `json:"error"`
 		Data struct {
 			Summary struct {
-				Scheduled int `json:"scheduled"`
-				Passed    int `json:"passed"`
-				Cached    int `json:"cached"`
-				Failed    int `json:"failed"`
-				Skipped   int `json:"skipped"`
-				Blocked   []struct {
-					Package    string `json:"package"`
-					Task       string `json:"task"`
-					Dependents int    `json:"dependents"`
+				Scheduled    int `json:"scheduled"`
+				Passed       int `json:"passed"`
+				Cached       int `json:"cached"`
+				Failed       int `json:"failed"`
+				Blocked      int `json:"blocked"`
+				NotAffected  int `json:"notAffected"`
+				BlockedTasks []struct {
+					Package          string `json:"package"`
+					Task             string `json:"task"`
+					BlockedByPackage string `json:"blockedByPackage"`
+					BlockedByTask    string `json:"blockedByTask"`
 				} `json:"blockedTasks"`
 			} `json:"summary"`
 		} `json:"data"`
@@ -275,15 +281,15 @@ func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing
 		t.Fatalf("decode failed-run JSON %q: %v", output, err)
 	}
 	summary := payload.Data.Summary
-	if summary.Scheduled != 3 || summary.Passed != 0 || summary.Cached != 0 || summary.Failed != 1 || summary.Skipped != 2 {
-		t.Fatalf("failed-run summary = %#v, want scheduled=3 failed=1 skipped=2", summary)
+	if summary.Scheduled != 3 || summary.Passed != 0 || summary.Cached != 0 || summary.Failed != 1 || summary.Blocked != 2 || summary.NotAffected != 0 {
+		t.Fatalf("failed-run summary = %#v, want scheduled=3 failed=1 blocked=2", summary)
 	}
-	if summary.Passed+summary.Cached+summary.Failed+summary.Skipped != summary.Scheduled {
+	if summary.Passed+summary.Cached+summary.Failed+summary.Blocked != summary.Scheduled {
 		t.Fatalf("summary does not partition scheduled tasks: %#v", summary)
 	}
-	if len(summary.Blocked) != 1 || summary.Blocked[0].Package != "@fixture/core" ||
-		summary.Blocked[0].Task != "build" || summary.Blocked[0].Dependents != 2 {
-		t.Fatalf("blocked task detail = %+v, want @fixture/core:build blocked 2 dependents", summary.Blocked)
+	if len(summary.BlockedTasks) != 2 || summary.BlockedTasks[0].BlockedByPackage != "@fixture/core" ||
+		summary.BlockedTasks[0].BlockedByTask != "build" {
+		t.Fatalf("blocked task details = %+v, want two tasks blocked by @fixture/core:build", summary.BlockedTasks)
 	}
 }
 

@@ -28,7 +28,6 @@
     "dev:studio": "rspack build --config rspack.studio.config.mjs --watch",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint . --fix",
-    "pretype-check": "pnpm --filter @kb-labs/qa-entry build",
     "test": "vitest run --passWithNoTests",
     "test:cli": "vitest run --config vitest.cli.config.ts --passWithNoTests",
     "test:watch": "vitest",

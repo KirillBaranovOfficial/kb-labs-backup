@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kb-labs/devkit/internal/cache"
 	"github.com/kb-labs/devkit/internal/config"
@@ -24,17 +25,21 @@ type RunOptions struct {
 	Concurrency int
 	WSRoot      string
 	CacheRoot   string // path to .kb/devkit/
+	Affected    bool   // selection came from --affected
 
 	// OnResult is called immediately when each (pkg, task) finishes.
 	// Called from the scheduler goroutine — must be safe to print to stdout.
 	// total is the total number of (pkg, task) nodes scheduled.
 	OnResult func(r TaskResult, done, total int)
+	// OnHeartbeat is called once per interval for each running task.
+	OnHeartbeat func(packageName, taskName string, elapsed time.Duration)
 }
 
 // RunResult is the aggregate result of a scheduler run.
 type RunResult struct {
 	OK           bool
 	Scheduled    int
+	NotAffected  int
 	Results      []TaskResult
 	BlockedTasks []BlockedTask
 }
@@ -42,6 +47,7 @@ type RunResult struct {
 func (r RunResult) Summary() RunSummary {
 	s := RunSummary{
 		Scheduled:    r.Scheduled,
+		NotAffected:  r.NotAffected,
 		BlockedTasks: append([]BlockedTask{}, r.BlockedTasks...),
 	}
 	for _, res := range r.Results {
@@ -54,7 +60,7 @@ func (r RunResult) Summary() RunSummary {
 			s.Failed++
 		}
 	}
-	s.Skipped = s.Scheduled - len(r.Results)
+	s.Blocked = len(r.BlockedTasks)
 	return s
 }
 
@@ -64,15 +70,17 @@ type RunSummary struct {
 	Passed       int           `json:"passed"`
 	Failed       int           `json:"failed"`
 	Cached       int           `json:"cached"`
-	Skipped      int           `json:"skipped"`
+	Blocked      int           `json:"blocked"`
+	NotAffected  int           `json:"notAffected"`
 	BlockedTasks []BlockedTask `json:"blockedTasks"`
 }
 
-// BlockedTask records the downstream task count omitted after a failed task.
+// BlockedTask records a scheduled task prevented from running by a failed task.
 type BlockedTask struct {
-	Package    string `json:"package"`
-	Task       string `json:"task"`
-	Dependents int    `json:"dependents"`
+	Package          string `json:"package"`
+	Task             string `json:"task"`
+	BlockedByPackage string `json:"blockedByPackage"`
+	BlockedByTask    string `json:"blockedByTask"`
 }
 
 // TaskGraphError reports a declared workspace task dependency that cannot be
@@ -102,6 +110,10 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	if containsTask(opts.Tasks, "build") {
 		pkgs = expandBuildDependencyClosure(pkgs, ws.Packages)
 	}
+	selectedPackageNames := make(map[string]bool, len(pkgs))
+	for _, pkg := range pkgs {
+		selectedPackageNames[pkg.Name] = true
+	}
 
 	// Validate all requested tasks exist in config (at least one variant).
 	for _, name := range opts.Tasks {
@@ -122,11 +134,24 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	manifests := cache.NewManifestStore(cacheRoot)
 	states := cache.NewStateStore(cacheRoot)
 	executor := NewExecutor(objects, manifests, states, opts.WSRoot, cacheRoot, opts.LiveOutput)
+	executor.onHeartbeat = opts.OnHeartbeat
 
 	// Build DAG of (pkg, task) nodes — only for packages with a matching variant.
 	nodes, err := buildDAG(pkgs, opts.Tasks, cfg, ws)
 	if err != nil {
 		return RunResult{}, err
+	}
+	notAffected := 0
+	if opts.Affected {
+		allNodes, err := buildDAG(ws.Packages, opts.Tasks, cfg, ws)
+		if err != nil {
+			return RunResult{}, err
+		}
+		for key := range allNodes {
+			if !selectedPackageNames[key.pkg] {
+				notAffected++
+			}
+		}
 	}
 
 	// Precompute direct workspace dep directories for each package in the run.
@@ -189,30 +214,36 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	done := 0
 	var allResults []TaskResult
 	failed := false
+	blockedBy := make(map[nodeKey]nodeKey)
 
 	for len(queue) > 0 {
 		layer := queue
 		queue = nil
 
-		layerResults := runLayer(layer, nodes, executor, cfg, opts.NoCache, concurrency, pkgDepDirs)
+		var resultMu sync.Mutex
+		complete := func(result TaskResult) {
+			if opts.OnResult == nil {
+				return
+			}
+			resultMu.Lock()
+			defer resultMu.Unlock()
+			done++
+			opts.OnResult(result, done, total)
+		}
+		layerResults := runLayer(layer, nodes, executor, cfg, opts.NoCache, concurrency, pkgDepDirs, complete)
 		allResults = append(allResults, layerResults...)
 
 		for _, r := range layerResults {
-			done++
-			if opts.OnResult != nil {
-				opts.OnResult(r, done, total)
-			}
+			key := nodeKey{r.Package, r.Task}
 			if !r.OK && !r.Cached {
 				failed = true
+				markBlockedDependents(key, revDeps, blockedBy)
+				continue
 			}
-		}
-
-		if failed {
-			break
-		}
-
-		for _, k := range layer {
-			for _, dependent := range revDeps[k] {
+			for _, dependent := range revDeps[key] {
+				if blockedBy[dependent] != (nodeKey{}) {
+					continue
+				}
 				inDegree[dependent]--
 				if inDegree[dependent] == 0 {
 					queue = append(queue, dependent)
@@ -229,58 +260,38 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		}
 	}
 
-	// Mark nodes that were scheduled but never executed as DIRTY.
-	// This happens when the scheduler hard-stops after a failure: packages in
-	// later layers never run, but their prior CLEAN state would cause --affected
-	// to skip them on the next run. Marking them DIRTY ensures they are retried.
+	blockedTasks := make([]BlockedTask, 0, len(blockedBy))
+	for key, blocker := range blockedBy {
+		blockedTasks = append(blockedTasks, BlockedTask{
+			Package: key.pkg, Task: key.task,
+			BlockedByPackage: blocker.pkg, BlockedByTask: blocker.task,
+		})
+		_ = states.SetDirty(key.pkg, key.task, "blocked_by_failure")
+	}
+	sort.Slice(blockedTasks, func(i, j int) bool {
+		if blockedTasks[i].Package == blockedTasks[j].Package {
+			return blockedTasks[i].Task < blockedTasks[j].Task
+		}
+		return blockedTasks[i].Package < blockedTasks[j].Package
+	})
 	if failed {
-		executed := make(map[nodeKey]bool, len(allResults))
-		for _, r := range allResults {
-			executed[nodeKey{r.Package, r.Task}] = true
-		}
-		for k := range nodes {
-			if !executed[k] {
-				_ = states.SetDirty(k.pkg, k.task, "not_executed")
-			}
-		}
-		blockedTasks := failedTaskDependents(allResults, revDeps, executed)
-		return RunResult{OK: false, Scheduled: total, Results: allResults, BlockedTasks: blockedTasks}, nil
+		return RunResult{OK: false, Scheduled: total, NotAffected: notAffected, Results: allResults, BlockedTasks: blockedTasks}, nil
 	}
 
-	return RunResult{OK: ok, Scheduled: total, Results: allResults, BlockedTasks: []BlockedTask{}}, nil
+	return RunResult{OK: ok, Scheduled: total, NotAffected: notAffected, Results: allResults, BlockedTasks: blockedTasks}, nil
 }
 
-func failedTaskDependents(results []TaskResult, reverse map[nodeKey][]nodeKey, executed map[nodeKey]bool) []BlockedTask {
-	blocked := make([]BlockedTask, 0)
-	for _, result := range results {
-		if result.OK || result.Cached {
+func markBlockedDependents(failed nodeKey, reverse map[nodeKey][]nodeKey, blockedBy map[nodeKey]nodeKey) {
+	queue := append([]nodeKey(nil), reverse[failed]...)
+	for len(queue) > 0 {
+		dependent := queue[0]
+		queue = queue[1:]
+		if _, alreadyBlocked := blockedBy[dependent]; alreadyBlocked {
 			continue
 		}
-		root := nodeKey{pkg: result.Package, task: result.Task}
-		visited := make(map[nodeKey]bool)
-		queue := append([]nodeKey(nil), reverse[root]...)
-		count := 0
-		for len(queue) > 0 {
-			dependent := queue[0]
-			queue = queue[1:]
-			if visited[dependent] {
-				continue
-			}
-			visited[dependent] = true
-			if !executed[dependent] {
-				count++
-			}
-			queue = append(queue, reverse[dependent]...)
-		}
-		blocked = append(blocked, BlockedTask{Package: result.Package, Task: result.Task, Dependents: count})
+		blockedBy[dependent] = failed
+		queue = append(queue, reverse[dependent]...)
 	}
-	sort.Slice(blocked, func(i, j int) bool {
-		if blocked[i].Package == blocked[j].Package {
-			return blocked[i].Task < blocked[j].Task
-		}
-		return blocked[i].Package < blocked[j].Package
-	})
-	return blocked
 }
 
 func containsTask(tasks []string, wanted string) bool {
@@ -362,8 +373,7 @@ func buildDAG(
 	pkgDeps := buildPkgDepMap(pkgs, pkgByName)
 
 	nodes := make(map[nodeKey]dagNode)
-
-	// Create a node for every (pkg, task) pair where a variant matches the pkg category.
+	var pending []nodeKey
 	for _, p := range pkgs {
 		for _, taskName := range taskNames {
 			def := ResolveTaskDef(cfg, taskName, p.Category)
@@ -373,40 +383,48 @@ func buildDAG(
 			}
 			k := nodeKey{p.Name, taskName}
 			nodes[k] = dagNode{pkg: p, task: taskName}
+			pending = append(pending, k)
 		}
 	}
 
-	// Resolve deps for each node.
-	for k, n := range nodes {
+	// Declared task dependencies are graph edges even when callers request only
+	// the dependent task by name.
+	for next := 0; next < len(pending); next++ {
+		k := pending[next]
+		n := nodes[k]
 		def := ResolveTaskDef(cfg, k.task, n.pkg.Category)
-		if def == nil {
-			continue
-		}
 		var deps []nodeKey
-
 		for _, dep := range def.Deps {
-			if strings.HasPrefix(dep, "^") {
+			workspaceDependency := strings.HasPrefix(dep, "^")
+			depTask := strings.TrimPrefix(dep, "^")
+			if workspaceDependency {
 				// ^build = run 'build' for every workspace dependency first.
-				depTask := strings.TrimPrefix(dep, "^")
-				if !containsTask(taskNames, depTask) {
-					continue
-				}
 				for _, depPkgName := range pkgDeps[k.pkg] {
-					if _, exists := pkgByName[depPkgName]; exists {
-						depKey := nodeKey{depPkgName, depTask}
-						if _, hasNode := nodes[depKey]; hasNode {
-							deps = append(deps, depKey)
-						} else {
+					depPkg, exists := pkgByName[depPkgName]
+					if !exists {
+						continue
+					}
+					depKey := nodeKey{depPkgName, depTask}
+					if _, hasNode := nodes[depKey]; !hasNode {
+						if ResolveTaskDef(cfg, depTask, depPkg.Category) == nil {
 							return nil, &TaskGraphError{Package: k.pkg, Task: k.task, Dependency: depPkgName, DependencyTask: depTask}
 						}
+						nodes[depKey] = dagNode{pkg: depPkg, task: depTask}
+						pending = append(pending, depKey)
 					}
+					deps = append(deps, depKey)
 				}
 			} else {
 				// "build" = run 'build' for this same package first.
-				depKey := nodeKey{k.pkg, dep}
-				if _, hasNode := nodes[depKey]; hasNode {
-					deps = append(deps, depKey)
+				depKey := nodeKey{k.pkg, depTask}
+				if _, hasNode := nodes[depKey]; !hasNode {
+					if ResolveTaskDef(cfg, depTask, n.pkg.Category) == nil {
+						return nil, &TaskGraphError{Package: k.pkg, Task: k.task, Dependency: k.pkg, DependencyTask: depTask}
+					}
+					nodes[depKey] = dagNode{pkg: n.pkg, task: depTask}
+					pending = append(pending, depKey)
 				}
+				deps = append(deps, depKey)
 			}
 		}
 
@@ -532,6 +550,7 @@ func runLayer(
 	noCache bool,
 	concurrency int,
 	pkgDepDirs map[string][]string,
+	onComplete func(TaskResult),
 ) []TaskResult {
 	results := make([]TaskResult, len(layer))
 	var wg sync.WaitGroup
@@ -550,9 +569,11 @@ func runLayer(
 			if def == nil {
 				// Should not happen — node was created only if variant matched.
 				results[i] = TaskResult{Package: k.pkg, Task: k.task, OK: false, Error: "no variant matched"}
+				onComplete(results[i])
 				return
 			}
 			results[i] = executor.Run(n.pkg, *def, noCache, pkgDepDirs[n.pkg.Name])
+			onComplete(results[i])
 		}()
 	}
 

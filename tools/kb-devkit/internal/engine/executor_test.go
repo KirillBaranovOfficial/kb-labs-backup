@@ -90,9 +90,20 @@ func TestTaskFingerprintChangesWhenTaskDefinitionChanges(t *testing.T) {
 func TestResolveBinPrefersWorkspaceNodeModulesBin(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "node_modules", ".bin", "eslint"), "#!/bin/sh\n")
-	got := resolveBin("eslint", root)
+	got := resolveBin("eslint", root, t.TempDir())
 	if got != filepath.Join(root, "node_modules", ".bin", "eslint") {
 		t.Fatalf("resolveBin = %q", got)
+	}
+}
+
+func TestResolveBinPrefersPackageNodeModulesBin(t *testing.T) {
+	root := t.TempDir()
+	pkgDir := filepath.Join(root, "packages", "ui-kit")
+	writeFile(t, filepath.Join(root, "node_modules", ".bin", "tsx"), "#!/bin/sh\n")
+	writeFile(t, filepath.Join(pkgDir, "node_modules", ".bin", "tsx"), "#!/bin/sh\n")
+	got := resolveBin("tsx", root, pkgDir)
+	if got != filepath.Join(pkgDir, "node_modules", ".bin", "tsx") {
+		t.Fatalf("resolveBin = %q; want package-local executable", got)
 	}
 }
 

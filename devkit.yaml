@@ -102,6 +102,13 @@ workspace:
       preset: runtime-core
 
     # TypeScript libraries — full ruleset
+    # The UI kit owns generated component documentation as an explicit build prerequisite.
+    studio-ui-kit:
+      match:
+        - "studio/ui-kit"
+      language: typescript
+      preset: node-lib
+
     ts-lib:
       match:
         - "core/*"
@@ -494,7 +501,36 @@ run:
 # ──────────────────────────────────────────────────────────────────────────────
 
 tasks:
+  docs:generate:
+    - categories: [studio-ui-kit]
+      command: tsx scripts/generate-component-docs.ts
+      inputs:
+        - "src/**/*.tsx"
+        - "scripts/generate-component-docs.ts"
+        - "README.md"
+      outputs:
+        - "README.md"
+        - "src/catalog.generated.ts"
+
   build:
+    - categories: [studio-ui-kit]
+      command: tsup
+      inputs:
+        - "src/**"
+        - "scripts/generate-component-docs.ts"
+        - "tsup.config.ts"
+        - "tsup.config.js"
+        - "tsconfig*.json"
+        - "package.json"
+        - "README.md"
+        - "src/catalog.generated.ts"
+        - "^dist/**"
+      outputs:
+        - "dist/**"
+      deps:
+        - "docs:generate"
+        - "^build"
+
     - categories: [plugin-entry]
       command: pnpm build
       inputs:
@@ -799,6 +835,11 @@ tasks:
 #   { ok: boolean, items: [{ target, message, fix? }] }
 
 custom_checks:
+  - name: lifecycle-builds
+    run: node scripts/checks/check-lifecycle-builds.mjs
+    on: [check]
+    scope: workspace
+
   - name: release-build-graph
     run: node scripts/checks/check-release-build-graph.mjs
     on: [check]
