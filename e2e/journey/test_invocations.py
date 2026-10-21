@@ -103,6 +103,32 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
 
 class PtyInvocationTest(unittest.TestCase):
+    def test_failed_envelope_log_path_is_captured_bounded_and_redacted(self):
+        with tempfile.TemporaryDirectory(prefix="journey-error-log-artifact-") as temp:
+            root = Path(temp)
+            source = root / "host.log"
+            secret = "invocation-artifact-secret"
+            source.write_text(secret + "\n" + ("x" * (2 * 1024 * 1024)))
+            env = {"KB_JOURNEY_API_TOKEN": secret}
+            failure = json.dumps({"ok": False, "error": {
+                "code": "KB_UPDATE_HOST_NOT_HEALTHY",
+                "details": {"logPath": str(source)},
+            }})
+
+            with invocations.invocation_context(report_root=root):
+                record = invocations.record_invocation(
+                    kind="http", argv=["GET"], cwd=root, env=env, exit_code=500,
+                    stdout=failure, duration_seconds=0.1,
+                )
+
+            self.assertEqual(len(record["invocation_evidence"]), 1)
+            artifact = root / record["invocation_evidence"][0]
+            content = artifact.read_text()
+            self.assertNotIn(secret, content)
+            self.assertIn("[REDACTED]", content)
+            self.assertLessEqual(artifact.stat().st_size, invocations.MAX_ERROR_LOG_BYTES + 128)
+            self.assertTrue(content.endswith("[truncated by journey evidence limit]\n"))
+
     def test_unexpected_correlation_parser_reads_json_and_catalog_rendered_human_output(self):
         correlation_id = "cli-text-correlation-1"
         catalog_path = Path(__file__).resolve().parents[2] / "core/platform/src/error-envelope/errors.catalog.json"

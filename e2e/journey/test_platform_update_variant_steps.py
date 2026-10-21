@@ -8,8 +8,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from platform_update_variant_steps import _install_vibeproxy_adapter, run_platform_update_variant_steps
+from platform_update_variant_steps import _file_fingerprints, _install_vibeproxy_adapter, run_platform_update_variant_steps
 from service_steps import Journey
+from installed_fixture import layout_relative, layout_value
+from journey_resources import workspace_resource
 
 
 def _versioned_platform(root: Path, version: str) -> Path:
@@ -29,6 +31,44 @@ def _versioned_platform(root: Path, version: str) -> Path:
 
 
 class PlatformUpdateVariantStepsTests(unittest.TestCase):
+    def test_preservation_fingerprints_cover_owned_files_but_not_mutable_database_or_caches(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "platform"
+            project = Path(directory) / "project"
+            project.mkdir()
+            current = root / layout_value("currentLink")
+            current.mkdir(parents=True)
+            layout = json.loads(workspace_resource(
+                "tools", "kb-create", "v2", "contracts", "platform-layout.json").read_text())
+            protected = [
+                current / projection["platformPath"]
+                for projection in layout["sharedRuntimePaths"]
+                if projection.get("preserveUserState") is True and projection.get("kind") == "file"
+            ]
+            protected.extend(
+                current / entry["path"] for entry in layout["versionStatePaths"]
+                if entry.get("preserveUserState") is True and entry.get("kind") == "file"
+            )
+            self.assertTrue(protected, "platform layout must identify preserved user-state files")
+            for path in protected:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("preserve me")
+            (project / ".kb").mkdir()
+            (project / ".kb" / "project.json").write_text("project identity")
+            database = root / layout_value("sharedStateDirectory") / "data" / "analytics.sqlite"
+            database.parent.mkdir(parents=True)
+            database.write_bytes(b"sqlite bytes can change while durable rows remain")
+            cache = root / layout_relative("sharedStateDirectory", "package-manager/xdg-data/pnpm/index.db")
+            cache.parent.mkdir(parents=True)
+            cache.write_bytes(b"package cache")
+
+            fingerprints = _file_fingerprints(root, (project,))
+
+        self.assertTrue(all(str(path) in fingerprints for path in protected))
+        self.assertIn(str(project / ".kb" / "project.json"), fingerprints)
+        self.assertNotIn(str(database), fingerprints)
+        self.assertNotIn(str(cache), fingerprints)
+
     def test_update_fixture_installs_vibeproxy_through_platform_marketplace(self) -> None:
         calls = []
 
