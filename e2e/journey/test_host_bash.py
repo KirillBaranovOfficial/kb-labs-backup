@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from test_environment import isolated_environment
+import jsonl
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,7 +27,7 @@ class HostBashTests(unittest.TestCase):
             journey = repo / "e2e/journey"
             journey.mkdir(parents=True)
             for name in ("run.sh", "candidate-services.sh", "teardown-compose.sh", "storage_has_packages.sh",
-                         "container_outcomes.py"):
+                         "container_outcomes.py", "jsonl.py"):
                 shutil.copy2(JOURNEY / name, journey / name)
 
             bin_dir = sandbox / "bin"
@@ -68,7 +69,9 @@ class HostBashTests(unittest.TestCase):
             self.assertTrue(publisher_log.is_file(), "nonzero publisher logs were not written to the journey report")
             self.assertEqual(publisher_log.read_text(encoding="utf-8"),
                              "container logs:\npublisher failed: missing package\n")
-            docker_calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
+            docker_records = jsonl.read_jsonl(calls_path)
+            self.assertEqual([row.line_number for row in docker_records if row.error is not None], [])
+            docker_calls = [row.value for row in docker_records]
             ps_calls = [call for call in docker_calls if "ps" in call]
             self.assertEqual(len(ps_calls), 2, f"expected empty monitor and teardown listings: {docker_calls}")
             self.assertIn(["wait", "publisher-container-id"], docker_calls, f"publisher wait did not use the created id: {docker_calls}")
@@ -86,10 +89,11 @@ class HostBashTests(unittest.TestCase):
     def _install_docker(path: Path) -> None:
         path.write_text(
             f"#!{sys.executable}\n"
-            "import json, os, sys\n"
+            "import os, sys\n"
+            "sys.path.insert(0, 'e2e/journey')\n"
+            "from jsonl import write_jsonl\n"
             "args = sys.argv[1:]\n"
-            "with open(os.environ['FAKE_DOCKER_CALLS'], 'a', encoding='utf-8') as stream:\n"
-            "    stream.write(json.dumps(args) + '\\n')\n"
+            "write_jsonl(os.environ['FAKE_DOCKER_CALLS'], [args], append=True)\n"
             "action = next((item for item in args if item in {'version', 'ps', 'run', 'exec', 'down', 'build', 'up', 'stop', 'rm', 'logs'}), None)\n"
             "if action in {'version', 'ps', 'down', 'build', 'up', 'stop', 'rm'}: raise SystemExit(0)\n"
             "if action == 'run':\n    print('publisher-container-id')\n    raise SystemExit(0)\n"

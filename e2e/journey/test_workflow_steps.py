@@ -12,6 +12,7 @@ import workflow_steps
 from installed_fixture import configure_hermetic_cli_fixture
 from service_steps import Journey
 from invocations import catalogued_error_hint, catalogued_error_message
+import jsonl
 
 
 class WorkflowJourneyTests(unittest.TestCase):
@@ -248,7 +249,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                          "KB_JOURNEY_ADMIN_PASSWORD": "admin-password"},
                     project=Path("/tmp/project"),
                 )
-                registry_record = json.loads((report_root / "project-registries.jsonl").read_text())
+                registry_record = jsonl.read_jsonl(report_root / "project-registries.jsonl")[0].value
                 self.assertEqual(registry_record["mode"], "secured")
                 self.assertEqual(registry_record["projects"], [{"path": "/tmp/project"}])
         finally:
