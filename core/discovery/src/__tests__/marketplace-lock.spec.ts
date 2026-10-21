@@ -8,6 +8,15 @@ import { DiagnosticCollector } from '../diagnostics.js';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 
+async function readWorkspacePackage(relativePath: string): Promise<{ kb?: { manifest?: unknown; adapter?: { manifest?: unknown } } }> {
+  const workspaceRealPath = await fs.realpath(workspaceRoot);
+  const packageRealPath = await fs.realpath(path.resolve(workspaceRoot, relativePath));
+  const relativePackagePath = path.relative(workspaceRealPath, packageRealPath);
+  expect(relativePackagePath.length, `${relativePath} must resolve to a workspace package`).toBeGreaterThan(0);
+  expect(relativePackagePath === '..' || relativePackagePath.startsWith(`..${path.sep}`), `${relativePath} must stay inside the workspace`).toBe(false);
+  return JSON.parse(await fs.readFile(path.join(packageRealPath, 'package.json'), 'utf8'));
+}
+
 describe('marketplace-lock v3', () => {
   it('identifies the first invalid entry and runtime validation reason', () => {
     const result = validateMarketplaceLock({
@@ -103,56 +112,19 @@ describe('marketplace-lock v3', () => {
   // case: S-179.4
   it('keeps workspace plugins and adapters in their v3 lock sections', async () => {
     const lock = await readMarketplaceLock(workspaceRoot, new DiagnosticCollector());
-    expect(Object.keys(lock?.plugins ?? [])).toEqual(expect.arrayContaining([
-      '@kb-labs/agents',
-      '@kb-labs/clickup',
-      '@kb-labs/commit',
-      '@kb-labs/devlink',
-      '@kb-labs/github',
-      '@kb-labs/host-agent',
-      '@kb-labs/impact',
-      '@kb-labs/inbox',
-      '@kb-labs/marketplace',
-      '@kb-labs/marketplace-registry',
-      '@kb-labs/mind',
-      '@kb-labs/policy',
-      '@kb-labs/qa',
-      '@kb-labs/quality',
-      '@kb-labs/release',
-      '@kb-labs/review',
-      '@kb-labs/scaffold',
-      '@kb-labs/site-tools',
-      '@kb-labs/steward',
-      '@kb-labs/workflow',
-    ]));
-    expect(Object.keys(lock?.adapters ?? [])).toEqual(expect.arrayContaining([
-      '@kb-labs/adapters-analytics-duckdb',
-      '@kb-labs/adapters-analytics-file',
-      '@kb-labs/adapters-analytics-sqlite',
-      '@kb-labs/adapters-environment-docker',
-      '@kb-labs/adapters-eventbus-cache',
-      '@kb-labs/adapters-fs',
-      '@kb-labs/adapters-kblabs-gateway',
-      '@kb-labs/adapters-log-document',
-      '@kb-labs/adapters-log-ringbuffer',
-      '@kb-labs/adapters-mongodb',
-      '@kb-labs/adapters-openai',
-      '@kb-labs/adapters-pino',
-      '@kb-labs/adapters-qdrant',
-      '@kb-labs/adapters-redis',
-      '@kb-labs/adapters-s3',
-      '@kb-labs/adapters-service-transport-http',
-      '@kb-labs/adapters-snapshot-localfs',
-      '@kb-labs/adapters-sqlite',
-      '@kb-labs/adapters-state-broker',
-      '@kb-labs/adapters-telegram',
-      '@kb-labs/adapters-vibeproxy',
-      '@kb-labs/adapters-voyage-ai',
-      '@kb-labs/adapters-workspace-agent',
-      '@kb-labs/adapters-workspace-localfs',
-      '@kb-labs/adapters-workspace-worktree',
-      '@kb-labs/data-store',
-    ]));
+    expect(lock).not.toBeNull();
+
+    for (const [id, entry] of Object.entries(lock?.plugins ?? {})) {
+      expect(entry.source, `${id} must be a workspace plugin link`).toBe('local');
+      if (entry.source !== 'local') continue;
+      const packageJson = await readWorkspacePackage(entry.link);
+      expect(packageJson.kb?.manifest, `${id} must resolve to a package declaring a plugin manifest`).toBeTypeOf('string');
+    }
+
+    for (const [id, entry] of Object.entries(lock?.adapters ?? {})) {
+      const packageJson = await readWorkspacePackage(entry.resolvedPath);
+      expect(packageJson.kb?.adapter?.manifest, `${id} must resolve to a package declaring an adapter manifest`).toBeTypeOf('string');
+    }
   });
 
   it('writes sorted, machine independent project pins', async () => {

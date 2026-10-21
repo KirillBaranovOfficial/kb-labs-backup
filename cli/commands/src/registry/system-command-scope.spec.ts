@@ -13,6 +13,11 @@ describe('system command scope declarations', () => {
 
     expect(registry.resolve(['hello'])).toMatchObject({ type: 'system-cmd', cmd: { scope: 'platform' } });
     expect(registry.resolve(['logs', 'query'])).toMatchObject({ type: 'system-cmd', cmd: { scope: 'platform' } });
+    for (const name of ['register', 'status', 'list']) {
+      expect(registry.resolve(['workspace', name])).toMatchObject({
+        type: 'system-cmd', cmd: { scope: 'platform' },
+      });
+    }
     expect(registry.resolve(['mcp', 'config'])).toMatchObject({ type: 'system-cmd', cmd: { scope: 'project' } });
     expect(registry.resolve(['docs', 'generate-cli-reference'])).toMatchObject({
       type: 'system-cmd', cmd: { scope: 'project' },
