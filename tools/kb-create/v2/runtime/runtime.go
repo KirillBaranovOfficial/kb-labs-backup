@@ -63,12 +63,13 @@ type systemClock struct{}
 func (systemClock) Now() time.Time { return time.Now().UTC() }
 
 type Dependencies struct {
-	Artifacts               ArtifactInstaller
-	Host                    HostStarter
-	Probe                   HostProbe
-	PreserveGeneratedConfig bool
-	VerificationConfigRoot  string
-	Clock                   Clock
+	Artifacts                 ArtifactInstaller
+	Host                      HostStarter
+	Probe                     HostProbe
+	PreserveGeneratedConfig   bool
+	VerificationConfigRoot    string
+	MarketplaceLockSourceRoot string
+	Clock                     Clock
 	// CorrelationID is supplied by a frontend; it is persisted verbatim in the
 	// receipt and must be safe to disclose in a diagnostic bundle.
 	CorrelationID string
@@ -142,7 +143,8 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	// core-discovery's plugin registry reads .kb/marketplace.lock, not the
 	// resolved plan — without this, every installed plugin/adapter is on
 	// disk but invisible to the running platform (empty registry at /ready).
-	if err := marketplace.WriteLock(plan.Request.PlatformRoot, plan.Artifacts, now(deps.Clock)); err != nil {
+	if err := marketplace.WriteLock(plan.Request.PlatformRoot, deps.MarketplaceLockSourceRoot,
+		plan.Artifacts, now(deps.Clock)); err != nil {
 		_ = previousProjections.Restore()
 		return contracts.InstallReceipt{}, fmt.Errorf("write marketplace lock: %w", err)
 	}

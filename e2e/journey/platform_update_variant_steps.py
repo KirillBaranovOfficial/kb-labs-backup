@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import layout_relative, layout_value, preserved_user_state_files
 
 from project_service_path import project_service_path
 
@@ -67,18 +67,11 @@ def _component_version(payload: dict) -> str | None:
 
 
 def _file_fingerprints(root: Path, projects: tuple[Path, ...]) -> dict[str, str]:
-    names = {layout_relative('currentLink', layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath'))}
     result = {}
-    paths = [root / name for name in names]
+    paths = list(preserved_user_state_files(root))
     paths.extend(project / ".kb" / name for project in projects
                  for name in ("marketplace.lock.json", "project.json", "kb.config.jsonc"))
     for path in paths:
-        if path.is_file():
-            result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
-    for path in (root / layout_value('sharedStateDirectory') / "data").rglob("*.sqlite"):
-        if path.is_file():
-            result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
-    for path in sorted((root / layout_value('sharedStateDirectory')).rglob("*")):
         if path.is_file():
             result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -53,10 +54,13 @@ type Item struct {
 // The platform lock is machine-local: it records its platform-relative path.
 // Integrity matches core-discovery's package.json hash contract, not the
 // artifact tarball digest in the resolved plan.
-func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Time) error {
-	existing, err := readLock(platformRoot)
+func WriteLock(platformRoot, existingRoot string, artifacts []contracts.Artifact, now time.Time) error {
+	if existingRoot == "" {
+		existingRoot = platformRoot
+	}
+	existing, err := readLock(existingRoot)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read existing marketplace lock: %w", err)
+		return fmt.Errorf("read existing marketplace lock at %s: %w", existingRoot, err)
 	}
 
 	lock := Lock{Schema: Schema, Plugins: make(map[string]Item), Adapters: make(map[string]Item)}
@@ -118,6 +122,59 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 	return versionroot.AtomicWriteFile(target, data, 0o600)
 }
 
+// PreserveInstalledComponents adds every marketplace identity in the active
+// install lock to a new update request. The target catalog resolver chooses
+// the target versions and returns its normal typed refusal if an identity is
+// no longer available or compatible.
+func PreserveInstalledComponents(platformRoot string, request *contracts.InstallRequest) (bool, error) {
+	if request == nil {
+		return false, fmt.Errorf("update request is required")
+	}
+	lock, err := readLock(platformRoot)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read active marketplace lock: %w", err)
+	}
+	changed := false
+	plugins := make(map[string]struct{}, len(request.Plugins))
+	for _, component := range request.Plugins {
+		plugins[component.ID] = struct{}{}
+	}
+	pluginIDs := make([]string, 0, len(lock.Plugins))
+	for id := range lock.Plugins {
+		pluginIDs = append(pluginIDs, id)
+	}
+	sort.Strings(pluginIDs)
+	for _, id := range pluginIDs {
+		if _, exists := plugins[id]; exists {
+			continue
+		}
+		request.Plugins = append(request.Plugins, contracts.ComponentRequest{ID: id})
+		plugins[id] = struct{}{}
+		changed = true
+	}
+	adapters := make(map[string]struct{}, len(request.Adapters))
+	for _, component := range request.Adapters {
+		adapters[component.ID] = struct{}{}
+	}
+	adapterIDs := make([]string, 0, len(lock.Adapters))
+	for id := range lock.Adapters {
+		adapterIDs = append(adapterIDs, id)
+	}
+	sort.Strings(adapterIDs)
+	for _, id := range adapterIDs {
+		if _, exists := adapters[id]; exists {
+			continue
+		}
+		request.Adapters = append(request.Adapters, contracts.ComponentRequest{ID: id})
+		adapters[id] = struct{}{}
+		changed = true
+	}
+	return changed, nil
+}
+
 func packageIntegrity(platformRoot, packageName string) (string, error) {
 	if packageName == "" {
 		return "", fmt.Errorf("package name is required")
@@ -146,6 +203,11 @@ func readLock(platformRoot string) (*Lock, error) {
 	for id, entry := range lock.Plugins {
 		if entry.Source != "platform" || entry.Package == "" {
 			return nil, fmt.Errorf("invalid marketplace lock plugin %q: platform entries require a package", id)
+		}
+	}
+	for id, entry := range lock.Adapters {
+		if entry.Source != "platform" {
+			return nil, fmt.Errorf("invalid marketplace lock adapter %q: platform entries require source platform", id)
 		}
 	}
 	return &lock, nil
