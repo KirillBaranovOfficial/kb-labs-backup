@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/sdk/testing';
 
-vi.mock('node:fs', () => ({
+vi.mock('node:fs', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:fs')>(),
   readFileSync: vi.fn(() => '{}'),
   writeFileSync: vi.fn(),
   existsSync: vi.fn(() => false),

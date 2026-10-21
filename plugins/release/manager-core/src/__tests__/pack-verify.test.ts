@@ -42,6 +42,29 @@ function makeTarball(name: string, version: string, manifest: Record<string, unk
   return { name, version, tarball };
 }
 
+async function withIsolatedNpmEnvironment<T>(run: () => Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'pack-verify-npm-home-'));
+  const keys = ['HOME', 'NPM_CONFIG_CACHE', 'npm_config_cache', 'NPM_CONFIG_USERCONFIG', 'npm_config_userconfig'] as const;
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  const npmrc = join(home, '.npmrc');
+  writeFileSync(npmrc, '');
+  process.env.HOME = home;
+  process.env.NPM_CONFIG_CACHE = join(home, '.npm-cache');
+  process.env.npm_config_cache = join(home, '.npm-cache');
+  process.env.NPM_CONFIG_USERCONFIG = npmrc;
+  process.env.npm_config_userconfig = npmrc;
+  try {
+    return await run();
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 const okFiles = { 'dist/index.js': 'export const a = 1;\n', 'dist/index.d.ts': 'export declare const a: number;\n' };
 const okManifest = { main: './dist/index.js', types: './dist/index.d.ts', exports: { '.': { types: './dist/index.d.ts', import: './dist/index.js' } } };
 
@@ -489,49 +512,55 @@ describe('pack-static: undeclared imports', () => {
   });
 
   it('is invisible to the aggregated install but caught by pack-static (hoisting hides the missing dependency)', async () => {
-    // `foo` is installed elsewhere in the same consumer (as a declared dependency of another
-    // package would be after hoisting), so the undeclared import resolves there.
-    const foo = makeTarball('foo', '1.0.0', { main: './index.js' }, { 'index.js': 'export const foo = 1;\n' });
-    const x = makeTarball('@u/hoisted', '1.0.0', okManifest, { ...okFiles, 'dist/index.js': "import { foo } from 'foo';\nexport const a = foo;\n" });
+    await withIsolatedNpmEnvironment(async () => {
+      // `foo` is installed elsewhere in the same consumer (as a declared dependency of another
+      // package would be after hoisting), so the undeclared import resolves there.
+      const foo = makeTarball('foo', '1.0.0', { main: './index.js' }, { 'index.js': 'export const foo = 1;\n' });
+      const x = makeTarball('@u/hoisted', '1.0.0', okManifest, { ...okFiles, 'dist/index.js': "import { foo } from 'foo';\nexport const a = foo;\n" });
 
-    const install = await runPackInstallCheck({
-      packages: [foo, x].map(t => ({ name: t.name, path: `/r/${t.name}` })),
-      artifacts: [foo, x],
-      config: { isolateChanged: false },
-      timeoutMs: 120_000,
-    }, defaultPackVerifyDeps);
-    expect(install.packages.map(p => p.ok)).toEqual([true, true]);
+      const install = await runPackInstallCheck({
+        packages: [foo, x].map(t => ({ name: t.name, path: `/r/${t.name}` })),
+        artifacts: [foo, x],
+        config: { isolateChanged: false },
+        timeoutMs: 120_000,
+      }, defaultPackVerifyDeps);
+      expect(install.packages.map(p => p.ok)).toEqual([true, true]);
 
-    const r = await run(x);
-    expect(r.ok).toBe(false);
-    expect(r.details?.stderr).toContain("imports 'foo'");
+      const r = await run(x);
+      expect(r.ok).toBe(false);
+      expect(r.details?.stderr).toContain("imports 'foo'");
+    });
   }, 150_000);
 });
 
 describe('real Arborist in-process install (offline, dependency-free tarballs)', () => {
   it('installs two tarballs into one consumer and imports them in one pass', async () => {
-    const a = makeTarball('@t/real-a', '1.0.0', okManifest, okFiles);
-    const b = makeTarball('@t/real-b', '1.0.0', okManifest, okFiles);
-    const out = await runPackInstallCheck({
-      packages: [a, b].map(x => ({ name: x.name, path: `/r/${x.name}` })),
-      artifacts: [a, b],
-      config: { isolateChanged: false },
-      timeoutMs: 120_000,
-    }, defaultPackVerifyDeps);
-    expect(out.packages.map(p => p.ok)).toEqual([true, true]);
+    await withIsolatedNpmEnvironment(async () => {
+      const a = makeTarball('@t/real-a', '1.0.0', okManifest, okFiles);
+      const b = makeTarball('@t/real-b', '1.0.0', okManifest, okFiles);
+      const out = await runPackInstallCheck({
+        packages: [a, b].map(x => ({ name: x.name, path: `/r/${x.name}` })),
+        artifacts: [a, b],
+        config: { isolateChanged: false },
+        timeoutMs: 120_000,
+      }, defaultPackVerifyDeps);
+      expect(out.packages.map(p => p.ok)).toEqual([true, true]);
+    });
   }, 150_000);
 
   it('surfaces a real install error (workspace: dependency) and bisects to the offending package', async () => {
-    const good = makeTarball('@t/real-ok', '1.0.0', okManifest, okFiles);
-    const bad = makeTarball('@t/real-bad', '1.0.0', { ...okManifest, dependencies: { '@t/dep': 'workspace:*' } }, okFiles);
-    const out = await runPackInstallCheck({
-      packages: [good, bad].map(x => ({ name: x.name, path: `/r/${x.name}` })),
-      artifacts: [good, bad],
-      config: { isolateChanged: false },
-      timeoutMs: 120_000,
-    }, defaultPackVerifyDeps);
-    expect(out.packages[0]?.ok).toBe(true);
-    expect(out.packages[1]?.ok).toBe(false);
-    expect(out.packages[1]?.details?.stderr).toMatch(/EUNSUPPORTEDPROTOCOL|workspace/);
+    await withIsolatedNpmEnvironment(async () => {
+      const good = makeTarball('@t/real-ok', '1.0.0', okManifest, okFiles);
+      const bad = makeTarball('@t/real-bad', '1.0.0', { ...okManifest, dependencies: { '@t/dep': 'workspace:*' } }, okFiles);
+      const out = await runPackInstallCheck({
+        packages: [good, bad].map(x => ({ name: x.name, path: `/r/${x.name}` })),
+        artifacts: [good, bad],
+        config: { isolateChanged: false },
+        timeoutMs: 120_000,
+      }, defaultPackVerifyDeps);
+      expect(out.packages[0]?.ok).toBe(true);
+      expect(out.packages[1]?.ok).toBe(false);
+      expect(out.packages[1]?.details?.stderr).toMatch(/EUNSUPPORTEDPROTOCOL|workspace/);
+    });
   }, 150_000);
 });

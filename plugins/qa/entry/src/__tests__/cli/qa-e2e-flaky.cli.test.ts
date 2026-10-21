@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { CommandFailure } from '@kb-labs/plugin-contracts';
+import type { CommandFailure } from '@kb-labs/sdk/contracts';
 
 vi.mock('@kb-labs/qa-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kb-labs/qa-core')>();

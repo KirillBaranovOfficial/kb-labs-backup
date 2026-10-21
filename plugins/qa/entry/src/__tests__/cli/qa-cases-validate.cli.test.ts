@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
-import type { CommandFailure } from '@kb-labs/plugin-contracts';
+import type { CommandFailure } from '@kb-labs/sdk/contracts';
 import command from '../../cli/commands/qa-cases-validate.js';
 
 const dirs: string[] = [];
