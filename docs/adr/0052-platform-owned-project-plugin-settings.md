@@ -111,9 +111,9 @@ files. They are based on the remaining `.kb` dependents inventory in
    Use the platform project state directory for runtime defaults and retain
    explicit user-selected repository output paths.
 5. **Workflow and agent state:**
-   `plugins/workflow/entry/src/commands/`,
-   `plugins/workflow/runtime/src/`, `plugins/workflow/engine/src/`,
-   `plugins/workflow/daemon/src/`, `plugins/agents/core/src/`,
+   `services/workflow/entry/src/commands/`,
+   `services/workflow/runtime/src/`, `services/workflow/engine/src/`,
+   `services/workflow/daemon/src/`, `plugins/agents/core/src/`,
    `plugins/agents/tools/src/`, `plugins/agents/entry/src/cli/commands/diff.ts`,
    and `plugins/agents/store/src/`. Move definitions, caches, sessions and
    plugin state to project-scoped platform storage; leave Git-tracked workflow

@@ -999,6 +999,11 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
 
     def discover_fixtures() -> None:
         _wait_for_workflow_fixtures(env=env, cwd=project, clock=clock, sleep=sleep)
+        lock_path = project / ".kb" / "marketplace.lock"
+        lock = json.loads(lock_path.read_text()) if lock_path.exists() else {"plugins": {}}
+        plugins = lock.get("plugins", {}) if isinstance(lock, dict) else None
+        if not isinstance(plugins, dict) or "@kb-labs/workflow" in plugins:
+            raise AssertionError("workflow definitions must be available without the workflow plugin installed")
 
     discovery = journey.step("discover installed project workflow definitions", "workflow",
                              discover_fixtures, cases=["S-006.3"])

@@ -25,7 +25,6 @@ describe('installed platform plugin identities', () => {
 
     const pluginPackages = [
       { id: '@kb-labs/scaffold', package: '@kb-labs/scaffold', root: path.join(workspaceRoot, 'plugins/scaffold/entry') },
-      { id: '@kb-labs/workflow', package: '@kb-labs/workflow-entry', root: path.join(workspaceRoot, 'plugins/workflow/entry') },
     ];
     const plugins = Object.fromEntries(pluginPackages.map(({ id, package: packageName, root }) => [id, {
       version: '2.120.1',

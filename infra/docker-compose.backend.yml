@@ -133,7 +133,7 @@ services:
     networks:
       - kb-backend
     # IMPORTANT: exactly one instance. JobBroker/CronScheduler run in-process
-    # (plugins/workflow/daemon/src/bootstrap.ts) — a second instance
+    # (services/workflow/daemon/src/bootstrap.ts) — a second instance
     # double-fires every scheduled job. See docs/adr/0037.
     deploy:
       replicas: 1

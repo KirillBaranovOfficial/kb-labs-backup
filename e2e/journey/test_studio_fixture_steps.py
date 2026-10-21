@@ -14,7 +14,7 @@ from studio_fixture_steps import prepare_studio_fixtures
 
 
 class StudioFixtureStepTests(unittest.TestCase):
-    def test_installs_distinct_project_plugins_and_publishes_real_greet_workflow(self):
+    def test_keeps_workflow_builtin_and_publishes_real_greet_workflow(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project_a = root / "project-a"
@@ -60,8 +60,8 @@ class StudioFixtureStepTests(unittest.TestCase):
             self.assertIn("required: true", manifest)
             self.assertIn("type: string", manifest)
             installs = [command for command in commands if command[1:3] == ["marketplace", "install"]]
-            self.assertEqual(len(installs), 2)
-            self.assertTrue(any("@kb-labs/workflow-entry" in command for command in installs))
+            self.assertEqual(len(installs), 1)
+            self.assertFalse(any("@kb-labs/workflow-entry" in command for command in commands))
             self.assertTrue(any("@kb-labs/commit-entry" in command for command in installs))
             self.assertIn(["kb", "marketplace", "uninstall", "@kb-labs/qa-entry", "--json"], commands)
 

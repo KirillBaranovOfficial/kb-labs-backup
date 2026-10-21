@@ -170,7 +170,7 @@ With these required, a PR cannot merge until both `CI (PR)` and the PR-triggered
 | `README.md` only (to main) | CodeQL only |
 | `docs/**/*.md` only (to main) | CodeQL only |
 | `sites/web/**` only (to main) | Deploy + CI + CodeQL (E2E skipped) |
-| `plugins/workflow/**` (to main) | CI + E2E Platform Tests + CodeQL |
+| `services/workflow/**` (to main) | CI + E2E Platform Tests + CodeQL |
 | `core/runtime/**` (to main) | CI + E2E Platform Tests + Deploy + CodeQL |
 | `.github/workflows/e2e-platform.yml` (to main) | CI + E2E Platform Tests + CodeQL (the workflow file itself isn't in `paths-ignore`) |
 | Any non-doc/-site code in a **PR** | CI (PR) + E2E Platform Tests (full matrix, branch protection required) |

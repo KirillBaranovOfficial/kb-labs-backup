@@ -9,13 +9,13 @@ const docsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = path.resolve(docsDir, '../../../..');
 
 export function sourceFileForCommand(command) {
-  return commandSources[command];
+  return commandSources[command]?.source;
 }
 
 export function collectGeneratedSources() {
-  const generated = Object.fromEntries(Object.entries(commandSources).map(([command, sourcePath]) => {
-    const sourceText = readFileSync(path.join(repoRoot, sourcePath), 'utf8');
-    return [command, { source: sourcePath, examples: findCommand(sourceText, sourcePath, command) }];
+  const generated = Object.fromEntries(Object.entries(commandSources).map(([command, source]) => {
+    const sourceText = readFileSync(path.join(repoRoot, source.source), 'utf8');
+    return [command, { source: source.source, examples: findCommand(sourceText, source.source, command, source.selector) }];
   }));
   const nodePolicySource = sourceFragmentSources.nodePolicy;
   const rootManifest = JSON.parse(readFileSync(path.join(repoRoot, nodePolicySource), 'utf8'));
@@ -43,13 +43,13 @@ function parseStringArray(sourceText, sourcePath, command) {
   return values;
 }
 
-function findCommand(sourceText, sourcePath, command) {
-  const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pathMatch = new RegExp(`\\bpath\\s*:\\s*(['"])${escaped}\\1`).exec(sourceText);
-  if (!pathMatch) throw new Error(`Command "${command}" was not found in ${sourcePath}`);
-  const start = pathMatch.index + pathMatch[0].length;
-  const nextCommand = /\bpath\s*:\s*['"]/.exec(sourceText.slice(start));
-  const commandEnd = nextCommand ? start + nextCommand.index : sourceText.length;
+function findCommand(sourceText, sourcePath, command, selector) {
+  const declaration = new RegExp(`\\bconst\\s+${selector}\\s*=\\s*defineSystemCommand\\(\\{`);
+  const commandMatch = declaration.exec(sourceText);
+  if (!commandMatch) throw new Error(`Command "${command}" selector "${selector}" was not found in ${sourcePath}`);
+  const start = commandMatch.index + commandMatch[0].length;
+  const commandEnd = sourceText.indexOf('\n});', start);
+  if (commandEnd < 0) throw new Error(`Command "${command}" declaration is unclosed in ${sourcePath}`);
   const examplesMatch = /\bexamples\s*:\s*\[/.exec(sourceText.slice(start, commandEnd));
   if (!examplesMatch) throw new Error(`Command "${command}" has no statically readable examples in ${sourcePath}`);
   const arrayStart = start + examplesMatch.index + examplesMatch[0].length;
@@ -72,15 +72,16 @@ function findCommand(sourceText, sourcePath, command) {
 }
 
 export function renderCommandExamples(command, generatedSources, match) {
-  const sourcePath = commandSources[command];
-  if (!sourcePath) throw new Error(`Command "${command}" is not in the docs source allowlist`);
+  const sourcePath = commandSources[command]?.source;
+  const selector = commandSources[command]?.selector;
+  if (!sourcePath || !selector) throw new Error(`Command "${command}" is not in the docs source allowlist`);
   const generated = generatedSources?.[command];
   if (generated && generated.source !== sourcePath) {
     throw new Error(`Generated source for "${command}" points to unexpected path ${generated.source}`);
   }
   const sourceData = generated ?? {
     source: sourcePath,
-    examples: findCommand(readFileSync(path.join(repoRoot, sourcePath), 'utf8'), sourcePath, command),
+    examples: findCommand(readFileSync(path.join(repoRoot, sourcePath), 'utf8'), sourcePath, command, selector),
   };
   if (sourceData.examples.length === 0) throw new Error(`Command "${command}" has no examples`);
   return renderGeneratedDocSource(command, { [command]: sourceData }, match);

@@ -227,6 +227,14 @@ describe("JSON envelope coverage for the live CLI registry", () => {
           ),
         );
       }
+      if (String(input).includes("/health/adapters")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, data: [] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
       return Promise.resolve(
         new Response(
           JSON.stringify({ ok: true, data: { webhooks: [], tokens: [] } }),
@@ -303,7 +311,7 @@ describe("JSON envelope coverage for the live CLI registry", () => {
     });
     await writeFile(fixtureManifest, fixtureManifestContent, "utf8");
 
-    const runAndCapture = async (argv: string[]) => {
+    const runAndCapture = async (argv: string[], cwd = workspaceRoot) => {
       const stdoutConsole = [
         vi.spyOn(console, "log").mockImplementation(() => {}),
         vi.spyOn(console, "info").mockImplementation(() => {}),
@@ -326,9 +334,11 @@ describe("JSON envelope coverage for the live CLI registry", () => {
           process.stderr.write(`${args.map(String).join(" ")}\n`);
         }),
       ];
+      const previousCwd = process.cwd();
       try {
+        process.chdir(cwd);
         const exitCode = await executeCli(argv, {
-          cwd: workspaceRoot,
+          cwd,
           env: process.env,
           registry,
           registerBuiltinCommands: () => {},
@@ -351,6 +361,7 @@ describe("JSON envelope coverage for the live CLI registry", () => {
         expect(typeof result.ok, argv.join(" ")).toBe("boolean");
         return { exitCode, result, stdoutRecords, stderrRecords };
       } finally {
+        process.chdir(previousCwd);
         for (const spy of stdoutConsole) spy.mockRestore();
         stdout.mockRestore();
         stderr.mockRestore();
@@ -371,14 +382,29 @@ describe("JSON envelope coverage for the live CLI registry", () => {
           const safeArgs = system.jsonTest.safeArgs.map((argument) => {
             if (argument === "__fixture_project_id__") return fixtureProjectId;
             if (argument === "__fixture_manifest__") return fixtureManifest;
+            if (argument === "__fixture_workflow__") {
+              return path.join(
+                workspaceRoot,
+                "services/workflow/entry/src/__tests__/cli/fixtures/lint/valid.yml",
+              );
+            }
             if (argument.startsWith("__fixture_")) return `${argument}-id`;
             return argument;
           });
-          const valid = await runAndCapture([
-            ...command.segments,
-            ...safeArgs,
-            "--json",
-          ]);
+          const commandCwd = command.segments.join(" ") === "workflow create"
+            ? await mkdtemp(path.join(isolatedHome, "workflow-create-"))
+            : workspaceRoot;
+          let valid: Awaited<ReturnType<typeof runAndCapture>>;
+          try {
+            valid = await runAndCapture(
+              [...command.segments, ...safeArgs, "--json"],
+              commandCwd,
+            );
+          } finally {
+            if (commandCwd !== workspaceRoot) {
+              await rm(commandCwd, { recursive: true, force: true });
+            }
+          }
           expect(
             valid.exitCode,
             `${command.segments.join(" ")}: ${JSON.stringify(valid.result)}`,

@@ -99,7 +99,7 @@ jobs:
           - image: kb-studio
             dockerfile: studio/app/Dockerfile
           - image: kb-workflow
-            dockerfile: plugins/workflow/daemon/Dockerfile
+            dockerfile: services/workflow/daemon/Dockerfile
           - image: kb-mcp
             dockerfile: services/mcp/app/Dockerfile
           - image: kb-marketplace-registry

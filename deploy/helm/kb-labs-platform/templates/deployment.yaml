@@ -6,7 +6,7 @@
 {{- end }}
 {{- end }}
 {{- if and (eq $name "workflow") (gt (int $svc.replicas) 1) }}
-{{- fail (printf "services.workflow.replicas is %d, must stay 1: JobBroker/CronScheduler run in-process (plugins/workflow/daemon/src/bootstrap.ts) and a second replica double-fires every scheduled job. See docs/adr/0037-containers-are-canonical-cloud-delivery.md." (int $svc.replicas)) }}
+{{- fail (printf "services.workflow.replicas is %d, must stay 1: JobBroker/CronScheduler run in-process (services/workflow/daemon/src/bootstrap.ts) and a second replica double-fires every scheduled job. See docs/adr/0037-containers-are-canonical-cloud-delivery.md." (int $svc.replicas)) }}
 {{- end }}
 ---
 apiVersion: apps/v1

@@ -412,34 +412,34 @@
         "../kb-labs-studio/packages/ui-react/src/*"
       ],
       "@kb-labs/workflow-artifacts": [
-        "../kb-labs-core/packages/workflow-artifacts/src/index.ts"
+        "../../services/workflow/artifacts/src/index.ts"
       ],
       "@kb-labs/workflow-artifacts/*": [
-        "../kb-labs-core/packages/workflow-artifacts/src/*"
+        "../../services/workflow/artifacts/src/*"
       ],
       "@kb-labs/workflow-constants": [
-        "../kb-labs-core/packages/workflow-constants/src/index.ts"
+        "../../services/workflow/constants/src/index.ts"
       ],
       "@kb-labs/workflow-constants/*": [
-        "../kb-labs-core/packages/workflow-constants/src/*"
+        "../../services/workflow/constants/src/*"
       ],
       "@kb-labs/workflow-contracts": [
-        "../kb-labs-core/packages/workflow-contracts/src/index.ts"
+        "../../services/workflow/contracts/src/index.ts"
       ],
       "@kb-labs/workflow-contracts/*": [
-        "../kb-labs-core/packages/workflow-contracts/src/*"
+        "../../services/workflow/contracts/src/*"
       ],
       "@kb-labs/workflow-engine": [
-        "../kb-labs-core/packages/workflow-engine/src/index.ts"
+        "../../services/workflow/engine/src/index.ts"
       ],
       "@kb-labs/workflow-engine/*": [
-        "../kb-labs-core/packages/workflow-engine/src/*"
+        "../../services/workflow/engine/src/*"
       ],
       "@kb-labs/workflow-runtime": [
-        "../kb-labs-core/packages/workflow-runtime/src/index.ts"
+        "../../services/workflow/runtime/src/index.ts"
       ],
       "@kb-labs/workflow-runtime/*": [
-        "../kb-labs-core/packages/workflow-runtime/src/*"
+        "../../services/workflow/runtime/src/*"
       ]
     }
   }

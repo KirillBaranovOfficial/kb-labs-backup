@@ -50,11 +50,11 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 "peerDependenciesMeta": {"@kb-labs/shared-testing": {"optional": True}},
             }))
             (sdk / "dist" / "index.js").write_text('import "@kb-labs/sdk-runtime-dependency";\n')
-            plugin = root / "node_modules" / "@kb-labs" / "workflow-entry"
+            plugin = root / "node_modules" / "@kb-labs" / "e2e-plugin-entry"
             (plugin / "dist" / "commands").mkdir(parents=True)
             (plugin / "dist" / "setup").mkdir(parents=True)
             (plugin / "package.json").write_text(json.dumps({
-                "name": "@kb-labs/workflow-entry",
+                "name": "@kb-labs/e2e-plugin-entry",
                 "type": "module",
                 "exports": {
                     ".": {"import": "./dist/index.js"},
@@ -64,6 +64,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             }))
             (plugin / "dist" / "manifest.json").write_text(json.dumps({
                 "schema": "kb.plugin/3",
+                "id": "@kb-labs/e2e-plugin",
                 "setup": {"handler": "./setup/handler.js"},
                 "cli": {"commands": [{"path": "workflow test", "handler": "./commands/handler.js"}]},
             }))
@@ -87,7 +88,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             receipt = root / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text(json.dumps({"plan": {"artifacts": [
-                {"kind": "plugin", "package": "@kb-labs/workflow-entry"},
+                {"kind": "plugin", "package": "@kb-labs/e2e-plugin-entry"},
             ]}}))
 
             result = check_installed_runtime_imports(root)
@@ -95,7 +96,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("@kb-labs/shared-command-kit", result.stdout + result.stderr)
             self.assertIn("@kb-labs/sdk", result.stdout + result.stderr)
-            self.assertIn("@kb-labs/workflow-entry", result.stdout + result.stderr)
+            self.assertIn("@kb-labs/e2e-plugin-entry", result.stdout + result.stderr)
             self.assertIn("dist/commands/handler.js", result.stdout + result.stderr)
             self.assertIn("dist/setup/handler.js", result.stdout + result.stderr)
             self.assertIn("@kb-labs/runtime-wildcard-dependency", result.stdout + result.stderr)
@@ -106,7 +107,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             plugin_manifest.unlink()
             result = check_installed_runtime_imports(root)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("bundled plugin @kb-labs/workflow-entry is missing dist/manifest.json", result.stderr)
+            self.assertIn("bundled plugin @kb-labs/e2e-plugin-entry is missing dist/manifest.json", result.stderr)
             plugin_manifest.write_text(json.dumps({"schema": "kb.plugin/3"}))
 
             for name, package_root in (
@@ -273,15 +274,6 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 "peerDependenciesMeta": {"@kb-labs/shared-testing": {"optional": True}},
             }))
             (sdk_root / "dist" / "index.js").write_text("export {};\n")
-            workflow_entry = platform_root / "node_modules" / "@kb-labs" / "workflow-entry"
-            (workflow_entry / "dist").mkdir(parents=True)
-            (workflow_entry / "package.json").write_text(json.dumps({
-                "name": "@kb-labs/workflow-entry",
-                "type": "module",
-                "exports": {".": {"import": "./dist/index.js"}},
-            }))
-            (workflow_entry / "dist" / "index.js").write_text("export {};\n")
-            (workflow_entry / "dist" / "manifest.json").write_text(json.dumps({"schema": "kb.plugin/3"}))
             shared_data = install_root / "state" / "data"
             shared_data.mkdir(parents=True)
             (platform_root / ".kb").mkdir(parents=True, exist_ok=True)
@@ -294,7 +286,6 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 {"id": "openai", "kind": "adapter", "package": "@kb-labs/adapters-openai", "config": [
                     {"id": "openai.apiKey", "optional": True, "severity": "warning",
                      "action": "set OPENAI_API_KEY to enable LLM features"}]},
-                {"id": "workflow", "kind": "plugin", "package": "@kb-labs/workflow-entry"},
             ]}}) + "\n")
             sealed_package = platform_root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
             sealed_package.parent.mkdir(parents=True)

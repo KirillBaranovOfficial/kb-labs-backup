@@ -72,7 +72,8 @@
               "platformMembers": [
                 "@kb-labs/cli-bin",
                 "@kb-labs/core-workspace",
-                "@kb-labs/host-agent-app"
+                "@kb-labs/host-agent-app",
+                "@kb-labs/workflow-entry"
               ]
             }
           }

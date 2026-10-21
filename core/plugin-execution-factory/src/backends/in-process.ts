@@ -188,7 +188,7 @@ export class InProcessBackend implements RawExecutionBackend {
 
       // 5. Create eventEmitter from onLog/onLoggerLog callbacks (if provided).
       // Routes by event name — no payload inspection.
-      // See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+      // See: services/workflow/docs/adr/0019-log-stream-separation.md
       const onLog = options?.onLog;
       const onLoggerLog = options?.onLoggerLog;
       const eventEmitter = (onLog || onLoggerLog)
@@ -219,7 +219,7 @@ export class InProcessBackend implements RawExecutionBackend {
       // Optional loggerOverride in request.context allows hosts (e.g. workflow daemon)
       // to replace platform.logger with a context-aware logger (e.g. stepLogger with runId/jobId/stepId).
       // This makes ctx.logger.* write to SQLite with workflow context instead of generic platform context.
-      // See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+      // See: services/workflow/docs/adr/0019-log-stream-separation.md
       const loggerOverride = requestToExecute.context?.loggerOverride as ILogger | undefined;
       // PlatformServices fields (processExecutor, cache, llm, storage, ...) are class
       // getters on PlatformContainer.prototype, not own properties of the instance —

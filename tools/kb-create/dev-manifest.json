@@ -65,7 +65,7 @@
       "pkg": "@kb-labs/workflow-daemon",
       "description": "Workflow engine (port 7778)",
       "default": true,
-      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/workflow/daemon"
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/services/workflow/daemon"
     },
     {
       "id": "gateway",

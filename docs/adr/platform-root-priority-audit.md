@@ -13,7 +13,7 @@
 | `core/runtime/src/config-loader.ts:274-317` | Читает projectConfig первым, honoring `platform.dir`, потом мержит с platformConfig — project wins |
 | `core/runtime/src/service-bootstrap.ts:206-212` | Передаёт `projectRoot` как cwd для адаптеров, `platformRoot` отдельно |
 | `cli/bin/src/runtime/platform-init.ts:135-139` | Аналогично service-bootstrap — оба root переданы правильно |
-| `plugins/workflow/daemon/src/bootstrap.ts:31-36` | Явно читает `KB_PROJECT_ROOT` из env, используется для рабочих директорий |
+| `services/workflow/daemon/src/bootstrap.ts:31-36` | Явно читает `KB_PROJECT_ROOT` из env, используется для рабочих директорий |
 | `services/state/daemon/src/bootstrap.ts` | Минимальный bootstrap, не читает конкретные директории — корректно |
 | `core/runtime/src/discover-adapters.ts:128-133` | Логика merge: projectRoot загружается первым с `overwrite=true`, платформа заполняет пробелы |
 
@@ -53,7 +53,7 @@ const lock = await readMarketplaceLock(this.root, diag);
 const registryRoot = getPlatformRoot() ?? repoRoot;
 const registry = await createRegistry({ root: registryRoot, ... });
 ```
-Registry плагинов (studio registry, widgetBundleDir) читается из платформы. `marketplace.lock` проекта игнорируется. Плагины из воркспейса (`./plugins/workflow/entry`) не обнаруживаются — используются установленные из `kb-platform/node_modules/`.
+Registry плагинов (studio registry, widgetBundleDir) читается из платформы. `marketplace.lock` проекта игнорируется. Плагины из воркспейса (`./services/workflow/entry`) не обнаруживаются — используются установленные из `kb-platform/node_modules/`.
 
 **Эффект**: Studio загружает виджеты из старой установленной версии, а не из актуального кода воркспейса.
 

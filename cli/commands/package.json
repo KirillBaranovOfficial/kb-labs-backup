@@ -60,6 +60,7 @@
     "@kb-labs/workflow-constants": "workspace:*",
     "@kb-labs/workflow-contracts": "workspace:*",
     "@kb-labs/workflow-engine": "workspace:*",
+    "@kb-labs/workflow-entry": "workspace:*",
     "@kb-labs/workflow-runtime": "workspace:*",
     "ajv": "^8.17.1",
     "chokidar": "^4.0.0",

@@ -1,7 +1,7 @@
 ---
 title: "Self-Hosted Cloud"
 description: "Deploy KB Labs to your own VPS — full platform in the cloud with automated SSL, tenant routing, and CI-driven updates."
-updatedAt: "2026-10-01"
+updatedAt: "2026-10-21"
 order: 2
 ---
 
@@ -216,21 +216,11 @@ services:
       healthGate: "60s"
 ```
 
-Plugins that hook into the workflow engine are loaded by `workflow-daemon`:
-
-```yaml
-services:
-  workflow:
-    service: "@kb-labs/workflow-daemon"
-    version: "2.94.0"
-    adapters: *adapters
-    plugins:
-      "@kb-labs/workflow-entry": "2.94.0"
-    targets:
-      hosts: [vm-1]
-      strategy: all
-      healthGate: "60s"
-```
+The workflow daemon is a platform service, and the `kb workflow` commands
+and Studio pages ship with the platform release. Do not add
+`@kb-labs/workflow-entry` to a service's `plugins` map. Plugin packages
+that contribute workflow handlers remain plugin entries and are loaded by the
+workflow daemon.
 
 ### Adapters required by plugins
 

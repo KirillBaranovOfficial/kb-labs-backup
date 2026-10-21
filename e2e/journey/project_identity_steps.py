@@ -100,7 +100,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                      requires=("step:register isolated project A and B",))
 
         def install_scoped_plugins() -> str | None:
-            for project, package in ((projects[0], "@kb-labs/workflow-entry"),
+            for project, package in ((projects[0], "@kb-labs/qa-entry"),
                                      (projects[1], "@kb-labs/commit-entry")):
                 version = _registry_version(package, registry, project, env, command_runner)
                 args = ["marketplace", "install", f"{package}@{version}", "--json"]
@@ -114,9 +114,9 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                     locks.append(json.loads(lock_path.read_text()).get("plugins", {}))
                 except (OSError, json.JSONDecodeError):
                     return f"{project.name} marketplace lock was missing or invalid after installation"
-            if "@kb-labs/workflow" not in locks[0] or "@kb-labs/commit" in locks[0]:
-                return "Project A's marketplace lock did not contain only its Workflow install"
-            if "@kb-labs/commit" not in locks[1] or "@kb-labs/workflow" in locks[1]:
+            if "@kb-labs/qa" not in locks[0] or "@kb-labs/commit" in locks[0]:
+                return "Project A's marketplace lock did not contain only its QA install"
+            if "@kb-labs/commit" not in locks[1] or "@kb-labs/qa" in locks[1]:
                 return "Project B's marketplace lock did not contain only its Commit install"
             return None
 
@@ -212,7 +212,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                      cases=["S-196.2"], requires=("step:register isolated project A and B",))
 
         def project_plugin_commands() -> str | None:
-            commands = ((projects[0], ("workflow", "defs", "list", "--json"), "@kb-labs/workflow-entry"),
+            commands = ((projects[0], ("qa", "cases", "list", "--help"), "@kb-labs/qa-entry"),
                         (projects[1], ("commit", "open", "--help"), "@kb-labs/commit-entry"))
             for project, args, package in commands:
                 result = run(project, *args, step_id="S-043.6")
@@ -224,6 +224,11 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                      cases=["S-043.6"], requires=("step:register isolated project A and B",))
 
         def platform_plugin_is_available() -> str | None:
+            version = _registry_version("@kb-labs/qa-entry", registry, projects[0], env, command_runner)
+            install = run(projects[0], "marketplace", "install", f"@kb-labs/qa-entry@{version}",
+                          "--scope", "platform", "--json", step_id="S-043.7")
+            if install.returncode != 0:
+                return f"Platform-scope install of @kb-labs/qa-entry failed: {(install.stderr or install.stdout).strip()}"
             project_lock_path = projects[0] / ".kb" / "marketplace.lock"
             platform_lock_path = Path(env.get("KB_PLATFORM_ROOT", "")) / ".kb" / "marketplace.lock"
             try:
@@ -231,11 +236,11 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                 platform_plugins = json.loads(platform_lock_path.read_text()).get("plugins", {})
             except (OSError, json.JSONDecodeError):
                 return "could not inspect the project and platform plugin scopes"
-            if "@kb-labs/workflow" not in project_plugins or "@kb-labs/workflow" not in platform_plugins:
-                return "the same Workflow plugin ID was not installed at both project and platform scope"
-            result = run(projects[0], "workflow", "defs", "list", "--help", step_id="S-043.7")
+            if "@kb-labs/qa" not in project_plugins or "@kb-labs/qa" not in platform_plugins:
+                return "the same QA plugin ID was not installed at both project and platform scope"
+            result = run(projects[0], "qa", "cases", "list", "--help", step_id="S-043.7")
             if result.returncode != 0:
-                return f"the shared Workflow command was unavailable from project A: {(result.stderr or result.stdout).strip()}"
+                return f"the shared QA command was unavailable from project A: {(result.stderr or result.stdout).strip()}"
             return None
 
         journey.step("resolve platform plugin alongside project plugins", "plugins",
