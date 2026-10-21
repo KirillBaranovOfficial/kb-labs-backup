@@ -121,8 +121,11 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (200, {"data": {"session": session}}, {}),
             (200, {"data": {"turns": []}}, {}),
             (200, {"data": {"sessionId": "session-1", "plan": None}}, {}),
-            (404, {"error": {"message": "session-does-not-exist not found"}}, {}),
-            (404, {"error": {"code": "KB_AGENT_NOT_FOUND", "message": "Agent ID agent-does-not-exist is not registered."}}, {}),
+            (404, {"error": {
+                "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
+                "details": {"sessionId": "session-does-not-exist"},
+            }}, {}),
+            (404, {"error": {"code": "KB_AGENT_NOT_FOUND", "details": {"agentId": "agent-does-not-exist"}}}, {}),
             (404, {"error": {
                 "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
                 "message": "REST route GET /api/v1/plugins/agents/unknown-route was not found for plugin @kb-labs/agents.",

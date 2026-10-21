@@ -24,12 +24,35 @@ describe('Agents session handler', () => {
     getSessionInfo.mockReset();
   });
 
-  // case: S-141.5
   it('registers the validated session creation handler for POST /sessions', () => {
     const route = manifest.rest.routes.find((candidate) => candidate.method === 'POST'
       && candidate.path === AGENTS_ROUTES.SESSION_CREATE);
 
     expect(route?.handler).toBe('./rest/handlers/sessions-handler.js#createSessionHandler');
+  });
+
+  it('creates a session for a registered agent', async () => {
+    const session = {
+      id: 'session-1',
+      agentId: 'orchestrator',
+      task: 'Summarize the project',
+      status: 'active',
+    };
+    createSession.mockResolvedValue(session);
+    const ctx = {
+      cwd: '/fixture/project',
+      platform: { logger: { info: vi.fn() } },
+    } as unknown as PluginContextV3;
+
+    await expect(createSessionHandler.execute(ctx, {
+      body: { agentId: 'orchestrator', task: 'Summarize the project' },
+    })).resolves.toEqual({ session });
+    expect(createSession).toHaveBeenCalledWith({
+      mode: 'execute',
+      task: 'Summarize the project',
+      agentId: 'orchestrator',
+      name: undefined,
+    });
   });
 
   // case: S-141.5
@@ -42,8 +65,9 @@ describe('Agents session handler', () => {
     await expect(createSessionHandler.execute(ctx, {
       body: { agentId: 'agent-does-not-exist', task: 'Summarize the project' },
     })).rejects.toMatchObject({
-      statusCode: 404,
       errorCode: 'KB_AGENT_NOT_FOUND',
+      statusCode: 404,
+      details: { agentId: 'agent-does-not-exist' },
       message: expect.stringContaining('agent-does-not-exist'),
     });
     expect(createSession).not.toHaveBeenCalled();
@@ -57,8 +81,9 @@ describe('Agents session handler', () => {
     await expect(getSessionHandler.execute(ctx, {
       params: { sessionId: 'session-does-not-exist' },
     })).rejects.toMatchObject({
-      statusCode: 404,
       errorCode: 'KB_RUNTIME_RESOURCE_NOT_FOUND',
+      statusCode: 404,
+      details: { plugin: '@kb-labs/agents', sessionId: 'session-does-not-exist' },
       message: expect.stringContaining('session-does-not-exist'),
     });
   });

@@ -12,6 +12,7 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
 } from '@kb-labs/agent-contracts';
+import { agentSessionNotFound } from './session-errors.js';
 
 /**
  * GET /sessions - List all sessions
@@ -62,7 +63,7 @@ export const getSessionHandler = defineHandler({
       const session = await sessionManager.getSessionInfo(sessionId);
 
       if (!session) {
-        throw new Error(`Session not found: ${sessionId}`);
+        throw agentSessionNotFound(sessionId);
       }
 
       return { session };

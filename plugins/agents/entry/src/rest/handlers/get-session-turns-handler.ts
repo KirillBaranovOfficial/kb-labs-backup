@@ -6,6 +6,7 @@
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import { SessionManager } from '@kb-labs/agent-core';
 import type { Turn } from '@kb-labs/agent-contracts';
+import { agentSessionNotFound } from './session-errors.js';
 
 interface GetSessionTurnsRequest {
   sessionId?: string;
@@ -40,7 +41,7 @@ export default defineHandler({
       // Verify session exists
       const session = await sessionManager.loadSession(sessionId);
       if (!session) {
-        throw new Error(`Session not found: ${sessionId}`);
+        throw agentSessionNotFound(sessionId);
       }
 
       // Get turns (with lazy migration from events if needed)

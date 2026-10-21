@@ -22,6 +22,7 @@ import {
   AGENT_ANALYTICS_EVENTS,
 } from '@kb-labs/agent-contracts';
 import { RunManager } from '../run-manager.js';
+import { agentSessionNotFound } from './session-errors.js';
 
 const FOLLOW_UP_SCOPE_RE = /\b(глубже|подробнее|детал|слишком поверхност|deeper|more depth|details?)\b/i;
 
@@ -155,7 +156,7 @@ export default defineHandler({
       }
 
       if (!resolvedSession) {
-        throw new Error(`Session not found: ${sessionId} (cwd=${ctx.cwd})`);
+        throw agentSessionNotFound(sessionId);
       }
 
       // Session workingDir is primary source of truth for follow-up runs

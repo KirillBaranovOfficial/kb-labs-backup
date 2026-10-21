@@ -131,10 +131,49 @@ class PtyInvocationTest(unittest.TestCase):
             stdout = json.dumps({"ok": False, "error": {
                 "code": "KB_RUNTIME_UNEXPECTED", "correlationId": "cli-by-name-1"}})
 
-            diagnostic = invocations._unexpected_error_diagnostics(["kb", "adapter", "list", "--json"],
-                                                                   stdout, "", root, env)
+            diagnostic = invocations._failure_log_query("command", 1,
+                                                        ["kb", "adapter", "list", "--json"],
+                                                        stdout, "", root, env)
 
-        self.assertEqual(diagnostic, {"correlationId": "cli-by-name-1", "queryError": "not-json"})
+        self.assertEqual(diagnostic, {
+            "code": "KB_RUNTIME_UNEXPECTED",
+            "correlationId": "cli-by-name-1",
+            "queryError": "not-json",
+            "exitCode": 0,
+        })
+
+    def test_http_failure_with_correlation_id_records_the_complete_platform_log_query(self):
+        with tempfile.TemporaryDirectory(prefix="journey-http-log-query-") as temp:
+            root = Path(temp)
+            target = root / "installed-kb"
+            target.write_text("#!/bin/sh\nexit 0\n")
+            target.chmod(0o755)
+            cli = root / "kb"
+            cli.symlink_to(target)
+            correlation_id = "http-failure-correlation-1"
+            query_envelope = {"ok": True, "data": {"data": {"source": "persistence", "logs": [
+                {"correlationId": correlation_id, "message": "plugin cause"},
+            ]}}}
+            env = {"PATH": str(root), "KB_JOURNEY_CLI_PATH": str(cli)}
+            failure = json.dumps({"ok": False, "error": {
+                "code": "KB_PLUGIN_COMMAND_FAILED", "correlationId": correlation_id,
+            }})
+
+            with patch.object(invocations.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [str(cli), "logs"], 0, json.dumps(query_envelope), "")) as run:
+                with invocations.invocation_context(report_root=root):
+                    invocations.record_invocation(
+                        kind="http", argv=["GET"], cwd=root, env=env, exit_code=500,
+                        stdout=failure, duration_seconds=0.1, url="http://gateway.invalid/test",
+                    )
+
+            self.assertEqual(run.call_args.args[0], [str(cli), "logs", "query", "--correlation-id", correlation_id, "--json"])
+            record = json.loads((root / "invocations/calls.jsonl").read_text())
+            self.assertEqual(record["correlated_log_query"], {
+                "code": "KB_PLUGIN_COMMAND_FAILED",
+                "correlationId": correlation_id,
+                "result": query_envelope,
+            })
 
     def test_non_cli_report_does_not_query_nested_unexpected_error_text(self):
         with tempfile.TemporaryDirectory(prefix="journey-nested-diagnostic-") as temp:
@@ -151,8 +190,8 @@ class PtyInvocationTest(unittest.TestCase):
             hint = unexpected["hint"].replace("{correlationId}", correlation_id)
             service_report = json.dumps({"message": f"{unexpected['message']} [KB_RUNTIME_UNEXPECTED]\nHint: {hint}"})
 
-            diagnostic = invocations._unexpected_error_diagnostics(
-                ["python3", "service_runner.py"], service_report, "", root, env)
+            diagnostic = invocations._failure_log_query(
+                "command", 1, ["python3", "service_runner.py"], service_report, "", root, env)
 
         self.assertIsNone(diagnostic)
 
