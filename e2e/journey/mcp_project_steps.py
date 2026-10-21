@@ -614,7 +614,10 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
         with invocation_context(step_id="S-141.4"):
             status, body, _ = _ux_request(f"{base}/{missing_id}", token=token)
         rendered = json.dumps(body, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
-        if status != 404 or missing_id not in rendered:
+        error = body.get("error") if isinstance(body, dict) else None
+        if (status != 404 or not isinstance(error, dict)
+                or error.get("code") != "KB_RUNTIME_RESOURCE_NOT_FOUND"
+                or error.get("details", {}).get("sessionId") != missing_id):
             return "unknown agent session response did not return not found naming the session ID"
         if re.search(r"Traceback|\bat\s+[^\n]+\([^\n]*:\d+:\d+\)|(?:^|\n)(?:Error|TypeError|ReferenceError):|panic:", rendered):
             return "unknown agent session response exposed a stack trace"
@@ -631,7 +634,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
         error = body.get("error") if isinstance(body, dict) else None
         if (status != 404 or not isinstance(error, dict)
                 or error.get("code") != "KB_AGENT_NOT_FOUND"
-                or "agent-does-not-exist" not in str(error.get("message", ""))):
+                or error.get("details", {}).get("agentId") != "agent-does-not-exist"):
             return "unknown agent ID did not return the typed KB_AGENT_NOT_FOUND 404"
         return None
 

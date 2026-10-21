@@ -7,6 +7,7 @@ import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } f
 import { SessionManager } from '@kb-labs/agent-core';
 import { ChangeStore, toSummary } from '@kb-labs/agent-history';
 import type { FileChangeSummary } from '@kb-labs/agent-history';
+import { agentSessionNotFound } from './session-errors.js';
 
 interface ListFileChangesResponse {
   changes: FileChangeSummary[];
@@ -27,7 +28,9 @@ export default defineHandler({
 
       const sessionManager = new SessionManager(ctx.cwd);
       const session = await sessionManager.loadSession(sessionId);
-      if (!session) {throw new Error(`Session not found: ${sessionId}`);}
+      if (!session) {
+        throw agentSessionNotFound(sessionId);
+      }
 
       const workingDir = session.workingDir || ctx.cwd;
       const store = new ChangeStore(workingDir);

@@ -169,6 +169,7 @@ export type {
 } from "./adapters/logger.js";
 export { LOG_CONTEXT_FIELDS } from "./adapters/logger.js";
 
+export { LOG_PERSISTENCE_ERROR_FLUSH_TIMEOUT_MS } from "./adapters/log-persistence.js";
 export type {
   ILogPersistence,
   LogPersistenceConfig,

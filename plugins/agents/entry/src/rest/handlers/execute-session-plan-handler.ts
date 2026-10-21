@@ -15,6 +15,7 @@ import type {
 } from '@kb-labs/agent-contracts';
 import { promises as fs } from 'node:fs';
 import runHandler from './run-handler.js';
+import { agentSessionNotFound } from './session-errors.js';
 
 interface ExecutePlanRouteParams {
   sessionId?: string;
@@ -92,7 +93,7 @@ export default defineHandler({
       const baseManager = new SessionManager(ctx.cwd);
       const session = await baseManager.loadSession(sessionId);
       if (!session) {
-        throw new Error(`Session not found: ${sessionId}`);
+        throw agentSessionNotFound(sessionId);
       }
 
       const workingDir = session.workingDir || ctx.cwd;
