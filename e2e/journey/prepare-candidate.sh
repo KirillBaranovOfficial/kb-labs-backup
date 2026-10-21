@@ -12,44 +12,7 @@ node "$ROOT/e2e/scripts/validate-package-outputs.mjs" --build-outputs "$ROOT"
 bash "$ROOT/e2e/journey/stage-runner-inputs.sh"
 
 mkdir -p "$PACKAGES" "$TARGET"
-if [[ -f "$TARGET/update-packages/generated-packages.txt" ]]; then
-  while IFS= read -r filename; do
-    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
-  done < "$TARGET/update-packages/generated-packages.txt"
-fi
-if [[ -f "$TARGET/canary-packages/generated-packages.txt" ]]; then
-  while IFS= read -r filename; do
-    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
-  done < "$TARGET/canary-packages/generated-packages.txt"
-fi
-if [[ -f "$TARGET/jump-packages/generated-packages.txt" ]]; then
-  while IFS= read -r filename; do
-    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
-  done < "$TARGET/jump-packages/generated-packages.txt"
-fi
-if [[ -f "$TARGET/minor-packages/generated-packages.txt" ]]; then
-  while IFS= read -r filename; do
-    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
-  done < "$TARGET/minor-packages/generated-packages.txt"
-fi
-if [[ -f "$TARGET/failed-host-packages/generated-packages.txt" ]]; then
-  while IFS= read -r filename; do
-    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
-  done < "$TARGET/failed-host-packages/generated-packages.txt"
-fi
-if [[ -f "$TARGET/healthy-host-packages/generated-packages.txt" ]]; then
-  while IFS= read -r filename; do
-    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
-  done < "$TARGET/healthy-host-packages/generated-packages.txt"
-fi
-for candidate in config doctor; do
-  package_list="$TARGET/staged-$candidate-packages/generated-packages.txt"
-  if [[ -f "$package_list" ]]; then
-    while IFS= read -r filename; do
-      [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
-    done < "$package_list"
-  fi
-done
+node "$ROOT/e2e/platform/release-index-package-stage.mjs" --packages-dir "$PACKAGES" --output-dir "$TARGET"
 rm -rf "$TARGET"
 mkdir -p "$TARGET"
 if [[ "${KB_JOURNEY_PACKAGES_READY:-0}" != "1" ]]; then

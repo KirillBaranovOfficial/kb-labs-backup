@@ -101,7 +101,7 @@ const config: KnipConfig = {
     'services/mcp/app': {
       entry: ['src/index.ts', 'src/manifest.ts'],
     },
-    'plugins/marketplace/daemon/marketplace': {
+    'services/marketplace/app/marketplace': {
       entry: ['src/index.ts', 'src/bootstrap.ts'],
     },
     'plugins/workflow/daemon': {

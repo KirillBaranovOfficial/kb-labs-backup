@@ -1066,6 +1066,9 @@ importers:
       '@kb-labs/gateway-contracts':
         specifier: workspace:*
         version: link:../../services/gateway/contracts
+      '@kb-labs/marketplace-contracts':
+        specifier: workspace:*
+        version: link:../../services/marketplace/contracts
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts
@@ -1075,6 +1078,9 @@ importers:
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../core/plugin-runtime
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/sdk
       '@kb-labs/shared-cli-ui':
         specifier: workspace:*
         version: link:../../shared/cli-ui
@@ -1136,6 +1142,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
+      '@kb-labs/shared-testing-e2e':
+        specifier: workspace:*
+        version: link:../../shared/testing-e2e
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2
@@ -2204,10 +2213,10 @@ importers:
         version: link:../shared
       '@kb-labs/marketplace-app':
         specifier: workspace:*
-        version: link:../../plugins/marketplace/daemon
+        version: link:../../services/marketplace/app
       '@kb-labs/marketplace-core':
         specifier: workspace:*
-        version: link:../../plugins/marketplace/core
+        version: link:../../services/marketplace/core
       '@playwright/test':
         specifier: ^1.52.0
         version: 1.59.1
@@ -2379,7 +2388,7 @@ importers:
         version: link:../../services/gateway/app
       '@kb-labs/marketplace-app':
         specifier: workspace:*
-        version: link:../../plugins/marketplace/daemon
+        version: link:../../services/marketplace/app
       '@kb-labs/rest-api-app':
         specifier: workspace:*
         version: link:../../services/rest-api/app
@@ -3818,142 +3827,6 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
-  plugins/marketplace-registry/api:
-    dependencies:
-      '@fastify/multipart':
-        specifier: ^9.0.3
-        version: 9.4.0
-      '@kb-labs/core-contracts':
-        specifier: workspace:*
-        version: link:../../../core/contracts
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/gateway-contracts':
-        specifier: workspace:*
-        version: link:../../../services/gateway/contracts
-      '@kb-labs/marketplace-registry-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@kb-labs/marketplace-registry-core':
-        specifier: workspace:*
-        version: link:../core
-      '@kb-labs/shared-http':
-        specifier: workspace:*
-        version: link:../../../shared/http
-      fastify:
-        specifier: '>=5.12.2'
-        version: 5.12.5
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/marketplace-registry/app:
-    dependencies:
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/core-runtime':
-        specifier: workspace:*
-        version: link:../../../core/runtime
-      '@kb-labs/core-sys':
-        specifier: workspace:*
-        version: link:../../../core/sys
-      '@kb-labs/gateway-auth':
-        specifier: workspace:*
-        version: link:../../../services/gateway/auth
-      '@kb-labs/marketplace-registry-api':
-        specifier: workspace:*
-        version: link:../api
-      '@kb-labs/marketplace-registry-core':
-        specifier: workspace:*
-        version: link:../core
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../core/plugin-contracts
-      '@kb-labs/plugin-runtime':
-        specifier: workspace:*
-        version: link:../../../core/plugin-runtime
-      '@kb-labs/shared-daemon':
-        specifier: workspace:*
-        version: link:../../../shared/daemon
-      '@kb-labs/shared-http':
-        specifier: workspace:*
-        version: link:../../../shared/http
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      tsx:
-        specifier: ^4.20.5
-        version: 4.21.0
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/marketplace-registry/contracts:
-    dependencies:
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/marketplace-registry/core:
-    dependencies:
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/marketplace-registry-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
   plugins/marketplace-registry/entry:
     dependencies:
       execa:
@@ -3984,255 +3857,6 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/marketplace/api:
-    dependencies:
-      '@fastify/swagger':
-        specifier: '>=9.5.1'
-        version: 9.7.0
-      '@fastify/swagger-ui':
-        specifier: ^5.2.0
-        version: 5.2.5
-      '@kb-labs/core-contracts':
-        specifier: workspace:*
-        version: link:../../../core/contracts
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/marketplace-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@kb-labs/marketplace-core':
-        specifier: workspace:*
-        version: link:../core
-      '@kb-labs/marketplace-npm':
-        specifier: workspace:*
-        version: link:../npm
-      '@kb-labs/shared-http':
-        specifier: workspace:*
-        version: link:../../../shared/http
-      fastify:
-        specifier: '>=5.12.2'
-        version: 5.12.5
-      fastify-type-provider-zod:
-        specifier: ^4.0.2
-        version: 4.0.2(fastify@5.12.5)(zod@3.25.76)
-      zod:
-        specifier: ^3.25.76
-        version: 3.25.76
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/marketplace/contracts:
-    dependencies:
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../core/plugin-contracts
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/marketplace/core:
-    dependencies:
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
-      '@kb-labs/core-extension-store':
-        specifier: workspace:*
-        version: link:../../../core/extension-store
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/marketplace-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../core/plugin-contracts
-      glob:
-        specifier: ^11.0.0
-        version: 11.1.0
-      semver:
-        specifier: ^7.8.5
-        version: 7.8.5
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/semver':
-        specifier: ^7.7.1
-        version: 7.7.1
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/marketplace/daemon:
-    dependencies:
-      '@kb-labs/core-config':
-        specifier: workspace:*
-        version: link:../../../core/config
-      '@kb-labs/core-extension-store':
-        specifier: workspace:*
-        version: link:../../../core/extension-store
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/core-runtime':
-        specifier: workspace:*
-        version: link:../../../core/runtime
-      '@kb-labs/core-sys':
-        specifier: workspace:*
-        version: link:../../../core/sys
-      '@kb-labs/marketplace-api':
-        specifier: workspace:*
-        version: link:../api
-      '@kb-labs/marketplace-core':
-        specifier: workspace:*
-        version: link:../core
-      '@kb-labs/marketplace-npm':
-        specifier: workspace:*
-        version: link:../npm
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../core/plugin-contracts
-      '@kb-labs/plugin-runtime':
-        specifier: workspace:*
-        version: link:../../../core/plugin-runtime
-      '@kb-labs/shared-daemon':
-        specifier: workspace:*
-        version: link:../../../shared/daemon
-      '@kb-labs/shared-http':
-        specifier: workspace:*
-        version: link:../../../shared/http
-      fastify:
-        specifier: '>=5.12.2'
-        version: 5.12.5
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      tsx:
-        specifier: ^4.20.5
-        version: 4.21.0
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/marketplace/entry:
-    dependencies:
-      '@kb-labs/marketplace-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-    devDependencies:
-      '@kb-labs/cli-runtime':
-        specifier: workspace:*
-        version: link:../../../cli/runtime
-      '@kb-labs/core-workspace':
-        specifier: workspace:*
-        version: link:../../../core/workspace
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
-      '@kb-labs/shared-cli-ui':
-        specifier: workspace:*
-        version: link:../../../shared/cli-ui
-      '@kb-labs/shared-testing-e2e':
-        specifier: workspace:*
-        version: link:../../../shared/testing-e2e
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
-  plugins/marketplace/npm:
-    dependencies:
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
-      '@kb-labs/marketplace-contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      execa:
-        specifier: ^9.5.3
-        version: 9.6.1
-      tar:
-        specifier: ^7.5.21
-        version: 7.5.21
-      yaml:
-        specifier: ^2.8.3
-        version: 2.8.3
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../../infra/devkit
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
   plugins/mind/contracts:
     dependencies:
@@ -5101,12 +4725,6 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
-      '@kb-labs/cli-runtime':
-        specifier: workspace:*
-        version: link:../../../cli/runtime
-      '@kb-labs/core-workspace':
-        specifier: workspace:*
-        version: link:../../../core/workspace
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
@@ -5116,9 +4734,6 @@ importers:
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
-      '@kb-labs/shared-cli-ui':
-        specifier: workspace:*
-        version: link:../../../shared/cli-ui
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e
@@ -6321,7 +5936,7 @@ importers:
         version: link:../../gateway/contracts
       '@kb-labs/marketplace-app':
         specifier: workspace:*
-        version: link:../../../plugins/marketplace/daemon
+        version: link:../../marketplace/app
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../../core/plugin-runtime
@@ -6365,6 +5980,318 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/marketplace-registry/api:
+    dependencies:
+      '@fastify/multipart':
+        specifier: ^9.0.3
+        version: 9.4.0
+      '@kb-labs/core-contracts':
+        specifier: workspace:*
+        version: link:../../../core/contracts
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
+      '@kb-labs/gateway-contracts':
+        specifier: workspace:*
+        version: link:../../gateway/contracts
+      '@kb-labs/marketplace-registry-contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@kb-labs/marketplace-registry-core':
+        specifier: workspace:*
+        version: link:../core
+      '@kb-labs/shared-http':
+        specifier: workspace:*
+        version: link:../../../shared/http
+      fastify:
+        specifier: '>=5.12.2'
+        version: 5.12.5
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/marketplace-registry/app:
+    dependencies:
+      '@kb-labs/marketplace-registry-api':
+        specifier: workspace:*
+        version: link:../api
+      '@kb-labs/marketplace-registry-core':
+        specifier: workspace:*
+        version: link:../core
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
+      '@kb-labs/plugin-runtime':
+        specifier: workspace:*
+        version: link:../../../core/plugin-runtime
+      '@kb-labs/shared-daemon':
+        specifier: workspace:*
+        version: link:../../../shared/daemon
+      '@kb-labs/shared-http':
+        specifier: workspace:*
+        version: link:../../../shared/http
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/node':
+        specifier: ^24.3.3
+        version: 24.19.0
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      tsx:
+        specifier: ^4.20.5
+        version: 4.21.0
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/marketplace-registry/contracts:
+    dependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../../core/discovery
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/marketplace-registry/core:
+    dependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../../core/discovery
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
+      '@kb-labs/marketplace-registry-contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/marketplace/api:
+    dependencies:
+      '@kb-labs/core-contracts':
+        specifier: workspace:*
+        version: link:../../../core/contracts
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../../core/discovery
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
+      '@kb-labs/marketplace-contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@kb-labs/marketplace-core':
+        specifier: workspace:*
+        version: link:../core
+      '@kb-labs/marketplace-npm':
+        specifier: workspace:*
+        version: link:../npm
+      '@kb-labs/shared-http':
+        specifier: workspace:*
+        version: link:../../../shared/http
+      fastify:
+        specifier: '>=5.12.2'
+        version: 5.12.5
+    devDependencies:
+      '@fastify/swagger':
+        specifier: '>=9.5.1'
+        version: 9.7.0
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/node':
+        specifier: ^24.3.3
+        version: 24.19.0
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/marketplace/app:
+    dependencies:
+      '@kb-labs/core-config':
+        specifier: workspace:*
+        version: link:../../../core/config
+      '@kb-labs/core-extension-store':
+        specifier: workspace:*
+        version: link:../../../core/extension-store
+      '@kb-labs/marketplace-api':
+        specifier: workspace:*
+        version: link:../api
+      '@kb-labs/marketplace-core':
+        specifier: workspace:*
+        version: link:../core
+      '@kb-labs/marketplace-npm':
+        specifier: workspace:*
+        version: link:../npm
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
+      '@kb-labs/plugin-runtime':
+        specifier: workspace:*
+        version: link:../../../core/plugin-runtime
+      '@kb-labs/shared-daemon':
+        specifier: workspace:*
+        version: link:../../../shared/daemon
+      '@kb-labs/shared-http':
+        specifier: workspace:*
+        version: link:../../../shared/http
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/node':
+        specifier: ^24.3.3
+        version: 24.19.0
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      tsx:
+        specifier: ^4.20.5
+        version: 4.21.0
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/marketplace/contracts:
+    dependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../../core/discovery
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/marketplace/core:
+    dependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../../core/discovery
+      '@kb-labs/core-extension-store':
+        specifier: workspace:*
+        version: link:../../../core/extension-store
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
+      '@kb-labs/marketplace-contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
+      glob:
+        specifier: ^11.0.0
+        version: 11.1.0
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      '@types/semver':
+        specifier: ^7.7.1
+        version: 7.7.1
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  services/marketplace/npm:
+    dependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../../core/discovery
+      '@kb-labs/marketplace-contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      execa:
+        specifier: ^9.5.3
+        version: 9.6.1
+      tar:
+        specifier: ^7.5.21
+        version: 7.5.21
+      yaml:
+        specifier: ^2.8.3
+        version: 2.8.3
+    devDependencies:
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../../infra/devkit
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.19.0)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
   services/mcp/app:
     dependencies:

@@ -28,7 +28,9 @@
     { "name": "@kb-labs/studio-ui-core" },
     { "name": "@kb-labs/studio-ui-kit" },
     { "name": "@kb-labs/core-state-daemon" },
-    { "name": "@kb-labs/adapters-kblabs-gateway" }
+    { "name": "@kb-labs/adapters-kblabs-gateway" },
+    { "name": "@kb-labs/cli-commands" },
+    { "name": "@kb-labs/marketplace-contracts" }
   ],
   "services": [
     {
@@ -66,13 +68,6 @@
       "gatewayPrefix": "/api/v1/marketplace"
     },
     {
-      "id": "marketplace-registry",
-      "pkg": "@kb-labs/marketplace-registry-app",
-      "description": "Marketplace registry (port 5071)",
-      "default": true,
-      "port": 5071
-    },
-    {
       "id": "studio",
       "pkg": "@kb-labs/studio-app",
       "description": "Web UI (port 3000)",
@@ -107,12 +102,6 @@
       "id": "@kb-labs/workflow",
       "pkg": "@kb-labs/workflow-entry",
       "description": "Workflow engine plugin — CLI, REST routes and WS channels for the workflow daemon",
-      "default": true
-    },
-    {
-      "id": "@kb-labs/marketplace",
-      "pkg": "@kb-labs/marketplace-entry",
-      "description": "Install, list, enable plugins",
       "default": true
     },
     {

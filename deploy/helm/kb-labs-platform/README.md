@@ -73,7 +73,7 @@ run -v` — see the comment in `templates/configmap.yaml`).
   it higher fails `helm template`/`helm install`, not a silent bad deploy.
 - **`image.tag` is required.** Unset fails the render with a clear message.
 - **`marketplace-registry` waits for `state-daemon`** via an initContainer
-  (real runtime dependency — `plugins/marketplace-registry/README.md:44`).
+  (real runtime dependency — `services/marketplace-registry/README.md:46`).
 
 Disable any unit you don't need with `--set services.<name>.enabled=false`
 (e.g. `studio`, `mcp`) — no fork required.

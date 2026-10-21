@@ -87,8 +87,8 @@ files. They are based on the remaining `.kb` dependents inventory in
    `core/workspace/`, `core/project-registry/src/registry.ts`,
    `cli/commands/src/commands/system/project/show.ts`,
    `plugins/impact/core/src/core/workspace.ts`,
-   `plugins/marketplace/core/src/scope.ts`,
-   `plugins/marketplace/entry/src/scope.ts`, `core/discovery/`,
+   `services/marketplace/core/src/scope.ts`,
+   `cli/commands/src/commands/system/marketplace/scope.ts`, `core/discovery/`,
    `core/runtime/src/platform-sync.ts`,
    `core/runtime/src/discover-adapters.ts`,
    `cli/commands/src/commands/system/platform/sync.ts`. Resolve project roots
@@ -96,8 +96,8 @@ files. They are based on the remaining `.kb` dependents inventory in
    symlink in the platform extension store remains platform-local; it is not a
    consumer repository file.
 3. **Marketplace and plugin-install state:**
-   `plugins/marketplace/core/src/manifest-cache.ts`,
-   `plugins/marketplace/entry/src/commands/sync.ts`,
+   `services/marketplace/core/src/manifest-cache.ts`,
+   `cli/commands/src/commands/system/marketplace/commands/sync.ts`,
    `plugins/scaffold/core/src/doctor/scan.ts`,
    `cli/commands/src/registry/plugins-state.ts`,
    `core/registry/src/snapshot/`, and `core/registry/src/state/`.

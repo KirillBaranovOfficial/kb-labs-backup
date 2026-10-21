@@ -119,12 +119,6 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
     };
   }
 
-  const catalogued = toErrorEnvelope(err, { correlationId });
-  if (catalogued.code !== 'KB_RUNTIME_UNEXPECTED' && isErrorCode(catalogued.code)) {
-    const catalogEntry = getCatalogEntry(catalogued.code);
-    if (catalogEntry?.httpStatus) {return { statusCode: catalogEntry.httpStatus, envelope: catalogued };}
-  }
-
   let code: ErrorCode = 'KB_RUNTIME_UNEXPECTED';
   let message: string | undefined;
   let hint: string | undefined;
@@ -183,6 +177,16 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
       code = 'KB_MARKETPLACE_RESOLUTION_FAILED';
       message = err.message;
       hint = `Check the registry version metadata for ${err.packageId}, then retry the Marketplace operation.`;
+    }
+  }
+
+  if (code === 'KB_RUNTIME_UNEXPECTED') {
+    const catalogued = toErrorEnvelope(err, { correlationId });
+    if (catalogued.code !== 'KB_RUNTIME_UNEXPECTED' && isErrorCode(catalogued.code)) {
+      const catalogEntry = getCatalogEntry(catalogued.code);
+      if (catalogEntry?.httpStatus) {
+        return { statusCode: catalogEntry.httpStatus, envelope: catalogued };
+      }
     }
   }
 

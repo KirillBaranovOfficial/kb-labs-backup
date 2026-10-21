@@ -41,14 +41,9 @@
       "enabled": true,
       "source": "local"
     },
-    "@kb-labs/marketplace": {
-      "link": "./plugins/marketplace/entry",
-      "enabled": true,
-      "source": "local"
-    },
     "@kb-labs/marketplace-registry": {
       "link": "./plugins/marketplace-registry/entry",
-      "enabled": true,
+      "enabled": false,
       "source": "local"
     },
     "@kb-labs/mind": {
@@ -96,6 +91,11 @@
       "enabled": true,
       "source": "local"
     },
+    "@kb-labs/viewer": {
+      "link": "./plugins/viewer/entry",
+      "enabled": false,
+      "source": "local"
+    },
     "@kb-labs/workflow": {
       "link": "./plugins/workflow/entry",
       "enabled": true,
@@ -105,184 +105,191 @@
   "adapters": {
     "@kb-labs/adapters-analytics-duckdb": {
       "version": "2.120.1",
-      "integrity": "sha256-L2PxLcC2q/vpVu0VOfwL1NjHUq9ORQoKsN8STnljo5E=",
+      "integrity": "sha256-XGDtXsQ60JSJW9R14ghYqmzaAqIPNGmdZ240D7Ldw5M=",
       "resolvedPath": "./adapters/analytics-duckdb",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-analytics-file": {
       "version": "2.120.1",
-      "integrity": "sha256-aY1p6IbH2g1+vFPdv6vwsI5g9z2lZ4g2mXAvlsDDaYo=",
+      "integrity": "sha256-Cds/jHOsIBxOUXQc53AW8iRyoXXVf1TsoGQvpZr7eIo=",
       "resolvedPath": "./adapters/analytics-file",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-analytics-sqlite": {
       "version": "2.120.1",
-      "integrity": "sha256-vH7Q7eOyBnlrJzZk8skBlMxi6KvbfkdH9qqmHh12IXY=",
+      "integrity": "sha256-h7cUXTbjRb2+OMV2j/alrhepdiB4tmTfBxdHqTwtoR0=",
       "resolvedPath": "./adapters/analytics-sqlite",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-environment-docker": {
       "version": "2.120.1",
-      "integrity": "sha256-gjaz+iEAJ6sPKIpAVH2p+ooAO4tpvupKIqiQrFy3Dn0=",
+      "integrity": "sha256-p+CVCnhbnYYDh+q4cdJiRo0DiLvJ0ZPZJO8ValE3Fpw=",
       "resolvedPath": "./adapters/environment-docker",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-eventbus-cache": {
       "version": "2.120.1",
-      "integrity": "sha256-C9YBtw5VQkpbt41dH8kYHIeyY4/1KdTHAOkQbuYACm4=",
+      "integrity": "sha256-IyjJUqCujk8FBQctxuiVN7GR67M1MNqijS7qXB2R0Tg=",
       "resolvedPath": "./adapters/eventbus-cache",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-fs": {
       "version": "2.107.0",
-      "integrity": "sha256-pWWOdhhyK5dICEhE1cmCb6gBxT2rrc0BDcsj7R5DP3Y=",
+      "integrity": "sha256-6y0r3VOTJkypUl0NvMAJZos/210LogdmDCIMxaEAzKM=",
       "resolvedPath": "./adapters/fs",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-kblabs-gateway": {
       "version": "2.120.1",
-      "integrity": "sha256-RGeysCgO1ohTgLVwOO6f3csrdI41hTuxA5GxeV0iHDw=",
+      "integrity": "sha256-I3oTTgdG/Gy9HSjmav6op+xWGoQJPvDwGpIYj/JNQbI=",
       "resolvedPath": "./adapters/kblabs-gateway",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-log-document": {
       "version": "2.120.1",
-      "integrity": "sha256-+35KyLrfKNluVVxKAMAnIZ38FFCfW3QTWRS+rPpwNhY=",
+      "integrity": "sha256-MoPf86o7BQe9HdPbPHQxYRv+B95mcOIFbxknCtF6yVc=",
       "resolvedPath": "./adapters/log-document",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-log-ringbuffer": {
       "version": "2.120.1",
-      "integrity": "sha256-g6ZJ9hqmPVMis/Jj1pqgv07iGLYzCbWjnAvCauB/xAU=",
+      "integrity": "sha256-/GqIfiHlKYqMYYM4jkaxIMWjfTpiS2BTxmTpXNVa7tc=",
       "resolvedPath": "./adapters/log-ringbuffer",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-mongodb": {
       "version": "2.120.1",
-      "integrity": "sha256-9ujgcQyWf1qIpgO+eaotD4f5BkPWYB0jJVMitODZV4A=",
+      "integrity": "sha256-2/yBHmmHXpfEa/9vcFLI8YqQd5DCOFfbpPwJpkLnbYw=",
       "resolvedPath": "./adapters/mongodb",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-openai": {
       "version": "2.120.1",
-      "integrity": "sha256-HzzO9T7vQ32MO3bs+dQoNerUcMO2TOGlUH8WssPsYT0=",
+      "integrity": "sha256-yjGwIHj9mTfZKTns14qXjWpYbLIrTauQ70vIZ96E3Gc=",
       "resolvedPath": "./adapters/openai",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-pino": {
       "version": "2.120.1",
-      "integrity": "sha256-BMpLRIh3FQVWhOVgjRB7ij7VtQeZ/zh2uxxTjZcOt/4=",
+      "integrity": "sha256-Cku+43BVoIoKAhbZq2G8tzFQTC7HkPh1YSOPs9mqEFI=",
       "resolvedPath": "./adapters/pino",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-qdrant": {
       "version": "2.120.1",
-      "integrity": "sha256-mRTOuq5pvNPeo5w11o8hga9u+6XR9gJDpH+KsB0D0xc=",
+      "integrity": "sha256-Hn5Jr29Eva1JbFGK6ZMXNInkd8l55S6PLIXn83RBW2s=",
       "resolvedPath": "./adapters/qdrant",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-redis": {
       "version": "2.120.1",
-      "integrity": "sha256-XLwtNm1783MHefsR0UxYsbnW9E8c4BynFguAG47dqT8=",
+      "integrity": "sha256-/EmJul/0PbRquwb0spH5Shq9kK/xUGSLQOTbSmHgslY=",
       "resolvedPath": "./adapters/redis",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-s3": {
       "version": "2.120.1",
-      "integrity": "sha256-bN6bEtXhxS2C9NbcYeXrCDuwDeO49N5j1TNarplQ7PE=",
+      "integrity": "sha256-03cvjxYM1oc4uasDKVC3iNKVCOeHRwH5KtygU+aOJxQ=",
       "resolvedPath": "./adapters/s3",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-service-transport-http": {
       "version": "2.120.1",
-      "integrity": "sha256-kFp/q2Orn45lOtim63HTF6TNvokzYJPifuBkeBTdqPU=",
+      "integrity": "sha256-Vu1YYrQnlax1llj69yJHlWNBst+C6MWg8GrllMkS514=",
       "resolvedPath": "./adapters/service-transport-http",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-snapshot-localfs": {
       "version": "2.120.1",
-      "integrity": "sha256-pAhR9FyIuywu28nIRR8cagfAdfR33tGEBSr2f7+7dhY=",
+      "integrity": "sha256-Cam/+4DrE+2037aXXGHM68vYhr2TBxZp7Z2LS8DBnIc=",
       "resolvedPath": "./adapters/snapshot-localfs",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-sqlite": {
       "version": "2.120.1",
-      "integrity": "sha256-/6CdhBjNVsnjUG0u5eOfPiSmZjUfIivxVzOvfEH4Gu8=",
+      "integrity": "sha256-PZeZMarOy6zimmS7v11R5EFtmeixQYVR2++ril17l+o=",
       "resolvedPath": "./adapters/sqlite",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-state-broker": {
       "version": "2.120.1",
-      "integrity": "sha256-0JjmF3W0vfv6pb8A9Ceqr9U/Ps4yaDEdwq+YggwBTZg=",
+      "integrity": "sha256-Vi4Bi5+3JFHWMvckWkzSCHz9vGRFxqQxjQEL4BWH0Y4=",
       "resolvedPath": "./adapters/state-broker",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-telegram": {
       "version": "2.120.1",
-      "integrity": "sha256-adWigv67RM8q+IUFtnvhVyGTR9bvlXslrvkbf816bfs=",
+      "integrity": "sha256-geJmqT14LJ2iuyrlmSkg/JxdGPgQjr+v+rHyv9SLWxY=",
       "resolvedPath": "./adapters/telegram",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-vibeproxy": {
       "version": "2.120.1",
-      "integrity": "sha256-G6wkcpzzhZ4GB3uvnRLm23sDnyiabSCjkzQ2L2paKsc=",
+      "integrity": "sha256-hf1rL+4ymLZTPP82b8EQWMpIuDblL4I+m9T2+oP39bE=",
       "resolvedPath": "./adapters/vibeproxy",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-voyage-ai": {
       "version": "2.120.1",
-      "integrity": "sha256-P8b/607yV2lEES6iuWLRSJw5f7DbE//GiiTn5OW4s0I=",
+      "integrity": "sha256-apKCG4L+xvsnYkeJRDyaQKYcGaz0Br4P6h5YKn6y4LM=",
       "resolvedPath": "./adapters/voyage-ai",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-workspace-agent": {
       "version": "2.120.1",
-      "integrity": "sha256-WHgmXCv3b+2jxH8cqpkOieXctah66+XCQGbPCsMxub8=",
+      "integrity": "sha256-s78HdNBaSOJU/QOWn4qR1O3gUZb08PVnhfW43wicSkI=",
       "resolvedPath": "./adapters/workspace-agent",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-workspace-localfs": {
       "version": "2.120.1",
-      "integrity": "sha256-9KZpOAGudkBvZVV4lodfOnmupMg/DdPq182i3wMQ2k4=",
+      "integrity": "sha256-IQKD09UBc9/bRkjODN/GH8coKrsG2EpBAP7v+gPLa1s=",
       "resolvedPath": "./adapters/workspace-localfs",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/adapters-workspace-worktree": {
       "version": "2.120.1",
-      "integrity": "sha256-OiTvGDtFF6LmcdNQxIFSq8vfJ8XK8aEPKWWAxd9qLIQ=",
+      "integrity": "sha256-bhAhRCmqtT7JYpBc/661IKpIuWurvEvB6FXh9+pBr5o=",
       "resolvedPath": "./adapters/workspace-worktree",
-      "enabled": true,
+      "enabled": false,
       "source": "platform"
     },
     "@kb-labs/data-store": {
       "version": "2.120.1",
-      "integrity": "sha256-u0XR/7vXjSz7nANDrVwuoPUeRfKxGM1zpxiDnTerSCk=",
+      "integrity": "sha256-DI2hJTgOJKw2SXaMIz3arq5d6JqIvh9Y8jnwnO79rfo=",
       "resolvedPath": "./adapters/diskio",
-      "enabled": true,
+      "enabled": false,
+      "source": "platform"
+    },
+    "@kb-labs/notifier-router": {
+      "version": "2.120.1",
+      "integrity": "sha256-Tz8zlhkUiQqlXIbUPbWCh8kKkx5ypqaH7z0POXvHrnY=",
+      "resolvedPath": "./adapters/notifier-router",
+      "enabled": false,
       "source": "platform"
     }
   }

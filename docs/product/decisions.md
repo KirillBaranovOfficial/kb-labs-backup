@@ -4,6 +4,18 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-21
+
+### Marketplace management is built in; the publishing registry is optional
+
+Plugin and adapter installation is a platform capability: every installed
+platform includes the marketplace service and the built-in `kb marketplace`
+command group. The marketplace talks to package registries as a client. The
+marketplace-registry backend serves publisher operations and self-hosted
+deployments, so it is released and operated as a separate optional service,
+not included in the default installed service graph. The host still composes
+the consumer marketplace service directly. Cases: S-252, S-264.
+
 ## 2026-10-20
 
 ### Release sealing checks install scenarios without requiring operator input

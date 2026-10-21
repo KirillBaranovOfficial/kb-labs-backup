@@ -93,7 +93,7 @@ jobs:
           - image: kb-gateway
             dockerfile: services/gateway/app/Dockerfile
           - image: kb-marketplace
-            dockerfile: plugins/marketplace/daemon/Dockerfile
+            dockerfile: services/marketplace/app/Dockerfile
           - image: kb-rest-api
             dockerfile: services/rest-api/app/Dockerfile
           - image: kb-studio
@@ -103,7 +103,7 @@ jobs:
           - image: kb-mcp
             dockerfile: services/mcp/app/Dockerfile
           - image: kb-marketplace-registry
-            dockerfile: plugins/marketplace-registry/app/Dockerfile
+            dockerfile: services/marketplace-registry/app/Dockerfile
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

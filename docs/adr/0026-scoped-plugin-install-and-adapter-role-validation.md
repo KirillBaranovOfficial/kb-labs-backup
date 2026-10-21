@@ -407,7 +407,7 @@ All shipped:
 ### Remaining deferred item
 
 - Validating adapter roles when installing a plugin onto an
-  already-running platform via the marketplace (`plugins/marketplace`) — a
+  already-running platform via the marketplace (`services/marketplace`) — a
   different install mechanism entirely, not `kb-create install`. Not
   addressed by this ADR or any of its follow-up PRs; tracked here so it
   isn't lost.

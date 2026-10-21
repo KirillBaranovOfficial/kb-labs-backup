@@ -7,6 +7,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { clearGeneratedReleasePackages } from './release-index-package-stage.mjs';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages, releasePackageNames } from './journey-update-packages.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
 import { invokePackageProvenanceOwner } from './package-provenance.mjs';
@@ -26,6 +27,7 @@ const required = name => {
 const packagesDir = resolve(required('--packages-dir'));
 const registryManifest = JSON.parse(readFileSync(resolve(required('--registry-manifest')), 'utf8'));
 const output = resolve(required('--output'));
+clearGeneratedReleasePackages(packagesDir, resolve(output, '..'));
 const sealer = resolve(required('--sealer'));
 const binaryDirectory = resolve(required('--binary-dir'));
 const binaryManifest = resolve(required('--binary-manifest'));
@@ -36,6 +38,7 @@ const sourceRevision = required('--source-revision');
 const binaryRepository = value('--binary-repository') ?? 'kb-labs-team/kb-labs';
 const binaryReleaseTag = value('--binary-release-tag') ?? 'journey-candidate';
 const binaryBaseUrl = value('--binary-base-url') ?? 'http://origin:8080/journey-candidate';
+const packageRegistry = value('--package-registry') ?? 'http://verdaccio:4873';
 const prepareScript = resolve(value('--prepare-script') ?? '/src/kb-create/scripts/prepare-release-index.mjs');
 const releaseConfigPath = resolve(value('--release-config') ?? 'tools/kb-create/config/platform-release.jsonc');
 const stage = resolve(process.env.KB_JOURNEY_RELEASE_STAGE ?? '/tmp/kb-e2e-release-stage');
@@ -111,7 +114,7 @@ const result = spawnSync(process.execPath, [
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
   '--adapter-overrides', adapterOverrides,
-  '--registry', 'http://verdaccio:4873',
+  '--registry', packageRegistry,
   '--output', output,
   ...releaseNotesArgs,
   '--sealer-bin', sealer,

@@ -113,7 +113,7 @@ Independent of the architecture work; ship immediately.
 1. **Fix the storage data loss.** Mount a volume over `/app/.kb/storage` (and decide on
    `.kb/analytics`) in `infra/docker-compose.backend.yml`, or point `data-store` at a path
    under the already-persisted `.kb/database`. Confirmed live issue.
-2. **Unify Node versions.** `plugins/marketplace-registry/app/Dockerfile` → `node:22-slim`,
+2. **Unify Node versions.** `services/marketplace-registry/app/Dockerfile` → `node:22-slim`,
    matching gateway and the CI `setup-node`.
 3. **Pin image tags.** Replace `${IMAGE_TAG:-latest}` with an explicit release version;
    make `latest` an alias, never the deployed default.

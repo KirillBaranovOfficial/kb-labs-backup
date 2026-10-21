@@ -1,8 +1,6 @@
 /**
  * System command groups - Organized categories for system commands
  *
- * NOTE: Marketplace commands have been migrated to the @kb-labs/marketplace-cli plugin.
- * They are now registered via ManifestV3 with subgroup support, not as system commands.
  */
 
 import { defineSystemCommandGroup } from '@kb-labs/shared-command-kit';
@@ -20,6 +18,7 @@ import { configShow, configGet, configSet } from './config';
 import { projectAdd, projectList, projectShow, projectRemove } from './project';
 import { mcpConfig } from './mcp';
 import { adapterBind, adapterList, adapterUnbind } from './adapter';
+import { marketplaceGroup } from './marketplace';
 
 /**
  * Info Commands Group
@@ -131,3 +130,5 @@ export const adapterGroup = defineSystemCommandGroup('adapter', 'Adapter install
   adapterBind,
   adapterUnbind,
 ]);
+
+export { marketplaceGroup };

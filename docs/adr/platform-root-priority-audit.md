@@ -85,7 +85,7 @@ const discovered = await discoverAdapters(
 ```
 Выглядит как инвертированный порядок (platform первый, project второй), но внутри `discoverAdapters` это **работает правильно** — project загружается с `overwrite=true`. Код запутанный, но функционально корректный.
 
-#### 7. `plugins/marketplace/daemon/src/bootstrap.ts` — platformRoot для service
+#### 7. `services/marketplace/app/src/bootstrap.ts` — platformRoot для service
 **Строка**: ~41  
 ```typescript
 const platformRoot = getPlatformRoot() ?? repoRoot;
@@ -105,7 +105,7 @@ const service = new MarketplaceService({ platformRoot, ... });
 | 4 | `plugins/gateway/app/src/bootstrap.ts` | ~26 | `repoRoot` вместо `projectRoot` | **MAJOR** |
 | 5 | `plugins/gateway/app/src/config.ts` | ~33 | Неправильная семантика параметра | **MAJOR** |
 | 6 | `core/runtime/src/loader.ts` | ~478 | Запутанный порядок аргументов (работает) | MINOR |
-| 7 | `plugins/marketplace/daemon/src/bootstrap.ts` | ~41 | platformRoot для service (возможно корректно) | MINOR |
+| 7 | `services/marketplace/app/src/bootstrap.ts` | ~41 | platformRoot для service (возможно корректно) | MINOR |
 
 ---
 

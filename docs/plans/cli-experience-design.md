@@ -10,7 +10,7 @@
 ## 1. Namespace Audit
 
 ### System namespaces (reserved — plugins cannot register)
-`auth`, `platform`, `info`, `logs`, `docs`, `registry`, `completion`, `__complete`, `__internal`
+`auth`, `platform`, `info`, `logs`, `docs`, `registry`, `marketplace`, `completion`, `__complete`, `__internal`
 
 ### Plugin namespaces
 
@@ -23,7 +23,6 @@
 | `workspace` | host-agent-entry | ✅ |
 | `impact` | impact-core | ⚠️ abstract name |
 | `infra-worker` | infra-worker-core | ❌ kebab at top level + internal concept leaked |
-| `marketplace` | marketplace-entry | ✅ broader concept, not just plugins |
 | `mind` | mind-entry | ⚠️ internal term + kebab subcommands |
 | `policy` | policy-core | ✅ |
 | `qa` | qa-entry | ✅ devkit metrics domain |
@@ -35,9 +34,10 @@
 
 ### marketplace collision resolved
 
-`marketplace-registry-entry` is an internal daemon — not a user-facing tool.
-Its CLI commands (`publish`, `yank`, `deprecate`) move into `marketplace-entry`.
-The daemon package stays as separate infrastructure.
+Consumer management is the built-in platform command group `kb marketplace`;
+its handlers live in `cli/commands`. The separate publisher CLI remains the
+`hub` plugin (`@kb-labs/marketplace-registry-entry`), and its backend is an
+optional self-hosted service.
 
 ---
 
@@ -102,7 +102,7 @@ Documented in `scripts/checks/check-cli-naming.mjs` and `cli/commands/src/regist
 | # | What | Problem | Fix |
 |---|---|---|---|
 | R1 | `infra-worker` | kebab top-level + internal concept | Rename namespace to `infra` |
-| R2 | `marketplace-registry-entry` CLI | namespace collision | Move CLI commands into `marketplace-entry` |
+| R2 | `marketplace` was registered as a plugin | Marketplace is part of platform use | ✅ Fixed — register `kb marketplace` as a built-in system group; keep publisher commands in `hub` |
 
 ### 🟡 Should fix
 

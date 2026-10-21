@@ -52,7 +52,7 @@ against an imperative schema layered on top of the same command.
 
 ADR-0014's first objection to containers — *"containers still need configured adapters inside"* —
 was correct against **baked-config** images, which describes every image that exists today
-(`services/gateway/app/Dockerfile`, `plugins/marketplace-registry/app/Dockerfile`). This ADR
+(`services/gateway/app/Dockerfile`, `services/marketplace-registry/app/Dockerfile`). This ADR
 dissolves that objection by taking configuration out of the image (see Decision 1). Its second
 objection — *"forces container infrastructure on users who do not need it"* — remains correct,
 which is why `kb-create` stays a first-class, non-container installation path; nothing here
@@ -101,7 +101,7 @@ What changed as part of this ADR: images now bake their prior source-tree config
 `*.default.json` / `*.default.lock` fallback, applied by a `docker-entrypoint.sh` **only if
 nothing was already mounted at the live path**, so an operator-supplied file always wins cleanly
 and unambiguously. See `services/gateway/app/docker-entrypoint.sh` and the equivalent in
-`plugins/marketplace-registry/app/`.
+`services/marketplace-registry/app/`.
 
 Interpolation strictness now depends on environment: `core/runtime/src/config-loader.ts` passes
 `required=true` to `interpolateConfig` when `NODE_ENV=production`, so a missing secret crashes the
@@ -183,7 +183,7 @@ See "Alternatives considered" in Context above.
 Tracked in the companion delivery plan (`docs/plans/2026-07-31-cloud-deployment-overhaul.md`).
 Summary of what changes:
 
-- `services/gateway/app/Dockerfile`, `plugins/marketplace-registry/app/Dockerfile` — config/lock
+- `services/gateway/app/Dockerfile`, `services/marketplace-registry/app/Dockerfile` — config/lock
   moved to `*.default.*`, applied via `docker-entrypoint.sh` (done).
 - `core/runtime/src/config-loader.ts` — strict interpolation gated on `NODE_ENV=production` (done).
 - Dockerfiles for `state-daemon`, `marketplace` (5070), `rest-api`, `workflow`, `mcp`, `studio`

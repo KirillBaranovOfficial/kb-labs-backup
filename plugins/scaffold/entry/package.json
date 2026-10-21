@@ -43,10 +43,7 @@
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.11",
-    "@kb-labs/cli-runtime": "workspace:*",
-    "@kb-labs/core-workspace": "workspace:*",
-    "@kb-labs/sdk": "workspace:*",
-    "@kb-labs/shared-cli-ui": "workspace:*"
+    "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
     "node": "24.x",
@@ -57,9 +54,6 @@
   },
   "sideEffects": false,
   "peerDependencies": {
-    "@kb-labs/cli-runtime": "workspace:*",
-    "@kb-labs/core-workspace": "workspace:*",
-    "@kb-labs/sdk": "workspace:*",
-    "@kb-labs/shared-cli-ui": "workspace:*"
+    "@kb-labs/sdk": "workspace:*"
   }
 }
