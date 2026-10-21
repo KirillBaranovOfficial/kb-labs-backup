@@ -95,11 +95,6 @@
       "link": "./plugins/steward/entry",
       "enabled": true,
       "source": "local"
-    },
-    "@kb-labs/workflow": {
-      "link": "./plugins/workflow/entry",
-      "enabled": true,
-      "source": "local"
     }
   },
   "adapters": {

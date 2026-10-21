@@ -50,12 +50,12 @@ Adopt a three-level test pyramid enforced by devkit:
 ## Consequences
 
 - Plugin owners must add a `test:cli` script (3-line config, inherits from `@kb-labs/devkit/vitest/cli`)
-- First real tests live in `plugins/workflow/entry` as the canonical example
+- First real tests live in `services/workflow/entry` as the canonical example
 - `@kb-labs/shared-testing-e2e` gains CLI-specific helpers (`captured-ui`, `mock-context`, `mock-cli-input`)
 
 ## References
 
 - `.claude/skills/testing.md` — decision tree and templates
-- `plugins/workflow/entry/src/__tests__/cli/` — canonical examples
+- `services/workflow/entry/src/__tests__/cli/` — canonical examples
 - `e2e/workflows/specs/sse/` — SSE integration tests
 - `e2e/workflows/specs/ws/` — WS integration tests

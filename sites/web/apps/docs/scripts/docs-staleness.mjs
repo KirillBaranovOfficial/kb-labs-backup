@@ -10,7 +10,7 @@
  *     ]
  *   }
  *
- * Standalone: CHANGED_FILES="plugins/workflow/core/executor.ts" node docs-staleness.mjs
+ * Standalone: CHANGED_FILES="services/workflow/core/executor.ts" node docs-staleness.mjs
  */
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -21,7 +21,7 @@ const cwd = process.cwd();
 const sitemapPath = join(cwd, 'sitemap.config.json');
 
 function ownerMatches(ownerGlob, filePath) {
-  // Patterns are like "plugins/workflow/**" or "core/platform/**"
+  // Patterns are like "services/workflow/**" or "core/platform/**"
   // Strip trailing /** and check prefix match
   const base = ownerGlob.replace(/\/\*\*$/, '').replace(/\*\*$/, '');
   return filePath === base || filePath.startsWith(base + '/');
@@ -117,7 +117,7 @@ function main() {
   const sourceRefs = collectSourceReferences(pages);
 
   // For each changed file, find the most-specific owner match per doc page.
-  // "Most specific" = longest owner prefix (e.g. plugins/workflow/core/** beats plugins/workflow/**).
+  // "Most specific" = longest owner prefix (e.g. services/workflow/core/** beats services/workflow/**).
   // This prevents broad patterns from flooding unrelated pages.
   const affectedMap = new Map(); // slug → entry
 

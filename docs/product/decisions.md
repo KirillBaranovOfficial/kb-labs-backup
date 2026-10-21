@@ -457,7 +457,7 @@ Cases: S-203.1, S-203.2.
 
 ### Platform members: core plugins only
 
-The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.
+The platform includes built-in capabilities: `workflow` (the CLI for the workflow service), `marketplace` (installing plugins) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.
 Cases: S-006, S-008, S-010, S-160.
 
 ### 2026-10-01: Platform installs seal runtime peer dependencies

@@ -20,7 +20,7 @@ workspace:
     plugin-e2e-suite:
       match:
         - "e2e/mind"          # plugins/mind
-        - "e2e/workflows"     # plugins/workflow (+ release)
+        - "e2e/workflows"     # workflow service (+ release)
         - "e2e/marketplace"   # plugins/marketplace
         - "e2e/plugins"       # plugins/{commit,review,scaffold}
       language: typescript

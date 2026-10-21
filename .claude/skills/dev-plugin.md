@@ -44,7 +44,7 @@ plugins/your-plugin/
 ### Plugin with daemon (+ HTTP service)
 
 ```
-plugins/workflow/
+plugins/your-plugin/
 ├── entry/                  # manifest + CLI + Studio wiring
 ├── contracts/              # types
 ├── core/                   # business logic

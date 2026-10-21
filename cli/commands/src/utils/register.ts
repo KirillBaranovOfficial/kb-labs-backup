@@ -13,6 +13,7 @@ import {
   mcpGroup,
   adapterGroup,
 } from "../commands/system/groups";
+import { workflowGroup } from "../commands/system/workflow";
 import { hello } from "../commands/system/hello";
 import { createCompletionCommand, autoUpdateCompletion } from "../commands/system/completion";
 import { diag } from "../commands/system/diag";
@@ -144,6 +145,7 @@ export function registerBuiltinSystemCommands(): void {
   registry.registerGroup(projectGroup);
   registry.registerGroup(mcpGroup);
   registry.registerGroup(adapterGroup);
+  registry.registerGroup(workflowGroup);
   // The documented `kb hello` route is also available at the root. Keeping it
   // registered statically lets bootstrap read its declared scope before init.
   registry.register(hello);

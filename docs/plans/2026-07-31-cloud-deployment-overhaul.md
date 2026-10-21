@@ -142,7 +142,7 @@ mostly packaging and documentation, not refactoring.
 
 Deliverable set is known and static: CLI / REST-API / Workflow / Studio / MCP.
 
-1. Add `Dockerfile`s for `services/rest-api`, `services/mcp`, `plugins/workflow/daemon`,
+1. Add `Dockerfile`s for `services/rest-api`, `services/mcp`, `services/workflow/daemon`,
    `studio/app`, following the gateway pattern.
 2. Replace the two hardcoded `pnpm deploy` steps in `.github/workflows/deploy.yml` with a
    build matrix over the known service list.

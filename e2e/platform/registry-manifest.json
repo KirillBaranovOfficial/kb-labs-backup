@@ -14,6 +14,7 @@
     { "name": "@kb-labs/core-ipc" },
     { "name": "@kb-labs/core-project-registry" },
     { "name": "@kb-labs/core-resource-broker" },
+    { "name": "@kb-labs/workflow-entry" },
     { "name": "@kb-labs/core-retry" },
     { "name": "@kb-labs/core-sys" },
     { "name": "@kb-labs/llm-router" },
@@ -47,8 +48,7 @@
       "default": true,
       "port": 7778,
       "gatewayPrefix": "/api/exec",
-      "gatewayRewrite": "",
-      "plugin": "@kb-labs/workflow-entry"
+      "gatewayRewrite": ""
     },
     {
       "id": "gateway",
@@ -103,12 +103,6 @@
     { "name": "@kb-labs/adapters-state-broker" }
   ],
   "plugins": [
-    {
-      "id": "@kb-labs/workflow",
-      "pkg": "@kb-labs/workflow-entry",
-      "description": "Workflow engine plugin — CLI, REST routes and WS channels for the workflow daemon",
-      "default": true
-    },
     {
       "id": "@kb-labs/marketplace",
       "pkg": "@kb-labs/marketplace-entry",

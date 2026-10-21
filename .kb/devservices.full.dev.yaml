@@ -74,7 +74,7 @@ services:
     description: Workflow engine REST API
     group: backend
     type: node
-    command: node ./plugins/workflow/daemon/dist/bin.js
+    command: node ./services/workflow/daemon/dist/bin.js
     health_check: http://localhost:7778/health
     port: 7778
     url: http://localhost:7778

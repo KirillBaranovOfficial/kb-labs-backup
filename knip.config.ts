@@ -104,7 +104,7 @@ const config: KnipConfig = {
     'plugins/marketplace/daemon/marketplace': {
       entry: ['src/index.ts', 'src/bootstrap.ts'],
     },
-    'plugins/workflow/daemon': {
+    'services/workflow/daemon': {
       // server.ts imports individual API files directly (not via api/index.ts barrel)
       // so api/index.ts is genuinely unused — leave it in results
       entry: ['src/index.ts'],

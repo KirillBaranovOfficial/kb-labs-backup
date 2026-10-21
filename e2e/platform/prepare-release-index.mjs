@@ -77,9 +77,8 @@ const adapterOptions = JSON.stringify({
   },
 });
 const platformRequires = releaseConfig.platformRequires.join(',');
-// Core plugins (`default: true`: workflow, marketplace, scaffold) ship as
-// platform members, as release.flows.platform.platformMembers does for the
-// real release. Every other plugin comes from the marketplace.
+// Built-in platform members ship with the platform release. Other plugins are
+// published separately and selected by the marketplace.
 const platformMembers = releaseConfig.platformMembers.join(',');
 const journeyReleaseNotes = 'Prepared candidate platform release for update verification.';
 const releaseNotesArgs = ['--release-notes', journeyReleaseNotes];
