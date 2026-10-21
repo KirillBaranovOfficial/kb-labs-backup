@@ -65,7 +65,7 @@ export async function createToolRegistry(opts: {
 /**
  * Make a plugin ID safe for use in MCP tool names.
  * Strips the leading `@` from scoped npm packages and replaces `/` with `-`.
- * Example: "@kb-labs/policy" → "kb-labs-policy", "my-plugin" → "my-plugin".
+ * Example: "@kb-labs/commit" → "kb-labs-commit", "my-plugin" → "my-plugin".
  * Case is preserved because plugin IDs like "pluginA" are valid non-scoped names.
  */
 function sanitizePluginId(pluginId: string): string {

@@ -85,27 +85,9 @@ jobs:
         run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release-manager-cli --no-cache
 
       - name: Hydrate release plan paths for candidate workspace
-        # All release flows share one scope-derived plan.json path (see
-        # resolve-plan.ts), so the committed artifact checked out at
-        # commit_sha can legitimately belong to whichever flow last had it
-        # committed. That's not stable-channel-safe either: "Commit and
-        # tag" (release git) only ever commits the bumped package.json
-        # files themselves (verified live — see the commit this step is
-        # failing on: two package.json changes, plan.json untouched), so
-        # the checked-out plan.json can be — and routinely is — for a
-        # completely different flow than the one actually tagged at this
-        # commit, on BOTH channels. For canary the fallback is "Apply
-        # planned package versions" below, whose `pnpm kb release version`
-        # call goes through resolvePlan() and already treats a foreign-flow
-        # artifact as unconditionally stale, recomputing fresh via
-        # planRelease(). Stable has no such step (deliberately — re-running
-        # `release version` with any real bump against an already-tagged
-        # commit invents a spurious patch bump, see that step's own
-        # comment) — so regenerate the plan here instead, with
-        # `--bump none` (returns currentVersion unchanged, see
-        # planner.ts's VersionBump handling) so it reflects exactly what
-        # this commit already has on disk without mutating anything, then
-        # let the normal path-hydration below run against that.
+        # Plans are per-run state and are not part of the immutable source
+        # commit. Recompute package membership in this candidate workspace;
+        # canary version application later reuses this flow/channel plan.
         env:
           FLOW: ${{ inputs.flow }}
           CHANNEL: ${{ inputs.channel }}
@@ -118,27 +100,17 @@ jobs:
           const { execFileSync } = require('node:child_process');
           const root = process.cwd();
           const planPath = path.join(root, '.kb', 'release', 'plans', 'root', 'current', 'plan.json');
-          let plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-          if (plan.flow !== process.env.FLOW) {
-            if (process.env.CHANNEL === 'canary') {
-              console.log(`Committed plan.json is for flow "${plan.flow}", not "${process.env.FLOW}" — ` +
-                `skipping hydration; "Apply planned package versions" will recompute it fresh.`);
-              process.exit(0);
-            }
-            console.log(`Committed plan.json is for flow "${plan.flow}", not "${process.env.FLOW}" — ` +
-              `regenerating with --bump none (no version mutation) before hydrating paths.`);
-            execFileSync('node', ['./cli/bin/dist/bin.js', 'release', 'plan',
-              '--flow', process.env.FLOW, '--channel', process.env.CHANNEL, '--bump', 'none', '--json'],
-              { cwd: root, stdio: 'inherit' });
-            plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-            if (plan.flow !== process.env.FLOW) {
-              throw new Error(`regenerated release plan still has wrong flow: ${plan.flow} != ${process.env.FLOW}`);
-            }
+          execFileSync('node', ['./cli/bin/dist/bin.js', 'release', 'plan',
+            '--flow', process.env.FLOW, '--channel', process.env.CHANNEL, '--bump', 'auto', '--json'],
+            { cwd: root, stdio: 'inherit' });
+          const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+          if (plan.flow !== process.env.FLOW || plan.channel !== process.env.CHANNEL) {
+            throw new Error(`regenerated release plan does not match requested flow/channel: ${plan.flow}/${plan.channel}`);
           }
           if (process.env.CHANNEL === 'canary') {
             const short = process.env.COMMIT_SHA.slice(0, 9);
-            for (const item of plan.packages ?? []) {
-              if (typeof item.nextVersion === 'string' && item.nextVersion.includes('-canary.')) {
+            for (const item of plan.packages) {
+              if (item.nextVersion.includes('-canary.')) {
                 item.nextVersion = item.nextVersion.replace(/-canary\.[^.]+$/, `-canary.${short}`);
               }
             }
@@ -156,7 +128,7 @@ jobs:
             }
           };
           walk(root);
-          for (const item of plan.packages ?? []) {
+          for (const item of plan.packages) {
             const packagePath = packages.get(item.name);
             if (!packagePath) throw new Error(`release plan package is absent from candidate workspace: ${item.name}`);
             item.path = packagePath;
@@ -196,21 +168,10 @@ jobs:
         env:
           FLOW: ${{ inputs.flow }}
           CHANNEL: ${{ inputs.channel }}
-        # --channel must be passed explicitly. release:version's resolvePlan()
-        # reuses the plan.json checked out at commit_sha only when it provably
-        # matches the current working tree (see resolve-plan.ts); for canary
-        # that plan.json is NOT guaranteed fresh — canary deliberately skips
-        # the git commit that would carry a just-computed plan forward (see
-        # "Bump versions"/"Commit and tag" in release-prepare.yml, gated on
-        # channel == stable) — so the checked-out artifact can legitimately
-        # still be whatever a previous release cycle last committed. When
-        # resolvePlan rejects it as stale, it recomputes via planRelease()
-        # fresh; without --channel here that recompute silently defaults to
-        # 'stable' and drops the -canary.<sha> suffix from every package's
-        # version, not just one — this is what produced candidate run
-        # 33991804236's "sealed platform version mismatch: 2.119.1 !=
-        # 2.119.1-canary.9dffabc24" (core-runtime was simply the one package
-        # whose version happens to get compared against inputs.version).
+        # --channel must be passed explicitly so a fresh resolve uses the same
+        # channel as the candidate plan generated above. Without it a fresh
+        # replan defaults to stable and drops the canary suffix from every
+        # package's version, not just one.
         run: pnpm kb release version --flow "$FLOW" --channel "$CHANNEL" --json
 
       - name: Verify pre-versioned stable candidate
@@ -233,7 +194,7 @@ jobs:
           const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
           const expected = process.env.EXPECTED_VERSION;
           const mismatches = [];
-          for (const pkg of plan.packages ?? []) {
+          for (const pkg of plan.packages) {
             const pkgJsonPath = path.join(pkg.path, 'package.json');
             const onDisk = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')).version;
             if (onDisk !== expected) mismatches.push(`${pkg.name}: ${onDisk} (expected ${expected})`);

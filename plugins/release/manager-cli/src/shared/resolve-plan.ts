@@ -11,8 +11,8 @@
  *
  * The plan written by `release:plan` is the single source of truth for a
  * pipeline run. It is only reused when it provably describes the current
- * state of the working tree, so a stale artifact (plan.json is committed to
- * the repo, so one is always present) can never be adopted silently.
+ * state of the working tree, so a stale per-run artifact can never be adopted
+ * silently.
  */
 
 import { join } from 'node:path';

@@ -84,6 +84,7 @@ _private/
 .kb/bundle/
 .kb/release/history/
 .kb/release/backup.json
+.kb/release/plans/
 
 # ───────────────
 # Deploy runtime data (docker volumes, db state)

@@ -31,11 +31,6 @@
       "enabled": true,
       "source": "local"
     },
-    "@kb-labs/impact": {
-      "link": "./plugins/impact/core",
-      "enabled": true,
-      "source": "local"
-    },
     "@kb-labs/inbox": {
       "link": "./plugins/inbox/entry",
       "enabled": true,
@@ -53,11 +48,6 @@
     },
     "@kb-labs/mind": {
       "link": "./plugins/mind/entry",
-      "enabled": true,
-      "source": "local"
-    },
-    "@kb-labs/policy": {
-      "link": "./plugins/policy/core",
       "enabled": true,
       "source": "local"
     },
@@ -93,6 +83,11 @@
     },
     "@kb-labs/steward": {
       "link": "./plugins/steward/entry",
+      "enabled": true,
+      "source": "local"
+    },
+    "@kb-labs/viewer": {
+      "link": "./plugins/viewer/entry",
       "enabled": true,
       "source": "local"
     },
@@ -282,6 +277,13 @@
       "version": "2.120.1",
       "integrity": "sha256-u0XR/7vXjSz7nANDrVwuoPUeRfKxGM1zpxiDnTerSCk=",
       "resolvedPath": "./adapters/diskio",
+      "enabled": true,
+      "source": "platform"
+    },
+    "@kb-labs/notifier-router": {
+      "version": "2.120.1",
+      "integrity": "sha256-Tz8zlhkUiQqlXIbUPbWCh8kKkx5ypqaH7z0POXvHrnY=",
+      "resolvedPath": "./adapters/notifier-router",
       "enabled": true,
       "source": "platform"
     }

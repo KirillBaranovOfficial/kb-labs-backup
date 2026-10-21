@@ -1,5 +1,7 @@
 # ТЗ: Policy Plugin
 
+Status: dropped 2026-10-21 (owner decision)
+
 ## Описание
 
 `Enforces workspace-level development policies per category. Detects which category a repo belongs to, resolves applicable rules, and validates compliance. Blocks pipeline on violations.`

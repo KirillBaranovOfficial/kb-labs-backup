@@ -114,13 +114,9 @@ export default defineCommand({
       // in the repo — including other flows' — onto this flow's version.
       //
       // `channel` must ALSO be threaded through explicitly (not left to
-      // resolvePlan/planRelease's 'stable' default): if the persisted plan.json
-      // is stale relative to the working tree (e.g. a canary run, which never
-      // commits its bumped package.json files back to git — see
-      // release-build-candidate.yml's "Apply planned package versions" step —
-      // so the plan.json checked out for a later commit can legitimately still
-      // reflect an older release), resolvePlan() correctly rejects it and
-      // recomputes fresh via planRelease(). Without an explicit channel here,
+      // resolvePlan/planRelease's 'stable' default): a per-run artifact can be
+      // stale relative to the working tree, so resolvePlan() correctly rejects
+      // it and recomputes fresh via planRelease(). Without an explicit channel here,
       // that recompute silently defaults to 'stable' and drops the
       // -canary.<sha> suffix from EVERY package's nextVersion — not just one —
       // producing a plain version that only gets caught downstream if
