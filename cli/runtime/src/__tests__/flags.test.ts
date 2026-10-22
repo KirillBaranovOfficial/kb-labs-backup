@@ -27,6 +27,13 @@ describe('parseArgs', () => {
     expect(global.json).toBe(true);
   });
 
+  it('reserves the explicit Gateway URL as a global option', () => {
+    const parsed = parseArgs(['project', 'add', '/workspace/project', '--gateway-url', 'http://gateway.example:4321']);
+
+    expect(parsed.global.gatewayUrl).toBe('http://gateway.example:4321');
+    expect(parsed.flagsObj.gatewayUrl).toBeUndefined();
+  });
+
   it('parses --help', () => {
     const { global } = parseArgs(['--help']);
     expect(global.help).toBe(true);

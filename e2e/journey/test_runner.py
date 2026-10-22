@@ -860,6 +860,7 @@ thread.join()
         self.assertTrue(service["states"]["fixtures-installed"]["value"]["projectBRoot"])
 
     def test_main_runs_selected_update_journey_owner_and_fails_when_it_registers_no_row(self):
+        runner = importlib.import_module("runner")
         owner_name = "helper-owned selected claim"
         claim = "S-100.1"
         selected_owners = {owner_name: [claim]}
@@ -871,20 +872,24 @@ thread.join()
             return journey
 
         with tempfile.TemporaryDirectory(prefix="journey-main-selected-update-") as temporary:
-            code, output, _service, outer, _observed = self._run_selected_main(
-                Path(temporary), "local", selection=claim, selector="agent:commit",
-                scenario="commit", selected_owners=selected_owners,
-                extra_update_group=update_group, update_runner=update_with_owner)
+            with patch("runner.project_b_fixture_from_state",
+                       return_value=runner.ProjectBRootValid(project_id="prj_b", root=Path(temporary))):
+                code, output, _service, outer, _observed = self._run_selected_main(
+                    Path(temporary), "local", selection=claim, selector="agent:commit",
+                    scenario="commit", selected_owners=selected_owners,
+                    extra_update_group=update_group, update_runner=update_with_owner)
         self.assertEqual(code, 0, output)
         self.assertIn(owner_name, [step["name"] for step in outer["steps"]])
         self.assertNotIn(f"SKIPPED {owner_name}: not selected", output)
 
         with tempfile.TemporaryDirectory(prefix="journey-main-missing-update-row-") as temporary:
-            code, output, _service, outer, _observed = self._run_selected_main(
-                Path(temporary), "local", selection=claim, selector="agent:commit",
-                scenario="commit", selected_owners=selected_owners,
-                extra_update_group=update_group,
-                update_runner=lambda **_kwargs: Journey("local", "unregistrable-update-journey"))
+            with patch("runner.project_b_fixture_from_state",
+                       return_value=runner.ProjectBRootValid(project_id="prj_b", root=Path(temporary))):
+                code, output, _service, outer, _observed = self._run_selected_main(
+                    Path(temporary), "local", selection=claim, selector="agent:commit",
+                    scenario="commit", selected_owners=selected_owners,
+                    extra_update_group=update_group,
+                    update_runner=lambda **_kwargs: Journey("local", "unregistrable-update-journey"))
         self.assertEqual(code, 1, output)
         self.assertIn("selected step never ran", output)
         self.assertIn(owner_name, output)
@@ -1041,8 +1046,8 @@ thread.join()
 
         with tempfile.TemporaryDirectory(prefix="journey-main-selected-update-") as temporary:
             with patch("runner.project_b_fixture_from_state",
-                       return_value={"projectBId": "prj_b",
-                                     "projectBRoot": str(Path(temporary) / "project-b")}):
+                       return_value=runner.ProjectBRootValid(
+                           project_id="prj_b", root=Path(temporary))):
                 code, output, _service, outer, _observed = self._run_selected_main(
                     Path(temporary), "secured", selection="S-100.1",
                     selector="service-secured:explore", selected_owners=owning,
@@ -1099,8 +1104,8 @@ thread.join()
 
         with tempfile.TemporaryDirectory(prefix="journey-main-full-secured-update-") as temporary:
             with patch("runner.project_b_fixture_from_state",
-                       return_value={"projectBId": "prj_b",
-                                     "projectBRoot": str(Path(temporary) / "project-b")}):
+                       return_value=runner.ProjectBRootValid(
+                           project_id="prj_b", root=Path(temporary))):
                 code, output, _service, _outer, _observed = self._run_selected_main(
                     Path(temporary), "secured", selection="", selector="service-secured:explore",
                     update_runner=full_update, update_variant_runner=full_variants,

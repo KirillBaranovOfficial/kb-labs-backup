@@ -59,7 +59,7 @@ const mocks = vi.hoisted(() => {
     initializePlatform: vi.fn(),
     resolveProjectConfig: vi.fn(),
     logger,
-    platform: { logger },
+    platform: { logger, getAdapter: () => undefined },
     corePlatform,
     platformSync: vi.fn().mockResolvedValue({
       ok: true,

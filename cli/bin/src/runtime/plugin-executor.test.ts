@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AdapterUnavailableError,
   createErrorEnvelope,
-  resolveCliGatewayTarget,
   serializeError,
   toErrorEnvelope,
   validateErrorEnvelope,
@@ -14,23 +13,13 @@ import { registry, registerBuiltinCommands, resolveCliHandlerPath } from '@kb-la
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 import { fileURLToPath } from 'node:url';
 
-const { executeCommandV3, resolveActiveGateway } = vi.hoisted(() => ({ executeCommandV3: vi.fn(), resolveActiveGateway: vi.fn() }));
+const { executeCommandV3 } = vi.hoisted(() => ({ executeCommandV3: vi.fn() }));
 vi.mock('@kb-labs/cli-runtime/v3', () => ({ executeCommandV3 }));
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({ resolveActiveGateway }));
 
 import { executePlugin, renderUnavailableAdapterError } from './plugin-executor.js';
 
 describe('plugin executor adapter errors', () => {
   afterEach(() => vi.restoreAllMocks());
-
-  beforeEach(() => {
-    resolveActiveGateway.mockImplementation(({ platformRoot, env, configuredNetOffset, transport }) => resolveCliGatewayTarget(platformRoot, {
-      gatewayUrl: env.KB_GATEWAY_URL,
-      gatewayPort: env.GATEWAY_PORT,
-      gatewayHost: env.GATEWAY_HOST,
-      netOffset: env.KB_NET_OFFSET === undefined ? configuredNetOffset ?? 0 : Number(env.KB_NET_OFFSET),
-    }, transport));
-  });
 
   it('renders an unconfigured capability as one line and marks it handled', () => {
     const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -54,6 +43,7 @@ describe('plugin executor adapter errors', () => {
     const matcher = vi.spyOn(pluginContracts, 'matchesPermissionPattern');
     executeCommandV3.mockResolvedValue(0);
     const previousGatewayUrl = process.env.KB_GATEWAY_URL;
+    process.env.KB_GATEWAY_URL = 'http://127.0.0.1:43323';
     const manifestCmd = {
       pkgRoot: '/platform/plugins/commit',
       manifest: {
@@ -79,12 +69,11 @@ describe('plugin executor adapter errors', () => {
     try {
       const exitCode = await executePlugin({
         context,
-        netOffset: 200,
+        env: process.env,
         commandId: 'commit:status',
         argv: [],
         flags: {},
         manifestCmd,
-        platformRoot: "/platform",
         platform,
       });
 
@@ -93,17 +82,18 @@ describe('plugin executor adapter errors', () => {
       expect(executeCommandV3).toHaveBeenCalledWith(expect.objectContaining({
         env: { KB_GATEWAY_URL: 'http://127.0.0.1:43323' },
       }));
-      expect(process.env.KB_GATEWAY_URL).toBe(previousGatewayUrl);
     } finally {
+      if (previousGatewayUrl === undefined) delete process.env.KB_GATEWAY_URL;
+      else process.env.KB_GATEWAY_URL = previousGatewayUrl;
       executeCommandV3.mockReset();
     }
   });
 
   // case: S-203.15
-  it('resolves the default gateway address when fresh platform config omits gateway.port', async () => {
+  it('passes the gateway address supplied by the CLI bootstrap to the plugin backend', async () => {
     executeCommandV3.mockResolvedValue(0);
-    const previousGatewayPort = process.env.GATEWAY_PORT;
-    delete process.env.GATEWAY_PORT;
+    const previousGatewayUrl = process.env.KB_GATEWAY_URL;
+    process.env.KB_GATEWAY_URL = 'http://127.0.0.1:4200';
     const manifestCmd = {
       pkgRoot: '/platform/plugins/commit',
       manifest: {
@@ -121,12 +111,11 @@ describe('plugin executor adapter errors', () => {
     try {
       const exitCode = await executePlugin({
         context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
+        env: process.env,
         commandId: 'commit:status',
         argv: [],
         flags: {},
         manifestCmd,
-        platformRoot: "/platform",
-        netOffset: 200,
         platform: {
           getAdapter: () => ({ listenAddress: () => undefined }),
         } as unknown as Parameters<typeof executePlugin>[0]['platform'],
@@ -137,47 +126,8 @@ describe('plugin executor adapter errors', () => {
         env: { KB_GATEWAY_URL: 'http://127.0.0.1:4200' },
       }));
     } finally {
-      if (previousGatewayPort === undefined) delete process.env.GATEWAY_PORT;
-      else process.env.GATEWAY_PORT = previousGatewayPort;
-      executeCommandV3.mockReset();
-    }
-  });
-
-  // case: S-203.16
-  it('rejects an invalid GATEWAY_PORT before starting the plugin', async () => {
-    const previousGatewayPort = process.env.GATEWAY_PORT;
-    process.env.GATEWAY_PORT = '4000oops';
-    const manifestCmd = {
-      pkgRoot: '/platform/plugins/commit',
-      manifest: {
-        id: '@kb-labs/commit-entry',
-        segments: ['commit', 'status'],
-        v3Manifest: {
-        id: '@kb-labs/commit-entry',
-        version: '1.0.0',
-        permissions: { env: { read: ['KB_GATEWAY_URL'] } },
-        cli: { commands: [{ path: 'commit status', handler: 'dist/index.js#status' }] },
-        },
-      },
-    } as unknown as RegisteredCommand;
-
-    try {
-      await expect(executePlugin({
-        context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
-        commandId: 'commit:status',
-        argv: [],
-        flags: {},
-        manifestCmd,
-        platformRoot: "/platform",
-        netOffset: 0,
-        platform: {
-          getAdapter: () => ({ listenAddress: () => undefined }),
-        } as unknown as Parameters<typeof executePlugin>[0]['platform'],
-      })).rejects.toMatchObject({ name: 'ServicePortConfigError', envVar: 'GATEWAY_PORT' });
-      expect(executeCommandV3).not.toHaveBeenCalled();
-    } finally {
-      if (previousGatewayPort === undefined) delete process.env.GATEWAY_PORT;
-      else process.env.GATEWAY_PORT = previousGatewayPort;
+      if (previousGatewayUrl === undefined) delete process.env.KB_GATEWAY_URL;
+      else process.env.KB_GATEWAY_URL = previousGatewayUrl;
       executeCommandV3.mockReset();
     }
   });
@@ -220,11 +170,11 @@ describe('plugin executor adapter errors', () => {
     for (const { registered, commandPath, handler } of handlers) {
       const exitCode = await executePlugin({
         context,
+        env: process.env,
         commandId: commandPath.replaceAll(' ', ':'),
         argv: [],
         flags: {},
         manifestCmd: registered,
-        platformRoot: workspaceRoot,
         platform,
       });
       expect(exitCode, `${registered.packageName} ${commandPath}`).toBe(0);
@@ -317,11 +267,11 @@ describe('plugin executor adapter errors', () => {
             cwd: workspaceRoot,
             presenter: {},
           } as Parameters<typeof executePlugin>[0]['context'],
+          env: process.env,
           commandId: commandPath.replaceAll(' ', ':'),
           argv: [],
           flags: { json: true },
           manifestCmd: registered,
-          platformRoot: workspaceRoot,
           platform,
         });
 

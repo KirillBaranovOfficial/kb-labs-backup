@@ -54,6 +54,20 @@ def workspace_checkout_problem(repo_root: Path) -> str | None:
     return None
 
 
+def _stage_workspace_checkout(repo_root: Path, stage_root: Path) -> Path:
+    """Stage a writable workspace root whose platform and registered project identities coincide."""
+    stage_root.mkdir(parents=True)
+    for entry in repo_root.iterdir():
+        if entry.name in {".git", ".kb", "node_modules"}:
+            continue
+        (stage_root / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+    staged_kb = stage_root / ".kb"
+    staged_kb.mkdir()
+    for name in ("marketplace.lock", "kb.config.jsonc"):
+        (staged_kb / name).symlink_to(repo_root / ".kb" / name)
+    return stage_root
+
+
 def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bool = False) -> None:
     if not prechecked:
         problem = workspace_checkout_problem(repo_root)
@@ -71,12 +85,15 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
 
     cli = repo_root / "cli/bin/dist/bin.js"
     with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-home-") as home:
+        workspace_root = _stage_workspace_checkout(repo_root, Path(home) / "workspace")
         env = configure_hermetic_cli_fixture(
-            Path(home), env=os.environ, workspace_root=repo_root)
+            Path(home), env=os.environ, workspace_root=workspace_root,
+            platform_root=workspace_root, source_config=workspace_root / ".kb" / "kb.config.jsonc")
         env["GATEWAY_PORT"] = "1"
+        cli = workspace_root / "cli/bin/dist/bin.js"
 
         def run(*args: str) -> CompletedProcess[str]:
-            return run_command(["node", str(cli), *args], cwd=repo_root, env=env, timeout=120)
+            return run_command(["node", str(cli), *args], cwd=workspace_root, env=env, timeout=120)
 
         def register_checkout() -> str | None:
             result = run_command(
@@ -84,10 +101,10 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                     "node", "--input-type=module", "-e",
                     "const { createProjectRegistry } = await import(process.argv[1]); "
                     "await createProjectRegistry({ env: process.env }).add(process.argv[2]);",
-                    str(repo_root / "core/project-registry/dist/index.js"),
-                    str(repo_root),
+                    str(workspace_root / "core/project-registry/dist/index.js"),
+                    str(workspace_root),
                 ],
-                cwd=repo_root,
+                cwd=workspace_root,
                 env=env,
                 capture_output=True,
                 text=True,

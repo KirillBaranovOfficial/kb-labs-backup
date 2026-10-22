@@ -9,6 +9,7 @@ from journey_values import journey_value
 import json
 import os
 import re
+import stat
 import shutil
 import sys
 import tempfile
@@ -19,7 +20,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Callable
+from typing import Callable, Union
 
 from studio_steps import (create_studio_access_tokens, create_studio_environment,
                           create_studio_member, run_studio_browser_step,
@@ -240,6 +241,20 @@ class ProjectRegistration:
     name: str
 
 
+@dataclass(frozen=True)
+class ProjectBRootValid:
+    project_id: str
+    root: Path
+
+
+@dataclass(frozen=True)
+class ProjectBRootInvalid:
+    diagnostic: dict
+
+
+ProjectBRootHandoff = Union[ProjectBRootValid, ProjectBRootInvalid]
+
+
 def project_registration_from_state(value: object) -> ProjectRegistration:
     """Parse a passed state value into the non-optional project contract."""
     project = value
@@ -250,15 +265,67 @@ def project_registration_from_state(value: object) -> ProjectRegistration:
     return ProjectRegistration(project_id=project["id"], root=project["root"], name=project["name"])
 
 
-def project_b_fixture_from_state(graph: FlowGraph) -> dict[str, str] | None:
-    fixtures = graph.state_value_if_passed("fixtures-installed")
-    if fixtures is None:
-        return None
-    if (not isinstance(fixtures, dict) or not isinstance(fixtures.get("projectBId"), str)
-            or not fixtures["projectBId"] or not isinstance(fixtures.get("projectBRoot"), str)
-            or not fixtures["projectBRoot"]):
-        raise RuntimeError("fixtures-installed state passed without a registered project B id and root")
-    return fixtures
+def project_b_fixture_from_state(graph: FlowGraph) -> ProjectBRootHandoff:
+    """Resolve the fixtures-installed state to a validated Project B handoff."""
+    state = graph.states.get("fixtures-installed")
+    value = state.get("value") if state else None
+    project_id = value.get("projectBId") if isinstance(value, dict) else None
+    serialized_root = value.get("projectBRoot") if isinstance(value, dict) else None
+    if state is None or state.get("passed") is not True or "value" not in state:
+        return invalid_project_b_root(serialized_root, graph.state_failure("fixtures-installed"))
+    return validate_project_b_root(project_id, serialized_root)
+
+
+def invalid_project_b_root(serialized_value: object, reason: str, *,
+                           realpath: str | None = None, mode: int | None = None,
+                           owner: dict[str, int] | None = None) -> ProjectBRootInvalid:
+    diagnostic = {
+        "code": "PROJECT_B_ROOT_INVALID",
+        "serializedValue": serialized_value,
+        "realpath": realpath,
+        "mode": mode,
+        "owner": owner,
+        "reason": reason,
+    }
+    return ProjectBRootInvalid(diagnostic)
+
+
+def validate_project_b_root(project_id: object, serialized_value: object) -> ProjectBRootHandoff:
+    """Validate the fixture's host-visible Project B identity and root at handoff."""
+    if not isinstance(serialized_value, str) or not serialized_value:
+        return invalid_project_b_root(serialized_value, "must be a non-empty directory path")
+
+    candidate = Path(serialized_value)
+    try:
+        resolved = candidate.resolve(strict=True)
+        info = resolved.stat()
+        metadata = {
+            "realpath": str(resolved),
+            "mode": stat.S_IMODE(info.st_mode),
+            "owner": {"uid": info.st_uid, "gid": info.st_gid},
+        }
+        if not stat.S_ISDIR(info.st_mode):
+            return invalid_project_b_root(serialized_value, "not a directory", **metadata)
+        if not os.access(resolved, os.W_OK):
+            return invalid_project_b_root(serialized_value, "not writable", **metadata)
+        if not isinstance(project_id, str) or not project_id:
+            return invalid_project_b_root(serialized_value, "fixture state has no registered Project B ID", **metadata)
+        return ProjectBRootValid(project_id=project_id, root=resolved)
+    except OSError as error:
+        reason = "missing or inaccessible"
+        if error.errno not in (None, 2, 13):
+            reason = f"filesystem error: {error.strerror}"
+        return invalid_project_b_root(serialized_value, reason)
+
+
+def invalidate_project_b_handoff(graph: FlowGraph, handoff: ProjectBRootHandoff) -> None:
+    if isinstance(handoff, ProjectBRootInvalid):
+        graph.invalidate_state(
+            "fixtures-installed",
+            group="journey",
+            step="Project B fixture handoff",
+            evidence=json.dumps(handoff.diagnostic, sort_keys=True),
+        )
 
 
 def cleanup_partial_install(graph: FlowGraph, env: dict[str, str], launcher: str) -> None:
@@ -1094,6 +1161,7 @@ def _main(*, update_variant_runner=None):
     selection_groups = outer_selection_groups()
     outer_graph = FlowGraph(CASE_JOURNEY, OUTER_GROUP_DEPENDENCIES,
                             diagnostics_path=diagnostics, groups=selection_groups)
+    project_b_handoff: ProjectBRootHandoff | None = None
 
     def produce_project_registration_state() -> None:
         establish_project_registration(outer_graph, PROJECT, env)
@@ -2111,25 +2179,13 @@ def _main(*, update_variant_runner=None):
             or bool(outer_graph.selected_groups & {"workflow", "studio"})
             or outer_graph.group_selected("update-variants")
         )
-        project_b_id = ""
-        project_b_root_value = ""
-        if fixture_state_needed:
-            fixture_state = outer_graph.states.get("fixtures-installed", {})
-            if fixture_state.get("passed") is not True:
-                evidence = str(fixture_state.get("evidence") or "state probe has not run")
-                fail(f"project B fixture handoff blocked by state fixtures-installed: {evidence}")
-                block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
-                                                     "workflow", "analytics", "studio"])
-            elif project_b_consumers_selected:
-                fixture_projects = project_b_fixture_from_state(outer_graph)
-                if fixture_projects is None:
-                    fail("project B fixture handoff blocked by state fixtures-installed: "
-                         + outer_graph.state_failure("fixtures-installed"))
-                    block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
-                                                         "workflow", "analytics", "studio"])
-                else:
-                    project_b_id = fixture_projects["projectBId"]
-                    project_b_root_value = fixture_projects["projectBRoot"]
+        if fixture_state_needed or project_b_consumers_selected:
+            project_b_handoff = project_b_fixture_from_state(outer_graph)
+            if isinstance(project_b_handoff, ProjectBRootInvalid):
+                handoff_diagnostic = json.dumps(project_b_handoff.diagnostic, sort_keys=True)
+                fail(handoff_diagnostic)
+                invalidate_project_b_handoff(outer_graph, project_b_handoff)
+                export_graph_state_to_child_environment(outer_graph, service_env)
         workflow_journey = Journey(mode, f"workflow-{mode}")
         def restart_for_workflow_history() -> None:
             restart_shared_host(outer_graph, launcher, env, "workflow history checkpoint")
@@ -2150,19 +2206,8 @@ def _main(*, update_variant_runner=None):
             cases=workflow_claims, record_empty_success=False,
             runners=("service-local:explore", "service-secured:explore"),
         )
-        fixture_state = outer_graph.states.get("fixtures-installed", {})
-        if fixture_state.get("passed") is True:
-            fixture_projects = project_b_fixture_from_state(outer_graph)
-            if fixture_projects is None:
-                fail("project B fixture handoff blocked by state fixtures-installed: "
-                     + outer_graph.state_failure("fixtures-installed"))
-                block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
-                                                     "workflow", "analytics", "studio"])
-            else:
-                project_b_root_value = fixture_projects["projectBRoot"]
-                project_b_id = fixture_projects["projectBId"]
-        if project_b_root_value and project_b_id:
-            project_b_fixture_root = Path(project_b_root_value)
+        if isinstance(project_b_handoff, ProjectBRootValid):
+            project_b_fixture_root = project_b_handoff.root
             prepare_workflow_fixtures(project_b_fixture_root)
             definitions_deadline = time.monotonic() + 30
             healthy_workflow_ready = False
@@ -2215,14 +2260,12 @@ def _main(*, update_variant_runner=None):
             fail(f"{mode} workflow journey: {workflow_result.first_failure}")
             first = workflow_result.first_failure or {}
 
-        studio_claims = "S-106.1,S-106.2,S-106.3,S-106.4,S-106.5,S-106.6,S-107.1,S-107.2,S-107.3"
         oauth_claims = (release_claims_for_case("S-109", case_catalog_root())
                         if mode == "secured" else [])
-        if oauth_claims:
-            studio_claims += "," + ",".join(oauth_claims)
 
         run_studio_browser_group = reject_unprepared_studio_flow
-        if not outer_graph.selection_active or "studio" in outer_graph.selected_groups:
+        if isinstance(project_b_handoff, ProjectBRootValid) and (
+                not outer_graph.selection_active or "studio" in outer_graph.selected_groups):
             project_state = outer_graph.states.get("project-registered")
             if project_state is not None and project_state.get("passed") is True:
                 project_result = project_registration_from_state(
@@ -2277,9 +2320,7 @@ def _main(*, update_variant_runner=None):
                     time.sleep(1)
                 else:
                     fail(f"Studio schedule journey could not list project A crons: {project_a_cron_error}")
-                if not project_b_root_value or not project_b_id:
-                    fail("installed Studio fixture requires the fixtures-installed project B state")
-                project_b_root = Path(project_b_root_value)
+                project_b_root = project_b_handoff.root
                 (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
                 (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
                 (project_b_root / ".kb" / "workflows" / "studio-b-workflow.yml").write_text(
@@ -2293,7 +2334,7 @@ def _main(*, update_variant_runner=None):
                     "KB_STUDIO_CRON_ID": cron_id,
                     "KB_STUDIO_PROJECT_A_PLUGIN_CRON_IDS": ",".join(project_a_plugin_cron_ids),
                     "KB_STUDIO_PROJECT_A_USER_CRON_IDS": ",".join(project_a_user_cron_ids),
-                    "KB_STUDIO_PROJECT_B_ID": project_b_id,
+                    "KB_STUDIO_PROJECT_B_ID": project_b_handoff.project_id,
                     "KB_STUDIO_PROJECT_B_CRON_ID": "studio-b",
                     "KB_STUDIO_PLAYWRIGHT_JSON": str(service_report.with_name(f"studio-playwright-{mode}.json")),
                     "KB_STUDIO_PROJECT_A_NAME": project_name,
@@ -2302,7 +2343,7 @@ def _main(*, update_variant_runner=None):
                 try:
                     studio_env.update(prepare_studio_fixtures(
                         service_env,
-                        project_b_id=project_b_id,
+                        project_b_id=project_b_handoff.project_id,
                         project_a=PROJECT,
                         project_b=project_b_root,
                     ))
@@ -2371,27 +2412,58 @@ def _main(*, update_variant_runner=None):
                             )
                     except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
                         fail(f"Studio secured member setup: {error}")
-                def run_studio_browser_group() -> str | None:
+                def run_studio_browser_group(studio_cases: tuple[str, ...]) -> str | None:
+                    studio_claims = ",".join([*studio_cases, *oauth_claims])
                     with invocation_context(step_id=studio_claims):
                         studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
                             "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
                             "--config=/opt/kb-studio-playwright/playwright.config.mjs",
-                        ], studio_env, service_report, mode, studio_shell_passed, timeout=660)
+                        ], studio_env, service_report, mode, studio_shell_passed,
+                            cases=list(studio_cases), timeout=660)
                     TIMES["Studio browser journey"] = studio_elapsed
                     return None if studio_passed else studio_message
-        outer_graph.flow("Studio browser journey", "studio", "studio",
-                         run_studio_browser_group, cases=studio_claims.split(","),
-                         runners=("service-local:explore", "service-secured:explore"))
+        else:
+            run_studio_browser_group = lambda _studio_cases: reject_unprepared_studio_flow()
+        if project_b_handoff is None:
+            if outer_graph.group_selected("studio"):
+                raise JourneyContractError("Studio selection has no Project B fixture handoff result")
+            studio_case_action = lambda _studio_cases: reject_unprepared_studio_flow()
+        elif isinstance(project_b_handoff, ProjectBRootInvalid):
+            studio_case_action = lambda _studio_cases: json.dumps(
+                project_b_handoff.diagnostic, sort_keys=True)
+        else:
+            studio_case_action = run_studio_browser_group
+        outer_graph.flow(
+            "Studio browser journey", "studio", "studio", None,
+            cases=[
+                "S-106.1", "S-106.2", "S-106.3", "S-106.4", "S-106.5", "S-106.6",
+                "S-107.1", "S-107.2", "S-107.3",
+            ], runners=("service-local:explore", "service-secured:explore"),
+            case_action=studio_case_action,
+        )
         capture_case_failure()
     update_variants_selected = outer_graph.group_selected("update-variants")
+    variant_gate = "SKIPPED"
     if update_variants_selected:
+        if project_b_handoff is None:
+            project_b_handoff = project_b_fixture_from_state(outer_graph)
+            if isinstance(project_b_handoff, ProjectBRootInvalid):
+                fail(json.dumps(project_b_handoff.diagnostic, sort_keys=True))
+                invalidate_project_b_handoff(outer_graph, project_b_handoff)
+        if isinstance(project_b_handoff, ProjectBRootValid):
+            variant_action = lambda: None
+        elif isinstance(project_b_handoff, ProjectBRootInvalid):
+            variant_action = lambda: json.dumps(project_b_handoff.diagnostic, sort_keys=True)
+        else:
+            raise JourneyContractError("update variants have no Project B fixture handoff result")
         variant_gate = outer_graph.flow(
             "platform update variant prerequisites", "update-variants", "platform.update",
-            lambda: None,
+            variant_action,
             cases=outer_graph.groups.get("update-variants", {}).get("cases", ()),
-            record_empty_success=False,
         )
-        update_variants_selected = variant_gate != "BLOCKED"
+        update_variants_selected = variant_gate == "PASS"
+    else:
+        outer_graph.skip_unselected("platform update variant prerequisites", "platform.update")
     if update_variants_selected:
         try:
             candidate_base = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/"
@@ -2417,7 +2489,9 @@ def _main(*, update_variant_runner=None):
             variant_request = HOME / "platform-update-variant-request.json"
             active_receipt = json.loads((PLATFORM_CURRENT / ".kb/v2/receipt.json").read_text())
             variant_request.write_text(json.dumps(active_receipt["plan"]["request"]) + "\n")
-            project_b_path = Path(project_b_root_value)
+            if not isinstance(project_b_handoff, ProjectBRootValid):
+                raise JourneyContractError("update variants reached execution without a valid Project B root handoff")
+            project_b_path = project_b_handoff.root
             def variant_run(args, cwd):
                 result, _ = run(args, env=service_env, cwd=cwd, timeout=1200)
                 return result
@@ -2457,7 +2531,7 @@ def _main(*, update_variant_runner=None):
         except Exception as error:
             log_group_exception("platform update variants")
             fail(f"platform update variants: {error}")
-    elif outer_graph.selection_active:
+    elif outer_graph.selection_active and variant_gate != "BLOCKED":
         outer_graph.skip_unselected("platform update variant journey", "platform.update")
     passed = _run_final_uninstall(outer_graph, env, launcher)
     return finalize_run(passed)

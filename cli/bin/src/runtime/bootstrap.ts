@@ -38,9 +38,9 @@ import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import { platform as runtimePlatform, type PlatformContainer, type PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, isAgentDiagnosticsEnabled, toErrorEnvelope } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, isAgentDiagnosticsEnabled, toErrorEnvelope, type IServiceTransport } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
-import { hasUsablePlatformAuth, resolveActiveGateway } from "@kb-labs/cli-runtime/gateway";
+import { hasUsablePlatformAuth, resolveActiveGateway, resolveActiveGatewayAddress } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
 import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
 import { resolveProjectScope } from "./command-scope";
@@ -57,9 +57,26 @@ type ILogger = PlatformContainer["logger"];
 type RuntimeInitOptions = RuntimeSetupOptions;
 type CliRuntimeInstance = Awaited<ReturnType<typeof createCliRuntime>>;
 type CliExecutionContext = CliRuntimeInstance["context"];
+type CliCommandEnv = NodeJS.ProcessEnv & { KB_GATEWAY_URL: string };
 
-export async function configuredGatewayUrl(cwd = process.cwd(), platformRoot?: string) {
-  return resolveActiveGateway({ cwd, env: process.env, platformRoot });
+export async function configuredGatewayUrl(
+  cwd = process.cwd(),
+  platformRoot?: string,
+  env = process.env,
+  transport?: Pick<IServiceTransport, 'listenAddress'>,
+  explicitGatewayUrl?: string,
+) {
+  return resolveActiveGateway({ cwd, env, platformRoot, transport, explicitGatewayUrl });
+}
+
+export async function configuredGatewayAddress(
+  cwd = process.cwd(),
+  platformRoot?: string,
+  env = process.env,
+  transport?: Pick<IServiceTransport, 'listenAddress'>,
+  explicitGatewayUrl?: string,
+) {
+  return resolveActiveGatewayAddress({ cwd, env, platformRoot, transport, explicitGatewayUrl });
 }
 
 export function createUnknownCommandError(
@@ -120,6 +137,7 @@ export async function executeCli(
   options: CliRuntimeOptions = {},
 ): Promise<number | void> {
   const cwd = options.cwd ?? process.cwd();
+  const env = options.env ?? process.env;
   const parse = options.parseArgs ?? parseArgs;
   const { cmdPath, rest, global, flagsObj } = parse(argv);
   const correlationId = randomUUID();
@@ -186,7 +204,10 @@ export async function executeCli(
   let gatewayTarget: Awaited<ReturnType<typeof configuredGatewayUrl>> | undefined;
   if (accessMode !== 'local' && !authExempt) {
     try {
-      gatewayTarget = await configuredGatewayUrl(cwd, loadedConfig.platformRoot);
+      gatewayTarget = await configuredGatewayUrl(
+        cwd, loadedConfig.platformRoot, env, undefined,
+        global.gatewayUrl,
+      );
     } catch (error) {
       return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
     }
@@ -240,6 +261,23 @@ export async function executeCli(
     loadEnvFile(projectRoot);
   }
 
+  let commandGatewayAddress: Awaited<ReturnType<typeof configuredGatewayAddress>>;
+  try {
+    commandGatewayAddress = await configuredGatewayAddress(
+      cwd,
+      platformRoot,
+      env,
+      platform.getAdapter<IServiceTransport>('serviceTransport'),
+      global.gatewayUrl,
+    );
+  } catch (error) {
+    return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
+  }
+  // The resolved address is an invocation-local carrier for service-aware
+  // built-ins and plugin handlers. It must not become the CLI process's
+  // execution-transport switch through process.env.
+  const commandEnv: CliCommandEnv = { ...env, KB_GATEWAY_URL: commandGatewayAddress.gatewayUrl };
+
   globalThis.__KB_PLATFORM_CONFIG__ = platformConfig;
   globalThis.__KB_RAW_CONFIG__ = rawConfig;
   globalThis.__KB_EFFECTIVE_CONFIG__ = effectiveConfig ?? rawConfig;
@@ -248,7 +286,6 @@ export async function executeCli(
     process.env.KB_RAW_CONFIG_JSON = JSON.stringify(rawConfig);
   }
 
-  const env = options.env ?? process.env;
   const version = resolveVersion(options.version, env);
   const runtimeFactory =
     options.createRuntime ??
@@ -274,7 +311,7 @@ export async function executeCli(
     options.registerBuiltinCommands ?? registerBuiltinCommands;
   await registerCommands({
     cwd,
-    env,
+    env: commandEnv,
     logger: cliLogger,
     platformRoot,
     projectRoot,
@@ -350,7 +387,7 @@ export async function executeCli(
     presenter,
     logger,
     output,
-    env,
+    env: commandEnv,
     cwd,
     profileId: global.profile,
     verbosity: global.quiet ? "quiet" : global.verbose ? "verbose" : "normal",
@@ -360,7 +397,7 @@ export async function executeCli(
   const runtimeInitOptions: RuntimeInitOptions = {
     presenter,
     output,
-    env,
+    env: commandEnv,
     cwd,
     context: cliContext,
     executionLimits: options.runtimeExecutionLimits,
@@ -504,11 +541,13 @@ export async function executeCli(
       try {
         const runtime = await runtimeFactory(runtimeInitOptions);
         const v3Context = createSystemCommandContext(cliContext, platform);
+        const { gatewayUrl: _gatewayUrl, ...commandGlobalFlags } = global;
+        const commandFlags: Record<string, unknown> = { ...commandGlobalFlags, ...flagsObj };
+        if (global.gatewayUrl && cmd.flags?.some((flag) => flag.name === 'gateway-url')) {
+          commandFlags['gateway-url'] = global.gatewayUrl;
+        }
         return runtime.middleware.execute(cliContext, async () => {
-          const code = await cmd.run(v3Context, actualRest, {
-            ...global,
-            ...flagsObj,
-          });
+          const code = await cmd.run(v3Context, actualRest, commandFlags);
           return typeof code === "number" ? code : 0;
         });
       } catch (error: unknown) {
@@ -564,12 +603,11 @@ export async function executeCli(
         return await dispatchPlugin({
           manifestCmd,
           actualRest,
+          env: commandEnv,
           global,
           flagsObj,
           cliContext,
           platform,
-          netOffset: Number(env.KB_NET_OFFSET) || 0,
-          platformRoot,
           presenter,
           runWithMiddleware: async (run) => {
             const runtime = await runtimeFactory(runtimeInitOptions);
@@ -586,12 +624,11 @@ export async function executeCli(
 interface DispatchPluginParams {
   manifestCmd: RegisteredCommand;
   actualRest: string[];
+  env: CliCommandEnv;
   global: ReturnType<typeof parseArgs>["global"];
   flagsObj: ReturnType<typeof parseArgs>["flagsObj"];
   cliContext: CliExecutionContext;
   platform: PlatformContainer;
-  platformRoot?: string;
-  netOffset: number;
   presenter: Presenter;
   runWithMiddleware: (run: () => Promise<number>) => Promise<number>;
 }
@@ -604,6 +641,16 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
   const executionMode = (
     rawConfig?.execution as Record<string, unknown> | undefined
   )?.mode;
+  const accessMode = resolveCliAccessMode();
+  const { gatewayUrl: _gatewayUrl, ...commandGlobalFlags } = p.global;
+  const commandFlags: Record<string, unknown> = { ...commandGlobalFlags, ...p.flagsObj };
+  if (p.global.gatewayUrl) {
+    for (const flag of p.manifestCmd.manifest.flags ?? []) {
+      if (flag.name === 'gateway-url' || flag.name === 'gatewayUrl') {
+        commandFlags[flag.name] = p.global.gatewayUrl;
+      }
+    }
+  }
 
   if (p.manifestCmd.manifest.unavailablePlugin) {
     const envelope = createErrorEnvelope('KB_PLUGIN_NOT_FOUND', {
@@ -620,13 +667,13 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
   }
 
   return p.runWithMiddleware(async () => {
-    if (executionMode !== "in-process") {
-      const gatewayClient = await tryResolveGateway();
+    if (executionMode !== "in-process" && accessMode !== 'local') {
+      const gatewayClient = await tryResolveGateway(p.env.KB_GATEWAY_URL);
       if (gatewayClient) {
         return executeViaGateway(gatewayClient, {
           commandId,
           argv: p.actualRest,
-          flags: { ...p.global, ...p.flagsObj },
+          flags: commandFlags,
           manifestCmd: p.manifestCmd,
         });
       }
@@ -634,11 +681,10 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
 
     const pluginExitCode = await executePlugin({
       context: p.cliContext,
-      netOffset: p.netOffset,
-      platformRoot: p.platformRoot,
+      env: p.env,
       commandId,
       argv: p.actualRest,
-      flags: { ...p.global, ...p.flagsObj },
+      flags: commandFlags,
       manifestCmd: p.manifestCmd,
       platform: p.platform,
     });
