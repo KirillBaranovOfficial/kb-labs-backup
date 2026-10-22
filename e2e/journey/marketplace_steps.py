@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from journey_resources import active_platform_root
+from hermetic_cli import run_hermetic_cli
 from service_steps import Journey
 from invocations import (
     CompletedProcess,
@@ -41,6 +42,23 @@ def commit_publish_command(workspace_root: str | Path) -> list[str]:
 
 def _publish_fixture_command(workspace_root: str | Path, package_path: str) -> list[str]:
     return ["hub", "publish", "--path", str(Path(workspace_root) / package_path), "--json"]
+
+
+def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dict[str, str],
+                               runner: CommandRunner) -> CompletedProcess[str]:
+    registry_url = env.get("KB_JOURNEY_MARKETPLACE_PUBLISH_URL")
+    author_handle = env.get("KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE")
+    if not registry_url or not author_handle:
+        raise RuntimeError("journey Registry publish configuration is missing; enable the marketplace-registry lane")
+    workspace_cli = workspace_root / "cli" / "bin" / "dist" / "bin.js"
+    publish = _publish_fixture_command(workspace_root, package_path)
+    command = ["node", str(workspace_cli), *publish]
+    publish_env = dict(env)
+    publish_env["KB_REGISTRY_URL"] = registry_url
+    publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = author_handle
+    return run_hermetic_cli(
+        command, cwd=workspace_root, env=publish_env, runner=runner,
+    )
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner,
@@ -328,15 +346,14 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
     def install_fixture() -> None:
         wait_for_marketplace_ready(project, base_env, runner)
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
-        publish = commit_publish_command(workspace)
-        published = _json(_run(kb_command(publish), cwd=project, env=base_env, runner=runner), publish)
+        published = _json(_publish_workspace_fixture(workspace, "plugins/commit/entry", base_env, runner),
+                           commit_publish_command(workspace))
         version = published.get("version")
         if not isinstance(version, str) or not version:
             raise RuntimeError("kb hub publish did not return the published Commit version")
         for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa/entry"):
-            publish_fixture = _publish_fixture_command(workspace, fixture_path)
-            publication = _json(_run(kb_command(publish_fixture), cwd=project, env=base_env, runner=runner),
-                                publish_fixture)
+            publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
+                                _publish_fixture_command(workspace, fixture_path))
             if not isinstance(publication.get("version"), str) or not publication["version"]:
                 raise RuntimeError(f"kb hub publish did not return a version for {fixture_path}")
         command = ["marketplace", "install", "@kb-labs/commit", "--json"]
