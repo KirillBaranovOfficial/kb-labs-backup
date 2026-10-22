@@ -341,7 +341,7 @@ def run_candidate_provenance_mismatch_step(*, launcher: str, candidate_index: Pa
                                            run_command: CommandRunner) -> None:
     sealer = shutil.which("kb-create-release-index")
     if not sealer:
-        raise RuntimeError("journey runner is missing kb-create-release-index; run `docker compose -f e2e/journey/docker-compose.yml build runner`, then rerun `KB_JOURNEY_CASES=PC-001.19 e2e/journey/run.sh --no-build`")
+        raise RuntimeError("journey runner is missing kb-create-release-index; run `KB_JOURNEY_CASES=PC-001.19 e2e/journey/run.sh` to rebuild and rerun the case")
     receipt = json.loads((installed_root / ".kb/v2/receipt.json").read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory(prefix="pc001-provenance-mismatch-") as temporary:
         directory = Path(temporary)

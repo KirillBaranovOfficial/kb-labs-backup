@@ -9,20 +9,19 @@ JOURNEY_HOSTS_ADDED=0
 JOURNEY_PUBLISHER_ID=""
 
 journey_start_container_services() {
-  if [[ $# -eq 0 ]]; then
-    echo "Journey container services need the Compose command and files. Next: call e2e/journey/run.sh." >&2
+  if (( ! COMPOSE_AVAILABLE )); then
+    echo "Journey container services need Docker Compose. Next: install Docker Compose and call e2e/journey/run.sh." >&2
     return 2
   fi
-  local -a compose=("$@")
-  "${compose[@]}" up -d --wait origin verdaccio
+  journey_compose up -d --wait origin verdaccio
   if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
-    "${compose[@]}" up -d --wait marketplace-state marketplace-registry marketplace-tamper
+    journey_compose up -d --wait marketplace-state marketplace-registry marketplace-tamper
   fi
-  if "${compose[@]}" exec -T verdaccio sh -s -- /verdaccio/storage < e2e/journey/storage_has_packages.sh >/dev/null 2>&1; then
+  if journey_compose exec -T verdaccio sh -s -- /verdaccio/storage < e2e/journey/storage_has_packages.sh >/dev/null 2>&1; then
     echo "WARNING: reusing non-empty Verdaccio storage; existing package versions must match the local tarballs."
   fi
-  JOURNEY_PUBLISHER_ID=$("${compose[@]}" run -d --name "journey-publisher-$$" \
-    -e "PUBLISHER_DIAGNOSTIC_NEXT=${compose[*]} logs verdaccio" publisher)
+  JOURNEY_PUBLISHER_ID=$(journey_compose run -d --name "journey-publisher-$$" \
+    -e "PUBLISHER_DIAGNOSTIC_NEXT=${JOURNEY_COMPOSE[*]} logs verdaccio" publisher)
 }
 
 journey_wait_container_publisher() {
@@ -51,14 +50,13 @@ journey_stop_container_services() {
     fi
     JOURNEY_PUBLISHER_ID=""
   fi
-  [[ $# -eq 0 ]] && return "$status"
-  local -a compose=("$@")
-  if ! "${compose[@]}" stop publisher verdaccio origin >/dev/null; then
+  (( ! COMPOSE_AVAILABLE )) && return "$status"
+  if ! journey_compose stop publisher verdaccio origin >/dev/null; then
     echo "Could not stop journey publisher, Verdaccio, or origin services. Next: e2e/journey/run.sh --down" >&2
     status=1
   fi
   if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]] && \
-     ! "${compose[@]}" stop marketplace-tamper marketplace-registry marketplace-state >/dev/null; then
+     ! journey_compose stop marketplace-tamper marketplace-registry marketplace-state >/dev/null; then
     echo "Could not stop the opt-in Marketplace Registry services. Next: e2e/journey/run.sh --down" >&2
     status=1
   fi

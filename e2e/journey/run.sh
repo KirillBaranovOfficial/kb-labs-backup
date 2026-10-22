@@ -46,33 +46,18 @@ if (( resolve_only )); then
   fi
   exit
 fi
+if (( prepare_only )); then
+  e2e/journey/prepare-candidate.sh
+  exit
+fi
 
-COMPOSE=()
-COMPOSE_AVAILABLE=0
 ACTIVE_MONITORS=()
 MONITORED_CONTAINER_IDS=()
-if command docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
-  COMPOSE_AVAILABLE=1
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE=(docker-compose)
-  COMPOSE_AVAILABLE=1
-fi
-COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
-if (( COMPOSE_AVAILABLE )); then
-  COMPOSE+=("${COMPOSE_FILES[@]}")
-fi
+source "$ROOT/e2e/journey/compose-owner.sh"
+trap journey_compose_cleanup EXIT
+journey_compose_init "$ROOT"
+if (( COMPOSE_AVAILABLE )); then COMPOSE=("${JOURNEY_COMPOSE[@]}"); else COMPOSE=(); fi
 source "$ROOT/e2e/journey/candidate-services.sh"
-
-REGISTRY_COMPOSITION_ROOT=""
-if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* && -z "${KB_JOURNEY_REGISTRY_CONFIG_ROOT:-}" ]]; then
-  REGISTRY_COMPOSITION_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kb-journey-registry-composition.XXXXXX")"
-  composition_json="$(node services/marketplace-registry/app/scripts/render-journey-composition.mjs \
-    --output "$REGISTRY_COMPOSITION_ROOT" --registry-url http://marketplace-registry:5071)"
-  export KB_JOURNEY_REGISTRY_CONFIG_ROOT="$REGISTRY_COMPOSITION_ROOT"
-  export KB_JOURNEY_MARKETPLACE_REGISTRY_URL="http://marketplace-tamper:8081"
-  export KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64="$(node -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).signingPublicKeyBase64)' <<< "$composition_json")"
-fi
 
 if [[ -n "$compose_action" ]]; then
   if (( ! COMPOSE_AVAILABLE )); then
@@ -80,12 +65,11 @@ if [[ -n "$compose_action" ]]; then
     exit 127
   fi
   if [[ "$compose_action" == "--down" ]]; then
-    "${COMPOSE[@]}" down --volumes --remove-orphans
+    if journey_compose down --volumes --remove-orphans; then compose_status=0; else compose_status=$?; fi
   else
-    "${COMPOSE[@]}" config --format json
+    if journey_compose config --format json; then compose_status=0; else compose_status=$?; fi
   fi
-  compose_status=$?
-  if [[ -n "$REGISTRY_COMPOSITION_ROOT" ]]; then rm -rf "$REGISTRY_COMPOSITION_ROOT"; fi
+  journey_compose_cleanup
   exit "$compose_status"
 fi
 
@@ -116,7 +100,7 @@ cleanup() {
     fi
   done
   if (( COMPOSE_AVAILABLE )); then
-    if ! journey_stop_container_services "${COMPOSE[@]}"; then
+    if ! journey_stop_container_services; then
       echo "Journey candidate services cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
       (( status != 0 )) || status=1
     fi
@@ -124,22 +108,17 @@ cleanup() {
       if ! bash e2e/journey/teardown-compose.sh "$status" .journey/reports "$RUN_STARTED_AT" "${COMPOSE[@]}"; then
         status=1
       fi
-    elif ! "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null; then
+    elif ! journey_compose down --volumes --remove-orphans >/dev/null; then
       echo "Journey Compose cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
       (( status != 0 )) || status=1
     fi
   fi
-  if [[ -n "$REGISTRY_COMPOSITION_ROOT" ]]; then rm -rf "$REGISTRY_COMPOSITION_ROOT"; fi
+  journey_compose_cleanup
   exit "$status"
 }
 
 mkdir -p .journey/reports
 export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
-
-if (( prepare_only )); then
-  e2e/journey/prepare-candidate.sh
-  exit
-fi
 
 if (( ! COMPOSE_AVAILABLE )); then
   echo "Docker Compose is required for journey runs; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
@@ -205,7 +184,7 @@ start_container_monitor() {
 
 start_project_container_monitors() {
   local container_id container_listing
-  container_listing=$("${COMPOSE[@]}" ps -aq --all)
+  container_listing=$(journey_compose ps -aq --all)
   while IFS= read -r container_id; do
     [[ -z "$container_id" ]] && continue
     case " ${MONITORED_CONTAINER_IDS[*]-} " in
@@ -218,11 +197,11 @@ start_project_container_monitors() {
 mkdir -p .journey/reports
 rm -f .journey/reports/journey-summary.md
 find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
-"${COMPOSE[@]}" build publisher runner idp-stub
+journey_compose build publisher runner idp-stub
 if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
-  "${COMPOSE[@]}" build marketplace-state marketplace-registry
+  journey_compose build marketplace-state marketplace-registry
 fi
-journey_start_container_services "${COMPOSE[@]}"
+journey_start_container_services
 start_project_container_monitors
 journey_wait_container_publisher
 
@@ -232,7 +211,7 @@ run_journey() {
   RUN_INDEX=$((RUN_INDEX + 1))
   echo "==> $front_door / $scenario / $variant"
   if ! container_id=$(KB_JOURNEY_RUNNER_SELECTOR="$runner_selector" KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
-    "${COMPOSE[@]}" run -d --name "$container_name" -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
+    journey_compose run -d --name "$container_name" -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
     -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_SELECTED_STEPS \
     -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS \
     -e KB_JOURNEY_SELECTED_OWNING_STEPS -e KB_JOURNEY_SELECTED_CAPABILITIES runner < /dev/null); then
