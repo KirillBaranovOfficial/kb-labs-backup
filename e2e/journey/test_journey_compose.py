@@ -27,13 +27,15 @@ class JourneyComposeMountTests(unittest.TestCase):
         compose.write_text("""#!/bin/sh
 if [ "$1 $2" = 'compose version' ]; then exit 0; fi
 shift
+printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
 case "$*" in
   *' config --format json') printf '{}\\n'; exit 0 ;;
 esac
 printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
 """)
         compose.chmod(0o755)
-        env = isolated_environment(Path(temp) / "home", bin_dir, required_tools=("bash", "git", "dirname", "id"),
+        env = isolated_environment(Path(temp) / "home", bin_dir,
+                                   required_tools=("bash", "git", "dirname", "id", "node", "mktemp", "rm"),
                                    overrides={"COMPOSE_ARGS_OUT": str(compose_args)})
         return env, compose_args
 
@@ -44,7 +46,16 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             compose_tools = tuple(tool for tool in ("docker", "docker-compose") if shutil.which(tool))
             self.assertTrue(compose_tools, "journey Compose tests require Docker Compose v2 or docker-compose on PATH")
             env = isolated_environment(Path(temp) / "home", bin_dir,
-                                       required_tools=("bash", "git", "dirname", "id", "node", *compose_tools))
+                                       required_tools=("bash", "git", "dirname", "id", "node", "mktemp", "rm", *compose_tools),
+                                       overrides={
+                                           "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
+                                           "KB_JOURNEY_GIT_REVISION": "test-revision",
+                                           "KB_JOURNEY_RUNNER_UID": str(os.getuid()),
+                                           "KB_JOURNEY_RUNNER_GID": str(os.getgid()),
+                                       })
+            compose_command = ["docker", "compose"] if shutil.which("docker") and subprocess.run(
+                ["docker", "compose", "version"], capture_output=True, check=False,
+            ).returncode == 0 else ["docker-compose"]
             composition = Path(temp) / "marketplace-registry-composition"
             producer = ROOT / "services" / "marketplace-registry" / "app" / "scripts" / "render-journey-composition.mjs"
             rendered = subprocess.run(
@@ -53,8 +64,11 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
                 cwd=ROOT, env=env, capture_output=True, text=True, check=False,
             )
             self.assertEqual(rendered.returncode, 0, rendered.stderr)
+            producer_output = json.loads(rendered.stdout)
+            overlay = Path(producer_output["composeOverlayPath"])
             self.assertTrue((composition / ".kb" / "kb.config.jsonc").is_file())
             self.assertTrue((composition / ".kb" / "marketplace.lock").is_file())
+            self.assertTrue(overlay.is_file())
             validation = subprocess.run(
                 ["node", "--input-type=module", "-e", """
 import fs from 'node:fs';
@@ -73,7 +87,6 @@ if (!configResult.ok || !lockResult.valid) {
                 cwd=ROOT, env=env, capture_output=True, text=True, check=False,
             )
             self.assertEqual(validation.returncode, 0, validation.stderr)
-            env["KB_JOURNEY_REGISTRY_CONFIG_ROOT"] = str(composition)
             if hosted:
                 env["CI"] = "true"
                 env["GITHUB_ACTIONS"] = "true"
@@ -94,12 +107,62 @@ if (!configResult.ok || !lockResult.valid) {
             if mount.get("type") == "bind"
         }
         self.assertEqual(set(mounts), {"/app/.kb/kb.config.jsonc", "/app/.kb/marketplace.lock"})
-        self.assertEqual(Path(mounts["/app/.kb/kb.config.jsonc"]["source"]).resolve(),
-                         composition / ".kb" / "kb.config.jsonc")
-        self.assertEqual(Path(mounts["/app/.kb/marketplace.lock"]["source"]).resolve(),
-                         composition / ".kb" / "marketplace.lock")
+        config_source = Path(mounts["/app/.kb/kb.config.jsonc"]["source"])
+        lock_source = Path(mounts["/app/.kb/marketplace.lock"]["source"])
+        self.assertEqual(config_source.name, "kb.config.jsonc")
+        self.assertEqual(lock_source.name, "marketplace.lock")
+        self.assertEqual(config_source.parent, lock_source.parent)
+        self.assertEqual(config_source.parent.name, ".kb")
         self.assertTrue(all(mount.get("read_only") is True for mount in mounts.values()))
         return rendered
+
+    def test_default_compose_configuration_does_not_require_registry_lane_inputs(self):
+        with tempfile.TemporaryDirectory(prefix="journey-compose-default-") as temp:
+            compose_command = ["docker", "compose"] if shutil.which("docker") and subprocess.run(
+                ["docker", "compose", "version"], capture_output=True, check=False,
+            ).returncode == 0 else ["docker-compose"]
+            env = isolated_environment(
+                Path(temp) / "home", Path(temp) / "bin", required_tools=tuple(compose_command),
+                overrides={
+                    "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
+                    "KB_JOURNEY_GIT_REVISION": "test-revision",
+                    "KB_JOURNEY_RUNNER_UID": str(os.getuid()),
+                    "KB_JOURNEY_RUNNER_GID": str(os.getgid()),
+                },
+            )
+            result = subprocess.run(
+                [*compose_command, "-f", "e2e/docker-compose.yml", "-f",
+                 "e2e/journey/docker-compose.yml", "config", "--quiet"],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_registry_lane_adds_producer_overlay_through_compose_owner(self):
+        for action, suffix in (("--render-compose-config", ["config", "--format", "json"]),
+                               ("--down", ["down", "--volumes", "--remove-orphans"])):
+            with tempfile.TemporaryDirectory(prefix="journey-compose-registry-owner-") as temp:
+                env, compose_args = self._fake_compose_environment(temp)
+                env["COMPOSE_PROFILES"] = "marketplace-registry"
+                result = subprocess.run(
+                    ["bash", str(RUNNER), action], cwd=ROOT, env=env,
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = compose_args.read_text().splitlines()
+            self.assertEqual(args.count("-f"), 3)
+            self.assertTrue(any(argument.endswith("docker-compose.registry.yml") for argument in args))
+            self.assertEqual(args[-len(suffix):], suffix)
+
+    def test_default_compose_owner_uses_only_default_files(self):
+        with tempfile.TemporaryDirectory(prefix="journey-compose-default-owner-") as temp:
+            env, compose_args = self._fake_compose_environment(temp)
+            result = subprocess.run(
+                ["bash", str(RUNNER), "--render-compose-config"], cwd=ROOT, env=env,
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            args = compose_args.read_text().splitlines()
+        self.assertNotIn("docker-compose.registry.yml", " ".join(args))
 
     # case: S-262.1
     def test_local_and_hosted_journeys_render_the_same_compose_bind_set(self):

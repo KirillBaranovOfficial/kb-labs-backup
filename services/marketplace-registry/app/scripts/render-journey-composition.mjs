@@ -46,4 +46,53 @@ await mkdir(kbRoot, { recursive: true, mode: 0o700 });
 await writeFile(path.join(kbRoot, 'kb.config.jsonc'), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 await writeFile(path.join(kbRoot, 'marketplace.lock'), `${JSON.stringify(lock, null, 2)}\n`, { mode: 0o600 });
 await writeFile(path.join(kbRoot, 'registry.env'), `KB_REGISTRY_SIGNING_KEY='${privatePem.trimEnd()}\n'\n`, { mode: 0o600 });
-process.stdout.write(`${JSON.stringify({ signingPublicKeyBase64: Buffer.from(publicPem).toString('base64') })}\n`);
+
+const composeOverlay = `services:
+  marketplace-state:
+    profiles: [marketplace-registry]
+    image: kb-marketplace-state:journey
+    build:
+      context: ${JSON.stringify(root)}
+      dockerfile: services/state/daemon/Dockerfile
+    networks: [journey]
+
+  marketplace-registry:
+    profiles: [marketplace-registry]
+    image: kb-marketplace-registry:journey
+    build:
+      context: ${JSON.stringify(root)}
+      dockerfile: services/marketplace-registry/app/Dockerfile
+    depends_on:
+      marketplace-state:
+        condition: service_started
+    env_file:
+      - ${JSON.stringify(path.join(kbRoot, 'registry.env'))}
+    environment:
+      KB_REGISTRY_HOST: 0.0.0.0
+      KB_REGISTRY_PORT: "5071"
+      KB_REGISTRY_URL: http://marketplace-tamper:8081
+      GATEWAY_INTERNAL_SECRET: journey-marketplace-internal-secret
+    volumes:
+      - ${JSON.stringify(`${path.join(kbRoot, 'kb.config.jsonc')}:/app/.kb/kb.config.jsonc:ro`)}
+      - ${JSON.stringify(`${path.join(kbRoot, 'marketplace.lock')}:/app/.kb/marketplace.lock:ro`)}
+    networks: [journey]
+
+  marketplace-tamper:
+    profiles: [marketplace-registry]
+    image: python:3.12-alpine
+    command: ["python3", "/fixture/marketplace_tamper_proxy.py"]
+    environment:
+      MARKETPLACE_TAMPER_UPSTREAM: http://marketplace-registry:5071
+    volumes:
+      - ${JSON.stringify(`${path.join(root, 'e2e/journey/marketplace_tamper_proxy.py')}:/fixture/marketplace_tamper_proxy.py:ro`)}
+    depends_on:
+      marketplace-registry:
+        condition: service_started
+    networks: [journey]
+`;
+const composeOverlayPath = path.join(path.resolve(outputRoot), 'docker-compose.registry.yml');
+await writeFile(composeOverlayPath, composeOverlay, { mode: 0o600 });
+process.stdout.write(`${JSON.stringify({
+  composeOverlayPath,
+  signingPublicKeyBase64: Buffer.from(publicPem).toString('base64'),
+})}\n`);
