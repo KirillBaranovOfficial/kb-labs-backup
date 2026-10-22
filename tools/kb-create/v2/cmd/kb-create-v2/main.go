@@ -104,6 +104,7 @@ func Execute() diag.ExitStatus {
 
 type directRequest struct {
 	PlatformRoot, ProjectRoot, PlatformVersion, PlatformChannel, SDKVersion, ServiceProfile, GatewayURL, Plugins, Adapters, Policy string
+	MarketplaceRegistryURL, MarketplaceSigningKeyEnv, MarketplaceTokenEnv, MarketplaceNpmURL                                       string
 	Providers                                                                                                                      []string
 	Offline                                                                                                                        bool
 }
@@ -295,7 +296,7 @@ func compileScenario(id, answers string, resume bool, base contracts.InstallRequ
 }
 
 func (value directRequest) normalize() (contracts.InstallRequest, error) {
-	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: value.PlatformRoot, ProjectRoot: value.ProjectRoot, Platform: contracts.VersionSelector{Version: value.PlatformVersion, Channel: contracts.Channel(value.PlatformChannel)}, SDK: contracts.VersionSelector{Version: value.SDKVersion}, ServiceProfile: value.ServiceProfile, GatewayURL: value.GatewayURL, Policy: contracts.CompatibilityPolicy(value.Policy), Source: contracts.SourceRegistry}
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: value.PlatformRoot, ProjectRoot: value.ProjectRoot, Platform: contracts.VersionSelector{Version: value.PlatformVersion, Channel: contracts.Channel(value.PlatformChannel)}, SDK: contracts.VersionSelector{Version: value.SDKVersion}, ServiceProfile: value.ServiceProfile, GatewayURL: value.GatewayURL, Policy: contracts.CompatibilityPolicy(value.Policy), Source: contracts.SourceRegistry, MarketplaceSources: value.marketplaceSources()}
 	if value.Offline {
 		request.Source = contracts.SourceOffline
 	}
@@ -313,6 +314,13 @@ func (value directRequest) normalize() (contracts.InstallRequest, error) {
 		return contracts.InstallRequest{}, err
 	}
 	return request.Normalize()
+}
+
+func (value directRequest) marketplaceSources() *contracts.MarketplaceSources {
+	if value.MarketplaceRegistryURL == "" && value.MarketplaceSigningKeyEnv == "" && value.MarketplaceTokenEnv == "" && value.MarketplaceNpmURL == "" {
+		return nil
+	}
+	return &contracts.MarketplaceSources{RegistryURL: value.MarketplaceRegistryURL, SigningPublicKeyEnv: value.MarketplaceSigningKeyEnv, RegistryTokenEnv: value.MarketplaceTokenEnv, NpmURL: value.MarketplaceNpmURL}
 }
 
 func configuredFirstAdmin(request contracts.InstallRequest) (string, bool) {

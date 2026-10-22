@@ -15,7 +15,7 @@ The decisions that bound the catalog (release scope, roles, adapter defaults, sc
 
 ## Frontmatter
 
-Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `status` (`active`/`planned`/`historical`), `release` (`true`/`false`), `modes` (`local`/`secured`), and `surfaces` (`cli`/`studio`/`api`/`agent`). Do not add `automation` or `e2e` fields. Historical duplicate records may include `superseded_by: S-023` to point to the active case that now owns that capability. Keep the superseding case ID valid and stable; `superseded_by` does not change the historical status.
+Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `status` (`active`/`planned`/`draft`/`historical`), `release` (`true`/`false`), `modes` (`local`/`secured`), and `surfaces` (`cli`/`studio`/`api`/`agent`). Draft cases are product proposals and must set `release: false`; they remain out of coverage gates until accepted. Do not add `automation` or `e2e` fields. Historical duplicate records may include `superseded_by: S-023` to point to the active case that now owns that capability. Keep the superseding case ID valid and stable; `superseded_by` does not change the historical status.
 
 ## Cases
 

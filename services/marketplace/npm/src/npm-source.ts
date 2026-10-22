@@ -10,13 +10,13 @@ import * as fs from 'node:fs/promises';
 import * as crypto from 'node:crypto';
 import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
 import type {
-  PackageSource,
+  MarketplaceSource,
   ResolvedPackage,
   InstalledPackage,
 } from '@kb-labs/marketplace-contracts';
 
 export class PackageMetadataError extends Error {
-  readonly code: 'PACKAGE_NOT_FOUND' | 'VERSION_NOT_FOUND' | 'UNKNOWN_ENTITY_KIND' | 'METADATA_FETCH_FAILED';
+  readonly code: 'PACKAGE_NOT_FOUND' | 'VERSION_NOT_FOUND' | 'UNKNOWN_ENTITY_KIND' | 'METADATA_FETCH_FAILED' | 'AUTH_FAILED' | 'TRANSPORT_FAILED';
   readonly packageId: string;
   readonly version: string;
   readonly hint: string;
@@ -43,7 +43,7 @@ export class PlatformArtifactPinsError extends Error {
 }
 
 export interface NpmPackageSourceOptions {
-  registryUrl?: string;
+  registryUrl: string;
 }
 
 export class PackageInstallError extends Error {
@@ -57,12 +57,25 @@ export class PackageInstallError extends Error {
   }
 }
 
-export class NpmPackageSource implements PackageSource {
+export class NpmPackageSource implements MarketplaceSource {
+  readonly kind = 'npm' as const;
   private readonly registryUrl: string;
   private readonly pendingInstalls = new Map<string, PackageManagerFileSnapshot[]>();
 
-  constructor(options: NpmPackageSourceOptions = {}) {
-    this.registryUrl = (options.registryUrl ?? process.env.npm_config_registry ?? process.env.NPM_CONFIG_REGISTRY ?? 'https://registry.npmjs.org').replace(/\/$/, '');
+  constructor(options: NpmPackageSourceOptions) {
+    this.registryUrl = options.registryUrl.replace(/\/$/, '');
+  }
+
+  async resolveIdentity(identity: string) {
+    try {
+      const resolved = await this.resolve(identity);
+      return { status: 'found' as const, package: resolved };
+    } catch (error) {
+      if (error instanceof PackageMetadataError && error.code === 'PACKAGE_NOT_FOUND') {
+        return { status: 'not-found-unowned' as const };
+      }
+      throw error;
+    }
   }
 
   async resolve(spec: string): Promise<ResolvedPackage> {
@@ -77,14 +90,16 @@ export class NpmPackageSource implements PackageSource {
     try {
       response = await globalThis.fetch(packageURL);
     } catch (error) {
-      throw new PackageMetadataError('METADATA_FETCH_FAILED', id, requestedVersion ?? 'latest',
+      throw new PackageMetadataError('TRANSPORT_FAILED', id, requestedVersion ?? 'latest',
         `Could not read package metadata for ${id}: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (response.status === 404) {
       throw new PackageMetadataError('PACKAGE_NOT_FOUND', id, requestedVersion ?? 'latest', `Package ${id} was not found in ${this.registryUrl}`);
     }
     if (!response.ok) {
-      throw new PackageMetadataError('METADATA_FETCH_FAILED', id, requestedVersion ?? 'latest', `Registry returned HTTP ${response.status} while reading ${id}`);
+      const code = response.status === 401 || response.status === 403 ? 'AUTH_FAILED'
+        : response.status >= 500 ? 'TRANSPORT_FAILED' : 'METADATA_FETCH_FAILED';
+      throw new PackageMetadataError(code, id, requestedVersion ?? 'latest', `Registry returned HTTP ${response.status} while reading ${id}`);
     }
     const packument = await response.json() as {
       'dist-tags'?: { latest?: string };

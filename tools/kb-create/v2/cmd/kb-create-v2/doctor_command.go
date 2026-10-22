@@ -170,6 +170,10 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 			HostState: layout.HostStateDir(),
 			Versions:  versions, Snapshots: snapshots}
 	}
+	marketplaceSources, sourcesErr := marketplaceSourceStatus(platformRoot)
+	if sourcesErr != nil {
+		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "The installed Marketplace source configuration could not be read.", "Run `kb-create status` to inspect the source configuration, repair the installed configuration, then retry `kb-create doctor`.", sourcesErr)
+	}
 	installation := doctor.InspectInstallation(platformRoot, state)
 	if in.Executable != "" && shimClassification.Kind != shim.ClassificationOwned {
 		hint := "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "` to repair the command shim."
@@ -214,7 +218,7 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	if !response.OK {
 		status = "unhealthy"
 	}
-	return doctorCommandResult{Operation: "doctor", Status: status, Response: response}, nil
+	return doctorCommandResult{Operation: "doctor", Status: status, MarketplaceSources: marketplaceSources, Response: response}, nil
 }
 
 func foreignShimHint(classification shim.Classification, platformRoot string) string {

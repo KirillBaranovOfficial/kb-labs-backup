@@ -58,6 +58,7 @@ function makePkg(overrides?: Partial<Parameters<RegistryService['publish']>[1]['
     meta: {
       name: 'my-plugin',
       version: '1.0.0',
+      identity: '@test/my-plugin',
       description: 'A test plugin',
       keywords: ['test'],
       ...overrides,
@@ -81,13 +82,25 @@ function makeService(extraOpts?: { signingPrivateKey?: string }): RegistryServic
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('RegistryService.publish', () => {
+  it('resolves canonical identity and returns Registry ownership results', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'commit-entry', identity: '@kb-labs/commit' }), 'kirill', 'ns-kirill');
+
+    await expect(svc.resolveIdentity('@kb-labs/commit')).resolves.toMatchObject({
+      status: 'found',
+      package: { id: 'commit-entry', signatureSubject: 'kirill/commit-entry' },
+    });
+    await expect(svc.resolveIdentity('@kb-labs/unknown')).resolves.toEqual({ status: 'not-found-owned' });
+    await expect(svc.resolveIdentity('@other/unknown')).resolves.toEqual({ status: 'not-found-unowned' });
+  });
+
   it('RS-01: stores tarball + meta, returns install command', async () => {
     const svc = makeService();
     const result = await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
 
     expect(result.name).toBe('my-plugin');
     expect(result.version).toBe('1.0.0');
-    expect(result.installCommand).toBe('kb marketplace install kb:kirill/my-plugin');
+    expect(result.installCommand).toBe('kb marketplace install @test/my-plugin');
     expect(result.pageUrl).toBe('https://kblabs.ru/ru/marketplace/kirill/my-plugin');
 
     const entry = await svc.getEntry('kirill', 'my-plugin');
@@ -267,7 +280,7 @@ describe('RegistryService.canAccess', () => {
       featured: false,
       badges: [],
       tags: [],
-      meta: { name: 'my-plugin', version: '1.0.0' },
+      meta: { name: 'my-plugin', version: '1.0.0', identity: '@kirill/my-plugin' },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

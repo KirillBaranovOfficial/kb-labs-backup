@@ -22,6 +22,24 @@ export interface EntitySignature {
   verifiedChecks: string[];
 }
 
+/** Structured answer from a configured Marketplace identity source. */
+export interface MarketplaceResolvedIdentity {
+  /** Package manager coordinate used for storage and removal. */
+  id: string;
+  version: string;
+  integrity: string;
+  signature?: EntitySignature;
+  primaryKind?: EntityKind;
+  downloadUrl?: string;
+  /** Registry canonical signer subject, e.g. author-handle/package-name. */
+  signatureSubject?: string;
+}
+
+export type MarketplaceIdentityResolution =
+  | { status: 'found'; package: MarketplaceResolvedIdentity }
+  | { status: 'not-found-unowned' }
+  | { status: 'not-found-owned' };
+
 // ---------------------------------------------------------------------------
 // Entity Kind (extensible)
 // ---------------------------------------------------------------------------
@@ -78,6 +96,10 @@ export type MarketplaceEntry = MarketplaceEntryMetadata & (
       integrity: string;
       package: string;
       resolvedPath?: string;
+      /** Source in the configured ordered Marketplace source list. */
+      marketplaceSource: 'registry' | 'npm';
+      /** Trust result from the source that served this artifact. */
+      signatureStatus: 'verified' | 'unsigned';
       link?: never;
     }
   | {
@@ -99,13 +121,9 @@ export type MarketplaceEntry = MarketplaceEntryMetadata & (
 );
 
 /** Machine-local adapter lock entry; adapters use package IDs as their keys. */
-export interface MarketplaceAdapterEntry {
-  source: 'platform';
-  version: string;
-  integrity: string;
-  resolvedPath: string;
-  enabled: boolean;
-}
+export type MarketplaceAdapterEntry =
+  | { source: 'platform'; version: string; integrity: string; resolvedPath: string; enabled: boolean }
+  | { source: 'marketplace'; version: string; integrity: string; resolvedPath: string; enabled: boolean; marketplaceSource: 'registry' | 'npm'; signatureStatus: 'verified' | 'unsigned' };
 
 export type MarketplaceLockEntry = MarketplaceEntry | MarketplaceAdapterEntry;
 
@@ -216,6 +234,7 @@ export type DiagnosticCode =
   | 'LOCK_NOT_FOUND'
   | 'LOCK_PARSE_ERROR'
   | 'LOCK_SCHEMA_INVALID'
+  | 'MARKETPLACE_PROVENANCE_REQUIRED'
   | 'MANIFEST_NOT_FOUND'
   | 'MANIFEST_PARSE_ERROR'
   | 'MANIFEST_VALIDATION_ERROR'

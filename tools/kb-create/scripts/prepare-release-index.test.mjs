@@ -96,6 +96,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   assert.deepEqual(index.platforms[0].config, [
     { id: 'platform.adapters', path: '/platform/adapters', default: '{"serviceTransport":"@kb-labs/adapters-service-transport-http"}' },
     { id: 'platform.adapterOptions', path: '/platform/adapterOptions', default: '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}' },
+    { id: 'marketplace.sources', path: '/marketplace/sources', default: '[{"kind":"npm","url":"https://registry.npmjs.org"}]' },
   ]);
   assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/host-app', '@kb-labs/core-contracts', '@kb-labs/release-manager-cli', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
   // Regression coverage for the members[]-id divergence bug: this array used

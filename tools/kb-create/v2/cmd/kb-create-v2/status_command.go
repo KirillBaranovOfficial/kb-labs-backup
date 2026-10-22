@@ -2,6 +2,8 @@ package v2cli
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 
 	"github.com/kb-labs/clikit/diag"
@@ -85,6 +87,11 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	payload["bootstrapCompleted"] = bootstrapCompleted
 	if installed {
 		payload["installedVersion"] = active.Plan.ServiceGraph.PlatformVersion
+		if sources, err := marketplaceSourceStatus(platformRoot); err != nil {
+			return nil, contracts.NewDiag(contracts.CodeApplyFailed, "The installed Marketplace source configuration could not be read.", "Run `kb-create doctor` to inspect the installation, then retry `kb-create status`.", err)
+		} else if sources != nil {
+			payload["marketplaceSources"] = sources
+		}
 	}
 	if status.PlatformVersion != "" {
 		payload["runningVersion"] = status.PlatformVersion
@@ -120,4 +127,39 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 		return nil, contracts.NewDiag("KB_HOST_UNHEALTHY", "The host responds but is unhealthy.", "Run \"kb-create restart\" or \"kb-create doctor\".", nil)
 	}
 	return payload, nil
+}
+
+func marketplaceSourceStatus(platformRoot string) ([]map[string]any, error) {
+	data, err := os.ReadFile(filepath.Join(platformRoot, ".kb", "kb.config.jsonc"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var config struct {
+		Marketplace struct {
+			Sources []struct {
+				Kind             string `json:"kind"`
+				URL              string `json:"url"`
+				SigningPublicKey string `json:"signingPublicKey"`
+				AuthToken        string `json:"authToken"`
+			} `json:"sources"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+	if len(config.Marketplace.Sources) == 0 {
+		return nil, nil
+	}
+	status := make([]map[string]any, 0, len(config.Marketplace.Sources))
+	for _, source := range config.Marketplace.Sources {
+		status = append(status, map[string]any{
+			"kind": source.Kind, "url": source.URL,
+			"signingKeyConfigured": source.SigningPublicKey != "",
+			"authTokenConfigured":  source.AuthToken != "",
+		})
+	}
+	return status, nil
 }

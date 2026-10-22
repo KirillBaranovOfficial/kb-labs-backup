@@ -103,6 +103,8 @@ async function registerPlugin(
       ...entryOptions,
       source: 'marketplace',
       package: JSON.parse(await fs.readFile(path.join(pluginDir, 'package.json'), 'utf8')).name,
+      marketplaceSource: 'registry',
+      signatureStatus: 'verified',
     });
   await addToMarketplaceLock(root, id, entry);
 }

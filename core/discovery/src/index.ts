@@ -66,6 +66,8 @@ export type {
   // Entity model
   EntityKind,
   EntitySignature,
+  MarketplaceResolvedIdentity,
+  MarketplaceIdentityResolution,
   // Marketplace lock
   MarketplaceLock,
   MarketplaceEntry,

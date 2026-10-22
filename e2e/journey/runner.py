@@ -7,6 +7,7 @@ from installed_fixture import layout_relative, layout_value
 from journey_values import journey_value
 
 import json
+import base64
 import os
 import re
 import stat
@@ -94,6 +95,27 @@ ACTIVE_MAIN_ENV: dict[str, str] | None = None
 ACTIVE_LAUNCHER: str | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
+
+
+def marketplace_install_flags(env: dict[str, str]) -> list[str]:
+    """Translate the journey composition's generated Registry public key into kb-create's env-ref contract."""
+    registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
+    encoded_key = env.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64", "")
+    if not registry_url and not encoded_key:
+        return []
+    if not registry_url or not encoded_key:
+        raise ValueError("journey Marketplace Registry URL and generated public key must be configured together")
+    try:
+        key = base64.b64decode(encoded_key, validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError) as error:
+        raise ValueError("journey Registry public key is not valid base64-encoded UTF-8") from error
+    env["KB_JOURNEY_MARKETPLACE_PUBLIC_KEY"] = key
+    store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
+                        "journey-registry-token-reference-test-value", "journey Marketplace Registry token")
+    return ["--marketplace-registry-url", registry_url,
+            "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
+            "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN",
+            "--marketplace-npm-url", REGISTRY]
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
 RUNNER_SCENARIOS = {
     "commit": {
@@ -1149,6 +1171,7 @@ def _main(*, update_variant_runner=None):
     env["KB_JOURNEY_INVOCATIONS"] = str(Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).resolve().parent)
     os.environ["KB_JOURNEY_INVOCATIONS"] = env["KB_JOURNEY_INVOCATIONS"]
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+    marketplace_flags = marketplace_install_flags(env)
     (HOME / ".profile").write_text("if [ -f ~/.bashrc ]; then . ~/.bashrc; fi\n")
     (HOME / ".bash_profile").write_text("if [ -f ~/.profile ]; then . ~/.profile; fi\n")
     (HOME / ".npmrc").write_text(f"registry={REGISTRY}\n")
@@ -1228,6 +1251,7 @@ def _main(*, update_variant_runner=None):
         return finalize_run(False)
 
     launcher = str(BIN / "kb-create")
+    env["KB_JOURNEY_KB_CREATE_PATH"] = launcher
     ACTIVE_LAUNCHER = launcher
     version, _ = run([launcher, "--version"], env=env, timeout=30)
     version_ok = version.returncode == 0 and re.fullmatch(r"kb-create [^\s]+\s*", version.stdout) is not None
@@ -1269,7 +1293,7 @@ def _main(*, update_variant_runner=None):
         choice = "commit" if VARIANT == "human-nondefault" else ""
         access_mode = "secured" if VARIANT.endswith("secured") else "local"
         code, output, duration, apply_offset = pty_install(
-            [launcher, "install", "--registry", REGISTRY], env, choice, access_mode
+            [launcher, "install", "--registry", REGISTRY, *marketplace_flags], env, choice, access_mode
         )
         TIMES["questions"] = apply_offset if apply_offset is not None else duration
         if apply_offset is not None:
@@ -1306,7 +1330,7 @@ def _main(*, update_variant_runner=None):
         install_scenario = scenario_setup["installer"]
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                 "--platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
-                "--registry", REGISTRY, "--project-root", str(PROJECT)]
+                "--registry", REGISTRY, *marketplace_flags, "--project-root", str(PROJECT)]
         if VARIANT.endswith("secured"):
             answers = json.dumps({
                 "access.mode": "secured",

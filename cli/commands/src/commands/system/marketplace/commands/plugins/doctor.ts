@@ -19,6 +19,7 @@ interface DoctorResultData {
   ok: boolean;
   total: number;
   issues: DoctorIssue[];
+  provenance: Array<{ packageId: string; source: 'registry' | 'npm'; integrity: string; signatureStatus: 'verified' | 'unsigned' }>;
 }
 
 export default defineCommand<unknown, DoctorInput, DoctorResultData>({
@@ -47,13 +48,16 @@ export default defineCommand<unknown, DoctorInput, DoctorResultData>({
 
         if (!flags.json) {
           if (report.issues.length === 0) {
-            ctx.ui?.success?.(`All ${report.total} packages healthy (${scopeCtx.scope})`);
+            ctx.ui?.success?.(`All ${report.total} packages healthy (${scopeCtx.scope})`, {
+              sections: report.provenance.length > 0 ? [{ header: 'Marketplace provenance', items: report.provenance.map(item => `${item.packageId}: ${item.source}, ${item.signatureStatus}, ${item.integrity}`) }] : [],
+            });
           } else {
             const errors = report.issues.filter(i => i.severity === 'error');
             ctx.ui?.warn?.(`Marketplace Doctor (${scopeCtx.scope})`, {
               sections: [
                 { header: 'Summary', items: [`Total: ${report.total}`, `Issues: ${report.issues.length}`, `Errors: ${errors.length}`] },
                 { header: 'Issues', items: report.issues.map(i => `${i.severity === 'error' ? '❌' : '⚠'} ${i.packageId}${i.diagnosticCode ? ` [${i.diagnosticCode}]` : ''}: ${i.message}`) },
+                ...(report.provenance.length > 0 ? [{ header: 'Marketplace provenance', items: report.provenance.map(item => `${item.packageId}: ${item.source}, ${item.signatureStatus}, ${item.integrity}`) }] : []),
               ],
             });
           }

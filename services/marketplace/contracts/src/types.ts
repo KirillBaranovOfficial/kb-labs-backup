@@ -8,6 +8,8 @@ import type {
   EntityKind,
   EntitySignature,
   MarketplaceLockEntry,
+  MarketplaceResolvedIdentity,
+  MarketplaceIdentityResolution,
 } from '@kb-labs/core-discovery';
 
 // ---------------------------------------------------------------------------
@@ -17,21 +19,9 @@ import type {
 /**
  * A resolved package ready to be installed.
  */
-export interface ResolvedPackage {
-  /** Package identifier (@scope/name) */
-  id: string;
-  /** Resolved version (semver) */
-  version: string;
-  /** SRI integrity hash (sha256-...) */
-  integrity: string;
-  /** Platform-issued signature (from registry) */
-  signature?: EntitySignature;
+export interface ResolvedPackage extends MarketplaceResolvedIdentity {
   /** How this package was sourced */
   source: 'marketplace' | 'local';
-  /** Primary KB Labs entity kind, when the source publishes it. */
-  primaryKind?: EntityKind;
-  /** Download URL (for registry-based sources) */
-  downloadUrl?: string;
 }
 
 /**
@@ -112,6 +102,17 @@ export interface PackageSource {
 
   /** Return a copy of this source with a per-request share token injected (optional) */
   withShareToken?(token: string): PackageSource;
+}
+
+export type MarketplaceSourceKind = 'registry' | 'npm';
+export type MarketplaceSourceResolution = MarketplaceIdentityResolution;
+
+export interface MarketplaceSource extends PackageSource {
+  kind: MarketplaceSourceKind;
+  /** Public verification key resolved from this Registry source's config. */
+  verificationKey?: string;
+  resolveIdentity(identity: string): Promise<MarketplaceSourceResolution>;
+  withShareToken?(token: string): MarketplaceSource;
 }
 
 // ---------------------------------------------------------------------------
@@ -289,6 +290,8 @@ export interface InstallResultEntry {
   packageRoot: string;
   /** Scope this entry was written to. */
   scope: MarketplaceScope;
+  source: MarketplaceSourceKind | 'local';
+  signatureStatus: 'verified' | 'unsigned' | 'not-applicable';
 }
 
 export interface InstallResult {
@@ -322,8 +325,16 @@ export interface DoctorIssue {
   remediation?: string;
 }
 
+export interface MarketplaceProvenance {
+  packageId: string;
+  source: 'registry' | 'npm';
+  integrity: string;
+  signatureStatus: 'verified' | 'unsigned';
+}
+
 export interface DoctorReport {
   ok: boolean;
   total: number;
   issues: DoctorIssue[];
+  provenance: MarketplaceProvenance[];
 }

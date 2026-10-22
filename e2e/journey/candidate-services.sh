@@ -15,6 +15,9 @@ journey_start_container_services() {
   fi
   local -a compose=("$@")
   "${compose[@]}" up -d --wait origin verdaccio
+  if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
+    "${compose[@]}" up -d --wait marketplace-state marketplace-registry marketplace-tamper
+  fi
   if "${compose[@]}" exec -T verdaccio sh -s -- /verdaccio/storage < e2e/journey/storage_has_packages.sh >/dev/null 2>&1; then
     echo "WARNING: reusing non-empty Verdaccio storage; existing package versions must match the local tarballs."
   fi
@@ -52,6 +55,11 @@ journey_stop_container_services() {
   local -a compose=("$@")
   if ! "${compose[@]}" stop publisher verdaccio origin >/dev/null; then
     echo "Could not stop journey publisher, Verdaccio, or origin services. Next: e2e/journey/run.sh --down" >&2
+    status=1
+  fi
+  if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]] && \
+     ! "${compose[@]}" stop marketplace-tamper marketplace-registry marketplace-state >/dev/null; then
+    echo "Could not stop the opt-in Marketplace Registry services. Next: e2e/journey/run.sh --down" >&2
     status=1
   fi
   return "$status"

@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { registryPostMultipart, registryPatch, resolveRegistryHandle } from '../registry-http.js';
 import { packPlugin } from '../pack-plugin.js';
@@ -58,12 +59,22 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData 
 
       // Extract manifest fields for the detail page
       const manifest = (kb?.manifest ?? {}) as Record<string, unknown>;
+      const manifestPath = typeof kb?.manifest === 'string' ? path.resolve(pluginDir, kb.manifest) : undefined;
+      let identity: string | undefined;
+      if (manifestPath) {
+        const loaded = await import(pathToFileURL(manifestPath).href) as { manifest?: { id?: string }; default?: { id?: string } };
+        identity = loaded.manifest?.id ?? loaded.default?.id;
+      } else if (typeof manifest['id'] === 'string') {
+        identity = manifest['id'];
+      }
+      if (!identity) { return validationError('The compiled KB manifest does not declare a canonical id', 'Build the package and publish again with kb.manifest pointing to its compiled manifest'); }
       const manifestCommands = Array.isArray(manifest['commands'])
         ? (manifest['commands'] as Array<{ id?: string; name?: string }>).map(c => c.id ?? c.name ?? '').filter(Boolean)
         : undefined;
 
       const meta = {
         name: pkgJson.name as string,
+        identity,
         version: pkgJson.version as string,
         description: pkgJson.description as string | undefined,
         author: pkgJson.author as unknown,

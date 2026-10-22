@@ -9,10 +9,12 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_HOST_PACKAGE,
   DEFAULT_PLATFORM_PACKAGE,
   DEFAULT_SDK_PACKAGE,
+  readPlatformReleaseConfig,
   configuredAdapterPackages,
   platformPackageRoots,
   shippedPlatformPackageSet,
@@ -56,6 +58,11 @@ const platformAdapterConfig = value('--platform-adapter-config')
 const platformAdapterOptions = value('--platform-adapter-options')
   ? JSON.parse(value('--platform-adapter-options'))
   : undefined;
+const releaseConfigPath = resolve(value('--release-config') ?? fileURLToPath(new URL('../config/platform-release.jsonc', import.meta.url)));
+const marketplaceSources = readPlatformReleaseConfig(releaseConfigPath).marketplaceSources;
+if (flow === 'platform' && (!Array.isArray(marketplaceSources) || marketplaceSources.length === 0)) {
+  throw new Error('platform release config must declare marketplace.sources for every platform install');
+}
 const platformMemberPackages = (value('--platform-member-packages') ?? '')
   .split(',')
   .map(item => item.trim())
@@ -232,6 +239,7 @@ for (const item of stage) {
     ? [
         ...(portablePlatformAdapterConfig ? [{ id: 'platform.adapters', path: '/platform/adapters', default: portablePlatformAdapterConfig }] : []),
         ...(portablePlatformAdapterOptions ? [{ id: 'platform.adapterOptions', path: '/platform/adapterOptions', default: portablePlatformAdapterOptions }] : []),
+        ...(marketplaceSources ? [{ id: 'marketplace.sources', path: '/marketplace/sources', default: marketplaceSources }] : []),
       ]
     : [];
   writeFileSync(join(staging, 'node_modules', item.name, 'kb-create.manifest.json'), `${JSON.stringify({
@@ -377,6 +385,11 @@ const exportValue = {
         id: 'platform.adapterOptions',
         path: '/platform/adapterOptions',
         default: JSON.stringify(portablePlatformAdapterOptions),
+      }] : []),
+      ...(marketplaceSources ? [{
+        id: 'marketplace.sources',
+        path: '/marketplace/sources',
+        default: JSON.stringify(marketplaceSources),
       }] : []),
     ],
     host,

@@ -41,6 +41,15 @@ S-190, S-245, S-253, and S-266. The S-266 case is landing from x128 and will
 be marked `release: false` there. There is no existing docs roadmap page in
 this checkout, so no new roadmap page is introduced.
 
+### Release 1 Marketplace defaults use npm until the public Registry is deployed
+
+Every Release 1 install renders `marketplace.sources` from the platform release
+configuration. Its default list is `[npm]`, so a fresh local install works before
+the public Registry is deployed. A Marketplace source explicitly supplied at
+install time overrides that default and persists across updates. Once the public
+Registry is live, changing the release-owned default to Registry-first is a
+separate owner decision. Case: S-268.9.
+
 ## 2026-10-21
 
 ### Marketplace management is built in; the publishing registry is optional

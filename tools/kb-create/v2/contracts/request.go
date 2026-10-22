@@ -52,6 +52,17 @@ type ComponentRequest struct {
 	Version VersionSelector `json:"version,omitempty"`
 }
 
+// MarketplaceSources contains install-time endpoints and environment-variable
+// names. Secret values are never accepted or persisted by this request. The
+// declared source contract is core/config/src/types/marketplace.ts; the Go
+// projection is guarded by render/render_test.go's schema validation test.
+type MarketplaceSources struct {
+	RegistryURL         string `json:"registryUrl"`
+	SigningPublicKeyEnv string `json:"signingPublicKeyEnv"`
+	RegistryTokenEnv    string `json:"registryTokenEnv,omitempty"`
+	NpmURL              string `json:"npmUrl,omitempty"`
+}
+
 // InstallRequest is deliberately transport-neutral. Wizard answers, CI flags,
 // agent protocol messages and scenario files all normalize to this type before
 // resolution. Values only carry non-secret input; secret input is referenced by
@@ -62,6 +73,7 @@ type InstallRequest struct {
 	SDK                 VersionSelector     `json:"sdk,omitempty"`
 	ServiceProfile      string              `json:"serviceProfile,omitempty"`
 	GatewayURL          string              `json:"gatewayUrl,omitempty"`
+	MarketplaceSources  *MarketplaceSources `json:"marketplaceSources,omitempty"`
 	Plugins             []ComponentRequest  `json:"plugins,omitempty"`
 	Adapters            []ComponentRequest  `json:"adapters,omitempty"`
 	ProviderPreferences map[string]string   `json:"providerPreferences,omitempty"`
@@ -110,6 +122,31 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	if r.Schema != RequestSchema {
 		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "schema",
 			fmt.Sprintf("unsupported request schema %q", r.Schema), "Set schema to `kb.create/v2` in the request JSON, then retry.", nil)
+	}
+	if source := r.MarketplaceSources; source != nil {
+		if source.RegistryURL == "" || source.SigningPublicKeyEnv == "" {
+			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "marketplaceSources",
+				"Marketplace Registry URL and signing public-key environment variable are required together",
+				"Set --marketplace-registry-url and --marketplace-registry-public-key-env, then rerun `kb-create plan`.", nil)
+		}
+		for field, name := range map[string]string{"signingPublicKeyEnv": source.SigningPublicKeyEnv, "registryTokenEnv": source.RegistryTokenEnv} {
+			if name != "" && !validEnvironmentVariableName(name) {
+				return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "marketplaceSources."+field,
+					"Marketplace credential reference must be an environment variable name",
+					"Set the Marketplace credential flag to an environment variable name such as KB_REGISTRY_KEY, then rerun `kb-create plan`.", nil)
+			}
+		}
+		for field, endpoint := range map[string]string{"registryUrl": source.RegistryURL, "npmUrl": source.NpmURL} {
+			if endpoint == "" {
+				continue
+			}
+			parsed, err := url.Parse(endpoint)
+			if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+				return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "marketplaceSources."+field,
+					"Marketplace source URL must be an absolute HTTP(S) URL without embedded credentials",
+					"Set the Marketplace source URL to an absolute HTTP(S) URL, then rerun `kb-create plan`.", err)
+			}
+		}
 	}
 	if r.Platform.Version == "" && r.Platform.Channel == "" {
 		r.Platform.Channel = ChannelStable
@@ -194,6 +231,16 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		delete(r.Values, key)
 	}
 	return r, nil
+}
+
+func validEnvironmentVariableName(value string) bool {
+	for index, char := range value {
+		valid := char == '_' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' || index > 0 && char >= '0' && char <= '9'
+		if !valid {
+			return false
+		}
+	}
+	return value != ""
 }
 
 // ValidateProjectSelection resolves a project path selected for registration

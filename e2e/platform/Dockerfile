@@ -53,6 +53,7 @@ COPY tools/kb-create/scripts/prepare-release-index.mjs /src/kb-create/scripts/pr
 COPY tools/kb-create/scripts/platform-release-config.mjs /src/kb-create/scripts/platform-release-config.mjs
 COPY tools/kb-create/scripts/platform-release-config.mjs /tools/kb-create/scripts/platform-release-config.mjs
 COPY tools/kb-create/config/platform-release.jsonc /src/platform-release.jsonc
+COPY tools/kb-create/config/platform-release.jsonc /src/kb-create/config/platform-release.jsonc
 COPY --from=go-builder /out/kb-create-linux-amd64 /out/binaries/kb-create-linux-amd64
 COPY --from=go-builder /out/kb-create-linux-arm64 /out/binaries/kb-create-linux-arm64
 COPY --from=go-builder /out/kb-create-release-index /usr/local/bin/kb-create-release-index

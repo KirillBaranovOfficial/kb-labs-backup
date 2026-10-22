@@ -40,7 +40,7 @@ describe('QA case catalog diagnostics', () => {
     const diagnostics = result.diagnostics;
     for (const expected of [
       'missing required frontmatter field persona', 'duplicate step id S-010.1',
-      'step id S-011.3 must use S-010.<number>', 'status must be active, planned, or historical',
+      'step id S-011.3 must use S-010.<number>', 'status must be active, planned, draft, or historical',
       'modes must contain local and/or secured',
     ]) expect(diagnostics.some(item => item.message === expected)).toBe(true);
     expect(diagnostics.every(item => item.file.endsWith('S-010.md') && item.line > 0)).toBe(true);
@@ -57,6 +57,14 @@ describe('QA case catalog diagnostics', () => {
     const parsed = parseQACatalog(directory);
     expect(parsed.diagnostics).toEqual([]);
     expect(parsed.cases.find(item => item.id === 'S-011')).toMatchObject({ supersededBy: 'S-010', steps: [] });
+  });
+
+  it('parses draft cases as non-release product proposals', () => {
+    const directory = fixture();
+    writeFileSync(join(directory, 'S-269.md'), caseDocument('S-269', '', 'draft').replace('release: true', 'release: false'));
+    const parsed = parseQACatalog(directory);
+    expect(parsed.diagnostics).toEqual([]);
+    expect(parsed.cases[0]).toMatchObject({ id: 'S-269', status: 'draft', release: false });
   });
 });
 
@@ -205,17 +213,19 @@ describe('release case journey claim validation', () => {
 });
 
 describe('QA case coverage', () => {
-  it('filters by mode and marks planned or historical cases NOT REQUIRED', () => {
+  it('filters by mode and marks planned, draft, or historical cases NOT REQUIRED', () => {
     const directory = fixture();
     const active = parsedCase(directory);
     const planned = { ...active, id: 'S-011', status: 'planned' as const, release: true, modes: ['secured' as const], steps: active.steps.map(step => ({ ...step, id: step.id.replace('S-010', 'S-011') })) };
     const historical = { ...planned, id: 'S-012', status: 'historical' as const };
-    const modeOnly = { ...active, id: 'S-013', modes: ['secured' as const], steps: active.steps.map(step => ({ ...step, id: step.id.replace('S-010', 'S-013') })) };
-    const result = computeQACaseCoverage([active, planned, historical, modeOnly], [], [], 'local');
+    const draft = { ...planned, id: 'S-013', status: 'draft' as const, release: false };
+    const modeOnly = { ...active, id: 'S-014', modes: ['secured' as const], steps: active.steps.map(step => ({ ...step, id: step.id.replace('S-010', 'S-014') })) };
+    const result = computeQACaseCoverage([active, planned, draft, historical, modeOnly], [], [], 'local');
     expect(result.cases[0]?.steps[0]).toMatchObject({ status: 'NOT COVERED', reason: expect.any(String) });
     expect(result.cases[1]).toMatchObject({ statusResult: 'NOT REQUIRED', reason: expect.any(String) });
     expect(result.cases[2]).toMatchObject({ statusResult: 'NOT REQUIRED', reason: expect.any(String) });
-    expect(result.cases[3]).toMatchObject({ statusResult: 'NOT REQUIRED', reason: expect.stringContaining('local') });
+    expect(result.cases[3]).toMatchObject({ statusResult: 'NOT REQUIRED', reason: expect.any(String) });
+    expect(result.cases[4]).toMatchObject({ statusResult: 'NOT REQUIRED', reason: expect.stringContaining('local') });
     expect(result.cases.every(item => item.reason || item.statusResult === 'NOT COVERED')).toBe(true);
     expect(result.releasePassed).toBe(false);
   });

@@ -61,6 +61,11 @@
       }
     }
   },
+  "marketplace": {
+    "sources": [
+      { "kind": "npm", "url": "https://registry.npmjs.org" }
+    ]
+  },
   "profiles": [
     {
       "id": "default",

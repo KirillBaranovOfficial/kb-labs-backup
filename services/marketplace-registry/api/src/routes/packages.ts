@@ -5,6 +5,26 @@ import { requireRegistryAuth } from '../auth-middleware.js';
 import { parseMultipart } from '../multipart.js';
 
 export function registerPackageRoutes(app: FastifyInstance, registry: RegistryService): void {
+  app.get<{ Querystring: { identity: string } }>(
+    '/api/v1/resolve',
+    { config: { registryAccess: 'public' } },
+    async (req, reply) => {
+      const identity = req.query.identity;
+      const result = await registry.resolveIdentity(identity);
+      if (result.status !== 'found') { return reply.send(result); }
+      const [handle, ...nameParts] = result.package.signatureSubject?.split('/') ?? [];
+      const entry = handle && nameParts.length ? await registry.getEntry(handle, nameParts.join('/')) : null;
+      if (!entry) { return reply.code(404).send({ status: 'not-found-owned' }); }
+      const token = extractShareToken(req);
+      const resolvedToken = token ? await registry.resolveShareToken(token) : null;
+      const callerNs = req.authContext?.namespaceId ?? '';
+      if (!registry.canAccess(entry, callerNs, resolvedToken)) {
+        return reply.code(403).send({ error: 'Access denied' });
+      }
+      return reply.send(result);
+    },
+  );
+
   // ── Public: list or search public packages ───────────────────────────────
   app.get<{ Querystring: { q?: string } }>('/api/v1/packages', { config: { registryAccess: 'public' } }, async (req, reply) => {
     const q = (req.query as any)?.q as string | undefined;

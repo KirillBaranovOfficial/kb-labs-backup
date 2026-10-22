@@ -22,12 +22,24 @@ describe('marketplace-lock v3', () => {
     const result = validateMarketplaceLock({
       schema: 'kb.marketplace/3',
       plugins: {
-        '@kb-labs/broken': { version: '1.0.0', integrity: 'sha999-bad', package: '@kb-labs/broken', enabled: true, source: 'marketplace' },
+        '@kb-labs/broken': { version: '1.0.0', integrity: 'sha999-bad', package: '@kb-labs/broken', enabled: true, source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'verified' },
       },
     }, 'platform');
 
     expect(result).toMatchObject({ valid: false, entry: '@kb-labs/broken' });
     if (!result.valid) {expect(result.reason).toMatch(/integrity/i);}
+  });
+
+  it('rejects marketplace entries that do not record source, integrity, and signature status', () => {
+    const result = validateMarketplaceLock({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-YQ==', package: '@kb-labs/commit', enabled: true, source: 'marketplace' },
+      },
+    }, 'platform');
+
+    expect(result).toMatchObject({ valid: false, entry: '@kb-labs/commit' });
+    if (!result.valid) { expect(result.reason).toMatch(/marketplaceSource|signatureStatus/i); }
   });
 
   it('rejects machine adapter entries in project scope and accepts them in platform scope', () => {
@@ -129,8 +141,8 @@ describe('marketplace-lock v3', () => {
 
   it('writes sorted, machine independent project pins', async () => {
     const lock = createEmptyLock();
-    lock.plugins['z-plugin'] = { version: '1.2.3', integrity: 'sha512-abc', package: 'z-plugin', source: 'marketplace', enabled: true };
-    lock.plugins['@scope/a-plugin'] = { version: '4.5.6', integrity: 'sha512-def', package: '@scope/a-plugin', source: 'marketplace', enabled: false };
+    lock.plugins['z-plugin'] = { version: '1.2.3', integrity: 'sha512-abc', package: 'z-plugin', source: 'marketplace', marketplaceSource: 'npm', signatureStatus: 'unsigned', enabled: true };
+    lock.plugins['@scope/a-plugin'] = { version: '4.5.6', integrity: 'sha512-def', package: '@scope/a-plugin', source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'verified', enabled: false };
     await writeMarketplaceLock(tmpDir, lock);
     const raw = await fs.readFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'utf8');
     expect(raw).toContain('"schema": "kb.marketplace/3"');
@@ -151,18 +163,78 @@ describe('marketplace-lock v3', () => {
   it('rejects machine-specific paths in project pins', async () => {
     await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
     await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
-      schema: 'kb.marketplace/3', plugins: { demo: { version: '1.0.0', integrity: 'sha512-x', package: 'demo-entry', enabled: true, source: 'marketplace', resolvedPath: '/machine/store/demo' } },
+      schema: 'kb.marketplace/3', plugins: { demo: { version: '1.0.0', integrity: 'sha512-x', package: 'demo-entry', enabled: true, source: 'marketplace', marketplaceSource: 'npm', signatureStatus: 'unsigned', resolvedPath: '/machine/store/demo' } },
     }));
     const diag = new DiagnosticCollector();
     expect(await readMarketplaceLock(tmpDir, diag)).toBeNull();
     expect(diag.getEvents()[0]?.code).toBe('LOCK_SCHEMA_INVALID');
   });
 
+  it('rejects absolute adapter paths and reports provenance failures with a structured reason code', () => {
+    const absoluteAdapter = validateMarketplaceLock({
+      schema: 'kb.marketplace/3',
+      plugins: {},
+      adapters: { database: { version: '1.0.0', integrity: 'sha512-x', resolvedPath: '/machine/adapters/database', enabled: true, source: 'platform' } },
+    }, 'platform');
+    expect(absoluteAdapter).toMatchObject({ valid: false, reasonCode: 'invalid-lock', entry: 'database' });
+
+    const missingProvenance = validateMarketplaceLock({
+      schema: 'kb.marketplace/3',
+      plugins: { demo: { version: '1.0.0', integrity: 'sha512-x', package: 'demo', enabled: true, source: 'marketplace' } },
+    }, 'platform');
+    expect(missingProvenance).toMatchObject({ valid: false, reasonCode: 'marketplace-provenance-required', entry: 'demo' });
+  });
+
+  // case: S-268.10
+  it('rejects normalized paths that escape their scope for every lock entry kind', () => {
+    const paths = ['../../outside/plugin', 'a/../../x', '..\\..\\outside\\plugin', 'a\\..\\..\\x'];
+    for (const resolvedPath of paths) {
+      const marketplacePlugin = validateMarketplaceLock({
+        schema: 'kb.marketplace/3',
+        plugins: { demo: { version: '1.0.0', integrity: 'sha512-x', package: 'demo', resolvedPath, enabled: true, source: 'marketplace', marketplaceSource: 'npm', signatureStatus: 'unsigned' } },
+      }, 'platform');
+      const platformPlugin = validateMarketplaceLock({
+        schema: 'kb.marketplace/3',
+        plugins: { demo: { version: '1.0.0', integrity: 'sha512-x', package: 'demo', resolvedPath, enabled: true, source: 'platform' } },
+      }, 'platform');
+      const linkedPlugin = validateMarketplaceLock({
+        schema: 'kb.marketplace/3',
+        plugins: { demo: { link: resolvedPath, enabled: true, source: 'local' } },
+      }, 'platform');
+      const platformAdapter = validateMarketplaceLock({
+        schema: 'kb.marketplace/3', plugins: {},
+        adapters: { database: { version: '1.0.0', integrity: 'sha512-x', resolvedPath, enabled: true, source: 'platform' } },
+      }, 'platform');
+      const marketplaceAdapter = validateMarketplaceLock({
+        schema: 'kb.marketplace/3', plugins: {},
+        adapters: { database: { version: '1.0.0', integrity: 'sha512-x', resolvedPath, enabled: true, source: 'marketplace', marketplaceSource: 'npm', signatureStatus: 'unsigned' } },
+      }, 'platform');
+
+      for (const result of [marketplacePlugin, platformPlugin, linkedPlugin, platformAdapter, marketplaceAdapter]) {
+        expect(result).toMatchObject({ valid: false, reasonCode: 'invalid-lock' });
+      }
+    }
+  });
+
+  it('maps the structured provenance reason to the public doctor code', async () => {
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: { demo: { version: '1.0.0', integrity: 'sha512-x', package: 'demo', enabled: true, source: 'marketplace' } },
+    }));
+    const diag = new DiagnosticCollector();
+    expect(await readMarketplaceLock(tmpDir, diag)).toBeNull();
+    expect(diag.getEvents()[0]).toMatchObject({
+      code: 'MARKETPLACE_PROVENANCE_REQUIRED',
+      remediation: 'Run "kb marketplace install demo --scope platform" to record Marketplace provenance.',
+    });
+  });
+
   it('rejects a marketplace pin without its package name through the lock schema diagnostic', async () => {
     await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
     await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
       schema: 'kb.marketplace/3',
-      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'marketplace' } },
+      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'verified' } },
     }));
     const diag = new DiagnosticCollector();
     expect(await readMarketplaceLock(tmpDir, diag)).toBeNull();
@@ -190,7 +262,7 @@ describe('marketplace-lock v3', () => {
   it('rejects an invalid lock before writing and identifies the plugin missing its package', async () => {
     const invalidLock = JSON.parse(JSON.stringify({
       schema: 'kb.marketplace/3',
-      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'marketplace' } },
+      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'verified' } },
     }));
 
     await expect(writeMarketplaceLock(tmpDir, invalidLock)).rejects.toMatchObject({
@@ -204,8 +276,8 @@ describe('marketplace-lock v3', () => {
   });
 
   it('mutates pins without changing a disabled entry and removes pins', async () => {
-    await addToMarketplaceLock(tmpDir, 'demo', { version: '1.0.0', integrity: 'sha512-x', package: 'demo', source: 'marketplace', enabled: false });
-    await addToMarketplaceLock(tmpDir, 'demo', { version: '1.0.0', integrity: 'sha512-x', package: 'demo', source: 'marketplace', enabled: true });
+    await addToMarketplaceLock(tmpDir, 'demo', { version: '1.0.0', integrity: 'sha512-x', package: 'demo', source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'verified', enabled: false });
+    await addToMarketplaceLock(tmpDir, 'demo', { version: '1.0.0', integrity: 'sha512-x', package: 'demo', source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'verified', enabled: true });
     const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
     expect(lock?.plugins.demo?.enabled).toBe(false);
     expect(await removeFromMarketplaceLock(tmpDir, 'demo')).toBe(true);

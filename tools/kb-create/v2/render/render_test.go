@@ -1,9 +1,13 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -49,6 +53,131 @@ func TestBuildOwnsLocalDeploymentTopology(t *testing.T) {
 	}
 	if config.Platform.Deployment.Topology != "local" {
 		t.Fatalf("topology = %q, want local; config: %s", config.Platform.Deployment.Topology, output.Config)
+	}
+}
+
+func TestBuildPersistsMarketplaceSourceOrderAndSecretReferences(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.Request.MarketplaceSources = &contracts.MarketplaceSources{
+		RegistryURL: "https://registry.example.test", SigningPublicKeyEnv: "KB_REGISTRY_PUBLIC_KEY",
+		RegistryTokenEnv: "KB_REGISTRY_TOKEN", NpmURL: "https://npm-mirror.example.test",
+	}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Marketplace struct {
+			Sources []map[string]string `json:"sources"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Marketplace.Sources) != 2 || config.Marketplace.Sources[0]["kind"] != "registry" || config.Marketplace.Sources[1]["kind"] != "npm" {
+		t.Fatalf("marketplace source order = %#v", config.Marketplace.Sources)
+	}
+	if config.Marketplace.Sources[0]["signingPublicKey"] != "${KB_REGISTRY_PUBLIC_KEY}" || config.Marketplace.Sources[0]["authToken"] != "${KB_REGISTRY_TOKEN}" {
+		t.Fatalf("secret references were not kept literal in config: %#v", config.Marketplace.Sources[0])
+	}
+	if strings.Contains(string(output.Config), "secret-value") {
+		t.Fatalf("resolved secret value entered generated config: %s", output.Config)
+	}
+}
+
+func TestGoRenderedMarketplaceSourcesValidateAgainstCoreConfigSchema(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.Request.MarketplaceSources = &contracts.MarketplaceSources{
+		RegistryURL: "https://registry.example.test", SigningPublicKeyEnv: "KB_REGISTRY_PUBLIC_KEY",
+		RegistryTokenEnv: "KB_REGISTRY_TOKEN", NpmURL: "https://npm-mirror.example.test",
+	}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate render test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	validateRenderedMarketplaceSources(t, root, output.Config)
+}
+
+// case: S-268.9
+func TestDefaultInstallRendersReleaseMarketplaceSourcesAndBootsMarketplace(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate render test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	defaultSourcesScript := fmt.Sprintf(`import { readPlatformReleaseConfig } from %q;
+const config = readPlatformReleaseConfig(%q);
+process.stdout.write(JSON.stringify(config.marketplaceSources));`,
+		"file://"+filepath.ToSlash(filepath.Join(root, "tools/kb-create/scripts/platform-release-config.mjs")),
+		filepath.Join(root, "tools/kb-create/config/platform-release.jsonc"))
+	defaultSourcesCommand := exec.Command("node", "--input-type=module", "-e", defaultSourcesScript)
+	defaultSourcesCommand.Dir = root
+	defaultSourcesJSON, err := defaultSourcesCommand.Output()
+	if err != nil {
+		t.Fatalf("read release-declared Marketplace sources: %v", err)
+	}
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = append(plan.ConfigPatches, contracts.ConfigPatch{
+		Path: "/marketplace/sources", JSON: string(defaultSourcesJSON), Owner: "release:marketplace.sources",
+	})
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Request.MarketplaceSources != nil {
+		t.Fatal("default install unexpectedly received Marketplace source flags")
+	}
+	var config struct {
+		Marketplace struct {
+			Sources []map[string]string `json:"sources"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Marketplace.Sources) != 1 || config.Marketplace.Sources[0]["kind"] != "npm" || config.Marketplace.Sources[0]["url"] != "https://registry.npmjs.org" {
+		t.Fatalf("default Marketplace sources = %#v; want the release-declared npm source", config.Marketplace.Sources)
+	}
+	validateRenderedMarketplaceSources(t, root, output.Config)
+
+	platformRoot := plan.Request.PlatformRoot
+	configDir := filepath.Join(platformRoot, ".kb")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "kb.config.jsonc"), output.Config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bootScript := fmt.Sprintf(`import { setup } from %q;
+import { NoOpLogger } from %q;
+const stop = await setup({ logger: new NoOpLogger(), port: 0, host: "127.0.0.1", platformRoot: process.argv[1] });
+try { /* setup returning a stop function proves the service listened successfully. */ } finally { await stop(); }`,
+		"file://"+filepath.ToSlash(filepath.Join(root, "services/marketplace/app/dist/index.js")),
+		"file://"+filepath.ToSlash(filepath.Join(root, "core/platform/dist/noop/index.js")))
+	bootCommand := exec.Command("node", "--input-type=module", "-e", bootScript, platformRoot)
+	bootCommand.Dir = root
+	if result, err := bootCommand.CombinedOutput(); err != nil {
+		t.Fatalf("Marketplace bootstrap rejected the default rendered config: %v: %s", err, result)
+	}
+}
+
+func validateRenderedMarketplaceSources(t *testing.T, root string, config []byte) {
+	t.Helper()
+	validate := fmt.Sprintf(`import { validateProductConfig } from %q;
+let input = '';
+for await (const chunk of process.stdin) input += chunk;
+const result = validateProductConfig('marketplace', JSON.parse(input).marketplace);
+if (!result.ok) { process.stderr.write(JSON.stringify(result.errors)); process.exit(1); }`, "file://"+filepath.ToSlash(filepath.Join(root, "core/config/dist/index.js")))
+	cmd := exec.Command("node", "--input-type=module", "-e", validate)
+	cmd.Dir = root
+	cmd.Stdin = bytes.NewReader(config)
+	if result, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Go-rendered Marketplace config failed core-config schema validation: %v: %s", err, result)
 	}
 }
 

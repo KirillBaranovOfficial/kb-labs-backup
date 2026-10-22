@@ -44,10 +44,40 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             compose_tools = tuple(tool for tool in ("docker", "docker-compose") if shutil.which(tool))
             self.assertTrue(compose_tools, "journey Compose tests require Docker Compose v2 or docker-compose on PATH")
             env = isolated_environment(Path(temp) / "home", bin_dir,
-                                       required_tools=("bash", "git", "dirname", "id", *compose_tools))
+                                       required_tools=("bash", "git", "dirname", "id", "node", *compose_tools))
+            composition = Path(temp) / "marketplace-registry-composition"
+            producer = ROOT / "services" / "marketplace-registry" / "app" / "scripts" / "render-journey-composition.mjs"
+            rendered = subprocess.run(
+                ["node", str(producer), "--output", str(composition),
+                 "--registry-url", "http://marketplace-registry:5071"],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(rendered.returncode, 0, rendered.stderr)
+            self.assertTrue((composition / ".kb" / "kb.config.jsonc").is_file())
+            self.assertTrue((composition / ".kb" / "marketplace.lock").is_file())
+            validation = subprocess.run(
+                ["node", "--input-type=module", "-e", """
+import fs from 'node:fs';
+import { validateProductConfig } from './core/config/dist/index.js';
+import { validateMarketplaceLock } from './core/discovery/dist/index.js';
+const root = process.argv[1];
+const config = JSON.parse(fs.readFileSync(`${root}/.kb/kb.config.jsonc`, 'utf8'));
+const lock = JSON.parse(fs.readFileSync(`${root}/.kb/marketplace.lock`, 'utf8'));
+const configResult = validateProductConfig('marketplace', config.marketplace);
+const lockResult = validateMarketplaceLock(lock, 'platform');
+if (!configResult.ok || !lockResult.valid) {
+  process.stderr.write(JSON.stringify({ config: configResult.errors, lock: lockResult }));
+  process.exitCode = 1;
+}
+""", str(composition)],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(validation.returncode, 0, validation.stderr)
+            env["KB_JOURNEY_REGISTRY_CONFIG_ROOT"] = str(composition)
             if hosted:
                 env["CI"] = "true"
                 env["GITHUB_ACTIONS"] = "true"
+            env["COMPOSE_PROFILES"] = "marketplace-registry"
             result = subprocess.run(
                 ["bash", str(RUNNER), "--render-compose-config"],
                 cwd=ROOT, env=env, capture_output=True, text=True, check=False,
@@ -57,7 +87,19 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             "journey Compose rendering failed; install Docker Compose v2 (`docker compose`) or "
             f"the standalone `docker-compose` command and rerun. Output: {result.stderr.strip()}",
         )
-        return json.loads(result.stdout)
+        rendered = json.loads(result.stdout)
+        mounts = {
+            mount["target"]: mount
+            for mount in rendered["services"]["marketplace-registry"].get("volumes", [])
+            if mount.get("type") == "bind"
+        }
+        self.assertEqual(set(mounts), {"/app/.kb/kb.config.jsonc", "/app/.kb/marketplace.lock"})
+        self.assertEqual(Path(mounts["/app/.kb/kb.config.jsonc"]["source"]).resolve(),
+                         composition / ".kb" / "kb.config.jsonc")
+        self.assertEqual(Path(mounts["/app/.kb/marketplace.lock"]["source"]).resolve(),
+                         composition / ".kb" / "marketplace.lock")
+        self.assertTrue(all(mount.get("read_only") is True for mount in mounts.values()))
+        return rendered
 
     # case: S-262.1
     def test_local_and_hosted_journeys_render_the_same_compose_bind_set(self):
@@ -66,6 +108,7 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             ("runner", "/summary"): ROOT / ".journey" / "reports",
             ("runner", "/opt/kb-workspace"): ROOT,
             ("runner", "/e2e-oidc-certs"): ROOT / "e2e" / "oidc-idp" / "certs",
+            ("marketplace-tamper", "/fixture/marketplace_tamper_proxy.py"): ROOT / "e2e" / "journey" / "marketplace_tamper_proxy.py",
             ("origin", "/release"): ROOT / ".journey" / "release",
             ("mock-llm", "/fixture/mock_llm_server.py"): ROOT / "e2e" / "journey" / "mock_llm_server.py",
             ("idp-stub", "/certs"): ROOT / "e2e" / "oidc-idp" / "certs",
@@ -79,8 +122,18 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
                 for mount in service.get("volumes", [])
                 if mount.get("type") == "bind"
             }
-            self.assertEqual(binds, {key: source.resolve() for key, source in expected.items()})
+            expected_binds = {key: source.resolve() for key, source in expected.items()}
+            non_registry_binds = {key: source for key, source in binds.items()
+                                  if key[0] != "marketplace-registry"}
+            self.assertEqual(non_registry_binds, expected_binds)
             self.assertEqual(rendered["services"]["runner"]["user"], f"{os.getuid()}:{os.getgid()}")
+            self.assertEqual(rendered["services"]["marketplace-registry"]["profiles"], ["marketplace-registry"])
+            self.assertEqual(rendered["services"]["marketplace-state"]["profiles"], ["marketplace-registry"])
+            self.assertEqual(rendered["services"]["marketplace-registry"]["build"]["dockerfile"],
+                             "services/marketplace-registry/app/Dockerfile")
+            self.assertEqual(rendered["services"]["marketplace-state"]["build"]["dockerfile"],
+                             "services/state/daemon/Dockerfile")
+            self.assertEqual(rendered["services"]["marketplace-tamper"]["profiles"], ["marketplace-registry"])
 
     # case: S-262.1
     def test_local_and_hosted_journey_use_the_same_compose_file_list(self):

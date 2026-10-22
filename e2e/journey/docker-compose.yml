@@ -1,4 +1,48 @@
 services:
+  # Opt-in full Marketplace Registry lane. These images use the same service
+  # Dockerfiles and .kb/deploy producer outputs as release images.
+  marketplace-state:
+    profiles: [marketplace-registry]
+    image: kb-marketplace-state:journey
+    build:
+      context: ../..
+      dockerfile: services/state/daemon/Dockerfile
+    networks: [journey]
+
+  marketplace-registry:
+    profiles: [marketplace-registry]
+    image: kb-marketplace-registry:journey
+    build:
+      context: ../..
+      dockerfile: services/marketplace-registry/app/Dockerfile
+    depends_on:
+      marketplace-state:
+        condition: service_started
+    env_file:
+      - ${KB_JOURNEY_REGISTRY_CONFIG_ROOT:?run e2e/journey/run.sh to render Registry composition}/.kb/registry.env
+    environment:
+      KB_REGISTRY_HOST: 0.0.0.0
+      KB_REGISTRY_PORT: "5071"
+      KB_REGISTRY_URL: http://marketplace-tamper:8081
+      GATEWAY_INTERNAL_SECRET: journey-marketplace-internal-secret
+    volumes:
+      - ${KB_JOURNEY_REGISTRY_CONFIG_ROOT:?run e2e/journey/run.sh to render Registry composition}/.kb/kb.config.jsonc:/app/.kb/kb.config.jsonc:ro
+      - ${KB_JOURNEY_REGISTRY_CONFIG_ROOT:?run e2e/journey/run.sh to render Registry composition}/.kb/marketplace.lock:/app/.kb/marketplace.lock:ro
+    networks: [journey]
+
+  marketplace-tamper:
+    profiles: [marketplace-registry]
+    image: python:3.12-alpine
+    command: ["python3", "/fixture/marketplace_tamper_proxy.py"]
+    environment:
+      MARKETPLACE_TAMPER_UPSTREAM: http://marketplace-registry:5071
+    volumes:
+      - ./journey/marketplace_tamper_proxy.py:/fixture/marketplace_tamper_proxy.py:ro
+    depends_on:
+      marketplace-registry:
+        condition: service_started
+    networks: [journey]
+
   publisher:
     networks: [journey]
 
@@ -52,6 +96,8 @@ services:
       KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}
       KB_JOURNEY_SERVICE_PROFILE: ${KB_JOURNEY_SERVICE_PROFILE:-fast}
       KB_JOURNEY_WORKSPACE_ROOT: /opt/kb-workspace
+      KB_JOURNEY_MARKETPLACE_REGISTRY_URL: ${KB_JOURNEY_MARKETPLACE_REGISTRY_URL:-}
+      KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64: ${KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64:-}
       OIDC_CORP_CLIENT_SECRET: journey-oidc-client-secret
       OIDC_CORP_ISSUER: https://idp-stub:9443
       NODE_EXTRA_CA_CERTS: /e2e-oidc-certs/ca.crt

@@ -34,7 +34,7 @@ const VALID_PKG = JSON.stringify({
   name: 'my-plugin',
   version: '1.0.0',
   description: 'Test plugin',
-  kb: { manifest: true },
+  kb: { manifest: { id: '@kb-labs/test' } },
 });
 
 const PUBLISH_RESULT = {
@@ -43,7 +43,7 @@ const PUBLISH_RESULT = {
   version: '1.0.0',
   visibility: 'public',
   trust: 'trusted',
-  installCommand: 'kb marketplace install kb:kirill/my-plugin',
+  installCommand: 'kb marketplace install @kb-labs/test',
   pageUrl: 'https://kblabs.ru/ru/marketplace/kirill/my-plugin',
 };
 

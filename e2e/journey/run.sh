@@ -64,6 +64,16 @@ if (( COMPOSE_AVAILABLE )); then
 fi
 source "$ROOT/e2e/journey/candidate-services.sh"
 
+REGISTRY_COMPOSITION_ROOT=""
+if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* && -z "${KB_JOURNEY_REGISTRY_CONFIG_ROOT:-}" ]]; then
+  REGISTRY_COMPOSITION_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kb-journey-registry-composition.XXXXXX")"
+  composition_json="$(node services/marketplace-registry/app/scripts/render-journey-composition.mjs \
+    --output "$REGISTRY_COMPOSITION_ROOT" --registry-url http://marketplace-registry:5071)"
+  export KB_JOURNEY_REGISTRY_CONFIG_ROOT="$REGISTRY_COMPOSITION_ROOT"
+  export KB_JOURNEY_MARKETPLACE_REGISTRY_URL="http://marketplace-tamper:8081"
+  export KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64="$(node -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).signingPublicKeyBase64)' <<< "$composition_json")"
+fi
+
 if [[ -n "$compose_action" ]]; then
   if (( ! COMPOSE_AVAILABLE )); then
     echo "Docker Compose is required for journey stack operations; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
@@ -74,7 +84,9 @@ if [[ -n "$compose_action" ]]; then
   else
     "${COMPOSE[@]}" config --format json
   fi
-  exit $?
+  compose_status=$?
+  if [[ -n "$REGISTRY_COMPOSITION_ROOT" ]]; then rm -rf "$REGISTRY_COMPOSITION_ROOT"; fi
+  exit "$compose_status"
 fi
 
 cleanup() {
@@ -117,6 +129,7 @@ cleanup() {
       (( status != 0 )) || status=1
     fi
   fi
+  if [[ -n "$REGISTRY_COMPOSITION_ROOT" ]]; then rm -rf "$REGISTRY_COMPOSITION_ROOT"; fi
   exit "$status"
 }
 
@@ -206,6 +219,9 @@ mkdir -p .journey/reports
 rm -f .journey/reports/journey-summary.md
 find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
 "${COMPOSE[@]}" build publisher runner idp-stub
+if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
+  "${COMPOSE[@]}" build marketplace-state marketplace-registry
+fi
 journey_start_container_services "${COMPOSE[@]}"
 start_project_container_monitors
 journey_wait_container_publisher

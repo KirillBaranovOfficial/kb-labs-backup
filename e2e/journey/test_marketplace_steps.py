@@ -13,20 +13,105 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               commit_publish_command,
+                               _publish_fixture_command,
+                               _assert_catalogued_marketplace_failure,
                                prepare_commit_project_fixture,
+                               run_ordered_source_journey_steps,
                                run_plugin_policy_diagnostic_step,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
+from marketplace_tamper_proxy import tamper_tarball
 from journey_dependencies import Dependency
 import service_runner
 from test_install_layout import create_test_install_container
-from invocations import catalogued_error_hint, invocation_context, open_http, run_command
+from invocations import catalogued_error_hint, catalogued_error_message, invocation_context, open_http, run_command
 import jsonl
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_s268_ordered_source_rows_are_wired_to_installed_journey_steps(self):
+        with tempfile.TemporaryDirectory(prefix="kb-s268-journey-wiring-") as directory:
+            project = Path(directory)
+            lock_path = project / ".kb" / "marketplace.lock"
+            lock_path.parent.mkdir()
+            lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {
+                "@kb-labs/commit": {"package": "@kb-labs/commit-entry", "version": "1.0.0",
+                    "integrity": "sha256-original", "marketplaceSource": "registry", "signatureStatus": "verified"},
+                "journey-npm-only-fixture": {"package": "journey-npm-only-fixture", "version": "1.0.0",
+                    "integrity": "sha256-fallback", "marketplaceSource": "npm", "signatureStatus": "unsigned"},
+            }}))
+            rendered = {"ok": True, "data": {
+                "installed": [{"id": "journey-npm-only-fixture", "source": "npm", "signatureStatus": "unsigned"}],
+                "marketplaceSources": [{"kind": "registry", "url": "http://registry.test"}],
+            }}
+            def runner(command, **_kwargs):
+                if command[0].endswith("kb-create") and command[1] == "update":
+                    return subprocess.CompletedProcess(command, 0, json.dumps(rendered), "")
+                if command[0].endswith("kb-create"):
+                    return subprocess.CompletedProcess(command, 0, json.dumps(rendered), "")
+                if command[1:4] == ["marketplace", "plugins", "doctor"]:
+                    code = "KB_MARKETPLACE_PROVENANCE_REQUIRED"
+                    return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {
+                        "code": code,
+                        "message": "The Marketplace lock entry does not record its source provenance.",
+                        "hint": catalogued_error_hint(code, package="@kb-labs/commit", scope="project"),
+                    }}), "")
+                return subprocess.CompletedProcess(command, 0, json.dumps(rendered), "")
+
+            journey = Journey("local", "s268-wiring")
+            journey.step("publish and install Commit through Registry", "marketplace-fixtures", lambda: None)
+            platform_root = project / "platform"
+            (platform_root / ".kb").mkdir(parents=True)
+            (platform_root / ".kb" / "kb.config.jsonc").write_text(
+                '{"marketplace":{"sources":[{"signingPublicKey":"${KB_JOURNEY_MARKETPLACE_PUBLIC_KEY}",'
+                '"authToken":"${KB_JOURNEY_MARKETPLACE_TOKEN}"}]}}\n')
+            env = {"HOME": directory, "KB_JOURNEY_PLATFORM_ROOT": str(project / "platform"),
+                   "KB_JOURNEY_REGISTRY": "http://verdaccio.test",
+                   "KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://registry.test",
+                   "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY": "journey-public-key",
+                   "KB_JOURNEY_MARKETPLACE_TOKEN": "journey-token-secret-value",
+                   "KB_JOURNEY_KB_CREATE_PATH": str(project / "kb-create")}
+            with patch("marketplace_steps._set_marketplace_proxy_faults"), \
+                    patch("marketplace_steps._assert_catalogued_marketplace_failure"), \
+                    patch("marketplace_steps._json", return_value=rendered["data"]):
+                run_ordered_source_journey_steps(journey, project, env, runner)
+            claims = {case for step in journey.steps for case in step.cases}
+            self.assertEqual(claims, {f"S-268.{number}" for number in range(2, 9)})
+            self.assertTrue(all(step.status == "PASS" for step in journey.steps),
+                            [(step.name, step.status, step.message) for step in journey.steps])
+
+    def test_s268_failure_assertion_reads_catalogue_message_and_hint(self):
+        with tempfile.TemporaryDirectory(prefix="kb-s268-error-catalog-") as directory:
+            project = Path(directory)
+            code = "KB_MARKETPLACE_TRANSPORT_FAILED"
+            package = "@kb-labs/commit"
+            envelope = {"ok": False, "error": {
+                "code": code, "message": catalogued_error_message(code),
+                "hint": catalogued_error_hint(code, package=package, scope="project"),
+            }}
+            def runner(command, **_kwargs):
+                return subprocess.CompletedProcess(command, 1, json.dumps(envelope), "")
+            _assert_catalogued_marketplace_failure(project, {"HOME": directory}, runner, package, code)
+            envelope["error"]["hint"] = "hand-copied hint"
+            with self.assertRaisesRegex(RuntimeError, "exact hint"):
+                _assert_catalogued_marketplace_failure(project, {"HOME": directory}, runner, package, code)
+
+    def test_tamper_forwarder_changes_only_registry_tarball_bytes(self):
+        body = b"sealed package archive"
+        self.assertNotEqual(tamper_tarball("/api/v1/packages/acme/plugin/1.0.0/tarball", body), body)
+        self.assertEqual(tamper_tarball("/api/v1/packages/acme/plugin", body), body)
+
+    def test_commit_fixture_publisher_uses_the_real_hub_publish_request(self):
+        self.assertEqual(commit_publish_command("/workspace"), [
+            "hub", "publish", "--path", "/workspace/plugins/commit/entry", "--json",
+        ])
+        self.assertEqual(_publish_fixture_command("/workspace", "plugins/qa/entry"), [
+            "hub", "publish", "--path", "/workspace/plugins/qa/entry", "--json",
+        ])
+
     def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):
         with tempfile.TemporaryDirectory(prefix="kb-policy-journey-unit-") as directory:
             project = Path(directory)
@@ -386,7 +471,10 @@ class MarketplaceStepTests(unittest.TestCase):
 
                 args = command[1:]
                 stdout = "{}"
-                if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/not-published":
+                if args[:2] == ["hub", "publish"]:
+                    stdout = json.dumps({"handle": "fixture", "name": "@kb-labs/commit-entry",
+                                         "version": registry_version, "trust": "trusted"})
+                elif args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/not-published":
                     payload = {"ok": False, "error": {"code": "KB_PLUGIN_NOT_FOUND",
                         "message": "Plugin @kb-labs/not-published was not found in the registry.",
                         "hint": 'Check the exact package name and package source. If available, run `kb marketplace install @kb-labs/not-published`; `kb marketplace plugins list` shows installed plugins.'}}
@@ -441,20 +529,27 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:1] == ["version"]:
                     stdout = json.dumps({"version": "1.0.0"})
                 elif args[:2] == ["marketplace", "install"]:
-                    package_id, version = args[2].rsplit("@", 1)
+                    if args[2].count("@") > 1:
+                        package_id, version = args[2].rsplit("@", 1)
+                    else:
+                        package_id, version = args[2], registry_version
+                    if package_id == "@kb-labs/commit":
+                        version = "2.120.1"
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
                     lock_root = active_platform if platform else cwd_path
                     value = lock(lock_root, platform=platform)
                     value.setdefault("adapters", {})
                     collection = value["plugins"]
-                    plugin_id = "@kb-labs/commit" if package_id == "@kb-labs/commit-entry" else package_id
+                    plugin_id = "@kb-labs/commit" if package_id in ("@kb-labs/commit-entry", "@kb-labs/commit") else package_id
                     collection[plugin_id] = {
                         "version": version, "integrity": "sha512-fixture", "source": "marketplace",
-                        "enabled": True, "package": package_id,
+                        "marketplaceSource": "registry", "signatureStatus": "verified",
+                        "enabled": True, "package": "@kb-labs/commit-entry" if plugin_id == "@kb-labs/commit" else package_id,
                     }
                     save_lock(lock_root, value)
                     stdout = json.dumps({
-                        "installed": [{"id": plugin_id, "version": version}],
+                        "installed": [{"id": plugin_id, "version": version, "source": "registry",
+                                       "signatureStatus": "verified"}],
                         "warnings": [],
                         "scope": "platform" if platform else "project",
                     })
@@ -631,6 +726,7 @@ class MarketplaceStepTests(unittest.TestCase):
             expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 7))) for step in steps}
             expected.update({
                 "S-010.7",
+                "S-268.1",
                 "S-051.2", "S-051.3", "S-051.4",
                 "S-203.14", "S-203.15", "S-203.16",
                 "S-203.25",
@@ -644,8 +740,11 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(claims_by_id["S-203.25"], "FAIL")
             self.assertEqual(actual, expected, [(step.name, step.status, step.message) for step in journey.steps])
             self.assertEqual(commit_case_hook_calls, [True])
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.9",
+            self.assertIn(("kb", "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "plugins" / "commit" / "entry"), "--json"), calls)
+            self.assertIn(("kb", "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "e2e" / "journey" / "fixtures" / "analytics-emitter"), "--json"), calls)
+            self.assertIn(("kb", "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "plugins" / "qa" / "entry"), "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit",
                            "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "marketplace", "uninstall", "@kb-labs/commit",
                            "--scope", "platform", "--json"), calls)
