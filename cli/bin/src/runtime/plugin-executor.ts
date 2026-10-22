@@ -20,13 +20,11 @@ import {
 } from "@kb-labs/plugin-contracts";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import { setJsonMode } from "@kb-labs/shared-cli-ui";
-import { resolveActiveGateway } from "@kb-labs/cli-runtime/gateway";
 import { randomUUID } from "node:crypto";
 import {
   AdapterUnavailableError,
   createContextLogger,
 } from "@kb-labs/core-platform";
-import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
 import { resolveCliHandlerPath } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
@@ -35,8 +33,7 @@ import { createCLIUIFacade } from "./ui-facade";
 
 export interface PluginExecutionOptions {
   context: SystemContext;
-  netOffset?: number;
-  platformRoot?: string;
+  env: NodeJS.ProcessEnv;
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
@@ -53,7 +50,7 @@ export interface PluginExecutionOptions {
 export async function executePlugin(
   options: PluginExecutionOptions,
 ): Promise<number | undefined> {
-  const { context, commandId, argv, flags, manifestCmd, platform } = options;
+  const { context, env, commandId, argv, flags, manifestCmd, platform } = options;
 
   // No manifest command info - can't execute
   if (!manifestCmd) {
@@ -94,19 +91,13 @@ export async function executePlugin(
   );
 
   // Gateway-aware plugins declare the address in their environment
-  // permissions. Resolve it from the same transport and module defaults used
-  // by the daemon to bind the gateway listener.
+  // permissions. The CLI bootstrap resolves the installed platform address
+  // once for built-ins and plugins alike.
   const gatewayUrl = permissionAllowsEnvironmentVariable(
     permissions.env?.read,
     "KB_GATEWAY_URL",
   )
-    ? (await resolveActiveGateway({
-        cwd: context.cwd,
-        env: process.env,
-        platformRoot: options.platformRoot,
-        configuredNetOffset: options.netOffset,
-        transport: platform.getAdapter<IServiceTransport>("serviceTransport"),
-      })).gatewayUrl
+    ? env.KB_GATEWAY_URL
     : undefined;
 
   try {

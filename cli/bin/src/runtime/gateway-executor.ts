@@ -33,13 +33,8 @@ export function pluginCommandUnavailable(commandPath: string): ErrorEnvelopeErro
  * Try to resolve a Gateway transport.
  * Returns null if no Gateway is available (fall back to local execution).
  */
-export async function tryResolveGateway(): Promise<IGatewayClient | null> {
-  try {
-    return await resolveTransport();
-  } catch {
-    // No Gateway available — fall back to local execution
-    return null;
-  }
+export async function tryResolveGateway(gatewayUrl: string): Promise<IGatewayClient> {
+  return resolveTransport(gatewayUrl);
 }
 
 /**

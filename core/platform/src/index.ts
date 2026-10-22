@@ -30,8 +30,8 @@ export { getHostServiceAddress, HostServiceAddressError } from "./host-service-a
 export { PLATFORM_AUDIT_COLLECTION, PlatformAuditStore } from './audit-store.js';
 export type { AuthAuditInput, McpToolCallAuditInput, PlatformAuditEvent } from './audit-store.js';
 export type { HostServiceEnvironment, HostServiceId } from "./host-service-address.js";
-export { GATEWAY_SERVICE_NETWORK, resolveCliGatewayTarget, readInstalledPlatformIdentity, resolveGatewayServiceAddress, resolveServiceListenAddress } from "./service-listen-address.js";
-export type { CliGatewayTarget } from "./service-listen-address.js";
+export { GATEWAY_SERVICE_NETWORK, resolveCliGatewayAddress, resolveCliGatewayTarget, readInstalledPlatformIdentity, resolveGatewayServiceAddress, resolveServiceListenAddress } from "./service-listen-address.js";
+export type { CliGatewayAddress, CliGatewayTarget } from "./service-listen-address.js";
 export type {
   ResolvedServiceListenAddress,
   ServiceNetworkSettings,

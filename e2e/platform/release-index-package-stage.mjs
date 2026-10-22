@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -21,6 +22,18 @@ export function clearGeneratedReleasePackages(packagesDirectory, outputDirectory
       rmSync(packagePath, { force: true });
     }
   }
+}
+
+export function readPackedPackageManifests(packagesDirectory) {
+  const root = resolve(packagesDirectory);
+  return readdirSync(root)
+    .filter(filename => filename.endsWith('.tgz'))
+    .sort()
+    .map(filename => {
+      const artifactPath = join(root, filename);
+      const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', artifactPath, 'package/package.json'], { encoding: 'utf8' }));
+      return { filename, artifactPath, packageJSON };
+    });
 }
 
 const args = process.argv.slice(2);

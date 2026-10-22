@@ -1,18 +1,22 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
 import { invokePackageProvenanceOwner } from './package-provenance.mjs';
 import { fileURLToPath } from 'node:url';
-import { releaseArtifactPackageNames } from '../../tools/kb-create/scripts/platform-release-config.mjs';
+import { releaseArtifactPackageNames, shippedPlatformPackageSet } from '../../tools/kb-create/scripts/platform-release-config.mjs';
+import { readPackedPackageManifests } from './release-index-package-stage.mjs';
 
 export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest, digestTool, platformMembers) {
-  const wanted = new Set(releaseArtifactPackageNames(releaseManifest, platformMembers));
+  const artifacts = readPackedPackageManifests(packagesDir);
+  const packageManifests = new Map(artifacts.map(({ packageJSON }) => [packageJSON.name, packageJSON]));
+  const wanted = shippedPlatformPackageSet(
+    releaseArtifactPackageNames(releaseManifest, platformMembers),
+    packageManifests,
+  );
   const packages = [];
-  for (const filename of readdirSync(resolve(packagesDir)).filter(name => name.endsWith('.tgz')).sort()) {
-    const path = join(resolve(packagesDir), filename);
-    const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', path, 'package/package.json'], { encoding: 'utf8' }));
+  for (const { filename, packageJSON } of artifacts) {
     if (wanted.has(packageJSON.name)) {
       packages.push({ name: packageJSON.name, version: packageJSON.version, tarball: filename });
       wanted.delete(packageJSON.name);
@@ -34,11 +38,16 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
   { publishDir, failingServicePackage, requiredConfigPackage, requiredConfig, digestTool,
     registryManifest: releaseManifest = registryManifest, platformMembers } = {}) {
   if (!digestTool) throw new Error('kb-create-release-index owner is required');
-  const versionedPackages = new Set(releaseArtifactPackageNames(releaseManifest, platformMembers));
+  const sourceDir = resolve(packagesDir);
+  const packedArtifacts = readPackedPackageManifests(sourceDir);
+  const packageManifests = new Map(packedArtifacts.map(({ packageJSON }) => [packageJSON.name, packageJSON]));
+  const versionedPackages = shippedPlatformPackageSet(
+    releaseArtifactPackageNames(releaseManifest, platformMembers),
+    packageManifests,
+  );
   if (requiredConfig && !versionedPackages.has(requiredConfigPackage)) {
     throw new Error(`staged requirement package is absent from the release manifest: ${requiredConfigPackage}`);
   }
-  const sourceDir = resolve(packagesDir);
   const targetDir = resolve(updatePackagesDir);
   const registryDir = resolve(publishDir ?? packagesDir);
   const manifest = [];
@@ -46,9 +55,7 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
   mkdirSync(targetDir, { recursive: true });
   const originals = new Map();
   const generatedFiles = [];
-  for (const filename of readdirSync(sourceDir).filter(name => name.endsWith('.tgz'))) {
-    const source = join(sourceDir, filename);
-    const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', source, 'package/package.json'], { encoding: 'utf8' }));
+  for (const { filename, artifactPath: source, packageJSON } of packedArtifacts) {
     if (versionedPackages.has(packageJSON.name)
         && packageJSON.name !== failingServicePackage
         && !(packageJSON.name === requiredConfigPackage && requiredConfig)) {

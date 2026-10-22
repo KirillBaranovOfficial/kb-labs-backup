@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, overload
 from invocations import invocation_context, invocation_link, write_report_json, write_report_text
 from journey_dependencies import Dependency
 from journey_values import MissingJourneyState
@@ -676,12 +676,28 @@ class FlowGraph:
             result.details = {**(result.details or {}), "requires": declared_dependencies}
         return result
 
+    @overload
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object],
              cases: Iterable[str] = (), *, role: str = "step",
              record_empty_success: bool = True, runners: Iterable[str] = (),
-             skip_note: str | None = None) -> str:
+             skip_note: str | None = None, case_action: None = None) -> str: ...
+
+    @overload
+    def flow(self, name: str, group: str, capability: str, action: None,
+             cases: Iterable[str] = (), *, role: str = "step",
+             record_empty_success: bool = True, runners: Iterable[str] = (),
+             skip_note: str | None = None,
+             case_action: Callable[[tuple[str, ...]], object]) -> str: ...
+
+    def flow(self, name: str, group: str, capability: str, action: Callable[[], object] | None,
+             cases: Iterable[str] = (), *, role: str = "step",
+             record_empty_success: bool = True, runners: Iterable[str] = (),
+             skip_note: str | None = None,
+             case_action: Callable[[tuple[str, ...]], object] | None = None) -> str:
         """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
         case_ids = list(cases)
+        if (action is None) == (case_action is None):
+            raise JourneyContractError("provide exactly one outer flow action")
         prerequisite = name in self.journey.prerequisite_flows
         lifecycle = role == "lifecycle"
         selected_owner = (group in self.selected_groups
@@ -708,7 +724,12 @@ class FlowGraph:
 
         start = len(self.journey.steps)
         try:
-            outcome = action()
+            if case_action is not None:
+                outcome = case_action(tuple(case_ids))
+            elif action is not None:
+                outcome = action()
+            else:
+                raise JourneyContractError("outer flow action was not selected")
         except MissingJourneyState as error:
             self.journey.step(name, capability, lambda: f"BLOCKED: {error}", cases=case_ids,
                               role="lifecycle" if selected_by_flow_rule else role,

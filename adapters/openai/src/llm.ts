@@ -5,6 +5,7 @@
 
 import OpenAI from "openai";
 import { AdapterCredentialsMissingError } from "@kb-labs/sdk";
+export { manifest } from "./manifest.js";
 import type {
   ILLM,
   LLMOptions,

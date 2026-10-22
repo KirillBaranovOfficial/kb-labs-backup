@@ -79,7 +79,7 @@ export function platformSharedPackages(roots, pluginPackages, platformPackage) {
 }
 
 export function shippedPlatformPackageSet(roots, releaseArtifactManifests, platformPackage = DEFAULT_PLATFORM_PACKAGE) {
-  const closure = new Set([platformPackage]);
+  const closure = new Set();
   const visit = packageName => {
     if (closure.has(packageName)) return;
     closure.add(packageName);
@@ -92,7 +92,7 @@ export function shippedPlatformPackageSet(roots, releaseArtifactManifests, platf
       if (releaseArtifactManifests.has(dependency)) visit(dependency);
     }
   };
-  for (const packageName of roots) visit(packageName);
+  for (const packageName of [platformPackage, ...roots]) visit(packageName);
   return closure;
 }
 

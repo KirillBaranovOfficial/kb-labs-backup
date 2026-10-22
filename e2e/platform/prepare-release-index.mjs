@@ -5,13 +5,13 @@
 // source, while the sealed index is the only input consumed by kb-create.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { clearGeneratedReleasePackages } from './release-index-package-stage.mjs';
+import { clearGeneratedReleasePackages, readPackedPackageManifests } from './release-index-package-stage.mjs';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
 import { invokePackageProvenanceOwner } from './package-provenance.mjs';
-import { readPlatformReleaseConfig, releaseArtifactPackageNames } from '../../tools/kb-create/scripts/platform-release-config.mjs';
+import { readPlatformReleaseConfig, releaseArtifactPackageNames, shippedPlatformPackageSet } from '../../tools/kb-create/scripts/platform-release-config.mjs';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -46,13 +46,13 @@ const stage = resolve(process.env.KB_JOURNEY_RELEASE_STAGE ?? '/tmp/kb-e2e-relea
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
-const wanted = releaseArtifactPackageNames(registryManifest, releaseConfig.platformMembers);
-const wantedSet = new Set(wanted);
+const artifacts = readPackedPackageManifests(packagesDir);
+const packageManifests = new Map(artifacts.map(({ packageJSON }) => [packageJSON.name, packageJSON]));
+const releaseRoots = releaseArtifactPackageNames(registryManifest, releaseConfig.platformMembers);
+const wantedSet = shippedPlatformPackageSet(releaseRoots, packageManifests);
 const packages = new Map();
 
-for (const filename of readdirSync(packagesDir).filter(name => name.endsWith('.tgz'))) {
-  const tarball = join(packagesDir, filename);
-  const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', tarball, 'package/package.json'], { encoding: 'utf8' }));
+for (const { filename, artifactPath: tarball, packageJSON } of artifacts) {
   if (wantedSet.has(packageJSON.name)) {
     copyFileSync(tarball, join(stage, filename));
     packages.set(packageJSON.name, {
@@ -62,8 +62,8 @@ for (const filename of readdirSync(packagesDir).filter(name => name.endsWith('.t
   }
 }
 
-for (const name of wanted) {
-  if (!packages.has(name)) throw new Error(`registry manifest package is not packed: ${name}`);
+for (const name of wantedSet) {
+  if (!packages.has(name)) throw new Error(`platform dependency package is not packed: ${name}`);
 }
 
 writeFileSync(join(stage, 'manifest.json'), `${JSON.stringify([...packages.values()], null, 2)}\n`);

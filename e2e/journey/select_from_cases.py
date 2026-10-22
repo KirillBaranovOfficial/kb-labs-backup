@@ -514,10 +514,16 @@ def lint_direct_module_global_state_handoffs(sources: set[str], root: Path) -> N
             case_declaration = next((keyword.value for keyword in call.keywords if keyword.arg == "cases"), None)
             if case_declaration is not None and not isinstance(case_declaration, (ast.List, ast.Tuple)):
                 continue
+            callback_keyword = next((keyword.value for keyword in call.keywords
+                                     if keyword.arg == "case_action"), None)
             callback_index = (3 if _call_name(call) == "flow" or len(call.args) >= 4 else 2)
-            if len(call.args) <= callback_index:
+            if callback_keyword is not None:
+                callback_node = callback_keyword
+            elif len(call.args) > callback_index:
+                callback_node = call.args[callback_index]
+            else:
                 continue
-            callback_node = call.args[callback_index]
+            callback_reference = callback_node
             if isinstance(callback_node, ast.Name):
                 callback_node = functions.get(callback_node.id)
                 if callback_node is None:
@@ -529,11 +535,13 @@ def lint_direct_module_global_state_handoffs(sources: set[str], root: Path) -> N
                         for local_node in ast.walk(owner):
                             if isinstance(local_node, ast.Assign):
                                 assigned = [target.id for target in local_node.targets if isinstance(target, ast.Name)]
-                                if call.args[callback_index].id in assigned:
+                                if (isinstance(callback_reference, ast.Name)
+                                        and callback_reference.id in assigned):
                                     local_values.append(local_node.value)
                             elif (isinstance(local_node, ast.AnnAssign)
                                   and isinstance(local_node.target, ast.Name)
-                                  and local_node.target.id == call.args[callback_index].id):
+                                  and isinstance(callback_reference, ast.Name)
+                                  and local_node.target.id == callback_reference.id):
                                 local_values.append(local_node.value)
                         if local_values:
                             forwarded_callbacks = []
@@ -551,8 +559,9 @@ def lint_direct_module_global_state_handoffs(sources: set[str], root: Path) -> N
                             forwarded_callbacks = []
                         parameters = [argument.arg for argument in
                                       [*owner.args.posonlyargs, *owner.args.args, *owner.args.kwonlyargs]]
-                        if not local_values and call.args[callback_index].id in parameters:
-                            parameter = call.args[callback_index].id
+                        if (not local_values and isinstance(callback_reference, ast.Name)
+                                and callback_reference.id in parameters):
+                            parameter = callback_reference.id
                             parameter_index = parameters.index(parameter)
                             forwarded = []
                             for site in ast.walk(tree):
