@@ -26,7 +26,7 @@ class HostBashTests(unittest.TestCase):
             repo = sandbox / "repo"
             journey = repo / "e2e/journey"
             journey.mkdir(parents=True)
-            for name in ("run.sh", "candidate-services.sh", "teardown-compose.sh", "storage_has_packages.sh",
+            for name in ("run.sh", "compose-owner.sh", "candidate-services.sh", "teardown-compose.sh", "storage_has_packages.sh",
                          "container_outcomes.py", "jsonl.py"):
                 shutil.copy2(JOURNEY / name, journey / name)
 
@@ -46,7 +46,7 @@ class HostBashTests(unittest.TestCase):
 
             environment = isolated_environment(
                 sandbox, bin_dir,
-                required_tools=("bash", "git", "python3", "dirname", "mkdir", "rm", "find", "date"),
+                required_tools=("bash", "git", "python3", "dirname", "id", "mkdir", "rm", "find", "date"),
                 overrides={
                 "FAKE_DOCKER_CALLS": str(calls_path),
                 "KB_JOURNEY_ONLY": "service-local:explore",
@@ -74,6 +74,15 @@ class HostBashTests(unittest.TestCase):
             docker_calls = [row.value for row in docker_records]
             ps_calls = [call for call in docker_calls if "ps" in call]
             self.assertEqual(len(ps_calls), 2, f"expected empty monitor and teardown listings: {docker_calls}")
+            default_compose_calls = [call for call in docker_calls if call[:1] == ["compose"] and call[1:2] != ["version"]]
+            self.assertTrue(default_compose_calls, f"no default-lane Compose calls were recorded: {docker_calls}")
+            command_names = {"ps", "up", "run", "build", "exec", "stop", "down"}
+            selected_files = []
+            for call in default_compose_calls:
+                command_index = next(index for index, item in enumerate(call) if item in command_names)
+                selected_files.append(call[1:command_index])
+            self.assertTrue(all(files == selected_files[0] for files in selected_files),
+                            f"default Compose commands did not reuse one owner file list: {selected_files}")
             self.assertIn(["wait", "publisher-container-id"], docker_calls, f"publisher wait did not use the created id: {docker_calls}")
             self.assertIn(["logs", "publisher-container-id"], docker_calls, f"publisher logs were not read: {docker_calls}")
             self.assertIn(["rm", "-f", "publisher-container-id"], docker_calls, f"publisher container cleanup did not use the created id: {docker_calls}")
