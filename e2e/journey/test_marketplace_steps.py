@@ -428,8 +428,11 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_PLATFORM_ROOT": str(platform_root),
                    "KB_JOURNEY_PROJECT_ID": "prj_marketplace_fixture",
                    "KB_JOURNEY_BASE_URL": "http://gateway.test",
-                   "KB_JOURNEY_SERVICE_TOKEN": "fixture-token"}
+                   "KB_JOURNEY_SERVICE_TOKEN": "fixture-token",
+                   "KB_JOURNEY_MARKETPLACE_PUBLISH_URL": "http://registry.test/api/v1",
+                   "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey"}
             calls: list[tuple[str, ...]] = []
+            publisher_configs: list[tuple[str | None, str | None]] = []
             host_running = True
             registry_version = "2.120.1"
 
@@ -455,6 +458,8 @@ class MarketplaceStepTests(unittest.TestCase):
             def fake_run(command, *, cwd, env, capture_output, text, timeout):
                 nonlocal host_running
                 calls.append(tuple(command))
+                if command[0] == "node":
+                    publisher_configs.append((env.get("KB_REGISTRY_URL"), env.get("KB_REGISTRY_AUTHOR_HANDLE")))
                 cwd_path = Path(cwd)
                 if command[0] == "kb-create":
                     host_running = command[1] == "start"
@@ -469,7 +474,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     }
                     return subprocess.CompletedProcess(command, 0, json.dumps(versions[package_id]), "")
 
-                args = command[1:]
+                args = command[2:] if command[0] == "node" else command[1:]
                 stdout = "{}"
                 if args[:2] == ["hub", "publish"]:
                     stdout = json.dumps({"handle": "fixture", "name": "@kb-labs/commit-entry",
@@ -710,6 +715,7 @@ class MarketplaceStepTests(unittest.TestCase):
 
             journey = Journey("local", "marketplace-fixture")
             fixture_entry = prepare_commit_project_fixture(journey, project, "http://registry.test", env, fake_run)
+            self.assertIsNotNone(fixture_entry, journey.steps)
             self.assertEqual(fixture_entry, json.loads((project / ".kb" / "marketplace.lock").read_text())[
                 "plugins"]["@kb-labs/commit"])
             registry_version = "2.120.9"
@@ -740,9 +746,12 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(claims_by_id["S-203.25"], "FAIL")
             self.assertEqual(actual, expected, [(step.name, step.status, step.message) for step in journey.steps])
             self.assertEqual(commit_case_hook_calls, [True])
-            self.assertIn(("kb", "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "plugins" / "commit" / "entry"), "--json"), calls)
-            self.assertIn(("kb", "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "e2e" / "journey" / "fixtures" / "analytics-emitter"), "--json"), calls)
-            self.assertIn(("kb", "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "plugins" / "qa" / "entry"), "--json"), calls)
+            workspace_cli = str(Path(__file__).resolve().parents[2] / "cli" / "bin" / "dist" / "bin.js")
+            self.assertIn(("node", workspace_cli, "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "plugins" / "commit" / "entry"), "--json"), calls)
+            self.assertIn(("node", workspace_cli, "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "e2e" / "journey" / "fixtures" / "analytics-emitter"), "--json"), calls)
+            self.assertIn(("node", workspace_cli, "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "plugins" / "qa" / "entry"), "--json"), calls)
+            self.assertEqual(publisher_configs, [("http://registry.test/api/v1", "journey")] * 3)
+            self.assertFalse(any(call[:2] == ("kb", "hub") for call in calls))
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit",
                            "--scope", "platform", "--json"), calls)
