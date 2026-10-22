@@ -9,7 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
-import type { PackageSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
+import type { PackageSource, MarketplaceSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
 import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
 import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
@@ -20,8 +20,43 @@ import { MarketplaceService, mergeScopedEntries, type MarketplaceServiceOptions 
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger'>): MarketplaceService {
-  return new MarketplaceService({ ...options, logger: new NoOpLogger() });
+const marketplaceServiceTestKeys = crypto.generateKeyPairSync('ed25519');
+const marketplaceServiceTestPublicKey = marketplaceServiceTestKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
+type TestServiceOptions = Omit<MarketplaceServiceOptions, 'logger' | 'sources'> & {
+  sources?: MarketplaceSource[];
+  source?: PackageSource;
+  registrySource?: PackageSource;
+};
+
+function asMarketplaceSource(source: PackageSource, kind: MarketplaceSource['kind']): MarketplaceSource {
+  const { withShareToken, ...base } = source;
+  return {
+    ...base,
+    kind,
+    ...(kind === 'registry' ? { verificationKey: marketplaceServiceTestPublicKey } : {}),
+    async resolveIdentity(identity) {
+      const resolved = await source.resolve(identity);
+      if (kind !== 'registry') { return { status: 'found', package: resolved }; }
+      const signatureSubject = `marketplace-service-test/${resolved.id}`;
+      const payload = Buffer.from(JSON.stringify({ integrity: resolved.integrity, pkg: `${signatureSubject}@${resolved.version}` }));
+      const signature = crypto.sign(null, payload, marketplaceServiceTestKeys.privateKey).toString('base64');
+      return { status: 'found', package: {
+        ...resolved,
+        signature: { algorithm: 'ed25519', value: signature, signer: 'test', signedAt: new Date(0).toISOString(), verifiedChecks: [] },
+        signatureSubject,
+      } };
+    },
+    ...(withShareToken ? { withShareToken: (token: string) => asMarketplaceSource(withShareToken(token), kind) } : {}),
+  };
+}
+
+function makeMarketplaceService(options: TestServiceOptions): MarketplaceService {
+  const sources = options.sources ?? [
+    ...(options.registrySource ? [asMarketplaceSource(options.registrySource, 'registry')] : []),
+    ...(options.source ? [asMarketplaceSource(options.source, 'npm')] : []),
+  ];
+  return new MarketplaceService({ platformRoot: options.platformRoot, projectRoot: options.projectRoot, extensionStore: options.extensionStore, strategies: options.strategies, sources, logger: new NoOpLogger() });
 }
 
 function computeIntegrity(content: string): string {
@@ -136,6 +171,56 @@ describe('MarketplaceService', () => {
   // ── install ──────────────────────────────────────────────────────────
 
   describe('install', () => {
+    it('does not resolve a Registry-owned identity from npm', async () => {
+      const projectRoot = path.join(tmpDir, 'owned-identity-project');
+      await fs.mkdir(projectRoot, { recursive: true });
+      const npmResolve = vi.fn(async (_identity: string) => ({ status: 'not-found-unowned' as const }));
+      const registry: MarketplaceSource = {
+        kind: 'registry',
+        async resolveIdentity() { return { status: 'not-found-owned' }; },
+        async resolve() { throw new Error('owned Registry identity has no package'); },
+        async install() { throw new Error('owned Registry identity must not install'); },
+        async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+      };
+      const npm: MarketplaceSource = {
+        kind: 'npm',
+        async resolveIdentity(identity) { npmResolve(identity); return { status: 'not-found-unowned' }; },
+        async resolve() { throw new Error('npm fallback must not resolve an owned identity'); },
+        async install() { throw new Error('npm fallback must not install an owned identity'); },
+        async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, sources: [registry, npm] });
+
+      await expect(service.install({ scope: 'project', projectRoot }, ['@kb-labs/reserved-plugin']))
+        .rejects.toMatchObject({ envelope: { code: 'KB_MARKETPLACE_IDENTITY_RESERVED' } });
+      expect(npmResolve).not.toHaveBeenCalled();
+    });
+
+    it('resolves canonical plugin identities through the Registry before npm', async () => {
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(projectRoot, { recursive: true });
+      const { dir, integrity } = await createPluginDir(tmpDir, 'commit-plugin', '@kb-labs/commit');
+      const npmSource: PackageSource = {
+        async resolve() { throw new Error('npm must not resolve a Registry identity'); },
+        async install() { throw new Error('npm must not install a Registry identity'); },
+        async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+      };
+      const registrySource: PackageSource = {
+        async resolve(identity) {
+          if (identity !== '@kb-labs/commit') { throw new Error(`unexpected Registry identity ${identity}`); }
+          return { id: '@kb-labs/commit', version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin', signature: { algorithm: 'ed25519', value: 'test', signer: 'test', signedAt: new Date(0).toISOString(), verifiedChecks: ['integrity'] } };
+        },
+        async install(pkg) { return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity }; },
+        async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source: npmSource, registrySource });
+
+      await expect(service.install({ scope: 'project', projectRoot }, ['@kb-labs/commit']))
+        .resolves.toMatchObject({ installed: [{ id: '@kb-labs/commit', source: 'registry', signatureStatus: 'verified' }] });
+      const lock = await readMarketplaceLock(projectRoot, new DiagnosticCollector(), 'project');
+      expect(lock?.plugins['@kb-labs/commit']).toMatchObject({ marketplaceSource: 'registry', signatureStatus: 'verified' });
+    });
+
     it('rejects packages without source metadata before installing', async () => {
       const install = vi.fn(async (): Promise<InstalledPackage> => {
         throw new Error('must not install an unclassified package');
@@ -218,7 +303,9 @@ describe('MarketplaceService', () => {
       expect(lock).not.toBeNull();
       expect(lock!.plugins['@kb-labs/test-plugin']).toBeDefined();
       expect(lock!.plugins['@kb-labs/test-plugin']!.version).toBe('1.0.0');
-      expect(lock!.plugins['@kb-labs/test-plugin']!.source).toBe('platform');
+      expect(lock!.plugins['@kb-labs/test-plugin']!).toMatchObject({
+        source: 'marketplace', marketplaceSource: 'npm', signatureStatus: 'unsigned',
+      });
     });
 
     // case: S-220.6
@@ -754,6 +841,26 @@ describe('MarketplaceService', () => {
   // ── doctor ───────────────────────────────────────────────────────────
 
   describe('doctor', () => {
+    it('returns the catalogue-owned reinstall command for a lock without source provenance', async () => {
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()) });
+      await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3',
+        plugins: { '@kb-labs/legacy-plugin': {
+          source: 'marketplace', package: '@kb-labs/legacy-plugin', version: '1.0.0',
+          integrity: 'sha512-YQ==', enabled: true,
+        } },
+      }));
+
+      await expect(service.doctor({ scope: 'platform' })).rejects.toMatchObject({
+        envelope: {
+          code: 'KB_MARKETPLACE_PROVENANCE_REQUIRED',
+          details: { package: '@kb-labs/legacy-plugin', scope: 'platform' },
+          hint: expect.stringContaining('kb marketplace install @kb-labs/legacy-plugin --scope platform'),
+        },
+      });
+    });
+
     // case: S-203.25
     it('does not compare marketplace pins to a local directory hash', async () => {
       const { dir } = await createPluginDir(tmpDir, 'marketplace-pinned', '@kb-labs/marketplace-pinned');
@@ -783,6 +890,7 @@ describe('MarketplaceService', () => {
         plugins: {
           '@kb-labs/marketplace-pinned': {
             source: 'marketplace', package: '@kb-labs/marketplace-pinned', version: '1.0.0', integrity: pin,
+            marketplaceSource: 'registry', signatureStatus: 'verified',
             enabled: true,
           },
         },
@@ -822,6 +930,7 @@ describe('MarketplaceService', () => {
         plugins: {
           '@kb-labs/marketplace-tampered': {
             source: 'marketplace', package: '@kb-labs/marketplace-tampered', version: '1.0.0', integrity: expected,
+            marketplaceSource: 'registry', signatureStatus: 'verified',
             enabled: true,
           },
         },
@@ -851,6 +960,9 @@ describe('MarketplaceService', () => {
       const report = await service.doctor({ scope: "platform" });
       expect(report.ok).toBe(true);
       expect(report.total).toBe(1);
+      expect(report.provenance).toEqual([expect.objectContaining({
+        packageId: '@kb-labs/healthy', source: 'npm', signatureStatus: 'unsigned', integrity,
+      })]);
       // Info about missing signature is expected
       const errors = report.issues.filter(i => i.severity === 'error');
       expect(errors).toHaveLength(0);
@@ -1146,6 +1258,8 @@ function makeEntry(id: string, version: string): MarketplaceEntryWithId {
     primaryKind: 'plugin',
     provides: ['plugin'],
     integrity: 'sha256-test',
+    marketplaceSource: 'registry',
+    signatureStatus: 'verified',
   };
 }
 

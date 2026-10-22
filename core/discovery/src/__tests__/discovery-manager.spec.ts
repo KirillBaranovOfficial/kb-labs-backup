@@ -120,6 +120,8 @@ describe('DiscoveryManager', () => {
       integrity: 'sha256-abc',
       package: '@kb-labs/ghost',
       source: 'marketplace',
+      marketplaceSource: 'registry',
+      signatureStatus: 'verified',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });

@@ -6,6 +6,7 @@ import { readPlatformReleaseConfig } from './platform-release-config.mjs';
 test('the platform release config binds every persistent built-in used by a fresh install', () => {
   const releaseConfigPath = fileURLToPath(new URL('../config/platform-release.jsonc', import.meta.url));
   const config = readPlatformReleaseConfig(releaseConfigPath);
+  assert.deepEqual(config.marketplaceSources, [{ kind: 'npm', url: 'https://registry.npmjs.org' }]);
   assert.deepEqual(config.platformRequires, [...Object.keys(config.adapters), 'llm']);
   assert.ok(config.platformRequires.includes('llm'), 'the default install must include the implicit OpenAI provider');
   assert.equal(config.adapters.llm, undefined, 'llm remains selected by its adapter manifest default');

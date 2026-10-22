@@ -13,24 +13,53 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
-import { DiscoveryManager } from '@kb-labs/core-discovery';
+import { createServer, type Server } from 'node:http';
+import { DiscoveryManager, type MarketplaceIdentityResolution } from '@kb-labs/core-discovery';
 import { createExtensionStore } from '@kb-labs/core-extension-store';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
-import type { PackageSource, InstalledPackage, ResolvedPackage } from '@kb-labs/marketplace-contracts';
+import type { PackageSource, MarketplaceSource, InstalledPackage, ResolvedPackage } from '@kb-labs/marketplace-contracts';
 import { MarketplaceService, type MarketplaceServiceOptions } from '../marketplace-service.js';
 
-function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger'>): MarketplaceService {
-  return new MarketplaceService({ ...options, logger: new NoOpLogger() });
+const integrationRegistryKeys = crypto.generateKeyPairSync('ed25519');
+const integrationRegistryPublicKey = integrationRegistryKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
+function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger' | 'sources'> & { source: PackageSource }): MarketplaceService {
+  const { withShareToken: _withShareToken, ...base } = options.source;
+  const source: MarketplaceSource = {
+    ...base,
+    kind: 'registry',
+    verificationKey: integrationRegistryPublicKey,
+    async resolveIdentity(identity) {
+      const resolved = await options.source.resolve(identity);
+      const signatureSubject = `integration/${resolved.id}`;
+      const payload = Buffer.from(JSON.stringify({ integrity: resolved.integrity, pkg: `${signatureSubject}@${resolved.version}` }));
+      const signature = crypto.sign(null, payload, integrationRegistryKeys.privateKey).toString('base64');
+      return {
+        status: 'found',
+        package: {
+          ...resolved,
+          signature: { algorithm: 'ed25519', value: signature, signer: 'integration', signedAt: '2026-10-22T00:00:00.000Z', verifiedChecks: [] },
+          signatureSubject,
+        },
+      };
+    },
+  };
+  return new MarketplaceService({ platformRoot: options.platformRoot, projectRoot: options.projectRoot, extensionStore: options.extensionStore, strategies: options.strategies, sources: [source], logger: new NoOpLogger() });
 }
 
 describe('Marketplace → Discovery Integration', () => {
   let tmpDir: string;
+  let registryServer: Server | undefined;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-mkt-disc-'));
   });
 
   afterEach(async () => {
+    if (registryServer?.listening) {
+      await new Promise<void>((resolve, reject) => registryServer!.close(error => error ? reject(error) : resolve()));
+      registryServer = undefined;
+    }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -120,6 +149,104 @@ describe('Marketplace → Discovery Integration', () => {
     expect(removedPackages).toEqual(['@kb-labs/commit-entry']);
     expect(await marketplace.list({ scope: 'platform' })).toEqual([]);
     expect((await new DiscoveryManager({ root: tmpDir, verifyIntegrity: false }).discover()).plugins).toEqual([]);
+  });
+
+  it('refuses invalid Registry signatures and tampered tarballs before publishing store entries or locks', async () => {
+    const packageId = '@kb-labs/signed-fixture-entry';
+    const identity = 'fixture/signed-fixture';
+    const subject = identity;
+    const version = '1.0.0';
+    const tarball = Buffer.from('tampered artifact bytes');
+    const expectedIntegrity = computeIntegrity('expected artifact bytes');
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const payload = Buffer.from(JSON.stringify({ integrity: expectedIntegrity, pkg: `${subject}@${version}` }));
+    const validSignature = crypto.sign(null, payload, privateKey).toString('base64');
+    let invalidSignature = crypto.randomBytes(64).toString('base64');
+    while (invalidSignature === validSignature) { invalidSignature = crypto.randomBytes(64).toString('base64'); }
+    let downloadCount = 0;
+    registryServer = createServer((request, response) => {
+      if (request.url?.startsWith('/api/v1/resolve?')) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          status: 'found',
+          package: {
+            id: packageId,
+            version,
+            integrity: expectedIntegrity,
+            signature: { algorithm: 'ed25519', value: invalidSignature, signer: 'fixture', signedAt: '2026-10-22T00:00:00.000Z', verifiedChecks: [] },
+            signatureSubject: subject,
+            primaryKind: 'plugin',
+            downloadUrl: `http://127.0.0.1:${(registryServer!.address() as import('node:net').AddressInfo).port}/artifact`,
+          },
+        }));
+        return;
+      }
+      downloadCount += 1;
+      response.writeHead(200, { 'content-type': 'application/octet-stream' });
+      response.end(tarball);
+    });
+    await new Promise<void>(resolve => registryServer!.listen(0, '127.0.0.1', resolve));
+    const serverAddress = registryServer.address() as import('node:net').AddressInfo;
+    const store = createExtensionStore({ root: path.join(tmpDir, 'machine-store') });
+    const source = Object.assign({
+      kind: 'registry' as const,
+      async resolveIdentity() {
+        const response = await fetch(`http://127.0.0.1:${serverAddress.port}/api/v1/resolve?identity=${encodeURIComponent(identity)}`);
+        return await response.json() as MarketplaceIdentityResolution;
+      },
+      async resolve(): Promise<ResolvedPackage> { throw new Error('identity API is used'); },
+      async install(): Promise<InstalledPackage> { throw new Error('extension store is used'); },
+      async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
+    }, { verificationKey: publicKeyPem });
+    const projectRoot = path.join(tmpDir, 'project');
+    await fs.mkdir(projectRoot, { recursive: true });
+    const marketplace = new MarketplaceService({
+      platformRoot: tmpDir,
+      projectRoot,
+      extensionStore: store,
+      sources: [source],
+      logger: new NoOpLogger(),
+    });
+
+    await expect(marketplace.install({ scope: 'project', projectRoot }, [identity]))
+      .rejects.toMatchObject({ envelope: { code: 'KB_MARKETPLACE_SIGNATURE_INVALID' } });
+    expect(downloadCount).toBe(0);
+    expect(await store.listEntries()).toEqual([]);
+    await expect(fs.access(path.join(projectRoot, '.kb', 'marketplace.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const validSource = Object.assign({
+      ...source,
+      async resolveIdentity() {
+        return {
+          status: 'found' as const,
+          package: {
+            id: packageId,
+            version,
+            integrity: expectedIntegrity,
+            signature: { algorithm: 'ed25519', value: validSignature, signer: 'fixture', signedAt: '2026-10-22T00:00:00.000Z', verifiedChecks: [] },
+            signatureSubject: subject,
+            primaryKind: 'plugin',
+            downloadUrl: `http://127.0.0.1:${serverAddress.port}/artifact`,
+          },
+        };
+      },
+    }, { verificationKey: publicKeyPem });
+    const tamperedMarketplace = new MarketplaceService({
+      platformRoot: tmpDir,
+      projectRoot,
+      extensionStore: store,
+      sources: [validSource],
+      logger: new NoOpLogger(),
+    });
+
+    await expect(tamperedMarketplace.install({ scope: 'project', projectRoot }, [identity]))
+      .rejects.toMatchObject({ code: 'KB_PLUGIN_INTEGRITY_MISMATCH' });
+    expect(downloadCount).toBe(1);
+    expect(await store.listEntries()).toEqual([]);
+    await expect(fs.access(path.join(projectRoot, '.kb', 'marketplace.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('link → discover: a linked entry package uses its manifest identity', async () => {

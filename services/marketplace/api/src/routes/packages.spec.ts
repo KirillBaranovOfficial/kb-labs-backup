@@ -4,11 +4,28 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import type { ILogger, IContextLogger } from '@kb-labs/core-platform';
 import { createContextLogger } from '@kb-labs/core-platform';
-import type { PackageSource, ResolvedPackage, InstalledPackage } from '@kb-labs/marketplace-contracts';
+import type { PackageSource, MarketplaceSource, ResolvedPackage, InstalledPackage } from '@kb-labs/marketplace-contracts';
 import { MarketplaceService, MarketplaceVersionError } from '@kb-labs/marketplace-core';
-import { NpmPackageSource, PackageInstallError } from '@kb-labs/marketplace-npm';
-import { afterEach, describe, expect, it } from 'vitest';
+import { NpmPackageSource, PackageInstallError, RegistryPackageSource } from '@kb-labs/marketplace-npm';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from '../server.js';
+
+function makeMarketplaceService(options: { platformRoot: string; logger: ILogger; source: PackageSource }): MarketplaceService {
+  const { withShareToken: _withShareToken, ...base } = options.source;
+  const source: MarketplaceSource = {
+    ...base,
+    kind: 'npm',
+    resolve: spec => options.source.resolve(spec),
+    install: (pkg, root, installOptions) => options.source.install(pkg, root, installOptions),
+    commitInstall: (packageId, root) => options.source.commitInstall(packageId, root),
+    rollbackInstall: (packageId, root) => options.source.rollbackInstall(packageId, root),
+    remove: (packageId, root) => options.source.remove(packageId, root),
+    async resolveIdentity(identity) {
+      return { status: 'found', package: await options.source.resolve(identity) };
+    },
+  };
+  return new MarketplaceService({ platformRoot: options.platformRoot, logger: options.logger, sources: [source] });
+}
 
 interface CapturedLog {
   message: string;
@@ -102,7 +119,7 @@ describe('Marketplace API error boundary', () => {
     await writeFile(path.join(root, 'pnpm-workspace.yaml'), 'overrides:\n  unrelated: 1.0.0\n');
 
     const { logger, errors } = makeContextLogger();
-    const service = new MarketplaceService({
+    const service = makeMarketplaceService({
       platformRoot: root,
       logger,
       source: new NpmPackageSource({ registryUrl: `http://127.0.0.1:${address.port}` }),
@@ -118,7 +135,7 @@ describe('Marketplace API error boundary', () => {
     const result = response.json();
     const correlationId = result.error?.correlationId;
 
-    expect(response.statusCode).toBe(409);
+    expect(response.statusCode, `${JSON.stringify(result)}; error=${errors[0]?.error?.stack}`).toBe(409);
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -132,6 +149,44 @@ describe('Marketplace API error boundary', () => {
     expect(errors[0]?.fields).toMatchObject({ requestId: correlationId, errorCode: 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING' });
   });
 
+  it('renders Registry authentication failure through the error catalogue', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-registry-auth-'));
+    roots.push(root);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })));
+    const { logger } = makeContextLogger();
+    const registry = new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'configured-key' });
+    const service = new MarketplaceService({
+      platformRoot: root,
+      logger,
+      sources: [{
+        kind: 'registry',
+        resolveIdentity: registry.resolveIdentity.bind(registry),
+        resolve: registry.resolve.bind(registry),
+        install: registry.install.bind(registry),
+        commitInstall: registry.commitInstall.bind(registry),
+        rollbackInstall: registry.rollbackInstall.bind(registry),
+        remove: registry.remove.bind(registry),
+      }],
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/install',
+      payload: { specs: ['@kb-labs/private'], scope: 'platform' },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_MARKETPLACE_AUTH_FAILED',
+        details: { package: '@kb-labs/private', scope: 'platform' },
+        hint: expect.stringContaining('kb marketplace install @kb-labs/private --scope platform'),
+      },
+    });
+  });
+
   // case: S-220.1
   it('returns a catalogued install failure and logs the package-manager cause', async () => {
     const { logger, errors } = makeContextLogger();
@@ -140,7 +195,7 @@ describe('Marketplace API error boundary', () => {
       '@kb-labs/test-adapter@1.0.0',
       'ERR_PNPM_NO_MATURE_MATCHING_VERSION: package is inside minimumReleaseAge',
     );
-    const service = new MarketplaceService({
+    const service = makeMarketplaceService({
       platformRoot: tmpdir(),
       logger,
       source: createFailingSource(packageManagerError, false),
@@ -180,7 +235,7 @@ describe('Marketplace API error boundary', () => {
       '@kb-labs/test-adapter@1.0.0',
       'ERR_PNPM_NO_MATURE_MATCHING_VERSION: package is inside minimumReleaseAge',
     );
-    const service = new MarketplaceService({
+    const service = makeMarketplaceService({
       platformRoot: tmpdir(),
       logger,
       source: createFailingSource(packageManagerError, false),
@@ -219,7 +274,7 @@ describe('Marketplace API error boundary', () => {
       '@kb-labs/test-adapter@1.0.0',
       'registry tarball integrity differs from the Marketplace pin',
     );
-    const service = new MarketplaceService({
+    const service = makeMarketplaceService({
       platformRoot: tmpdir(),
       logger,
       source: createFailingSource(packageManagerError, false),
@@ -255,7 +310,7 @@ describe('Marketplace API error boundary', () => {
       '1.0.0',
       '1.0.0',
     );
-    const service = new MarketplaceService({
+    const service = makeMarketplaceService({
       platformRoot: tmpdir(),
       logger,
       source: createFailingSource(versionError, true),
@@ -297,7 +352,7 @@ describe('Marketplace API error boundary', () => {
       '1.4.0',
       '1.4.0',
     );
-    const service = new MarketplaceService({
+    const service = makeMarketplaceService({
       platformRoot: tmpdir(),
       logger,
       source: createFailingSource(versionError, true),
@@ -333,7 +388,7 @@ describe('Marketplace API error boundary', () => {
   // case: S-220.3
   it('maps Fastify request validation through the same logged UX boundary', async () => {
     const { logger, errors } = makeContextLogger();
-    const service = new MarketplaceService({
+    const service = makeMarketplaceService({
       platformRoot: tmpdir(),
       logger,
       source: createFailingSource(new Error('unused'), true),
@@ -361,7 +416,7 @@ describe('Marketplace API error boundary', () => {
   // case: S-220.2
   it('turns unexpected service failures into correlated internal-error envelopes', async () => {
     const { logger, errors } = makeContextLogger();
-    const service = new MarketplaceService({
+    const service = makeMarketplaceService({
       platformRoot: tmpdir(),
       logger,
       source: createFailingSource(new Error('private adapter loader detail'), true),
@@ -414,7 +469,7 @@ describe('Marketplace API error boundary', () => {
       async rollbackInstall() { packageInstalled = false; },
     };
     const { logger, errors } = makeContextLogger();
-    const service = new MarketplaceService({ platformRoot: root, logger, source });
+    const service = makeMarketplaceService({ platformRoot: root, logger, source });
     const server = await createServer({ service, logger });
     servers.push(server);
 

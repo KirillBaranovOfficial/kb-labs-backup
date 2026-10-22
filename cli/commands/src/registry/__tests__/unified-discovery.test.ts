@@ -60,7 +60,8 @@ async function writeLock(
       const packageName = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8')).name as string;
       lock.plugins[id] = source === 'platform'
         ? createMarketplaceEntry({ ...entryOptions, source, package: packageName, resolvedPath: path.relative(root, dir) })
-        : createMarketplaceEntry({ ...entryOptions, source, package: packageName });
+        : createMarketplaceEntry({ ...entryOptions, source, package: packageName,
+            marketplaceSource: 'registry', signatureStatus: 'verified' });
     }
   }
   await writeMarketplaceLock(root, lock);

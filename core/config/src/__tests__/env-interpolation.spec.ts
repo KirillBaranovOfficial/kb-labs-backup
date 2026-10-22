@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { interpolateString, interpolateConfig } from '../config-interpolation.js';
+import { ErrorEnvelopeError } from '@kb-labs/core-platform/error-envelope';
+import { interpolateString, interpolateConfig } from '../env-interpolation.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,9 +47,13 @@ describe('interpolateString', () => {
 
   it('throws on missing env var when required=true (default)', () => {
     delete process.env['__MISSING_VAR__'];
-    expect(() => interpolateString('${__MISSING_VAR__}')).toThrow(
-      /environment variable "__MISSING_VAR__" is not set/,
-    );
+    try {
+      interpolateString('${__MISSING_VAR__}');
+      throw new Error('Expected missing environment reference to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ErrorEnvelopeError);
+      expect((error as ErrorEnvelopeError).envelope.code).toBe('KB_CONFIG_SECRET_MISSING');
+    }
   });
 
   it('leaves placeholder unresolved when required=false', () => {

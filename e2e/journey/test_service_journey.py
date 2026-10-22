@@ -1698,7 +1698,7 @@ raise SystemExit(1)
             "projectBId": project_b_id,
             "projectBRoot": project_b_root,
         })
-        self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"])
+        self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit", "--json"])
         registration_calls = [call for call in calls if call[:3] == ["kb", "project", "add"]]
         self.assertEqual(len(registration_calls), 1)
         self.assertEqual(calls[2], ["kb", "marketplace", "install", "@kb-labs/review-entry@2.120.1", "--json"])

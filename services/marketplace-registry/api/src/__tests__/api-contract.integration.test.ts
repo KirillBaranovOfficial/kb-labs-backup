@@ -39,7 +39,7 @@ function makeMockRegistry() {
     featured: false,
     badges: [],
     tags: [],
-    meta: { name: 'my-plugin', version: '1.0.0' },
+    meta: { name: 'my-plugin', version: '1.0.0', identity: '@kirill/my-plugin' },
     createdAt: '2024-01-01T00:00:00.000Z',
     updatedAt: '2024-01-01T00:00:00.000Z',
   };
@@ -143,7 +143,7 @@ describe('GET /api/v1/packages/:handle/:name (public)', () => {
       featured: false,
       badges: [],
       tags: [],
-      meta: { name: 'private-pkg', version: '1.0.0' },
+      meta: { name: 'private-pkg', version: '1.0.0', identity: '@kirill/private-pkg' },
       createdAt: '',
       updatedAt: '',
     });
@@ -163,7 +163,7 @@ describe('GET /api/v1/packages/:handle/:name (public)', () => {
     const entry = {
       name: 'private-pkg', authorHandle: 'kirill', authorNamespaceId: 'ns-kirill',
       visibility: 'private' as const, trust: 'untrusted' as const, allowlist: [], versions: [],
-      deprecated: false, featured: false, badges: [], tags: [], meta: { name: 'private-pkg', version: '1.0.0' },
+      deprecated: false, featured: false, badges: [], tags: [], meta: { name: 'private-pkg', version: '1.0.0', identity: '@kirill/private-pkg' },
       createdAt: '', updatedAt: '',
     };
     registry.getEntry.mockResolvedValue(entry);

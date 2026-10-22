@@ -20,6 +20,7 @@ beforeEach(() => {
   mockedGet.mockResolvedValue({
     ok: false,
     total: 1,
+    provenance: [],
     issues: [{
       severity: 'error',
       packageId: '@kb-labs/blocked',
