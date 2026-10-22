@@ -558,6 +558,7 @@ export async function loadPlatformConfig(
   let platformDefaults: PlatformConfig | undefined;
   let platformDefaultsSource: string | undefined;
   let rawPlatformConfig: Record<string, unknown> | undefined;
+  let containerConfigOverlay: Record<string, unknown> = {};
 
   const samePath =
     !!platformConfigPath &&
@@ -586,6 +587,17 @@ export async function loadPlatformConfig(
     platformDefaults = platformSection;
     rawPlatformConfig = rawConfig;
     platformDefaultsSource = platformConfigPath;
+  }
+
+  // Container delivery can mount a topology-owned overlay without replacing
+  // the release image's baked composition. The standard config remains the
+  // base; this file is an explicit higher-precedence layer owned by the
+  // container composition producer (currently Helm).
+  const containerConfigOverlayPath = path.join(roots.platformRoot, '.kb', 'kb.config.override.json');
+  if (existsSync(containerConfigOverlayPath)) {
+    const { platformSection, rawConfig } = await readConfigFile(containerConfigOverlayPath);
+    platformDefaults = mergeDefined(platformDefaults ?? {}, platformSection ?? {});
+    containerConfigOverlay = rawConfig ?? {};
   }
 
   // Generated layer (ADR-0047): installer-written `.kb/generated/*.json|jsonc`
@@ -664,12 +676,17 @@ export async function loadPlatformConfig(
   const defaultsData: Record<string, unknown> = {
     plugins: Object.fromEntries(pluginSettingsDefaults.map(({ configSection, data }) => [configSection, data])),
   };
-  // Effective full config applies defaults, generated config, platform config,
-  // project settings, then the platform-owned scenario overlays.
+  // Effective full config applies defaults, generated config, the selected
+  // base config, then the delivery overlay, project settings, and scenario
+  // overlays. Keep the delivery layer independent of root layout.
   let effectiveConfig: Record<string, unknown> = mergeOverlay(
     defaultsData,
-    mergeOverlay(generatedLayer.data, rawProjectConfig ?? rawPlatformConfig ?? {}),
+    mergeOverlay(
+      generatedLayer.data,
+      rawProjectConfig ?? rawPlatformConfig ?? {},
+    ),
   );
+  effectiveConfig = mergeOverlay(effectiveConfig, containerConfigOverlay);
   if (projectId) {
     effectiveConfig = mergeOverlay(effectiveConfig, projectSettings);
   }

@@ -40,6 +40,8 @@ export type CatalogErrorCode =
   | "KB_CONFIG_SECRET_MISSING"
   | "KB_CONFIG_SECRET_PLAINTEXT"
   | "KB_CONFIG_UNKNOWN_KEY"
+  | "KB_DEPLOYMENT_AUTH_REQUIRED"
+  | "KB_DEPLOYMENT_TOPOLOGY_REQUIRED"
   | "KB_DEPLOY_CONFIG_DELIVERY"
   | "KB_DEPLOY_HOST_UNDEFINED"
   | "KB_DEPLOY_LOCK_WRITE_FAILED"
@@ -299,6 +301,8 @@ export interface CatalogTemplateParameters {
   "KB_CONFIG_SECRET_MISSING": { "variable": string };
   "KB_CONFIG_SECRET_PLAINTEXT": { "example": string; "path": string };
   "KB_CONFIG_UNKNOWN_KEY": { "path": string; "suggestion": string };
+  "KB_DEPLOYMENT_AUTH_REQUIRED": Record<never, never>;
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": Record<never, never>;
   "KB_DEPLOY_CONFIG_DELIVERY": Record<never, never>;
   "KB_DEPLOY_HOST_UNDEFINED": Record<never, never>;
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<never, never>;
@@ -558,6 +562,8 @@ export interface CatalogDetailsFor {
   "KB_CONFIG_SECRET_MISSING": { "variable": string; "secretName"?: string };
   "KB_CONFIG_SECRET_PLAINTEXT": { "example": string; "path": string };
   "KB_CONFIG_UNKNOWN_KEY": { "path": string; "suggestion": string };
+  "KB_DEPLOYMENT_AUTH_REQUIRED": Record<string, never>;
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": Record<string, never>;
   "KB_DEPLOY_CONFIG_DELIVERY": Record<string, never>;
   "KB_DEPLOY_HOST_UNDEFINED": Record<string, never>;
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<string, never>;
@@ -817,6 +823,8 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_CONFIG_SECRET_MISSING": ["variable"],
   "KB_CONFIG_SECRET_PLAINTEXT": ["example","path"],
   "KB_CONFIG_UNKNOWN_KEY": ["path","suggestion"],
+  "KB_DEPLOYMENT_AUTH_REQUIRED": [],
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": [],
   "KB_DEPLOY_CONFIG_DELIVERY": [],
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
@@ -1076,6 +1084,8 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_CONFIG_SECRET_MISSING": ["variable"],
   "KB_CONFIG_SECRET_PLAINTEXT": ["path"],
   "KB_CONFIG_UNKNOWN_KEY": ["path"],
+  "KB_DEPLOYMENT_AUTH_REQUIRED": [],
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": [],
   "KB_DEPLOY_CONFIG_DELIVERY": [],
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
@@ -1335,6 +1345,8 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_CONFIG_SECRET_MISSING": [],
   "KB_CONFIG_SECRET_PLAINTEXT": ["example"],
   "KB_CONFIG_UNKNOWN_KEY": ["suggestion"],
+  "KB_DEPLOYMENT_AUTH_REQUIRED": [],
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": [],
   "KB_DEPLOY_CONFIG_DELIVERY": [],
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
@@ -1594,6 +1606,8 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_CONFIG_SECRET_MISSING": ["variable"],
   "KB_CONFIG_SECRET_PLAINTEXT": ["example","path"],
   "KB_CONFIG_UNKNOWN_KEY": ["path","suggestion"],
+  "KB_DEPLOYMENT_AUTH_REQUIRED": [],
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": [],
   "KB_DEPLOY_CONFIG_DELIVERY": [],
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
@@ -1853,6 +1867,8 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_CONFIG_SECRET_MISSING": ["variable"],
   "KB_CONFIG_SECRET_PLAINTEXT": ["path"],
   "KB_CONFIG_UNKNOWN_KEY": ["path"],
+  "KB_DEPLOYMENT_AUTH_REQUIRED": [],
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": [],
   "KB_DEPLOY_CONFIG_DELIVERY": [],
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
@@ -2112,6 +2128,8 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_CONFIG_SECRET_MISSING": [],
   "KB_CONFIG_SECRET_PLAINTEXT": ["example"],
   "KB_CONFIG_UNKNOWN_KEY": ["suggestion"],
+  "KB_DEPLOYMENT_AUTH_REQUIRED": [],
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": [],
   "KB_DEPLOY_CONFIG_DELIVERY": [],
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
@@ -2371,6 +2389,8 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_CONFIG_SECRET_MISSING": ["secretName"],
   "KB_CONFIG_SECRET_PLAINTEXT": [],
   "KB_CONFIG_UNKNOWN_KEY": [],
+  "KB_DEPLOYMENT_AUTH_REQUIRED": [],
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": [],
   "KB_DEPLOY_CONFIG_DELIVERY": [],
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
@@ -2630,6 +2650,8 @@ export interface CatalogMessageTemplateParameters {
   "KB_CONFIG_SECRET_MISSING": { "variable": string };
   "KB_CONFIG_SECRET_PLAINTEXT": { "path": string };
   "KB_CONFIG_UNKNOWN_KEY": { "path": string };
+  "KB_DEPLOYMENT_AUTH_REQUIRED": Record<never, never>;
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": Record<never, never>;
   "KB_DEPLOY_CONFIG_DELIVERY": Record<never, never>;
   "KB_DEPLOY_HOST_UNDEFINED": Record<never, never>;
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<never, never>;
@@ -2889,6 +2911,8 @@ export interface CatalogHintTemplateParameters {
   "KB_CONFIG_SECRET_MISSING": Record<never, never>;
   "KB_CONFIG_SECRET_PLAINTEXT": { "example": string };
   "KB_CONFIG_UNKNOWN_KEY": { "suggestion": string };
+  "KB_DEPLOYMENT_AUTH_REQUIRED": Record<never, never>;
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": Record<never, never>;
   "KB_DEPLOY_CONFIG_DELIVERY": Record<never, never>;
   "KB_DEPLOY_HOST_UNDEFINED": Record<never, never>;
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<never, never>;
@@ -3148,6 +3172,8 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_CONFIG_SECRET_MISSING": Record<never, never>;
   "KB_CONFIG_SECRET_PLAINTEXT": Record<never, never>;
   "KB_CONFIG_UNKNOWN_KEY": Record<never, never>;
+  "KB_DEPLOYMENT_AUTH_REQUIRED": Record<never, never>;
+  "KB_DEPLOYMENT_TOPOLOGY_REQUIRED": Record<never, never>;
   "KB_DEPLOY_CONFIG_DELIVERY": Record<never, never>;
   "KB_DEPLOY_HOST_UNDEFINED": Record<never, never>;
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<never, never>;

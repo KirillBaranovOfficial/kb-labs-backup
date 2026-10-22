@@ -37,6 +37,7 @@ import {
 } from "./config-loader.js";
 import { initPlatform, resetPlatform } from "./loader.js";
 import { requireProjectContext } from "./project-context.js";
+import { resolveDeploymentTopology } from "./config-schemas.js";
 
 export type PlatformApplicationKind = "service" | "cli" | "worker" | "test";
 export type PlatformFailurePolicy = "strict" | "degraded";
@@ -241,6 +242,9 @@ async function launch(
     sameLocation,
     sources,
   } = loadResult;
+  if (kind === 'service' || kind === 'worker') {
+    resolveDeploymentTopology(effectiveConfig ?? rawConfig);
+  }
   const adapterProjectRoot = loadResult.projectScope === 'platform'
     ? platformRoot
     : requireProjectContext(projectRoot, options.startDir);

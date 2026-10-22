@@ -13,11 +13,11 @@ RUN addgroup --system --gid 1001 nodejs && \
 # deploy/ produced on CI by: pnpm deploy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon
 COPY --chown=kb:nodejs .kb/deploy/state-daemon/node_modules ./node_modules
 COPY --chown=kb:nodejs .kb/deploy/state-daemon/dist ./dist
+COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
 
-# No adapters, no config: the broker is InMemoryStateBroker
-# (core/state-broker/src/factory.ts) — nothing to mount, nothing to persist.
-# State does not survive container recreation; that is current, expected
-# behaviour, not a gap — see docs/adr/0037.
+# State uses InMemoryStateBroker (core/state-broker/src/factory.ts), so state
+# does not survive container recreation; the baked composition declares the
+# deployment topology shared by all release services.
 
 USER kb
 

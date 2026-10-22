@@ -94,11 +94,15 @@ export {
   PlatformSectionSchema,
   PlatformUserConfigSchema,
   ExecutionConfigSchema,
+  DeploymentTopologySchema,
+  DeploymentConfigSchema,
+  resolveDeploymentTopology,
   validatePlatformUserConfig,
 } from "./config-schemas.js";
 export type {
   PlatformUserConfig,
   PlatformConfigIssue,
+  DeploymentTopology,
 } from "./config-schemas.js";
 
 // Adapter discovery (for testing/debugging)
