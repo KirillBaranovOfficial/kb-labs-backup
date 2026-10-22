@@ -583,47 +583,62 @@ func runLayer(
 
 // ─── Dirty packages ───────────────────────────────────────────────────────────
 
-// DirtyPackages returns packages that have at least one requested task in DIRTY
-// state (including packages with no state file — unknown = dirty).
-//
-// This complements AffectedPackages: git-diff catches source changes, while
-// DirtyPackages catches packages whose last run failed or never ran at all.
-func DirtyPackages(ws *workspace.Workspace, tasks []string, cacheRoot string) []workspace.Package {
+// DirtyPackages returns packages whose requested task inputs differ from their
+// last successful run, plus their workspace dependents. Missing or failed task
+// state is dirty; Git diffs are reserved for the explicit diff-only selector.
+func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []string, cacheRoot string) []workspace.Package {
 	if len(tasks) == 0 {
 		return nil
 	}
 	states := cache.NewStateStore(cacheRoot)
+	runtimeFingerprint := cache.RuntimeFingerprint()
+	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
+	for _, p := range ws.Packages {
+		pkgByName[p.Name] = p
+	}
 
-	var result []workspace.Package
+	var changed []workspace.Package
 	for _, p := range ws.Packages {
 		for _, task := range tasks {
-			if states.IsDirty(p.Name, task) {
-				result = append(result, p)
+			def := ResolveTaskDef(cfg, task, p.Category)
+			if def == nil {
+				continue
+			}
+			state, exists := states.Get(p.Name, task)
+			if !exists || state.Kind != cache.TaskStateClean {
+				changed = append(changed, p)
+				break
+			}
+			depNames := readWorkspaceDeps(p.Dir, pkgByName)
+			depDirs := make([]string, 0, len(depNames))
+			for _, name := range depNames {
+				if dep, ok := pkgByName[name]; ok {
+					depDirs = append(depDirs, dep.Dir)
+				}
+			}
+			inputHash, err := hashTaskInputs(p, *def, depDirs, runtimeFingerprint)
+			if err != nil {
+				// Schedule the package so Executor reports the input read failure
+				// through the task's catalogued error and recovery hint.
+				changed = append(changed, p)
+				break
+			}
+			if state.InputHash != inputHash {
+				changed = append(changed, p)
 				break
 			}
 		}
 	}
-	return result
+	return packagesAndDependents(ws, changed)
 }
 
-// UnionPackages merges two package lists into one, preserving workspace order
-// and deduplicating by package name. Only packages present in ws.Packages are
-// included — packages not in the workspace are silently dropped.
-func UnionPackages(ws *workspace.Workspace, a, b []workspace.Package) []workspace.Package {
-	inEither := make(map[string]bool, len(a)+len(b))
-	for _, p := range a {
-		inEither[p.Name] = true
+// AffectedRunPackages selects by configured Git diff only when diffOnly is
+// explicit. Normal --affected runs use last-successful input hashes.
+func AffectedRunPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []string, cacheRoot string, diffOnly bool) ([]workspace.Package, error) {
+	if diffOnly {
+		return AffectedPackages(ws, cfg)
 	}
-	for _, p := range b {
-		inEither[p.Name] = true
-	}
-	var result []workspace.Package
-	for _, p := range ws.Packages {
-		if inEither[p.Name] {
-			result = append(result, p)
-		}
-	}
-	return result
+	return DirtyPackages(ws, cfg, tasks, cacheRoot), nil
 }
 
 // ─── Affected packages ────────────────────────────────────────────────────────
@@ -658,28 +673,32 @@ func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) ([]work
 		return nil, nil
 	}
 
-	// Build reverse dep graph: pkg → list of packages that depend on it.
+	var direct []workspace.Package
+	for _, p := range ws.Packages {
+		if directlyChanged[p.Name] {
+			direct = append(direct, p)
+		}
+	}
+	return packagesAndDependents(ws, direct), nil
+}
+
+func packagesAndDependents(ws *workspace.Workspace, direct []workspace.Package) []workspace.Package {
 	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
 	for _, p := range ws.Packages {
 		pkgByName[p.Name] = p
 	}
-
-	// reverseDeps[A] = [B, C] means B and C depend on A.
 	reverseDeps := make(map[string][]string, len(ws.Packages))
 	for _, p := range ws.Packages {
-		deps := readWorkspaceDeps(p.Dir, pkgByName)
-		for _, dep := range deps {
+		for _, dep := range readWorkspaceDeps(p.Dir, pkgByName) {
 			reverseDeps[dep] = append(reverseDeps[dep], p.Name)
 		}
 	}
-
-	// BFS from directly changed packages through reverse dep graph.
 	visited := make(map[string]bool)
-	queue := make([]string, 0, len(directlyChanged))
-	for name := range directlyChanged {
-		if !visited[name] {
-			visited[name] = true
-			queue = append(queue, name)
+	queue := make([]string, 0, len(direct))
+	for _, p := range direct {
+		if !visited[p.Name] {
+			visited[p.Name] = true
+			queue = append(queue, p.Name)
 		}
 	}
 	for len(queue) > 0 {
@@ -692,15 +711,13 @@ func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) ([]work
 			}
 		}
 	}
-
-	// Collect results preserving workspace order.
 	var result []workspace.Package
 	for _, p := range ws.Packages {
 		if visited[p.Name] {
 			result = append(result, p)
 		}
 	}
-	return result, nil
+	return result
 }
 
 // collectChangedFiles returns absolute paths of changed files using the given strategy.
