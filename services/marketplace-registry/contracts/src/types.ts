@@ -3,7 +3,7 @@
  * Shared types for the KB Labs Marketplace Registry.
  */
 
-import type { EntitySignature, EntityKind } from '@kb-labs/core-discovery';
+import type { EntitySignature, EntityKind, MarketplaceIdentityResolution } from '@kb-labs/core-discovery';
 
 // ---------------------------------------------------------------------------
 // Package metadata (read from package.json at publish time)
@@ -24,6 +24,8 @@ export interface PackageRepository {
 export interface PackageMeta {
   name: string;
   version: string;
+  /** Canonical KB Labs plugin/adapter identity declared by its manifest. */
+  identity: string;
   description?: string;
   author?: PackageAuthor | string;
   repository?: PackageRepository | string;
@@ -41,6 +43,9 @@ export interface PackageMeta {
   /** CLI command IDs registered by the plugin. */
   commands?: string[];
 }
+
+/** Registry-owned identity and namespace ownership result consumed by Marketplace. */
+export type RegistryIdentityResolution = MarketplaceIdentityResolution;
 
 // ---------------------------------------------------------------------------
 // Registry entry (meta.json stored in platform.storage)

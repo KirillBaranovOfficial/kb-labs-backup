@@ -6,7 +6,8 @@
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { getListenOptions } from "@kb-labs/shared-http";
 import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
-import { readKbConfig } from "@kb-labs/core-config";
+import { readKbConfig, type MarketplaceSourcesConfig } from "@kb-labs/core-config";
+import { createErrorEnvelope, ErrorEnvelopeError } from "@kb-labs/core-platform/error-envelope";
 import { createServer } from "@kb-labs/marketplace-api";
 import { MarketplaceService } from "@kb-labs/marketplace-core";
 import { createExtensionStore } from "@kb-labs/core-extension-store";
@@ -27,28 +28,30 @@ export async function setup({
 }: ServiceContext): Promise<() => Promise<void>> {
   const repoRoot = platformRoot;
 
-  // Read marketplace.registry config to wire up RegistryPackageSource for kb: specs.
-  const kbConfig = await readKbConfig(repoRoot);
-  const registryConfig = (
-    kbConfig?.data as Record<string, unknown> | undefined
-  )?.marketplace as Record<string, unknown> | undefined;
-  const registryUrl =
-    ((registryConfig?.registry as Record<string, unknown> | undefined)
-      ?.url as string | undefined) ?? process.env.KB_REGISTRY_URL;
-
-  const registrySource = registryUrl
-    ? new RegistryPackageSource({
-        registryUrl,
-        authToken: process.env.KB_REGISTRY_TOKEN,
-      })
-    : undefined;
+  const kbConfig = await readKbConfig(repoRoot, { required: true });
+  const marketplace = (kbConfig?.data as { marketplace?: { sources?: MarketplaceSourcesConfig } } | undefined)?.marketplace;
+  const sourcesConfig = marketplace?.sources;
+  if (!sourcesConfig?.[0]) {
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_CONFIG_INVALID', { details: { path: 'marketplace.sources' } }));
+  }
+  const sources = [
+    ...(sourcesConfig[0].kind === 'registry'
+      ? [new RegistryPackageSource({
+        registryUrl: sourcesConfig[0].url,
+        signingPublicKey: sourcesConfig[0].signingPublicKey,
+        authToken: sourcesConfig[0].authToken,
+      })]
+      : []),
+    ...sourcesConfig.flatMap(source => source?.kind === 'npm'
+      ? [new NpmPackageSource({ registryUrl: source.url })]
+      : []),
+  ];
 
   const service = new MarketplaceService({
     platformRoot,
     logger,
     extensionStore: createExtensionStore({ platformRoot }),
-    source: new NpmPackageSource(),
-    registrySource,
+    sources,
   });
 
   const server = await createServer({ service, port, logger });

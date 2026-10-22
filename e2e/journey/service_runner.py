@@ -45,7 +45,7 @@ from invocations import (
     write_report_text,
 )
 from plugin_author_steps import run_plugin_author_flow
-from marketplace_steps import prepare_commit_project_fixture, run_marketplace_steps
+from marketplace_steps import prepare_commit_project_fixture, run_marketplace_steps, run_ordered_source_journey_steps
 from marketplace_steps import _registry_version, _output
 from adapter_defaults_steps import _config_difference_keys, run_adapter_default_steps
 from analytics_steps import run_analytics_steps
@@ -1126,9 +1126,8 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
         options.pop("text", None)
         return run_with_runner(command_runner, command, timeout=timeout, **options)
     project_a = Path(project_root).resolve()
-    package = "@kb-labs/commit-entry"
-    version = _registry_version(package, registry, project_a, env, runner)
-    install = kb_command([ "marketplace", "install", f"{package}@{version}", "--json"])
+    package = "@kb-labs/commit"
+    install = kb_command([ "marketplace", "install", package, "--json"])
     installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
                        text=True, timeout=300)
     _output(installed, install)
@@ -1289,6 +1288,9 @@ def main() -> int:
             if token is not None:
                 store_report_secret(flow_env, "KB_JOURNEY_SERVICE_TOKEN", token,
                                     "marketplace lifecycle service API bearer")
+            flow_env["KB_JOURNEY_PLATFORM_ROOT"] = journey_value("KB_JOURNEY_PLATFORM_ROOT", required=True)
+            flow_env["KB_JOURNEY_REGISTRY"] = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
+            run_ordered_source_journey_steps(journey, project_root, flow_env, run_command)
             run_marketplace_steps(journey, project_root, project_id, registry, flow_env,
                                   fixture_entry=fixture_entry)
 

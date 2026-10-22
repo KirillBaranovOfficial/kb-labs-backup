@@ -20,6 +20,8 @@ interface InstalledEntry {
   id: string;
   version: string;
   primaryKind: string;
+  source: 'registry' | 'npm' | 'local';
+  signatureStatus: 'verified' | 'unsigned' | 'not-applicable';
 }
 
 interface InstallResultData {
@@ -80,7 +82,7 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
             sections: [
               {
                 header: 'Installed',
-                items: result.installed.map(p => `${p.id}@${p.version} (${p.primaryKind})`),
+                items: result.installed.map(p => `${p.id}@${p.version} (${p.primaryKind}; ${p.signatureStatus}/${p.source})`),
               },
               ...(result.warnings.length > 0
                 ? [{ header: 'Warnings', items: result.warnings }]

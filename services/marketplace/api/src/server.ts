@@ -16,7 +16,7 @@ import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/cor
 import { registerRoutes } from './routes/index.js';
 import { MarketplaceInstallRollbackError, MarketplaceVersionError, type MarketplaceService } from '@kb-labs/marketplace-core';
 import { ScopeResolutionError, AdapterScopeError, InvalidEntityError, PackageClassificationError } from '@kb-labs/marketplace-core';
-import { PackageInstallError, PackageMetadataError } from '@kb-labs/marketplace-npm';
+import { PackageInstallError, PackageMetadataError, PlatformArtifactPinsError, RegistryPackageError } from '@kb-labs/marketplace-npm';
 import { ScopeRequestError } from './scope-parser.js';
 
 export interface CreateServerOptions {
@@ -134,16 +134,32 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
     code = 'KB_MARKETPLACE_PACKAGE_INVALID';
     message = err.message;
     hint = err instanceof PackageClassificationError ? err.hint : undefined;
+  } else if (err instanceof PlatformArtifactPinsError) {
+    code = 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING';
+    message = err.message;
+    hint = err.hint;
   } else if (err instanceof PackageMetadataError) {
     if (err.code === 'PACKAGE_NOT_FOUND') {
       code = 'KB_PLUGIN_NOT_FOUND';
       details = { plugin: err.packageId };
+    } else if (err.code === 'AUTH_FAILED') {
+      code = 'KB_MARKETPLACE_AUTH_FAILED';
+      details = { package: err.packageId, scope };
+    } else if (err.code === 'TRANSPORT_FAILED') {
+      code = 'KB_MARKETPLACE_TRANSPORT_FAILED';
+      details = { package: err.packageId, scope };
     } else {
       code = 'KB_MARKETPLACE_RESOLUTION_FAILED';
-      details = { package: err.packageId };
-      message = err.message;
-      hint = err.hint;
+      details = { package: err.packageId, scope };
     }
+  } else if (err instanceof RegistryPackageError) {
+    details = { package: err.identity, scope };
+    if (err.code === 'SIGNATURE_INVALID') { code = 'KB_MARKETPLACE_SIGNATURE_INVALID'; }
+    else if (err.code === 'INTEGRITY_MISMATCH') { code = 'KB_MARKETPLACE_INTEGRITY_MISMATCH'; }
+    else if (err.code === 'AUTH_FAILED') { code = 'KB_MARKETPLACE_AUTH_FAILED'; }
+    else if (err.code === 'TRANSPORT_FAILED') { code = 'KB_MARKETPLACE_TRANSPORT_FAILED'; }
+    else if (err.code === 'IDENTITY_RESERVED') { code = 'KB_MARKETPLACE_IDENTITY_RESERVED'; }
+    else { code = 'KB_MARKETPLACE_RESOLUTION_FAILED'; }
   } else if (err instanceof PackageInstallError) {
     if (err.code === 'NOT_FOUND') {
       code = 'KB_PLUGIN_NOT_FOUND';

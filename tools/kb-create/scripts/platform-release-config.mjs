@@ -21,11 +21,15 @@ export function readPlatformReleaseConfig(path) {
   const config = JSON.parse(json);
   const flow = config.profiles?.find(profile => profile.id === 'default')?.products?.release?.flows?.platform;
   const adapters = config.platform?.adapters;
+  const marketplaceSources = config.marketplace?.sources;
   if (!Array.isArray(flow?.platformMembers) || flow.platformMembers.length === 0) {
     throw new Error('release.flows.platform.platformMembers must be a non-empty array');
   }
   if (!adapters || typeof adapters !== 'object' || Array.isArray(adapters)) {
     throw new Error('platform.adapters is required for a platform release index');
+  }
+  if (marketplaceSources !== undefined && (!Array.isArray(marketplaceSources) || marketplaceSources.length === 0)) {
+    throw new Error('marketplace.sources must be a non-empty array when declared');
   }
   const additionalRequirements = flow.platformRequires ?? [];
   if (!Array.isArray(additionalRequirements) || additionalRequirements.some(slot => typeof slot !== 'string' || slot.length === 0)) {
@@ -39,6 +43,7 @@ export function readPlatformReleaseConfig(path) {
     ])],
     adapters,
     adapterOptions: config.platform.adapterOptions ?? {},
+    marketplaceSources,
   };
 }
 

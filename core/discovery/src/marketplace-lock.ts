@@ -24,9 +24,11 @@ export class MarketplaceLockValidationError extends Error {
   }
 }
 
+export type MarketplaceLockValidationReasonCode = 'invalid-lock' | 'marketplace-provenance-required';
+
 export type MarketplaceLockValidationResult =
   | { valid: true; lock: MarketplaceLock }
-  | { valid: false; entry?: string; reason: string };
+  | { valid: false; entry?: string; reasonCode: MarketplaceLockValidationReasonCode; reason: string };
 
 // ---------------------------------------------------------------------------
 // Read
@@ -76,13 +78,20 @@ export async function readMarketplaceLock(
   const validation = validateMarketplaceLock(parsed, scope);
   if (!validation.valid) {
     const isV2 = typeof parsed === 'object' && parsed !== null && 'schema' in parsed && parsed.schema === 'kb.marketplace/2';
-    diag.error('LOCK_SCHEMA_INVALID', isV2
+    const needsProvenance = validation.reasonCode === 'marketplace-provenance-required';
+    const code = needsProvenance ? 'MARKETPLACE_PROVENANCE_REQUIRED' : 'LOCK_SCHEMA_INVALID';
+    diag.error(code, isV2
       ? 'Lock file uses kb.marketplace/2 and cannot be read by this version.'
+      : needsProvenance
+        ? `Marketplace lock entry "${validation.entry ?? 'unknown'}" does not record source provenance.`
       : validation.entry
         ? `Invalid marketplace lock entry "${validation.entry}": ${validation.reason}`
         : validation.reason, {
+      ...(validation.entry ? { pluginId: validation.entry } : {}),
       filePath: lockPath,
-      remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.',
+      ...(needsProvenance && validation.entry
+        ? { remediation: `Run "kb marketplace install ${validation.entry} --scope ${scope}" to record Marketplace provenance.` }
+        : { remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.' }),
     });
     return null;
   }
@@ -110,7 +119,20 @@ export async function writeMarketplaceLock(
         ? { link: entry.link, enabled: entry.enabled ?? true, source: entry.source }
         : entry.source === 'platform'
           ? { version: entry.version, integrity: entry.integrity, package: entry.package, resolvedPath: entry.resolvedPath, enabled: entry.enabled ?? true, source: entry.source }
-          : { version: entry.version, integrity: entry.integrity, package: entry.package, enabled: entry.enabled ?? true, source: entry.source },
+          : {
+            version: entry.version,
+            integrity: entry.integrity,
+            package: entry.package,
+            ...(entry.resolvedPath && !entry.resolvedPath.startsWith('store:') ? { resolvedPath: entry.resolvedPath } : {}),
+            enabled: entry.enabled ?? true,
+            source: entry.source,
+            ...(entry.primaryKind ? { primaryKind: entry.primaryKind } : {}),
+            ...(entry.provides ? { provides: entry.provides } : {}),
+            marketplaceSource: entry.marketplaceSource,
+            signatureStatus: entry.signatureStatus,
+            ...(entry.signature ? { signature: entry.signature } : {}),
+            ...(entry.trust ? { trust: entry.trust } : {}),
+          },
     ])),
     ...(lock.adapters && Object.keys(lock.adapters).length > 0 ? {
       adapters: Object.fromEntries(Object.entries(lock.adapters).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([id, entry]) => [id, {
@@ -118,7 +140,8 @@ export async function writeMarketplaceLock(
         integrity: entry.integrity,
         resolvedPath: entry.resolvedPath,
         enabled: entry.enabled ?? true,
-        source: 'platform',
+        source: entry.source,
+        ...(entry.source === 'marketplace' ? { marketplaceSource: entry.marketplaceSource, signatureStatus: entry.signatureStatus } : {}),
       }]))
     } : {})
   };
@@ -158,16 +181,21 @@ export async function addToMarketplaceLock(
   const diag = new DiagnosticCollector();
   const existing = await readMarketplaceLock(root, diag, scope) ?? createEmptyLock();
   if (entry.primaryKind === 'adapter') {
-    if (entry.source !== 'platform') {
-      throw new MarketplaceLockValidationError(`Marketplace adapter "${packageId}" must use source "platform".`, packageId);
+    if (!entry.resolvedPath) {
+      throw new MarketplaceLockValidationError(`Marketplace adapter "${packageId}" requires a resolved installation path.`, packageId);
     }
     const existingEntry = existing.adapters?.[packageId];
-    const adapterEntry: MarketplaceAdapterEntry = {
-      source: 'platform',
+    const adapterEntry: MarketplaceAdapterEntry = entry.source === 'marketplace' ? {
+      source: 'marketplace',
       version: entry.version,
       integrity: entry.integrity,
       resolvedPath: entry.resolvedPath,
       enabled: existingEntry?.enabled ?? entry.enabled ?? true,
+      marketplaceSource: entry.marketplaceSource,
+      signatureStatus: entry.signatureStatus,
+    } : {
+      source: 'platform', version: entry.version, integrity: entry.integrity,
+      resolvedPath: entry.resolvedPath, enabled: existingEntry?.enabled ?? entry.enabled ?? true,
     };
     (existing.adapters ??= {})[packageId] = adapterEntry;
   } else {
@@ -221,7 +249,7 @@ export function createMarketplaceEntry(opts: {
   signature?: EntitySignature;
   trust?: 'trusted' | 'untrusted';
 } & (
-  | { source: 'marketplace'; package: string; resolvedPath?: string }
+  | { source: 'marketplace'; package: string; resolvedPath?: string; marketplaceSource: 'registry' | 'npm'; signatureStatus: 'verified' | 'unsigned' }
   | { source: 'platform'; package: string; resolvedPath: string }
   | { source: 'local'; package?: never; resolvedPath: string }
 )): MarketplaceEntry {
@@ -236,7 +264,7 @@ export function createMarketplaceEntry(opts: {
     return { ...metadata, source: 'local', version: opts.version, integrity: opts.integrity, link: opts.resolvedPath };
   }
   if (opts.source === 'marketplace') {
-    return { ...metadata, source: 'marketplace', version: opts.version, integrity: opts.integrity, package: opts.package, resolvedPath: opts.resolvedPath };
+    return { ...metadata, source: 'marketplace', version: opts.version, integrity: opts.integrity, package: opts.package, resolvedPath: opts.resolvedPath, marketplaceSource: opts.marketplaceSource, signatureStatus: opts.signatureStatus };
   }
   return { ...metadata, source: 'platform', version: opts.version, integrity: opts.integrity, package: opts.package, resolvedPath: opts.resolvedPath };
 }
@@ -292,59 +320,94 @@ export async function disablePlugin(root: string, packageId: string, scope: Mark
  * development lock shared by platform and project roles is platform-owned.
  */
 export function validateMarketplaceLock(value: unknown, scope: MarketplaceLockScope): MarketplaceLockValidationResult {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {return { valid: false, reason: 'lock must be an object' };}
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {return invalidLock('lock must be an object');}
   const obj = value as Record<string, unknown>;
   const unknownKey = Object.keys(obj).find((key) => !['schema', 'plugins', 'adapters'].includes(key));
-  if (unknownKey) {return { valid: false, reason: `unknown lock field "${unknownKey}"` };}
-  if (obj.schema !== SCHEMA_VERSION) {return { valid: false, reason: `lock schema must be ${SCHEMA_VERSION}` };}
-  if (scope === 'project' && Object.hasOwn(obj, 'adapters')) {return { valid: false, reason: 'project lock must not contain adapters' };}
-  if (typeof obj.plugins !== 'object' || obj.plugins === null || Array.isArray(obj.plugins)) {return { valid: false, reason: 'plugins must be an object' };}
-  if (obj.adapters !== undefined && (typeof obj.adapters !== 'object' || obj.adapters === null || Array.isArray(obj.adapters))) {return { valid: false, reason: 'adapters must be an object' };}
+  if (unknownKey) {return invalidLock(`unknown lock field "${unknownKey}"`);}
+  if (obj.schema !== SCHEMA_VERSION) {return invalidLock(`lock schema must be ${SCHEMA_VERSION}`);}
+  if (scope === 'project' && Object.hasOwn(obj, 'adapters')) {return invalidLock('project lock must not contain adapters');}
+  if (typeof obj.plugins !== 'object' || obj.plugins === null || Array.isArray(obj.plugins)) {return invalidLock('plugins must be an object');}
+  if (obj.adapters !== undefined && (typeof obj.adapters !== 'object' || obj.adapters === null || Array.isArray(obj.adapters))) {return invalidLock('adapters must be an object');}
   for (const [id, raw] of Object.entries(obj.plugins)) {
-    const reason = pluginEntryError(id, raw, scope);
-    if (reason) {return { valid: false, entry: id, reason };}
+    const failure = pluginEntryError(id, raw, scope);
+    if (failure) {return { ...failure, entry: id };}
   }
   for (const [id, raw] of Object.entries((obj.adapters ?? {}) as Record<string, unknown>)) {
-    const reason = adapterEntryError(id, raw);
-    if (reason) {return { valid: false, entry: id, reason };}
+    const failure = adapterEntryError(id, raw);
+    if (failure) {return { ...failure, entry: id };}
   }
   return { valid: true, lock: value as MarketplaceLock };
 }
 
-function pluginEntryError(id: string, raw: unknown, scope: MarketplaceLockScope): string | undefined {
-  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id)) {return 'entry ID must be a package name';}
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {return 'entry must be an object';}
+type LockValidationFailure = { valid: false; reasonCode: MarketplaceLockValidationReasonCode; reason: string };
+
+function invalidLock(reason: string): LockValidationFailure {
+  return { valid: false, reasonCode: 'invalid-lock', reason };
+}
+
+function missingProvenance(reason: string): LockValidationFailure {
+  return { valid: false, reasonCode: 'marketplace-provenance-required', reason };
+}
+
+function pluginEntryError(id: string, raw: unknown, scope: MarketplaceLockScope): LockValidationFailure | undefined {
+  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id)) {return invalidLock('entry ID must be a package name');}
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {return invalidLock('entry must be an object');}
   const entry = raw as Record<string, unknown>;
-  if (typeof entry.enabled !== 'boolean') {return 'enabled must be a boolean';}
-  if (!['marketplace', 'local', 'platform'].includes(String(entry.source))) {return 'source must be marketplace, local, or platform';}
-  if (scope === 'project' && !['marketplace', 'local'].includes(String(entry.source))) {return 'source must be marketplace or local in project locks';}
-  const allowed = entry.source === 'marketplace' ? ['version', 'integrity', 'package', 'enabled', 'source']
+  if (typeof entry.enabled !== 'boolean') {return invalidLock('enabled must be a boolean');}
+  if (!['marketplace', 'local', 'platform'].includes(String(entry.source))) {return invalidLock('source must be marketplace, local, or platform');}
+  if (entry.source === 'marketplace' && entry.marketplaceSource === undefined) {return missingProvenance('marketplaceSource is required');}
+  if (entry.source === 'marketplace' && !['registry', 'npm'].includes(String(entry.marketplaceSource))) {return invalidLock('marketplaceSource must be registry or npm');}
+  if (entry.source === 'marketplace' && entry.signatureStatus === undefined) {return missingProvenance('signatureStatus is required');}
+  if (entry.source === 'marketplace' && !['verified', 'unsigned'].includes(String(entry.signatureStatus))) {return invalidLock('signatureStatus must be verified or unsigned');}
+  if (scope === 'project' && !['marketplace', 'local'].includes(String(entry.source))) {return invalidLock('source must be marketplace or local in project locks');}
+  const allowed = entry.source === 'marketplace' ? ['version', 'integrity', 'package', 'resolvedPath', 'enabled', 'source', 'marketplaceSource', 'signatureStatus', 'signature', 'trust', 'primaryKind', 'provides']
     : entry.source === 'local' ? ['link', 'enabled', 'source']
       : ['version', 'integrity', 'package', 'resolvedPath', 'enabled', 'source'];
   const unknownKey = Object.keys(entry).find((key) => !allowed.includes(key));
-  if (unknownKey) {return `field "${unknownKey}" is not allowed for ${entry.source} entries`;}
+  if (unknownKey) {return invalidLock(`field "${unknownKey}" is not allowed for ${entry.source} entries`);}
   if (entry.source === 'local') {
-    return typeof entry.link === 'string' && !path.isAbsolute(entry.link) ? undefined : 'link must be a relative path';
+    return typeof entry.link === 'string' && isPortableRelativePath(entry.link) ? undefined : invalidLock('link must be a relative path');
   }
-  if (typeof entry.version !== 'string') {return 'version must be a string';}
-  if (!validIntegrity(entry.integrity)) {return 'integrity must be a valid sha256 or sha512 SRI value';}
-  if (typeof entry.package !== 'string' || !VALID_PACKAGE.test(entry.package)) {return 'package must be a valid npm package name';}
-  if (entry.source === 'platform' && typeof entry.resolvedPath !== 'string') {return 'resolvedPath must be a string';}
+  if (typeof entry.version !== 'string') {return invalidLock('version must be a string');}
+  if (!validIntegrity(entry.integrity)) {return invalidLock('integrity must be a valid sha256 or sha512 SRI value');}
+  if (typeof entry.package !== 'string' || !VALID_PACKAGE.test(entry.package)) {return invalidLock('package must be a valid npm package name');}
+  if (entry.source === 'platform' && typeof entry.resolvedPath !== 'string') {return invalidLock('resolvedPath must be a string');}
+  if (entry.resolvedPath !== undefined && (typeof entry.resolvedPath !== 'string' || !isPortableRelativePath(entry.resolvedPath))) {return invalidLock('resolvedPath must be a relative path');}
   return undefined;
 }
 
-function adapterEntryError(id: string, raw: unknown): string | undefined {
-  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id)) {return 'entry ID must be a package name';}
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {return 'entry must be an object';}
+function adapterEntryError(id: string, raw: unknown): LockValidationFailure | undefined {
+  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id)) {return invalidLock('entry ID must be a package name');}
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {return invalidLock('entry must be an object');}
   const entry = raw as Record<string, unknown>;
-  const unknownKey = Object.keys(entry).find((key) => !['version', 'integrity', 'resolvedPath', 'enabled', 'source'].includes(key));
-  if (unknownKey) {return `field "${unknownKey}" is not allowed for adapter entries`;}
-  if (entry.source !== 'platform') {return 'source must be platform';}
-  if (typeof entry.version !== 'string') {return 'version must be a string';}
-  if (!validIntegrity(entry.integrity)) {return 'integrity must be a valid sha256 or sha512 SRI value';}
-  if (typeof entry.resolvedPath !== 'string') {return 'resolvedPath must be a string';}
-  if (typeof entry.enabled !== 'boolean') {return 'enabled must be a boolean';}
+  const allowed = entry.source === 'marketplace'
+    ? ['version', 'integrity', 'resolvedPath', 'enabled', 'source', 'marketplaceSource', 'signatureStatus']
+    : ['version', 'integrity', 'resolvedPath', 'enabled', 'source'];
+  const unknownKey = Object.keys(entry).find((key) => !allowed.includes(key));
+  if (unknownKey) {return invalidLock(`field "${unknownKey}" is not allowed for adapter entries`);}
+  if (!['platform', 'marketplace'].includes(String(entry.source))) {return invalidLock('source must be platform or marketplace');}
+  if (entry.source === 'marketplace' && entry.marketplaceSource === undefined) {return missingProvenance('marketplaceSource is required');}
+  if (entry.source === 'marketplace' && !['registry', 'npm'].includes(String(entry.marketplaceSource))) {return invalidLock('marketplaceSource must be registry or npm');}
+  if (entry.source === 'marketplace' && entry.signatureStatus === undefined) {return missingProvenance('signatureStatus is required');}
+  if (entry.source === 'marketplace' && !['verified', 'unsigned'].includes(String(entry.signatureStatus))) {return invalidLock('signatureStatus must be verified or unsigned');}
+  if (typeof entry.version !== 'string') {return invalidLock('version must be a string');}
+  if (!validIntegrity(entry.integrity)) {return invalidLock('integrity must be a valid sha256 or sha512 SRI value');}
+  if (typeof entry.resolvedPath !== 'string' || !isPortableRelativePath(entry.resolvedPath)) {return invalidLock('resolvedPath must be a relative path');}
+  if (typeof entry.enabled !== 'boolean') {return invalidLock('enabled must be a boolean');}
   return undefined;
+}
+
+export function isPortableRelativePath(value: string, scopeRoot?: string): boolean {
+  if (!value || path.isAbsolute(value) || path.win32.isAbsolute(value) || path.win32.parse(value).root !== '') {return false;}
+  const normalized = path.posix.normalize(value.replaceAll('\\', '/'));
+  if (normalized.startsWith('/') || normalized === '..' || normalized.startsWith('../')) {return false;}
+  if (scopeRoot !== undefined) {
+    const resolvedRoot = path.resolve(scopeRoot);
+    const resolvedPath = path.resolve(resolvedRoot, ...normalized.split('/'));
+    const relativePath = path.relative(resolvedRoot, resolvedPath);
+    if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {return false;}
+  }
+  return true;
 }
 
 function validIntegrity(value: unknown): value is string {

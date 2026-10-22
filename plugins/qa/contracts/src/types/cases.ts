@@ -1,5 +1,5 @@
 export type QACasePriority = 'P0' | 'P1' | 'P2';
-export type QACaseStatus = 'active' | 'planned' | 'historical';
+export type QACaseStatus = 'active' | 'planned' | 'draft' | 'historical';
 export type QACaseMode = 'local' | 'secured';
 export type QACaseSurface = 'cli' | 'studio' | 'api' | 'agent';
 export type QACaseClaimKind = 'journey' | 'e2e' | 'unit';
@@ -84,7 +84,7 @@ export const QA_CASE_COVERAGE_JSON_SCHEMA = {
         properties: {
           id: { type: 'string', pattern: '^(S|PC)-[0-9]{3}$' },
           title: { type: 'string' },
-          status: { enum: ['active', 'planned', 'historical'] },
+          status: { enum: ['active', 'planned', 'draft', 'historical'] },
           release: { type: 'boolean' },
           statusResult: { enum: ['PASS', 'FAIL', 'NOT RUN', 'NOT COVERED', 'NOT REQUIRED'] },
           reason: { type: 'string' },

@@ -62,6 +62,21 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	if err := commandDeps.NodeCheck(); err != nil {
 		return updateCommandResult{}, sharedtoolchain.NodeCheckDiagnostic(err)
 	}
+	if input.Direct.MarketplaceRegistryURL == "" && input.Direct.MarketplaceSigningKeyEnv == "" && input.Direct.MarketplaceTokenEnv == "" && input.Direct.MarketplaceNpmURL == "" {
+		root := input.Direct.PlatformRoot
+		if root == "" {
+			root = defaultPlatformRoot()
+		}
+		if layout, err := versionroot.ForPlatformPath(root); err == nil {
+			if active, readErr := receipt.Read(layout.PlatformRoot()); readErr == nil && active.Plan.Request.MarketplaceSources != nil {
+				sources := active.Plan.Request.MarketplaceSources
+				input.Direct.MarketplaceRegistryURL = sources.RegistryURL
+				input.Direct.MarketplaceSigningKeyEnv = sources.SigningPublicKeyEnv
+				input.Direct.MarketplaceTokenEnv = sources.RegistryTokenEnv
+				input.Direct.MarketplaceNpmURL = sources.NpmURL
+			}
+		}
+	}
 	resolved, failure := resolvePlan(planInput{Operation: "update", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
 		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable})
 	if failure != nil {

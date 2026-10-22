@@ -1,5 +1,5 @@
 /**
- * @module @kb-labs/core-runtime/config-interpolation
+ * @module @kb-labs/core-config/env-interpolation
  *
  * Resolves ${ENV_VAR} placeholders in platform config strings.
  * Applied once at startup — before config is used by loader.ts.
@@ -10,6 +10,8 @@
  * Throws if a referenced env var is missing (fail-fast in production).
  * Set required=false per-call to warn instead of throw (dev/test mode).
  */
+
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform/error-envelope';
 
 /**
  * Replace all ${VAR_NAME} patterns in a string with process.env values.
@@ -24,10 +26,9 @@ export function interpolateString(
     const resolved = env[varName];
     if (resolved === undefined) {
       if (required) {
-        throw new Error(
-          `Config interpolation error: environment variable "${varName}" is not set. ` +
-          `Found in config value: "${value}"`,
-        );
+        throw new ErrorEnvelopeError(createErrorEnvelope('KB_CONFIG_SECRET_MISSING', {
+          details: { variable: varName },
+        }));
       }
       // This runs before the platform logger exists, so use the process-level
       // log setting. In particular, silent must also apply to bootstrap

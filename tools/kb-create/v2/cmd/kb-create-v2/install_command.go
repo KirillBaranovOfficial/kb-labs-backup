@@ -226,6 +226,9 @@ func mergeDirectRequest(request contracts.InstallRequest, direct directRequest) 
 	if direct.GatewayURL != "" {
 		request.GatewayURL = fields.GatewayURL
 	}
+	if direct.MarketplaceRegistryURL != "" || direct.MarketplaceSigningKeyEnv != "" || direct.MarketplaceTokenEnv != "" || direct.MarketplaceNpmURL != "" {
+		request.MarketplaceSources = fields.MarketplaceSources
+	}
 	if direct.Plugins != "" {
 		request.Plugins = fields.Plugins
 	}

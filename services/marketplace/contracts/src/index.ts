@@ -6,6 +6,9 @@
 export type {
   // PackageSource
   PackageSource,
+  MarketplaceSource,
+  MarketplaceSourceKind,
+  MarketplaceSourceResolution,
   MarketplaceEntryWithId,
   ResolvedPackage,
   InstalledPackage,
@@ -35,4 +38,5 @@ export type {
   InstallResultEntry,
   DoctorReport,
   DoctorIssue,
+  MarketplaceProvenance,
 } from './types.js';

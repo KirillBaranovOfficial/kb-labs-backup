@@ -13,4 +13,5 @@ export type {
   RegistryConfig,
   PackageStats,
   RegistryErrorCode,
+  RegistryIdentityResolution,
 } from './types.js';

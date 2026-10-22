@@ -36,6 +36,7 @@ import {
 } from '@kb-labs/core-discovery';
 import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import type {
+  MarketplaceSource,
   PackageSource,
   EntityKindStrategy,
   MarketplaceServiceAPI,
@@ -70,10 +71,8 @@ export interface MarketplaceServiceOptions {
    * provided, per-call `ctx.projectRoot` wins.
    */
   projectRoot?: string;
-  /** Default package source (npm/pnpm) */
-  source: PackageSource;
-  /** KB Registry package source — used for specs starting with 'kb:' */
-  registrySource?: PackageSource;
+  /** Ordered identity sources from platform config; Registry precedes npm when configured. */
+  sources: MarketplaceSource[];
   /** Shared machine store. When set, packages never enter project node_modules. */
   extensionStore?: IExtensionStore;
   /** Platform logger used by lifecycle strategies. */
@@ -101,14 +100,46 @@ export class MarketplaceVersionError extends Error {
   }
 }
 
+function verifyResolvedArtifact(
+  resolved: Awaited<ReturnType<PackageSource['resolve']>>,
+  source: MarketplaceSource,
+  scope: MarketplaceScope,
+): { signatureStatus: 'verified' | 'unsigned' } {
+  if (source.kind !== 'registry') { return { signatureStatus: 'unsigned' }; }
+  if (!resolved.integrity) {
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_INTEGRITY_MISMATCH', {
+      details: { package: resolved.id, scope },
+    }));
+  }
+  const signature = resolved.signature;
+  const verificationKey = source.verificationKey;
+  if (!signature || signature.algorithm !== 'ed25519' || !resolved.signatureSubject || !verificationKey) {
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_SIGNATURE_INVALID', {
+      details: { package: resolved.id, scope },
+    }));
+  }
+  const payload = Buffer.from(JSON.stringify({ integrity: resolved.integrity, pkg: `${resolved.signatureSubject}@${resolved.version}` }));
+  let valid = false;
+  try {
+    valid = crypto.verify(null, payload, { key: verificationKey, format: 'pem' }, Buffer.from(signature.value, 'base64'));
+  } catch {
+    valid = false;
+  }
+  if (!valid) {
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_SIGNATURE_INVALID', {
+      details: { package: resolved.id, scope },
+    }));
+  }
+  return { signatureStatus: 'verified' };
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
 export class MarketplaceService implements MarketplaceServiceAPI {
   private readonly roots: ServiceRoots;
-  private readonly source: PackageSource;
-  private readonly registrySource?: PackageSource;
+  private readonly sources: MarketplaceSource[];
   private readonly extensionStore?: IExtensionStore;
   private readonly logger: ILogger;
   private readonly strategies = new Map<EntityKind, EntityKindStrategy>();
@@ -123,8 +154,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
   constructor(opts: MarketplaceServiceOptions) {
     this.roots = { platformRoot: opts.platformRoot, projectRoot: opts.projectRoot };
-    this.source = opts.source;
-    this.registrySource = opts.registrySource;
+    this.sources = opts.sources;
     this.extensionStore = opts.extensionStore;
     this.logger = opts.logger;
 
@@ -170,24 +200,31 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
 
     for (const spec of specs) {
-      // Route kb: specs to registry source; fall back to npm source
-      const isKbSpec = spec.startsWith('kb:');
-      if (isKbSpec && !this.registrySource) {
-        warnings.push(`Registry source not configured — cannot install '${spec}'. Set marketplace.registry.url in kb.config.json.`);
-        continue;
+      let source: MarketplaceSource | undefined;
+      let resolved: Awaited<ReturnType<MarketplaceSource['resolve']>> | undefined;
+      for (const configuredSource of this.sources) {
+        const candidateSource = opts?.shareToken && configuredSource.withShareToken
+          ? configuredSource.withShareToken(opts.shareToken)
+          : configuredSource;
+        const result = await candidateSource.resolveIdentity(spec);
+        if (result.status === 'not-found-owned') {
+          throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_IDENTITY_RESERVED', { details: { package: spec, scope: ctx.scope } }));
+        }
+        if (result.status === 'not-found-unowned') { continue; }
+        source = candidateSource;
+        resolved = { ...result.package, source: 'marketplace' };
+        break;
       }
-      let source = isKbSpec ? this.registrySource! : this.source;
-      if (isKbSpec && opts?.shareToken && source.withShareToken) {
-        source = source.withShareToken(opts.shareToken);
+      if (!source || !resolved) {
+        throw new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_FOUND', { details: { plugin: spec } }));
       }
-
-      const resolved = await source.resolve(spec);
       if (!resolved.primaryKind) {
         throw new PackageClassificationError(
           resolved.id,
           resolved.version,
         );
       }
+      const verification = verifyResolvedArtifact(resolved, source, ctx.scope);
       const installedPin = findInstalledPin(lock, resolved.id);
       if (installedPin) {
         const installedVersion = installedPin.version;
@@ -243,8 +280,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         ? await strategy.extractProvides(result.packageRoot)
         : [primaryKind];
 
-      // Packages from registry with a platform signature are trusted and sealed
-      const trust: 'trusted' | 'untrusted' = resolved.signature ? 'trusted' : 'untrusted';
+      const trust: 'trusted' | 'untrusted' = verification.signatureStatus === 'verified' ? 'trusted' : 'untrusted';
 
       // Write to marketplace.lock
       const entryOptions = {
@@ -254,17 +290,16 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         provides,
         trust,
         signature: resolved.signature,
+        marketplaceSource: source.kind,
+        signatureStatus: verification.signatureStatus,
       };
       const packagePath = usesExtensionStore
           ? `store:${encodeURIComponent(result.id)}@${encodeURIComponent(result.version)}`
           : relativeToRoot(scopeRoot, result.packageRoot);
-      const entrySource = usesExtensionStore ? resolved.source
-        : ctx.scope === 'platform' && resolved.source === 'marketplace' ? 'platform' : resolved.source;
-      const entry = entrySource === 'platform'
-        ? createMarketplaceEntry({ ...entryOptions, source: 'platform', package: result.id, resolvedPath: packagePath })
-        : entrySource === 'marketplace'
-          ? createMarketplaceEntry({ ...entryOptions, source: 'marketplace', package: result.id, resolvedPath: packagePath })
-          : createMarketplaceEntry({ ...entryOptions, source: 'local', resolvedPath: packagePath });
+      const entrySource = resolved.source;
+      const entry = entrySource === 'marketplace'
+        ? createMarketplaceEntry({ ...entryOptions, source: 'marketplace', package: result.id, resolvedPath: packagePath })
+        : createMarketplaceEntry({ ...entryOptions, source: 'local', resolvedPath: packagePath });
 
       await addToMarketplaceLock(scopeRoot, canonicalId, entry, ctx.scope);
 
@@ -289,6 +324,8 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         provides,
         packageRoot: result.packageRoot,
         scope: ctx.scope,
+        source: source.kind,
+        signatureStatus: verification.signatureStatus,
       });
       if (!usesExtensionStore) {await source.commitInstall(result.id, scopeRoot);}
       } catch (error) {
@@ -352,7 +389,8 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       await removeFromMarketplaceLock(scopeRoot, id, ctx.scope);
       await removeCacheEntry(scopeRoot, id);
       if (!this.extensionStore && packageName) {
-        await this.source.remove(packageName, scopeRoot);
+        const source = entry.source === 'marketplace' ? this.sources.find(item => item.kind === entry.marketplaceSource) : this.sources[0];
+        if (source) { await source.remove(packageName, scopeRoot); }
       }
     }
   }
@@ -429,7 +467,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       await strategy.afterInstall(canonicalId, absPath, this, ctx);
     }
 
-    return { id: canonicalId, version, primaryKind, provides, packageRoot: absPath, scope: ctx.scope };
+    return { id: canonicalId, version, primaryKind, provides, packageRoot: absPath, scope: ctx.scope, source: 'local', signatureStatus: 'not-applicable' };
   }
 
   async unlink(ctx: ScopeContext, packageId: string): Promise<void> {
@@ -743,10 +781,19 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const issues: DoctorIssue[] = [];
 
     if (!lock) {
-      return { ok: true, total: 0, issues: [{ severity: 'info', packageId: '', message: 'No marketplace.lock found' }] };
+      const provenanceError = diag.getEvents().find(event => event.code === 'MARKETPLACE_PROVENANCE_REQUIRED');
+      if (provenanceError?.context?.pluginId) {
+        throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_PROVENANCE_REQUIRED', {
+          details: { package: provenanceError.context.pluginId, scope: ctx.scope },
+        }));
+      }
+      return { ok: true, total: 0, issues: [{ severity: 'info', packageId: '', message: 'No marketplace.lock found' }], provenance: [] };
     }
 
     const entries = [...Object.entries(lock.plugins), ...Object.entries(lock.adapters ?? {})];
+    const provenance = entries.flatMap(([packageId, entry]) => entry.source === 'marketplace' ? [{
+      packageId, source: entry.marketplaceSource, integrity: entry.integrity, signatureStatus: entry.signatureStatus,
+    }] : []);
 
     for (const [id, entry] of entries) {
       let pkgRoot: string | undefined;
@@ -763,7 +810,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           severity: 'error',
           packageId: id,
           diagnosticCode: 'PACKAGE_NOT_FOUND',
-          message: `Pinned package ${id}@${entry.version ?? 'unknown version'} is missing from its configured location`,
+          message: `Pinned package ${id}@${entry.version ?? 'unknown version'} was not found at its configured location`,
           remediation: `Run "kb marketplace install ${id}" to restore`,
         });
         continue;
@@ -826,11 +873,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       ok: issues.filter(i => i.severity === 'error').length === 0,
       total: entries.length,
       issues,
+      provenance,
     };
   }
 
   private async resolveEntryPath(scopeRoot: string, id: string, entry: MarketplaceLockEntry): Promise<string | undefined> {
-    if (entry.source === 'marketplace' && this.extensionStore && entry.version) {
+    if (entry.source === 'marketplace' && 'package' in entry && this.extensionStore && entry.version) {
       return (await this.extensionStore.lookup({ name: entry.package, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
     }
     if ('link' in entry && entry.link) {return path.resolve(scopeRoot, entry.link);}

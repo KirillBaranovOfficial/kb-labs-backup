@@ -4,20 +4,21 @@
  * Resolves/installs packages from the KB Registry (kb:handle/name spec).
  */
 
-import { createHash, createVerify } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { extract } from 'tar';
 import * as os from 'node:os';
-import type { PackageSource, ResolvedPackage, InstalledPackage } from '@kb-labs/marketplace-contracts';
-import type { EntitySignature } from '@kb-labs/core-discovery';
+import type { MarketplaceSource, ResolvedPackage, InstalledPackage } from '@kb-labs/marketplace-contracts';
 
 export class RegistryPackageError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  readonly identity: string;
+  constructor(code: string, message: string, identity: string) {
     super(message);
     this.name = 'RegistryPackageError';
     this.code = code;
+    this.identity = identity;
   }
 }
 
@@ -29,118 +30,61 @@ export interface RegistrySourceOptions {
   /** Share token for token-based private access */
   shareToken?: string;
   /** Ed25519 public key (PEM) for signature verification */
-  signingPublicKey?: string;
+  signingPublicKey: string;
 }
 
-export class RegistryPackageSource implements PackageSource {
+export class RegistryPackageSource implements MarketplaceSource {
+  readonly kind = 'registry' as const;
+  readonly verificationKey: string;
   private readonly baseUrl: string;
   private readonly authToken?: string;
   private readonly shareToken?: string;
-  private readonly signingPublicKey?: string;
   private readonly pendingInstalls = new Map<string, { packageRoot: string; backupPath?: string }>();
 
   constructor(opts: RegistrySourceOptions) {
     this.baseUrl = opts.registryUrl.replace(/\/$/, '');
     this.authToken = opts.authToken;
     this.shareToken = opts.shareToken;
-    this.signingPublicKey = opts.signingPublicKey;
+    if (!opts.signingPublicKey) {
+      throw new RegistryPackageError('KB_CONFIG_SECRET_MISSING', 'Registry signing public key is required by marketplace.sources.', 'unknown');
+    }
+    this.verificationKey = opts.signingPublicKey;
   }
 
-  /** Returns true if spec is a kb: registry spec */
-  static accepts(spec: string): boolean {
-    return spec.startsWith('kb:');
-  }
-
-  /** Parse 'kb:handle/name[@version]' → { handle, name, version }
-   *  Handles scoped package names like kb:handle/@scope/name[@version].
-   */
-  static parseSpec(spec: string): { handle: string; name: string; version: string } {
-    const raw = spec.slice(3); // strip 'kb:'
-    const firstSlash = raw.indexOf('/');
-    if (firstSlash === -1) {
-      throw new RegistryPackageError('INVALID_SPEC', `Invalid kb: spec '${spec}'. Expected kb:handle/name[@version]`);
+  async resolveIdentity(identity: string) {
+    const response = await this.fetch(`${this.baseUrl}/api/v1/resolve?identity=${encodeURIComponent(identity)}`, identity);
+    if (!response.ok) {
+      throw new RegistryPackageError(response.status === 401 || response.status === 403 ? 'AUTH_FAILED' : 'RESOLUTION_FAILED', `Registry identity resolution failed with HTTP ${response.status}`, identity);
     }
-    const handle = raw.slice(0, firstSlash);
-    const nameAndVersion = raw.slice(firstSlash + 1);
-
-    // Find version separator: last '@' that appears after the package name.
-    // For scoped names (@scope/pkg), skip the leading '@' and the slash that follows it.
-    let versionAtIdx = -1;
-    if (nameAndVersion.startsWith('@')) {
-      // scoped: @scope/pkg[@version] — look for '@' after the second '/'
-      const secondSlash = nameAndVersion.indexOf('/', 1);
-      if (secondSlash !== -1) {
-        versionAtIdx = nameAndVersion.indexOf('@', secondSlash + 1);
-      }
-    } else {
-      versionAtIdx = nameAndVersion.indexOf('@');
-    }
-
-    const name = versionAtIdx > 0 ? nameAndVersion.slice(0, versionAtIdx) : nameAndVersion;
-    const version = versionAtIdx > 0 ? nameAndVersion.slice(versionAtIdx + 1) : 'latest';
-
-    if (!handle || !name) {
-      throw new RegistryPackageError('INVALID_SPEC', `Invalid kb: spec '${spec}'. Expected kb:handle/name[@version]`);
-    }
-    return { handle, name, version };
+    const result = await response.json() as import('@kb-labs/marketplace-contracts').MarketplaceSourceResolution;
+    if (result.status !== 'found') { return result; }
+    return result;
   }
 
   async resolve(spec: string): Promise<ResolvedPackage> {
-    const { handle, name, version } = RegistryPackageSource.parseSpec(spec);
-    const url = `${this.baseUrl}/api/v1/packages/${handle}/${encodeURIComponent(name)}`;
-    const resp = await this.fetch(url);
-    if (!resp.ok) {
-      throw new RegistryPackageError('PACKAGE_NOT_FOUND', `Package ${handle}/${name} not found in registry`);
-    }
-    const entry = await resp.json() as {
-      primaryKind?: ResolvedPackage['primaryKind'];
-      versions?: Array<{ version: string; integrity: string; yanked?: boolean; signature?: EntitySignature }>;
-    };
-
-    const versions = entry.versions ?? [];
-    const resolved = version === 'latest'
-      ? versions.filter(v => !v.yanked).at(-1)
-      : versions.find(v => v.version === version);
-
-    if (!resolved) {
-      throw new RegistryPackageError('VERSION_NOT_FOUND', `Version ${version} not found for ${handle}/${name}`);
-    }
-    if (resolved.yanked) {
-      throw new RegistryPackageError('VERSION_YANKED', `Version ${version} of ${handle}/${name} has been yanked`);
-    }
-
-    return {
-      id: `${handle}/${name}`,
-      version: resolved.version,
-      integrity: resolved.integrity,
-      signature: resolved.signature,
-      source: 'marketplace',
-      ...(entry.primaryKind ? { primaryKind: entry.primaryKind } : {}),
-      downloadUrl: `${this.baseUrl}/api/v1/packages/${handle}/${encodeURIComponent(name)}/${resolved.version}/tarball`,
-    };
+    const result = await this.resolveIdentity(spec);
+    if (result.status === 'not-found-owned') { throw new RegistryPackageError('IDENTITY_RESERVED', `Identity ${spec} is owned by the Registry.`, spec); }
+    if (result.status !== 'found') { throw new RegistryPackageError('PACKAGE_NOT_FOUND', `Identity ${spec} was not found in the Registry`, spec); }
+    return { ...result.package, source: 'marketplace' };
   }
 
   async install(pkg: ResolvedPackage, root: string): Promise<InstalledPackage> {
     if (!pkg.downloadUrl) {
-      throw new RegistryPackageError('NO_DOWNLOAD_URL', 'Missing downloadUrl in ResolvedPackage');
+      throw new RegistryPackageError('RESOLUTION_FAILED', 'Missing downloadUrl in ResolvedPackage', pkg.id);
     }
 
-    const resp = await this.fetch(pkg.downloadUrl);
+    const resp = await this.fetch(pkg.downloadUrl, pkg.id);
     if (!resp.ok) {
-      throw new RegistryPackageError('DOWNLOAD_FAILED', `Failed to download ${pkg.id}@${pkg.version}: ${resp.status}`);
+      throw new RegistryPackageError(resp.status === 401 || resp.status === 403 ? 'AUTH_FAILED' : 'TRANSPORT_FAILED', `Failed to download ${pkg.id}@${pkg.version}: ${resp.status}`, pkg.id);
     }
 
     const tarball = Buffer.from(await resp.arrayBuffer());
 
     // Verify integrity
+    if (!pkg.integrity) { throw new RegistryPackageError('INTEGRITY_MISMATCH', `Registry did not provide an integrity pin for ${pkg.id}@${pkg.version}`, pkg.id); }
     const actualIntegrity = `sha256-${createHash('sha256').update(tarball).digest('base64')}`;
-    if (pkg.integrity && actualIntegrity !== pkg.integrity) {
-      throw new RegistryPackageError('INTEGRITY_MISMATCH', `Integrity mismatch for ${pkg.id}@${pkg.version}`);
-    }
-
-    // Verify platform signature (for trusted packages)
-    if (pkg.signature) {
-      this.verifySignature(tarball, pkg.integrity, pkg.signature, pkg.id, pkg.version);
+    if (actualIntegrity !== pkg.integrity) {
+      throw new RegistryPackageError('INTEGRITY_MISMATCH', `Integrity mismatch for ${pkg.id}@${pkg.version}`, pkg.id);
     }
 
     // Extract to node_modules (write tarball to temp file first — tar requires a path)
@@ -170,7 +114,7 @@ export class RegistryPackageSource implements PackageSource {
       }
       throw error;
     } finally {
-      await fs.unlink(tmpFile).catch(() => { /* ignore */ });
+      await fs.rm(tmpFile, { force: true });
     }
 
     return { id: pkg.id, version: pkg.version, packageRoot, integrity: actualIntegrity };
@@ -181,13 +125,12 @@ export class RegistryPackageSource implements PackageSource {
       registryUrl: this.baseUrl,
       authToken: this.authToken,
       shareToken: token,
-      signingPublicKey: this.signingPublicKey,
+      signingPublicKey: this.verificationKey,
     });
   }
 
-  async remove(_packageId: string, _root: string): Promise<void> {
-    // Removal delegates to npm/fs — RegistryPackageSource doesn't manage node_modules cleanup
-    throw new RegistryPackageError('UNSUPPORTED', 'Use npm source for remove operations');
+  async remove(packageId: string, root: string): Promise<void> {
+    await fs.rm(path.join(root, 'node_modules', packageId), { recursive: true, force: true });
   }
 
   async commitInstall(packageId: string, root: string): Promise<void> {
@@ -212,30 +155,15 @@ export class RegistryPackageSource implements PackageSource {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
-  private async fetch(url: string): Promise<Response> {
+  private async fetch(url: string, identity: string): Promise<Response> {
     const headers: Record<string, string> = {};
     if (this.authToken) { headers['Authorization'] = `Bearer ${this.authToken}`; }
     if (this.shareToken) { headers['X-Share-Token'] = this.shareToken; }
-    return globalThis.fetch(url, { headers });
-  }
-
-  private verifySignature(
-    tarball: Buffer,
-    integrity: string,
-    signature: EntitySignature,
-    id: string,
-    version: string,
-  ): void {
-    if (!this.signingPublicKey) { return; } // no key = skip verification
-    const payload = Buffer.from(JSON.stringify({ integrity, pkg: `${id}@${version}` }));
-    const verify = createVerify('sha256');
-    verify.update(payload);
-    const valid = verify.verify(
-      { key: this.signingPublicKey, format: 'pem' },
-      Buffer.from(signature.value, 'base64'),
-    );
-    if (!valid) {
-      throw new RegistryPackageError('SIGNATURE_INVALID', `Platform signature invalid for ${id}@${version}`);
+    try {
+      return await globalThis.fetch(url, { headers });
+    } catch (error) {
+      throw new RegistryPackageError('TRANSPORT_FAILED', `Registry request failed: ${error instanceof Error ? error.message : String(error)}`, identity);
     }
   }
+
 }

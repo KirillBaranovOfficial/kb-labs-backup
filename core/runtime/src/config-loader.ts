@@ -56,6 +56,7 @@ import {
   validateProductConfig,
   type Diagnostic,
   type FieldMergePolicy,
+  interpolateConfig,
 } from "@kb-labs/core-config";
 import { DiscoveryManager } from "@kb-labs/core-discovery";
 import { findRegisteredProjectRoot, resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
@@ -63,7 +64,6 @@ import { canonicalizeProjectPath, createProjectRegistry, ProjectRegistryError } 
 import { AdapterProjectScopeError, PlatformConfigError, registerProcessSensitiveValues } from "@kb-labs/core-platform";
 
 import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
-import { interpolateConfig } from "./config-interpolation.js";
 import { requireProjectContext } from "./project-context.js";
 import { applyLocalNetworkOffset } from "./config-net-offset.js";
 import { isWorkspaceDevelopmentMode } from "./platform-mode.js";

@@ -81,9 +81,10 @@ function parseCase(file: string, source: string, errors: QACatalogDiagnostic[]):
   const priority = value('priority');
   if (!['P0', 'P1', 'P2'].includes(priority)) { errors.push(diagnostic(file, values.get('priority')?.line ?? 1, 'priority must be P0, P1, or P2')); invalid = true; }
   const status = value('status');
-  if (!['active', 'planned', 'historical'].includes(status)) { errors.push(diagnostic(file, values.get('status')?.line ?? 1, 'status must be active, planned, or historical')); invalid = true; }
+  if (!['active', 'planned', 'draft', 'historical'].includes(status)) { errors.push(diagnostic(file, values.get('status')?.line ?? 1, 'status must be active, planned, draft, or historical')); invalid = true; }
   const release = value('release');
   if (!['true', 'false'].includes(release)) { errors.push(diagnostic(file, values.get('release')?.line ?? 1, 'release must be true or false')); invalid = true; }
+  if (status === 'draft' && release !== 'false') { errors.push(diagnostic(file, values.get('release')?.line ?? 1, 'draft cases must set release: false')); invalid = true; }
   const modes = list(values.get('modes')?.value, lines, (values.get('modes')?.line ?? 0));
   const surfaces = list(values.get('surfaces')?.value, lines, (values.get('surfaces')?.line ?? 0));
   const supersededBy = value('superseded_by');

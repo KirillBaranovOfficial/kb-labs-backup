@@ -14,6 +14,7 @@ import type {
   RegistryPackageSummary,
   PackageStats,
   ShareToken,
+  RegistryIdentityResolution,
 } from '@kb-labs/marketplace-registry-contracts';
 import type { EntitySignature } from '@kb-labs/core-discovery';
 
@@ -22,6 +23,22 @@ const CACHE_TTL_META = 5 * 60 * 1000;
 const CACHE_TTL_SEARCH = 60 * 1000;
 const CACHE_TTL_SHARE_DEFAULT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_TARBALL_SIZE = 50 * 1024 * 1024; // 50 MB
+
+function shortIdentity(identity: string): string {
+  return identity.slice(identity.lastIndexOf('/') + 1);
+}
+
+function canonicalIdentityNamespace(identity: string): string | undefined {
+  const separator = identity.indexOf('/');
+  if (!identity.startsWith('@') || separator <= 1 || separator === identity.length - 1) { return undefined; }
+  return identity.slice(0, separator);
+}
+
+function identityHandle(identity: string): string | undefined {
+  const separator = identity.indexOf('/');
+  if (identity.startsWith('@') || separator <= 0 || separator === identity.length - 1) { return undefined; }
+  return identity.slice(0, separator);
+}
 
 export interface RegistryServiceOptions {
   storage: IStorage;
@@ -165,7 +182,7 @@ export class RegistryService {
       visibility,
       trust: entry.trust,
       signature,
-      installCommand: `kb marketplace install kb:${fullName}`,
+      installCommand: `kb marketplace install ${entry.meta.identity}`,
       pageUrl: this.siteUrl ? `${this.siteUrl}/ru/marketplace/${fullName}` : undefined,
     };
   }
@@ -290,6 +307,47 @@ export class RegistryService {
     const entry = await this.loadEntry(authorHandle, name);
     if (entry) { await this.cache.set(cacheKey, entry, CACHE_TTL_META); }
     return entry;
+  }
+
+  async resolveIdentity(identity: string): Promise<RegistryIdentityResolution> {
+    const paths = (await this.storage.list(`${STORAGE_PREFIX}/packages/`)).filter(path => path.endsWith('/meta.json'));
+    const entries: RegistryEntry[] = [];
+    for (const path of paths) {
+      const raw = await this.storage.read(path);
+      if (raw) { entries.push(JSON.parse(raw.toString()) as RegistryEntry); }
+    }
+
+    const matches = entries.filter(entry => entry.meta.identity === identity || shortIdentity(entry.meta.identity) === identity);
+    if (matches.length > 1) {
+      throw Object.assign(new Error(`Marketplace identity ${identity} is ambiguous in the Registry.`), { code: 'IDENTITY_AMBIGUOUS' });
+    }
+    const entry = matches[0];
+    if (entry) {
+      const latest = entry.versions.filter(version => !version.yanked).at(-1);
+      if (!latest || entry.deprecated) { return { status: 'not-found-owned' }; }
+      return {
+        status: 'found',
+        package: {
+          id: entry.meta.name,
+          version: latest.version,
+          integrity: latest.integrity,
+          ...(latest.signature ? { signature: latest.signature } : {}),
+          primaryKind: entry.primaryKind,
+          downloadUrl: `${this.baseUrl}/api/v1/packages/${entry.authorHandle}/${encodeURIComponent(entry.name)}/${latest.version}/tarball`,
+          signatureSubject: `${entry.authorHandle}/${entry.name}`,
+        },
+      };
+    }
+
+    const namespace = canonicalIdentityNamespace(identity);
+    if (namespace && entries.some(candidate => canonicalIdentityNamespace(candidate.meta.identity) === namespace)) {
+      return { status: 'not-found-owned' };
+    }
+    const handle = identityHandle(identity);
+    if (handle && entries.some(candidate => candidate.authorHandle === handle)) {
+      return { status: 'not-found-owned' };
+    }
+    return { status: 'not-found-unowned' };
   }
 
   async getStats(authorHandle: string, name: string): Promise<PackageStats> {

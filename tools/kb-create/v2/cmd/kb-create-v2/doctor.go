@@ -56,8 +56,9 @@ func (r recoverRequest) args() []string {
 }
 
 type doctorCommandResult struct {
-	Operation string `json:"operation"`
-	Status    string `json:"status"`
+	Operation          string           `json:"operation"`
+	Status             string           `json:"status"`
+	MarketplaceSources []map[string]any `json:"marketplaceSources,omitempty"`
 	doctor.Response
 }
 
@@ -70,6 +71,16 @@ func (d doctorCommandResult) human() string {
 	}
 	if d.PlatformVersion != "" {
 		lines = append(lines, "Platform version: "+d.PlatformVersion)
+	}
+	for _, source := range d.MarketplaceSources {
+		line := fmt.Sprintf("Marketplace source: %s %s", source["kind"], source["url"])
+		if source["signingKeyConfigured"] == true {
+			line += " (signing key configured)"
+		}
+		if source["authTokenConfigured"] == true {
+			line += " (token configured)"
+		}
+		lines = append(lines, line)
 	}
 	if d.PendingRestart != nil {
 		lines = append(lines, renderPendingRestart(d.PendingRestart))

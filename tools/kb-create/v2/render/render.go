@@ -68,6 +68,23 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	// was dropped whenever a manifest declared a /platform/adapters default.
 	config := map[string]any{"platform": map[string]any{"version": plan.ServiceGraph.PlatformVersion, "adapters": stringMapAsAny(adapters)}, "plugins": stringMapAsAny(plugins)}
 	merge(config, extra)
+	if plan.Request.MarketplaceSources != nil {
+		source := plan.Request.MarketplaceSources
+		registry := map[string]any{"kind": "registry", "url": source.RegistryURL, "signingPublicKey": "${" + source.SigningPublicKeyEnv + "}"}
+		if source.RegistryTokenEnv != "" {
+			registry["authToken"] = "${" + source.RegistryTokenEnv + "}"
+		}
+		sources := []any{registry}
+		if source.NpmURL != "" {
+			sources = append(sources, map[string]any{"kind": "npm", "url": source.NpmURL})
+		}
+		marketplace, _ := config["marketplace"].(map[string]any)
+		if marketplace == nil {
+			marketplace = map[string]any{}
+			config["marketplace"] = marketplace
+		}
+		marketplace["sources"] = sources
+	}
 	// Development workspace resolution is enabled only by the checkout's
 	// explicit marker. The installer must never activate that source.
 	if platformConfig, ok := config["platform"].(map[string]any); ok {

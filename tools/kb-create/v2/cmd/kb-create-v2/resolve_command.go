@@ -197,6 +197,19 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		if readErr != nil {
 			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", readErr)
 		}
+		if input.Operation == "update" {
+			var request contracts.InstallRequest
+			if err := json.Unmarshal(data, &request); err != nil {
+				return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", err)
+			}
+			if sources := input.Direct.marketplaceSources(); sources != nil {
+				request.MarketplaceSources = sources
+				data, err = json.Marshal(request)
+				if err != nil {
+					return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be encoded", "correct the update request JSON, then retry", err)
+				}
+			}
+		}
 		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"})
 	} else {
 		request, requestErr := input.Direct.normalize()
