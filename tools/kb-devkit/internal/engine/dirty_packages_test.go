@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/cache"
+	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
 
@@ -22,21 +24,35 @@ func TestDirtyPackagesIncludesNeverBuilt(t *testing.T) {
 	cacheRoot := filepath.Join(t.TempDir(), ".kb", "devkit")
 	ws := makeWS("@kb/app")
 
-	got := DirtyPackages(ws, []string{"build"}, cacheRoot)
+	got := DirtyPackages(ws, &config.DevkitConfig{Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}}}, []string{"build"}, cacheRoot)
 	if len(got) != 1 || got[0].Name != "@kb/app" {
 		t.Fatalf("DirtyPackages = %v, want [@kb/app] (no state file = dirty)", got)
 	}
 }
 
 func TestDirtyPackagesExcludesCleanState(t *testing.T) {
-	cacheRoot := filepath.Join(t.TempDir(), ".kb", "devkit")
+	root := t.TempDir()
+	pkgDir := filepath.Join(root, "packages", "app")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"@kb/app"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
 	states := cache.NewStateStore(cacheRoot)
-	if err := states.SetClean("@kb/app", "build", "h1"); err != nil {
+	def := TaskDef{Name: "build", Command: "true", Cache: true}
+	inputHash, err := hashTaskInputs(workspace.Package{Name: "@kb/app", Dir: pkgDir}, def, nil, cache.RuntimeFingerprint())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := states.SetClean("@kb/app", "build", inputHash); err != nil {
 		t.Fatalf("SetClean: %v", err)
 	}
-	ws := makeWS("@kb/app")
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{{Name: "@kb/app", Dir: pkgDir}}}
+	cfg := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}}}
 
-	got := DirtyPackages(ws, []string{"build"}, cacheRoot)
+	got := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
 	if len(got) != 0 {
 		t.Fatalf("DirtyPackages = %v, want [] (state is CLEAN)", got)
 	}
@@ -50,34 +66,78 @@ func TestDirtyPackagesIncludesDirtyState(t *testing.T) {
 	}
 	ws := makeWS("@kb/app")
 
-	got := DirtyPackages(ws, []string{"build"}, cacheRoot)
+	got := DirtyPackages(ws, &config.DevkitConfig{Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}}}, []string{"build"}, cacheRoot)
 	if len(got) != 1 || got[0].Name != "@kb/app" {
 		t.Fatalf("DirtyPackages = %v, want [@kb/app] (state is DIRTY)", got)
 	}
 }
 
+func TestDirtyPackagesSchedulesTaskWhenInputHashCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	pkgDir := filepath.Join(root, "packages", "app")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"@kb/app"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	if err := cache.NewStateStore(cacheRoot).SetClean("@kb/app", "build", "last-successful-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(pkgDir, "package.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(pkgDir); err != nil {
+		t.Fatal(err)
+	}
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{{Name: "@kb/app", Dir: pkgDir}}}
+	cfg := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}}}
+
+	got := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+	if len(got) != 1 || got[0].Name != "@kb/app" {
+		t.Fatalf("DirtyPackages after input hash read error = %v, want [@kb/app] so Executor can report it", got)
+	}
+}
+
 func TestDirtyPackagesAllTasksMustBeClean(t *testing.T) {
-	cacheRoot := filepath.Join(t.TempDir(), ".kb", "devkit")
+	root := t.TempDir()
+	pkgDir := filepath.Join(root, "packages", "app")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"@kb/app"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
 	states := cache.NewStateStore(cacheRoot)
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{{Name: "@kb/app", Dir: pkgDir}}}
+	cfg := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}, "test": {{Command: "true"}}}}
+	buildHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "build", ""), nil, cache.RuntimeFingerprint())
+	if err != nil {
+		t.Fatal(err)
+	}
+	testHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "test", ""), nil, cache.RuntimeFingerprint())
+	if err != nil {
+		t.Fatal(err)
+	}
 	// build is clean but test is dirty
-	if err := states.SetClean("@kb/app", "build", "h1"); err != nil {
+	if err := states.SetClean("@kb/app", "build", buildHash); err != nil {
 		t.Fatalf("SetClean build: %v", err)
 	}
 	if err := states.SetDirty("@kb/app", "test", "last_run_failed"); err != nil {
 		t.Fatalf("SetDirty test: %v", err)
 	}
-	ws := makeWS("@kb/app")
-
-	got := DirtyPackages(ws, []string{"build", "test"}, cacheRoot)
+	got := DirtyPackages(ws, cfg, []string{"build", "test"}, cacheRoot)
 	if len(got) != 1 || got[0].Name != "@kb/app" {
 		t.Fatalf("DirtyPackages = %v, want [@kb/app] (test task is DIRTY)", got)
 	}
 
 	// Now fix test state — both clean → excluded
-	if err := states.SetClean("@kb/app", "test", "h2"); err != nil {
+	if err := states.SetClean("@kb/app", "test", testHash); err != nil {
 		t.Fatalf("SetClean test: %v", err)
 	}
-	got2 := DirtyPackages(ws, []string{"build", "test"}, cacheRoot)
+	got2 := DirtyPackages(ws, cfg, []string{"build", "test"}, cacheRoot)
 	if len(got2) != 0 {
 		t.Fatalf("DirtyPackages = %v, want [] (all tasks CLEAN)", got2)
 	}
@@ -87,50 +147,8 @@ func TestDirtyPackagesEmptyTasks(t *testing.T) {
 	cacheRoot := filepath.Join(t.TempDir(), ".kb", "devkit")
 	ws := makeWS("@kb/app")
 
-	got := DirtyPackages(ws, []string{}, cacheRoot)
+	got := DirtyPackages(ws, nil, []string{}, cacheRoot)
 	if len(got) != 0 {
 		t.Fatalf("DirtyPackages with empty tasks = %v, want []", got)
-	}
-}
-
-func TestUnionPackagesPreservesWorkspaceOrder(t *testing.T) {
-	ws := makeWS("A", "B", "C", "D")
-	a := []workspace.Package{{Name: "B"}}
-	b := []workspace.Package{{Name: "A"}, {Name: "C"}}
-
-	got := UnionPackages(ws, a, b)
-	if len(got) != 3 {
-		t.Fatalf("UnionPackages len = %d, want 3", len(got))
-	}
-	if got[0].Name != "A" || got[1].Name != "B" || got[2].Name != "C" {
-		t.Fatalf("UnionPackages order = [%s,%s,%s], want [A,B,C]",
-			got[0].Name, got[1].Name, got[2].Name)
-	}
-}
-
-func TestUnionPackagesDeduplicates(t *testing.T) {
-	ws := makeWS("A", "B", "C")
-	a := []workspace.Package{{Name: "A"}, {Name: "B"}}
-	b := []workspace.Package{{Name: "B"}, {Name: "C"}}
-
-	got := UnionPackages(ws, a, b)
-	if len(got) != 3 {
-		t.Fatalf("UnionPackages len = %d, want 3 (no duplicates)", len(got))
-	}
-}
-
-func TestUnionPackagesEmptyAffected(t *testing.T) {
-	ws := makeWS("A", "B")
-	got := UnionPackages(ws, nil, []workspace.Package{{Name: "B"}})
-	if len(got) != 1 || got[0].Name != "B" {
-		t.Fatalf("UnionPackages = %v, want [B]", got)
-	}
-}
-
-func TestUnionPackagesEmptyDirty(t *testing.T) {
-	ws := makeWS("A", "B")
-	got := UnionPackages(ws, []workspace.Package{{Name: "A"}}, nil)
-	if len(got) != 1 || got[0].Name != "A" {
-		t.Fatalf("UnionPackages = %v, want [A]", got)
 	}
 }

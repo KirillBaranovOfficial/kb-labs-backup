@@ -2,10 +2,14 @@ package engine
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +84,202 @@ func TestRunE2ECachesAndRestoresOutputs(t *testing.T) {
 	if summary.Scheduled != 1 || summary.Cached != 1 || summary.Passed != 0 || summary.Failed != 0 || summary.Blocked != 0 || summary.NotAffected != 0 {
 		t.Fatalf("unexpected summary: %+v", summary)
 	}
+}
+
+// case: S-261.4
+func TestRunE2ECachedOutputsPreserveFileModes(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	pkgDir := filepath.Join(root, "packages", "app")
+	writePkg(t, pkgDir, `{"name":"@kb/app"}`)
+
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "libs", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {{
+			Command: `sh -c "mkdir -p dist && printf regular > dist/regular.txt && printf executable > dist/run.sh && chmod 644 dist/regular.txt && chmod 755 dist/run.sh"`,
+			Outputs: []string{"dist/**"},
+		}},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	cacheRoot := filepath.Join(root, ".kb", "devkit-cache")
+	run := func() RunResult {
+		t.Helper()
+		result, err := Run(ws, cfg, RunOptions{Tasks: []string{"build"}, WSRoot: root, CacheRoot: cacheRoot})
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		return result
+	}
+	if result := run(); !result.OK || result.Results[0].Cached {
+		t.Fatalf("first build = %+v, want fresh successful build", result)
+	}
+	for name := range map[string]os.FileMode{"regular.txt": 0o644, "run.sh": 0o755} {
+		if err := os.Remove(filepath.Join(pkgDir, "dist", name)); err != nil {
+			t.Fatalf("remove %s: %v", name, err)
+		}
+	}
+	result := run()
+	if !result.OK || !result.Results[0].Cached {
+		t.Fatalf("second build = %+v, want cached successful build", result)
+	}
+	for name, want := range map[string]os.FileMode{"regular.txt": 0o644, "run.sh": 0o755} {
+		info, err := os.Stat(filepath.Join(pkgDir, "dist", name))
+		if err != nil {
+			t.Fatalf("stat restored %s: %v", name, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("restored %s mode = %04o, want %04o", name, got, want)
+		}
+	}
+	if err := filepath.WalkDir(filepath.Join(cacheRoot, "tasks"), func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var manifest map[string]any
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return err
+		}
+		outputs, ok := manifest["outputs"].([]any)
+		if !ok {
+			return nil
+		}
+		for _, output := range outputs {
+			if ref, ok := output.(map[string]any); ok {
+				delete(ref, "mode")
+			}
+		}
+		data, err = json.Marshal(manifest)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(path, data, 0o644)
+	}); err != nil {
+		t.Fatalf("remove mode metadata from cached manifest: %v", err)
+	}
+	for _, name := range []string{"regular.txt", "run.sh"} {
+		if err := os.Remove(filepath.Join(pkgDir, "dist", name)); err != nil {
+			t.Fatalf("remove %s for legacy cache check: %v", name, err)
+		}
+	}
+	legacy := run()
+	if !legacy.OK || legacy.Results[0].Cached {
+		t.Fatalf("legacy manifest run = %+v, want a successful rebuild after cache miss", legacy)
+	}
+}
+
+// case: S-261.5
+func TestAffectedBuildSelectsChangedInputsAfterMerge(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	coreDir := filepath.Join(root, "packages", "core")
+	runtimeDir := filepath.Join(root, "packages", "runtime")
+	appDir := filepath.Join(root, "packages", "app")
+	writePkg(t, coreDir, `{"name":"@fixture/core"}`)
+	writePkg(t, runtimeDir, `{"name":"@fixture/runtime","dependencies":{"@fixture/core":"workspace:*"}}`)
+	writePkg(t, appDir, `{"name":"@fixture/app","dependencies":{"@fixture/runtime":"workspace:*"}}`)
+	for _, dir := range []string{coreDir, runtimeDir, appDir} {
+		writeEngineFile(t, filepath.Join(dir, "src", "input.txt"), "initial\n")
+	}
+	writeEngineFile(t, filepath.Join(coreDir, "README.md"), "package notes\n")
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("**/dist/\n.kb/\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(coreDir, "src", "input.txt"), []byte("initial\n"), 0o644); err != nil {
+		t.Fatalf("write core input: %v", err)
+	}
+	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.email", "devkit@example.test"}, {"config", "user.name", "kb-devkit test"}, {"add", "."}, {"commit", "-m", "initial packages"}} {
+		runGitCommand(t, root, args...)
+	}
+
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "packages", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {{
+			Command: `sh -c "mkdir -p dist && cat src/input.txt > dist/output.txt"`,
+			Inputs:  []string{"src/**"},
+			Outputs: []string{"dist/**"},
+			Deps:    []string{"^build"},
+		}},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	first, err := Run(ws, cfg, RunOptions{Tasks: []string{"build"}, WSRoot: root, CacheRoot: cacheRoot, Concurrency: 1})
+	if err != nil || !first.OK {
+		t.Fatalf("initial build = %+v, error = %v", first, err)
+	}
+	runGitCommand(t, root, "checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(coreDir, "src", "input.txt"), []byte("merged change\n"), 0o644); err != nil {
+		t.Fatalf("change core input: %v", err)
+	}
+	runGitCommand(t, root, "add", "packages/core/src/input.txt")
+	runGitCommand(t, root, "commit", "-m", "change core input")
+	runGitCommand(t, root, "checkout", "main")
+	runGitCommand(t, root, "merge", "--no-ff", "feature", "-m", "merge feature")
+
+	changed, err := AffectedPackages(ws, cfg)
+	if err != nil {
+		t.Fatalf("AffectedPackages: %v", err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("committed merge has Git-diff packages %v, want none", packageNames(changed))
+	}
+	selected, err := AffectedRunPackages(ws, cfg, []string{"build"}, cacheRoot, false)
+	if err != nil {
+		t.Fatalf("AffectedRunPackages: %v", err)
+	}
+	want := []string{"@fixture/core", "@fixture/runtime", "@fixture/app"}
+	got := packageNames(selected)
+	sort.Strings(got)
+	sort.Strings(want)
+	if len(got) != len(want) || strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("--affected selected %v (git changes %v), want %v", got, packageNames(changed), want)
+	}
+	completed, err := Run(ws, cfg, RunOptions{Tasks: []string{"build"}, WSRoot: root, CacheRoot: cacheRoot, Concurrency: 1})
+	if err != nil || !completed.OK {
+		t.Fatalf("build after merged change = %+v, error = %v", completed, err)
+	}
+	if err := os.WriteFile(filepath.Join(coreDir, "README.md"), []byte("notes outside declared build inputs\n"), 0o644); err != nil {
+		t.Fatalf("change file outside task inputs: %v", err)
+	}
+	diffOnly, err := AffectedPackages(ws, cfg)
+	if err != nil {
+		t.Fatalf("AffectedPackages after README change: %v", err)
+	}
+	diffOnlySelection, err := AffectedRunPackages(ws, cfg, []string{"build"}, cacheRoot, true)
+	if err != nil {
+		t.Fatalf("AffectedRunPackages with diff-only: %v", err)
+	}
+	unchangedInputs, err := AffectedRunPackages(ws, cfg, []string{"build"}, cacheRoot, false)
+	if err != nil {
+		t.Fatalf("AffectedRunPackages after README change: %v", err)
+	}
+	if len(diffOnly) == 0 || len(diffOnlySelection) != len(diffOnly) || len(unchangedInputs) != 0 {
+		t.Fatalf("Git diff = %v, diff-only selection = %v, input-hash selection = %v; want a selected Git diff and empty input-hash selection", packageNames(diffOnly), packageNames(diffOnlySelection), packageNames(unchangedInputs))
+	}
+}
+
+func runGitCommand(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+}
+
+func packageNames(packages []workspace.Package) []string {
+	names := make([]string, len(packages))
+	for i, pkg := range packages {
+		names[i] = pkg.Name
+	}
+	return names
 }
 
 // case: S-179.18
@@ -517,7 +717,7 @@ func TestDirtyPackagesCoversRetryAfterFailure(t *testing.T) {
 	})
 
 	// DirtyPackages must return @kb/app even though no files changed
-	dirty := DirtyPackages(ws, []string{"build"}, cacheRoot)
+	dirty := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
 	if len(dirty) != 1 || dirty[0].Name != "@kb/app" {
 		t.Fatalf("DirtyPackages after failure = %v, want [@kb/app]", dirty)
 	}
@@ -531,7 +731,7 @@ func TestDirtyPackagesCoversRetryAfterFailure(t *testing.T) {
 	})
 
 	// Now DirtyPackages must be empty
-	dirty2 := DirtyPackages(ws, []string{"build"}, cacheRoot)
+	dirty2 := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
 	if len(dirty2) != 0 {
 		t.Fatalf("DirtyPackages after fix = %v, want []", dirty2)
 	}

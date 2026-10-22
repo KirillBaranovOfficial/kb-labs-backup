@@ -36,7 +36,7 @@ func TestLocalStorePutGetAndRestoreFile(t *testing.T) {
 	}
 
 	restorePath := filepath.Join(t.TempDir(), "restored", "artifact.txt")
-	if err := store.RestoreFile(sha, restorePath); err != nil {
+	if err := store.RestoreFile(sha, restorePath, 0o644); err != nil {
 		t.Fatalf("RestoreFile error: %v", err)
 	}
 	restored, err := os.ReadFile(restorePath)
