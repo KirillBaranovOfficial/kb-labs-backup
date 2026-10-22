@@ -5,7 +5,7 @@ persona: solo-developer
 area: platform-core
 priority: P0
 status: active
-release: true
+release: false
 modes: [local, secured]
 surfaces: [agent, cli]
 ---
