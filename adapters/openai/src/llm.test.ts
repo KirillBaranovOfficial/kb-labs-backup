@@ -5,6 +5,12 @@ import { OpenAILLM } from './llm.js';
 describe('OpenAILLM credentials', () => {
   afterEach(() => vi.unstubAllEnvs());
 
+  it('exports the adapter manifest from the configured llm subpath', async () => {
+    const llm = await import('./llm.js');
+
+    expect(llm.manifest).toMatchObject({ id: 'openai-llm', implements: 'ILLM' });
+  });
+
   // case: S-054.8
   it('fails before sending a completion request when no API key is configured', async () => {
     vi.stubEnv('OPENAI_API_KEY', '');

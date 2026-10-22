@@ -24,11 +24,21 @@ function packageFilename(name, version) {
 
 function seedReleasePackages(root, packages, manifest = registryManifest, extraNames = []) {
   mkdirSync(packages, { recursive: true });
-  const packageNames = [...new Set([...releaseArtifactPackageNames(manifest, platformMembers), ...extraNames])];
+  const packageNames = [...new Set([
+    ...releaseArtifactPackageNames(manifest, platformMembers),
+    '@kb-labs/core-discovery',
+    ...extraNames,
+  ])];
   for (const name of packageNames) {
     const packageRoot = join(root, `${name.replace(/^@/, '').replaceAll('/', '-')}-source`, 'package');
     mkdirSync(join(packageRoot, 'dist'), { recursive: true });
-    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name, version: '3.0.0' }));
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
+      name,
+      version: '3.0.0',
+      ...(name === '@kb-labs/core-runtime'
+        ? { dependencies: { '@kb-labs/core-discovery': 'workspace:*' } }
+        : {}),
+    }));
     writeFileSync(join(packageRoot, 'index.js'), `${name} bytes`);
     writeFileSync(join(packageRoot, 'dist/index.js'), `${name} dist bytes`);
     if (name === '@kb-labs/gateway-app') {
@@ -100,7 +110,7 @@ test('versions every release-manifest artifact and preserves package code', () =
     prepareJourneyUpdatePackages(packages, update, '3.0.1', { publishDir: packages, digestTool, registryManifest, platformMembers });
 
     const manifest = JSON.parse(readFileSync(join(update, 'manifest.json'), 'utf8'));
-    const versionedNames = releaseArtifactPackageNames(registryManifest, platformMembers);
+    const versionedNames = packageNames.filter(name => name !== '@kb-labs/not-in-release');
     assert.deepEqual(manifest.map(entry => [entry.name, entry.version]).sort((a, b) => a[0].localeCompare(b[0])),
       [...versionedNames.map(name => [name, '3.0.1']), ['@kb-labs/not-in-release', '3.0.0']].sort((a, b) => a[0].localeCompare(b[0])));
     assert.ok(manifest.every(entry => /^[0-9a-f]{64}$/.test(entry.sha256)));

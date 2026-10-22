@@ -102,7 +102,7 @@ describe('secured CLI auth ordering', () => {
       sources: { platformDefaults: 'platform', platform: 'env', project: 'platform', fields: {} },
     });
     mocks.initializePlatform.mockResolvedValue({
-      platform: { logger: mocks.logger }, platformConfig: {},
+      platform: { logger: mocks.logger, getAdapter: () => undefined }, platformConfig: {},
       rawConfig: { gateway: { access: { mode: 'secured' } } }, effectiveConfig: {},
       platformRoot: isolatedHome, projectRoot: undefined,
     });
@@ -412,6 +412,9 @@ describe('secured CLI auth ordering', () => {
     process.env.KB_HOME = path.join(isolatedHome, '.kb');
     delete process.env.KB_PLATFORM_ROOT;
     delete process.env.KB_NET_OFFSET;
+    delete process.env.GATEWAY_PORT;
+    delete process.env.GATEWAY_HOST;
+    delete process.env.KB_GATEWAY_URL;
 
     const rawConfig = { gateway: { access: { mode: 'local' } } };
     mocks.loadPlatformConfiguration.mockResolvedValue({
@@ -420,7 +423,7 @@ describe('secured CLI auth ordering', () => {
       sources: { platform: 'env', project: 'platform', fields: {} },
     });
     mocks.initializePlatform.mockResolvedValue({
-      platform: { logger: mocks.logger }, platformConfig: {}, rawConfig, effectiveConfig: rawConfig,
+      platform: { logger: mocks.logger, getAdapter: () => undefined }, platformConfig: {}, rawConfig, effectiveConfig: rawConfig,
       platformRoot: isolatedHome, projectRoot: undefined,
     });
     mocks.hasUsablePlatformAuth.mockResolvedValue(false);

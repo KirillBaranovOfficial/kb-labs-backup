@@ -1054,6 +1054,24 @@ class DispatchRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
                 lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
 
+    def test_module_global_state_lint_follows_case_action_callback(self):
+        with tempfile.TemporaryDirectory(prefix="journey-case-action-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'shared = {}\n'
+                'def produce(case_ids):\n'
+                '    shared["project"] = "registered"\n'
+                'def check(case_ids):\n'
+                '    return shared.get("project")\n'
+                'journey.flow("project setup", "test", "test", None, '
+                'cases=["S-001.1"], case_action=produce)\n'
+                'journey.flow("project consumer", "test", "test", None, '
+                'cases=["S-001.1"], case_action=check)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
+
     def test_environment_lint_detects_literal_kb_journey_read_outside_accessor(self):
         with tempfile.TemporaryDirectory(prefix="journey-env-state-rail-") as directory:
             root = Path(directory)

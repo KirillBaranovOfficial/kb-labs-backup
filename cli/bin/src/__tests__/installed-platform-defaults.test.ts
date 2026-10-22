@@ -77,7 +77,7 @@ describe('installed platform adapter defaults', () => {
     const run = (args: string[], cwd: string) => new Promise<{
       status: number | null; stdout: string; stderr: string; error?: Error;
     }>((resolve) => {
-      const child = spawn(process.execPath, [cliPath, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(process.execPath, [cliPath, '--gateway-url', gatewayUrl, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       let timedOut = false;

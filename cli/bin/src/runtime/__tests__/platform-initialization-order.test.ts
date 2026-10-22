@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, access } from "node:fs/promises";
+import { mkdtemp, rm, access, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -24,7 +24,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {},
     child() { return logger; },
   };
-  const platform = { logger };
+  const platform = { logger, getAdapter: () => undefined };
 
   afterEach(async () => {
     if (isolatedHome) await rm(isolatedHome, { recursive: true, force: true });
@@ -44,6 +44,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     delete process.env.KB_PROJECT_ROOT;
     delete process.env.KB_PROJECT_ID;
     delete process.env.KB_NET_OFFSET;
+    delete process.env.KB_GATEWAY_URL;
     process.env.KB_LOG_LEVEL = "silent";
     process.env.CLI_VERSION = "2.120.1";
     return isolatedHome;
@@ -124,6 +125,56 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false });
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
     expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({ projectRoot }));
+  });
+
+  it("provides the installed Gateway address to built-in command registration", async () => {
+    const cwd = await isolateEnvironment();
+    const gatewayUrl = "http://127.0.0.1:4820";
+    await mkdir(path.join(cwd, ".kb", "v2"), { recursive: true });
+    await writeFile(path.join(cwd, ".kb", "v2", "receipt.json"), JSON.stringify({
+      installationId: "install-test",
+      verification: { hostHealthUrl: `${gatewayUrl}/health` },
+    }));
+    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    mockInitialization();
+    const registerBuiltinCommands = vi.fn();
+
+    await executeCli(["hello", "--help"], { cwd, registerBuiltinCommands });
+
+    expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({
+      env: expect.objectContaining({ KB_GATEWAY_URL: gatewayUrl }),
+    }));
+    expect(process.env.KB_GATEWAY_URL).toBeUndefined();
+  });
+
+  it("uses --gateway-url as the invocation address without changing process transport", async () => {
+    const cwd = await isolateEnvironment();
+    const gatewayUrl = "https://team-gateway.example.test";
+    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    mockInitialization();
+    const registerBuiltinCommands = vi.fn();
+
+    await executeCli(["hello", "--gateway-url", gatewayUrl, "--help"], { cwd, registerBuiltinCommands });
+
+    expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({
+      env: expect.objectContaining({ KB_GATEWAY_URL: gatewayUrl }),
+    }));
+    expect(process.env.KB_GATEWAY_URL).toBeUndefined();
+  });
+
+  // case: S-203.16
+  it("rejects an invalid Gateway port at the CLI bootstrap boundary", async () => {
+    const cwd = await isolateEnvironment();
+    delete process.env.KB_GATEWAY_URL;
+    process.env.GATEWAY_PORT = "4000oops";
+    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    mockInitialization();
+    const registerBuiltinCommands = vi.fn();
+
+    const exitCode = await executeCli(["hello"], { cwd, registerBuiltinCommands });
+
+    expect(exitCode).toBe(1);
+    expect(registerBuiltinCommands).not.toHaveBeenCalled();
   });
 
   // case: S-043.6
