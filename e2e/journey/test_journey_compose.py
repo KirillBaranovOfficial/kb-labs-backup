@@ -197,6 +197,22 @@ if (!configResult.ok || !lockResult.valid) {
             self.assertEqual(rendered["services"]["marketplace-state"]["build"]["dockerfile"],
                              "services/state/daemon/Dockerfile")
             self.assertEqual(rendered["services"]["marketplace-tamper"]["profiles"], ["marketplace-registry"])
+            runner_environment = rendered["services"]["runner"]["environment"]
+            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_PUBLISH_URL"],
+                             "http://marketplace-registry:5071/api/v1")
+            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE"], "journey")
+            workspace_mount = next(mount for mount in rendered["services"]["runner"]["volumes"]
+                                   if mount.get("target") == "/opt/kb-workspace")
+            workspace_source = Path(workspace_mount["source"])
+            self.assertEqual(workspace_source.resolve(), ROOT.resolve())
+            for relative in (
+                    "cli/bin/dist/bin.js",
+                    "plugins/marketplace-registry/entry/dist/manifest.js",
+                    "plugins/marketplace-registry/entry/dist/commands/publish.js",
+                    "plugins/marketplace-registry/entry/node_modules/@kb-labs/sdk",
+                    "plugins/marketplace-registry/entry/node_modules/@kb-labs/cli-runtime",
+                    "plugins/marketplace-registry/entry/node_modules/execa"):
+                self.assertTrue((workspace_source / relative).exists(), relative)
 
     # case: S-262.1
     def test_local_and_hosted_journey_use_the_same_compose_file_list(self):

@@ -22,6 +22,11 @@ def workspace_checkout_problem(repo_root: Path) -> str | None:
     required = (
         "cli/bin/dist/bin.js",
         "core/project-registry/dist/index.js",
+        "plugins/marketplace-registry/entry/dist/manifest.js",
+        "plugins/marketplace-registry/entry/dist/commands/publish.js",
+        "plugins/marketplace-registry/entry/node_modules/@kb-labs/sdk",
+        "plugins/marketplace-registry/entry/node_modules/@kb-labs/cli-runtime",
+        "plugins/marketplace-registry/entry/node_modules/execa",
         layout_value('versionStatePaths.kb_marketplace_lock'),
         "plugins",
     )

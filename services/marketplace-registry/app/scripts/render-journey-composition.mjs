@@ -48,6 +48,11 @@ await writeFile(path.join(kbRoot, 'marketplace.lock'), `${JSON.stringify(lock, n
 await writeFile(path.join(kbRoot, 'registry.env'), `KB_REGISTRY_SIGNING_KEY='${privatePem.trimEnd()}\n'\n`, { mode: 0o600 });
 
 const composeOverlay = `services:
+  runner:
+    environment:
+      KB_JOURNEY_MARKETPLACE_PUBLISH_URL: ${JSON.stringify(`${registryUrl}/api/v1`)}
+      KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE: journey
+
   marketplace-state:
     profiles: [marketplace-registry]
     image: kb-marketplace-state:journey
