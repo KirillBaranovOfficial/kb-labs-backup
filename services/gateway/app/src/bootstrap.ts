@@ -7,7 +7,7 @@ import {
   readInstalledPlatformIdentity,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
-import { requireProjectContext } from "@kb-labs/core-runtime";
+import { requireProjectContext, resolveDeploymentTopology } from "@kb-labs/core-runtime";
 import {
   createInMemoryDocumentDatabase,
   createInMemoryKVStore,
@@ -48,7 +48,7 @@ import {
 import type { IKVStore } from "@kb-labs/core-platform/adapters";
 import { createRegistry } from "@kb-labs/core-registry";
 import { loadGatewayConfig } from "./config.js";
-import { resolveAccess, resolveBootstrapTenantId } from "./access.js";
+import { assertDeploymentAuth, resolveAccess, resolveBootstrapTenantId } from "./access.js";
 import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
 import { createServer, type UserAuthServerDeps } from "./server.js";
 import { HostRegistry } from "./hosts/registry.js";
@@ -134,6 +134,7 @@ export async function startGateway(
     platformRoot,
     port: listenPort,
     logger: serviceLogger,
+    runtime,
   }: ServiceContext,
   options: GatewayEmbedOptions,
 ): Promise<() => Promise<void>> {
@@ -152,6 +153,7 @@ export async function startGateway(
     ? options.configure(loadedConfig)
     : loadedConfig;
   const access = resolveAccess(config);
+  assertDeploymentAuth(resolveDeploymentTopology(runtime.effectiveConfig), config);
   logger.info("Gateway config loaded", {
     port: listenPort,
     upstreams: Object.keys(config.upstreams),

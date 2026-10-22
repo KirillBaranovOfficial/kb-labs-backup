@@ -12,6 +12,7 @@ import type {
 } from "@kb-labs/core-platform";
 import type { AdapterSlot } from "@kb-labs/core-platform";
 import type { ResolvedExecutionMode } from "@kb-labs/core-contracts";
+import type { DeploymentTopology } from "./config-schemas.js";
 import type {
   RateLimitConfig,
   RateLimitPreset,
@@ -370,6 +371,7 @@ export interface PlatformConfig {
   core?: CoreFeaturesConfig;
   /** Execution backend configuration (NEW: unified plugin execution) */
   execution?: ExecutionConfig;
+  deployment?: { topology: DeploymentTopology };
 }
 
 /**
@@ -391,4 +393,5 @@ export const CONFIG_FIELD_SCOPE: Record<
   adapterOptions: "platform-only",
   core: "platform-only",
   execution: "platform-only",
+  deployment: "platform-only",
 };

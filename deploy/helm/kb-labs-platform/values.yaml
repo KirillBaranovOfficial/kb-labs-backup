@@ -30,7 +30,7 @@ services:
     replicas: 1
     healthPath: /health
   marketplace-registry:
-    enabled: true
+    enabled: false
     image: kb-marketplace-registry
     port: 5071
     replicas: 1
@@ -44,7 +44,6 @@ services:
     port: 5070
     replicas: 1
     healthPath: /health
-    dependsOn: [marketplace-registry]
   gateway:
     enabled: true
     image: kb-gateway

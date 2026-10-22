@@ -1,6 +1,7 @@
 {
   "platform": {
     "mode": "development",
+    "deployment": { "topology": "local" },
     "adapters": {
       "storage": "@kb-labs/adapters-fs",
       "cache": "@kb-labs/adapters-state-broker",

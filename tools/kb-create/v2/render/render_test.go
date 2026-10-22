@@ -26,6 +26,32 @@ func TestBuildKeepsSecretValuesOutOfConfigAndChecksTheirServices(t *testing.T) {
 	}
 }
 
+func TestBuildOwnsLocalDeploymentTopology(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = []contracts.ConfigPatch{{
+		Path:  "/platform/deployment/topology",
+		JSON:  `"cloud"`,
+		Owner: "manifest:platform.deployment.topology",
+	}}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Platform struct {
+			Deployment struct {
+				Topology string `json:"topology"`
+			} `json:"deployment"`
+		} `json:"platform"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Platform.Deployment.Topology != "local" {
+		t.Fatalf("topology = %q, want local; config: %s", config.Platform.Deployment.Topology, output.Config)
+	}
+}
+
 func hostSection(t *testing.T, config []byte) map[string]any {
 	t.Helper()
 	var parsed struct {

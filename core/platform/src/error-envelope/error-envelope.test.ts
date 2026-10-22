@@ -264,6 +264,7 @@ describe('errors.catalog.json lint', () => {
       RUNTIME: 'runtime',
       NODE: 'runtime',
       DEPLOY: 'runtime',
+      DEPLOYMENT: 'config',
       DEVKIT: 'runtime',
       SERVICE: 'runtime',
       ENV: 'config',

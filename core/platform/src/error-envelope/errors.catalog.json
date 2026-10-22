@@ -3,6 +3,28 @@
   "version": 1,
   "codes": [
     {
+      "code": "KB_DEPLOYMENT_TOPOLOGY_REQUIRED",
+      "area": "config",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 500,
+      "message": "The platform deployment topology is missing from platform.deployment.topology.",
+      "hint": "Set platform.deployment.topology in the producer configuration: kb-create writes local, release images provide cloud, and Helm writes k8s."
+    },
+    {
+      "code": "KB_DEPLOYMENT_AUTH_REQUIRED",
+      "area": "config",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 500,
+      "message": "Cloud and Kubernetes deployments require Gateway authentication.",
+      "hint": "Set gateway.access.mode to secured and remove gateway.auth.enabled=false from the deployment config."
+    },
+    {
       "code": "KB_ADAPTER_CREDENTIALS_MISSING",
       "area": "plugin",
       "stage": "run",

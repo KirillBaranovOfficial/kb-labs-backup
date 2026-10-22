@@ -78,6 +78,12 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	// chose for this plan must win over it on the same key.
 	reapplyResolved(config, "platform", "adapters", adapters)
 	reapplyResolved(config, "", "plugins", plugins)
+	platformConfig, ok := config["platform"].(map[string]any)
+	if !ok {
+		platformConfig = map[string]any{}
+		config["platform"] = platformConfig
+	}
+	platformConfig["deployment"] = map[string]any{"topology": "local"}
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return Output{}, fmt.Errorf("marshal runtime config: %w", err)

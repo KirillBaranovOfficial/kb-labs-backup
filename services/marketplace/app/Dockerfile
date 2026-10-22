@@ -10,12 +10,12 @@ RUN addgroup --system --gid 1001 nodejs && \
 # deploy/ produced on CI by: pnpm deploy --filter @kb-labs/marketplace-app --prod .kb/deploy/marketplace-app
 COPY --chown=kb:nodejs .kb/deploy/marketplace-app/node_modules ./node_modules
 COPY --chown=kb:nodejs .kb/deploy/marketplace-app/dist ./dist
+COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
 
 # Consumer-side daemon (distinct from marketplace-registry at :5071, the
 # publisher/storage service). Registry endpoint is read from marketplace.
 # registry.url in a mounted .kb/kb.config.json, falling back to KB_REGISTRY_URL
-# (src/bootstrap.ts:37-39) — no adapter composition required to boot, so no
-# baked default config/lock, unlike gateway/marketplace-registry.
+# (src/bootstrap.ts:37-39).
 # KB_REGISTRY_URL must point at your own marketplace-registry deployment in
 # production — do not rely on any upstream default.
 

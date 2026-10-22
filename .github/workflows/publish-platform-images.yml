@@ -70,6 +70,8 @@ jobs:
           pnpm deploy --filter @kb-labs/workflow-daemon --prod .kb/deploy/workflow-daemon
           pnpm deploy --filter @kb-labs/mcp-app --prod .kb/deploy/mcp-app
           pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app
+      - name: Generate the release image default config
+        run: node tools/release/generate-platform-image-default.mjs
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

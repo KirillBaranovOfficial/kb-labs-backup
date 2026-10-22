@@ -14,10 +14,10 @@ RUN addgroup --system --gid 1001 nodejs && \
 # deploy/ produced on CI by: pnpm deploy --filter @kb-labs/workflow-daemon --prod .kb/deploy/workflow-daemon
 COPY --chown=kb:nodejs .kb/deploy/workflow-daemon/node_modules ./node_modules
 COPY --chown=kb:nodejs .kb/deploy/workflow-daemon/dist ./dist
+COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
 
-# Composition is deliberately absent from the release image. kb-create writes
-# the user's explicit config and lock into their derived image; the entrypoint
-# refuses to boot without both files.
+# The release composition declares cloud topology; deployment-specific config
+# may be layered at runtime.
 #
 # IMPORTANT — replicas: only ever run ONE instance of this image. JobBroker
 # and CronScheduler run in-process (src/bootstrap.ts); a second replica
