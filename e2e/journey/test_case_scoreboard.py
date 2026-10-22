@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scoreboard import build_scoreboard, load_cases, release_claims_for_case, render_delta, render_markdown, write_scoreboards
+from scoreboard import RELEASE_GATING_MODES, build_scoreboard, load_cases, release_claims_for_case, render_delta, render_markdown, write_scoreboards
 from service_steps import FlowGraph, Journey
 from invocations import invocation_context, record_invocation
 import jsonl
@@ -39,6 +39,25 @@ class CaseScoreboardTests(unittest.TestCase):
 
     def write_json(self, name, data):
         (self.reports / name).write_text(json.dumps(data), encoding="utf-8")
+
+    def test_release_gate_is_owned_by_local_mode_and_secured_stays_non_gating(self):
+        self.assertEqual(RELEASE_GATING_MODES, ("local",))
+        self.write_json("installer-case-local-agent-explore-default.json", {
+            "case_run": {"mode": "local", "claims": [
+                {"claimId": "S-001.1", "status": "PASS"},
+                {"claimId": "S-001.2", "status": "PASS"}]}, "steps": []})
+        self.write_json("service-secured.json", {
+            "case_run": {"mode": "secured", "claims": []},
+            "steps": [{"cases": ["S-001.1", "S-001.2"], "status": "FAIL", "message": "secured lane failure"}]})
+
+        combined = build_scoreboard(self.reports, self.catalog, ["local", "secured"])
+        secured = build_scoreboard(self.reports, self.catalog, ["secured"])
+
+        self.assertEqual(combined["releaseGate"], {"modes": ["local"], "gating": True})
+        self.assertEqual(combined["releaseCases"], {"fullyGreen": 1, "total": 1})
+        self.assertEqual(secured["releaseGate"], {"modes": ["local"], "gating": False})
+        self.assertEqual(secured["releaseCases"], {"fullyGreen": 0, "total": 0})
+        self.assertIn("non-gating for Release 1", render_markdown(secured))
 
     def test_scores_case_defined_denominator_and_mode_specific_results(self):
         self.write_json("installer-case-local-agent-explore-default.json", {
@@ -376,8 +395,7 @@ class CaseScoreboardTests(unittest.TestCase):
     def test_release_claims_follow_the_case_release_flag(self):
         catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
         self.assertEqual(release_claims_for_case("S-109", catalog), [])
-        self.assertEqual(release_claims_for_case("S-100", catalog),
-                         ["S-100.1", "S-100.2", "S-100.3", "S-100.4", "S-100.5"])
+        self.assertEqual(release_claims_for_case("S-100", catalog), [])
 
     def test_playwright_tags_and_skip_are_claimed(self):
         self.write_json("studio-playwright-secured.json", {"suites": [{"specs": [{

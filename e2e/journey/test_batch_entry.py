@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from test_environment import isolated_environment
+from scoreboard import build_scoreboard
 
 REPO = Path(__file__).resolve().parents[2]
 ENTRY_SHELL = shutil.which("dash") or "sh"
@@ -35,6 +36,17 @@ class JourneyBatchEntryTests(unittest.TestCase):
         )
         shutil.copy2(REPO / "e2e/scripts/build-pack-extras.mjs", self.root / "e2e/scripts/build-pack-extras.mjs")
         self.calls = self.root / "calls.log"
+        import json
+        self.scoreboard_fixtures = {}
+        for mode in ("local", "secured"):
+            catalog = self.root / f"catalog-{mode}"
+            reports = self.root / f"reports-{mode}"
+            catalog.mkdir()
+            reports.mkdir()
+            scoreboard = build_scoreboard(reports, catalog, [mode])
+            fixture = self.root / f"scoreboard-{mode}.json"
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+            self.scoreboard_fixtures[mode] = fixture
         self._script(self.root / "e2e/journey/run.sh", '''#!/bin/sh
 printf 'journey %s %s\\n' "$KB_JOURNEY_ONLY" "$*" >> "$CALLS"
 if [ "$*" = "--down" ] && [ "${FAIL_RESET:-}" = 1 ]; then
@@ -55,6 +67,10 @@ if [ -n "$KB_JOURNEY_ONLY" ] && [ ! -s "$ROOT/core/fixture/dist/index.js" ]; the
   exit 10
 fi
 mkdir -p "$REPORTS"
+case "$mode" in
+  local) cp "$SCOREBOARD_LOCAL" "$REPORTS/case-scoreboard.json" ;;
+  secured) cp "$SCOREBOARD_SECURED" "$REPORTS/case-scoreboard.json" ;;
+esac
 printf '%s report\\n' "$mode" > "$REPORTS/$mode.json"
 if [ "$mode" = "${FAIL_MODE:-}" ] && [ ! -f "$ATTEMPT_MARKER" ]; then
   : > "$ATTEMPT_MARKER"
@@ -168,6 +184,8 @@ exec "$REAL_TAR" "$@"
             "ROOT": str(self.root),
             "BATCH_PYTHON": sys.executable,
             "REAL_TAR": real_tar,
+            "SCOREBOARD_LOCAL": str(self.scoreboard_fixtures["local"]),
+            "SCOREBOARD_SECURED": str(self.scoreboard_fixtures["secured"]),
         }
         Path(self.env["REPORTS"]).mkdir(parents=True)
 
@@ -236,6 +254,53 @@ exec "$REAL_TAR" "$@"
             })
             self.assertTrue(all(isinstance(value, int) and value >= 0
                                 for value in metadata["stageDurationsSeconds"].values()))
+
+    # case: S-262.2
+    def test_secured_product_failure_is_reported_non_gating_and_keeps_batch_green(self):
+        result = self._run("secured", failure_kind="product")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertIn("secured: FAIL (non-gating for Release 1)", summary)
+        self.assertIn("- Result: PASS", summary)
+        import json
+        self.assertEqual(json.loads((self.root / "out/secured/batch-metadata.json").read_text())["result"], "FAIL")
+
+    # case: S-262.2
+    def test_secured_mode_job_exits_successfully_after_recording_non_gating_product_failure(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-artifact")],
+            cwd=self.root,
+            env={**self.env, "FAIL_MODE": "secured", "FAIL_KIND": "product"},
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        mode_dir = self.root / "secured-artifact/secured"
+        self.assertIn("Result: FAIL (non-gating for Release 1)", (mode_dir / "batch.log").read_text())
+        import json
+        self.assertEqual(json.loads((mode_dir / "batch-metadata.json").read_text())["result"], "FAIL")
+
+    # case: S-262.2
+    def test_local_product_failure_fails_batch(self):
+        result = self._run("local", failure_kind="product")
+        self.assertNotEqual(result.returncode, 0)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertIn("local: FAIL (gating)", summary)
+        self.assertIn("- Result: FAIL", summary)
+
+    # case: S-262.1
+    def test_shared_preflight_failure_fails_batch_even_when_product_lanes_do_not_run(self):
+        result = self._run(fail_build=True)
+        self.assertNotEqual(result.returncode, 0)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertIn("- Failed stage: `build`", summary)
+        self.assertIn("- Result: FAIL", summary)
 
     # case: S-262.1, S-262.2
     def test_producer_artifact_flows_through_both_mode_entrypoints_into_shared_layout(self):

@@ -15,6 +15,7 @@ from journey_dependencies import Dependency
 CASE_STEP = re.compile(r"^\|\s*((?:S|PC)-\d+\.\d+)\s*\|", re.MULTILINE)
 CLAIM_TAG = re.compile(r"@(S|PC)-(\d+\.\d+)")
 MODES = ("local", "secured")
+RELEASE_GATING_MODES = ("local",)
 FAILURE_MAX_LENGTH = 180
 
 
@@ -430,16 +431,21 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
         rows.append({**case, "caseStatus": case["status"], "status": status, "passingClaims": passing,
                      "claimedCount": sum(bool(evidence.get(mode, {}).get(claim_id)) for mode in relevant for claim_id in case["claims"]),
                      "claimCount": len(case["claims"])})
-    release_cases = [row for row in rows if row["release"]]
+    gated_modes = [mode for mode in modes if mode in RELEASE_GATING_MODES]
+    release_cases = [case for case in cases
+                     if case["status"] == "active" and case["release"]
+                     and any(mode in case["modes"] for mode in gated_modes)]
     mode_reports = {mode: _blocking_report(directory, cases, mode, evidence) for mode in modes}
     result = {
         "schema": "kb.journey-case-scoreboard/v1",
         "modes": modes,
+        "releaseGate": {"modes": list(RELEASE_GATING_MODES), "gating": bool(gated_modes)},
         "partial": bool(partial_selections),
         "selection": sorted(set(partial_selections)),
         "observedModes": observed_modes,
-        "releaseCases": {"fullyGreen": sum(row["status"] == "Fully green" for row in release_cases),
-                         "total": len(release_cases)},
+        "releaseCases": {"fullyGreen": sum(
+            _status(case["claims"], evidence, gated_modes)[0] == "Fully green"
+            for case in release_cases), "total": len(release_cases)},
         "activeCases": {"fullyGreen": sum(row["status"] == "Fully green" for row in rows),
                         "total": len(rows)},
         "plannedCount": planned_count,
@@ -454,7 +460,8 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
 
 def _render_mode_report(mode: str, report: dict) -> list[str]:
     headline = report["headline"]
-    lines = [f"## {mode}: platform coverage", "",
+    gate_label = "" if mode in RELEASE_GATING_MODES else " (non-gating for Release 1)"
+    lines = [f"## {mode}: platform coverage{gate_label}", "",
              f"All active cases fully green: **{headline['activeCasesFullyGreen']['count']} / {headline['activeCasesFullyGreen']['total']}**.",
              f"Claims passing: **{headline['claimsPassing']['count']} / {headline['claimsPassing']['total']}**.",
              f"Claims reachable (not BLOCKED): **{headline['claimsReachable']['count']} / {headline['claimsReachable']['total']}**.",
@@ -507,7 +514,10 @@ def render_markdown(scoreboard: dict) -> str:
         counts[case["status"]] += 1
     release = scoreboard["releaseCases"]
     active = scoreboard["activeCases"]
-    lines = [f"# Product case scoreboard ({modes})", "",
+    gate_modes = ", ".join(scoreboard["releaseGate"]["modes"])
+    gate_status = (f"Release 1 gate modes: {gate_modes}." if scoreboard["releaseGate"]["gating"]
+                   else f"Release 1 gate modes: {gate_modes}; this scoreboard is non-gating.")
+    lines = [f"# Product case scoreboard ({modes})", "", gate_status,
              (f"**Partial run**; selection: {', '.join(scoreboard['selection'])}." if scoreboard.get("partial") else "Full run.")]
     for mode, report in scoreboard.get("modeReports", {}).items():
         lines.extend(["", *_render_mode_report(mode, report)])

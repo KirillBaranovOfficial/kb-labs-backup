@@ -5,7 +5,7 @@ persona: workflow-author
 area: workflows
 priority: P0
 status: planned
-release: true
+release: false
 modes: [local, secured]
 surfaces: [cli]
 ---

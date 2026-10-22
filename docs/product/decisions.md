@@ -4,6 +4,43 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-22
+
+### Release 1 is local-only
+
+Release 1 supports local macOS and Linux development. It includes plugins,
+the public SDK and default adapters, workflows, marketplace management, and
+in-process, subprocess, and worker-pool plugin execution. Container execution
+and secured access (users, authentication, invites, and tokens) are Release 2.
+Several local repositories remain separate projects. The release headline gates
+only the local lane; the secured lane continues to run and report as
+non-gating. The cases below define the Release 1 promise:
+
+1. Install the platform with one command and start Studio without manual setup:
+   PC-001, PC-002, S-040, S-120, S-125, S-181.
+2. Install Commit from the marketplace and create AI commits in the selected
+   repository: S-010, S-160, S-182, S-123.
+3. Find, install, update, enable, disable, pin, and uninstall plugins:
+   S-010, S-011, S-012, S-047, S-050, S-182.
+4. Run workflows with inputs, inspect history, logs, and failures, cancel,
+   rerun, and schedule them from CLI and Studio: S-002, S-007, S-008, S-009,
+   S-021, S-022, S-029, S-044, S-056, S-143, S-184.
+5. Scaffold a plugin on the public SDK, check compatibility, configure default
+   adapters, and run it in supported Release 1 execution modes: S-003, S-048,
+   S-053, S-054, S-186, S-240, S-241, S-242, S-243, S-246, S-247.
+6. Update, roll back, uninstall safely, receive typed errors with next steps,
+   and diagnose the platform: PC-001, S-023, S-024, S-025, S-050, S-051,
+   S-053, S-258.
+7. Use multiple isolated local repositories as projects: S-043, S-124, S-187.
+8. Inspect analytics and platform, plugin, and workflow logs from CLI and
+   Studio: S-009, S-044, S-121, S-191, S-270.
+
+The Release 2 case list is S-039, S-042, S-045, S-046, S-052, S-055, S-100,
+S-101, S-102, S-103, S-104, S-105, S-106, S-107, S-108, S-140, S-188, S-189,
+S-190, S-245, S-253, and S-266. The S-266 case is landing from x128 and will
+be marked `release: false` there. There is no existing docs roadmap page in
+this checkout, so no new roadmap page is introduced.
+
 ## 2026-10-21
 
 ### Marketplace management is built in; the publishing registry is optional

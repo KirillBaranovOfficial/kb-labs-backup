@@ -15,9 +15,26 @@ STAGES = ("reset", "build", "unit", "candidate", "local", "secured", "total")
 def _read_metadata(directory: Path, mode: str) -> dict[str, Any]:
     path = directory / mode / "batch-metadata.json"
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or not isinstance(value.get("stageDurationsSeconds"), dict):
+    allowed_results = {"PASS", "FAIL", "INTERRUPTED"} if mode == "shared" else {"PASS", "FAIL"}
+    if (not isinstance(value, dict)
+            or not isinstance(value.get("stageDurationsSeconds"), dict)
+            or value.get("result") not in allowed_results):
         raise ValueError(f"batch metadata is invalid: {path}")
     return value
+
+
+def _read_release_gate(directory: Path) -> list[str]:
+    path = directory / "case-scoreboard.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    release_gate = value.get("releaseGate") if isinstance(value, dict) else None
+    modes = release_gate.get("modes") if isinstance(release_gate, dict) else None
+    if not isinstance(modes, list) or any(not isinstance(mode, str) for mode in modes):
+        raise ValueError(f"scoreboard releaseGate is invalid: {path}")
+    return modes
+
+
+def mode_is_gating(directory: Path, mode: str) -> bool:
+    return mode in _read_release_gate(directory)
 
 
 def _write_metadata(path: Path, value: dict[str, Any]) -> None:
@@ -90,6 +107,12 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
     producer_metadata = _read_metadata(output, "shared")
     local_metadata = _read_metadata(output, "local")
     secured_metadata = _read_metadata(output, "secured")
+    release_gates = {
+        mode: _read_release_gate(output / mode)
+        for mode in ("local", "secured")
+    }
+    if release_gates["local"] != release_gates["secured"]:
+        raise ValueError("local and secured scoreboards publish different releaseGate modes")
     local_durations = local_metadata["stageDurationsSeconds"]
     secured_durations = secured_metadata["stageDurationsSeconds"]
     shared_durations = producer_metadata["stageDurationsSeconds"]
@@ -104,15 +127,29 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
             local_durations["local"], secured_durations["secured"]
         ),
     }
-    results = (producer_metadata.get("result"), local_metadata.get("result"), secured_metadata.get("result"))
-    overall_result = "PASS" if all(result == "PASS" for result in results) else "FAIL"
+    mode_metadata = {"local": local_metadata, "secured": secured_metadata}
+    gate_modes = release_gates["local"]
+    mode_results = {
+        mode: metadata.get("result")
+        for mode, metadata in mode_metadata.items()
+    }
+    shared_passed = producer_metadata.get("result") == "PASS"
+    gating_mode_failed = any(
+        mode in gate_modes and result != "PASS"
+        for mode, result in mode_results.items()
+    )
+    overall_result = "PASS" if shared_passed and not gating_mode_failed else "FAIL"
     run = json.loads((output / "shared" / "run.json").read_text(encoding="utf-8"))
     lines = ["# Journey batch", "", f"- Commit: `{run['commit']}`",
              f"- Baseline: `{run['baseline']}`", f"- Build base: `{run['buildBase']}`", "",
              "## Stage durations"]
     lines.extend(f"- {stage}: {durations[stage]} seconds" for stage in STAGES)
-    lines.extend(["", "- Modes: local and secured", "- Reports and logs: one directory per mode",
-                  f"", f"- Result: {overall_result}", ""])
+    lines.extend(["", "- Modes: local and secured", "- Reports and logs: one directory per mode", ""])
+    lines.extend(
+        f"- {mode}: {mode_results[mode]} ({'gating' if mode in gate_modes else 'non-gating for Release 1'})"
+        for mode in mode_metadata
+    )
+    lines.extend(["", f"- Result: {overall_result}", ""])
     (output / "shared" / "summary.md").write_text("\n".join(lines), encoding="utf-8")
     for mode, metadata in (("shared", producer_metadata), ("local", local_metadata),
                            ("secured", secured_metadata)):
@@ -149,6 +186,13 @@ def main(argv: list[str]) -> int:
             print(f"journey mode metadata could not be written: {error}; next: rerun e2e/journey/batch.sh mode {argv[4]}",
                   file=sys.stderr)
             return 1
+    if len(argv) == 4 and argv[1] == "mode-gating":
+        try:
+            return 0 if mode_is_gating(Path(argv[2]), argv[3]) else 1
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            print(f"journey mode gate could not be read: {error}; next: rerun e2e/journey/batch.sh mode {argv[3]}",
+                  file=sys.stderr)
+            return 2
     if len(argv) != 5:
         print("usage: batch_summary.py <output> <producer-artifact> <local-artifact> <secured-artifact>",
               file=sys.stderr)
