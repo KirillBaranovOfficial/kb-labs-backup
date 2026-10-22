@@ -67,13 +67,9 @@ Examples:
 		var pkgs []workspace.Package
 		switch {
 		case runAffected:
-			pkgs, err = engine.AffectedPackages(ws, cfg)
+			pkgs, err = engine.AffectedRunPackages(ws, cfg, args, cacheRoot, runDiffOnly)
 			if err != nil {
 				return fmt.Errorf("affected: %w", err)
-			}
-			if !runDiffOnly {
-				dirty := engine.DirtyPackages(ws, args, cacheRoot)
-				pkgs = engine.UnionPackages(ws, pkgs, dirty)
 			}
 			if len(pkgs) == 0 {
 				o := newOutput()

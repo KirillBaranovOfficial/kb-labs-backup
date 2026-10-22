@@ -57,13 +57,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	start := time.Now()
 
 	// 1. Compute input hash.
-	inputs := append([]string(nil), def.Inputs...)
-	if !containsInput(inputs, "package.json") {
-		// Package metadata controls exports, scripts and dependency resolution,
-		// all of which can change dist without touching src/.
-		inputs = append(inputs, "package.json")
-	}
-	inputHash, err := cache.HashInputsWithFingerprint(pkg.Dir, depDirs, inputs, e.taskFingerprint(def))
+	inputHash, err := hashTaskInputs(pkg, def, depDirs, e.runtimeFingerprint)
 	if err != nil {
 		failure := fmt.Sprintf("hash inputs: %v", err)
 		logPath, logErr := e.writeTaskLog(pkg.Name, def.Name, "", "", failure)
@@ -203,9 +197,13 @@ func (e *Executor) writeTaskLog(pkgName, taskName, stdout, stderr, runError stri
 }
 
 func (e *Executor) taskFingerprint(def TaskDef) string {
+	return taskFingerprint(def, e.runtimeFingerprint)
+}
+
+func taskFingerprint(def TaskDef, runtimeFingerprint string) string {
 	parts := append([]string{
 		cache.FormatVersion,
-		e.runtimeFingerprint,
+		runtimeFingerprint,
 		def.Name,
 		def.Command,
 		strings.Join(def.Inputs, "\x00"),
@@ -214,6 +212,16 @@ func (e *Executor) taskFingerprint(def TaskDef) string {
 	}, strconv.FormatBool(def.Cache))
 	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(digest[:])
+}
+
+func hashTaskInputs(pkg workspace.Package, def TaskDef, depDirs []string, runtimeFingerprint string) (string, error) {
+	inputs := append([]string(nil), def.Inputs...)
+	if !containsInput(inputs, "package.json") {
+		// Package metadata controls exports, scripts and dependency resolution,
+		// all of which can change dist without touching src/.
+		inputs = append(inputs, "package.json")
+	}
+	return cache.HashInputsWithFingerprint(pkg.Dir, depDirs, inputs, taskFingerprint(def, runtimeFingerprint))
 }
 
 func containsInput(inputs []string, wanted string) bool {
@@ -301,11 +309,16 @@ func (e *Executor) storeOutputs(pkgDir string, patterns []string) ([]cache.Outpu
 	var refs []cache.OutputRef
 	for _, rel := range fileList {
 		absPath := filepath.Join(pkgDir, rel)
+		info, err := os.Stat(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("stat %s: %w", rel, err)
+		}
 		sha, err := e.objects.PutFile(absPath)
 		if err != nil {
 			return nil, fmt.Errorf("store %s: %w", rel, err)
 		}
-		refs = append(refs, cache.OutputRef{Path: rel, Object: sha})
+		mode := uint32(info.Mode().Perm())
+		refs = append(refs, cache.OutputRef{Path: rel, Object: sha, Mode: &mode})
 	}
 	return refs, nil
 }
@@ -313,8 +326,11 @@ func (e *Executor) storeOutputs(pkgDir string, patterns []string) ([]cache.Outpu
 // restoreOutputs copies cached output files back to their locations in pkgDir.
 func (e *Executor) restoreOutputs(m *cache.Manifest, pkgDir string) error {
 	for _, ref := range m.Outputs {
+		if ref.Mode == nil {
+			return fmt.Errorf("restore %s: cached output has no file mode", ref.Path)
+		}
 		dest := filepath.Join(pkgDir, ref.Path)
-		if err := e.objects.RestoreFile(ref.Object, dest); err != nil {
+		if err := e.objects.RestoreFile(ref.Object, dest, os.FileMode(*ref.Mode)); err != nil {
 			return fmt.Errorf("restore %s: %w", ref.Path, err)
 		}
 	}
