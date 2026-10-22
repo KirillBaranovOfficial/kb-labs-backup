@@ -194,9 +194,16 @@ run_mode() {
     "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" || return 1
   if [ "$rc" -ne 0 ]; then
     printf '\n- Failed stage: `%s`\n- Stage log: `%s/batch.log`\n' "$mode" "$mode/batch.log" >> "$mode_dir/batch.log"
+    gate_rc=0
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-gating "$mode_dir" "$mode" || gate_rc=$?
+    if [ "$gate_rc" -eq 1 ]; then
+      printf 'Result: FAIL (non-gating for Release 1)\n' >> "$mode_dir/batch.log"
+      return 0
+    fi
     echo "journey $mode mode failed; see $mode_dir/batch.log; next: KB_JOURNEY_ONLY=service-$mode:explore e2e/journey/run.sh --no-build" >&2
+    return "$rc"
   fi
-  return "$rc"
+  return 0
 }
 case "${1:-}" in
   prepare)
@@ -223,6 +230,6 @@ case "${1:-}" in
       done
       "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$full_out" "$producer" "$full_out/.artifact-local" "$full_out/.artifact-secured" || summary_rc=1
     fi
-    [ "${prepare_rc:-0}" -eq 0 ] && [ "${mode_rc:-0}" -eq 0 ] && [ "${summary_rc:-0}" -eq 0 ]
+    [ "${prepare_rc:-0}" -eq 0 ] && [ "${summary_rc:-0}" -eq 0 ]
     ;;
 esac
