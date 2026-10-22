@@ -253,6 +253,7 @@ function createPlatformServices(
 export function createSystemCommandContext(
   context: SystemContext,
   platform: PlatformContainer,
+  env: NodeJS.ProcessEnv,
 ): PluginContextV3 & { executionBackend?: PlatformContainer['executionBackend'] } {
   const ui = createCLIUIFacade(
     context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
@@ -291,11 +292,11 @@ export function createSystemCommandContext(
     platform: scopedPlatformServices,
     ...(platform.hasExecutionBackend ? { executionBackend: platform.executionBackend } : {}),
     runtime: {
-      // Stub: system commands do not use sandboxed runtime. Real runtime is
-      // only wired for plugin handlers executed via executeCommandV3.
+      // The built-in command path shares the invocation environment carrier
+      // with plugin handlers, without mutating the CLI process environment.
       fs: {} as unknown as FSShim,
       fetch: fetch,
-      env: (key: string) => process.env[key],
+      env: (key: string) => env[key],
     },
     api: {} as unknown as PluginAPI,
     hostContext: {

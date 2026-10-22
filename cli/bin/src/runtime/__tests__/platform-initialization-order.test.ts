@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, access, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createProjectRegistry } from "@kb-labs/core-project-registry";
 
 const mocks = vi.hoisted(() => ({
   loadPlatformConfiguration: vi.fn(),
@@ -29,6 +30,8 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
   afterEach(async () => {
     if (isolatedHome) await rm(isolatedHome, { recursive: true, force: true });
     isolatedHome = undefined;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     for (const key of Object.keys(process.env)) {
       if (!(key in originalEnv)) delete process.env[key];
     }
@@ -144,6 +147,72 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({
       env: expect.objectContaining({ KB_GATEWAY_URL: gatewayUrl }),
     }));
+    expect(process.env.KB_GATEWAY_URL).toBeUndefined();
+  });
+
+  it("passes the resolved Gateway address into the real built-in Marketplace handler", async () => {
+    const cwd = await isolateEnvironment();
+    delete process.env.KB_GATEWAY_URL;
+    const env = { ...process.env };
+    delete env.KB_GATEWAY_URL;
+    const gatewayUrl = "http://127.0.0.1:4873";
+    await createProjectRegistry({ env }).add(cwd);
+    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    const platformWithTransport = {
+      logger,
+      getAdapter: (name: string) => name === "serviceTransport"
+        ? { listenAddress: () => ({ host: "127.0.0.1", port: 4873 }) }
+        : undefined,
+    };
+    mocks.initializePlatform.mockImplementation(async (config) => ({ ...config, platform: platformWithTransport }));
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({ ok: true, total: 0, issues: [] }), { status: 200 });
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const exitCode = await executeCli(["marketplace", "plugins", "doctor", "--scope", "project", "--json"], {
+      cwd,
+      env,
+      registerBuiltinCommands: () => {},
+    });
+
+    expect(exitCode).toBe(0);
+    expect(requests).toEqual([`${gatewayUrl}/api/v1/marketplace/diagnostics?scope=project&projectRoot=${encodeURIComponent(cwd)}`]);
+    expect(process.env.KB_GATEWAY_URL).toBeUndefined();
+  });
+
+  it("passes the resolved Gateway address into the built-in Workspace Agent handler", async () => {
+    const cwd = await isolateEnvironment();
+    delete process.env.KB_GATEWAY_URL;
+    const env = { ...process.env };
+    delete env.KB_GATEWAY_URL;
+    const gatewayUrl = "http://127.0.0.1:4873";
+    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    const platformWithTransport = {
+      logger,
+      getAdapter: (name: string) => name === "serviceTransport"
+        ? { listenAddress: () => ({ host: "127.0.0.1", port: 4873 }) }
+        : undefined,
+    };
+    mocks.initializePlatform.mockImplementation(async (config) => ({ ...config, platform: platformWithTransport }));
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({ hosts: [] }), { status: 200 });
+    }));
+    const output: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line) => { output.push(String(line)); });
+
+    const exitCode = await executeCli(["workspace", "list", "--json"], {
+      cwd,
+      env,
+      registerBuiltinCommands: () => {},
+    });
+
+    expect(requests, output.join("\n")).toEqual([`${gatewayUrl}/hosts`]);
+    expect(exitCode).toBe(0);
     expect(process.env.KB_GATEWAY_URL).toBeUndefined();
   });
 

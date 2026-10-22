@@ -45,6 +45,7 @@ import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
 import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
 import { resolveProjectScope } from "./command-scope";
 import { handleExecutionError } from "./execution-error";
+import { runtimeContext } from "@kb-labs/plugin-contracts";
 
 declare global {
   var __KB_PLATFORM_CONFIG__: PlatformConfig | undefined;
@@ -540,15 +541,17 @@ export async function executeCli(
 
       try {
         const runtime = await runtimeFactory(runtimeInitOptions);
-        const v3Context = createSystemCommandContext(cliContext, platform);
+        const v3Context = createSystemCommandContext(cliContext, platform, commandEnv);
         const { gatewayUrl: _gatewayUrl, ...commandGlobalFlags } = global;
         const commandFlags: Record<string, unknown> = { ...commandGlobalFlags, ...flagsObj };
         if (global.gatewayUrl && cmd.flags?.some((flag) => flag.name === 'gateway-url')) {
           commandFlags['gateway-url'] = global.gatewayUrl;
         }
         return runtime.middleware.execute(cliContext, async () => {
-          const code = await cmd.run(v3Context, actualRest, commandFlags);
-          return typeof code === "number" ? code : 0;
+          return runtimeContext.run(v3Context.runtime, async () => {
+            const code = await cmd.run(v3Context, actualRest, commandFlags);
+            return typeof code === "number" ? code : 0;
+          });
         });
       } catch (error: unknown) {
         return handleExecutionError(error, presenter);
