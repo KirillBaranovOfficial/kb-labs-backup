@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { getHostServiceAddress } from '@kb-labs/core-platform';
+import { useEnv } from '@kb-labs/sdk';
 
 type Flags = {
   json: { type: 'boolean'; description: string };
@@ -39,7 +40,7 @@ export const workspaceList = defineSystemCommand<Flags, Result>({
         // Use the configured platform Gateway when no agent configuration exists.
       }
     }
-    gatewayUrl ??= getHostServiceAddress('gateway', { KB_GATEWAY_URL: process.env.KB_GATEWAY_URL });
+    gatewayUrl ??= getHostServiceAddress('gateway', { KB_GATEWAY_URL: useEnv('KB_GATEWAY_URL') });
     let hosts: HostEntry[];
     try {
       const response = await gatewayApiFetch(`${gatewayUrl}/hosts`);
