@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
@@ -28,6 +28,10 @@ describe("launchPlatform", () => {
     process.env.HOME = kbHome;
     process.env.KB_HOME = kbHome;
     await createProjectRegistry({ root: kbHome }).add(projectRoot);
+    await mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    await writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({
+      platform: { deployment: { topology: 'local' } },
+    }));
     previousSocketHash = process.env.KB_SOCKET_HASH;
     delete process.env.KB_SOCKET_HASH;
   });
@@ -65,6 +69,18 @@ describe("launchPlatform", () => {
     expect(process.env.PLATFORM_LAUNCH_TEST).toBe("value");
     expect(process.env.KB_SOCKET_HASH).toMatch(/^[0-9a-f]{8}$/);
     expect(runtime.startupReport.applicationId).toBe("test-service");
+  });
+
+  it('refuses service startup when the delivery producer omits topology', async () => {
+    await writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: {} }));
+    await expect(launchPlatform({
+      applicationId: 'missing-topology-service',
+      kind: 'service',
+      startDir: projectRoot,
+      assemblyHook,
+    })).rejects.toMatchObject({
+      envelope: { code: 'KB_DEPLOYMENT_TOPOLOGY_REQUIRED' },
+    });
   });
 
   it("is idempotent for one application identity", async () => {
