@@ -6,6 +6,15 @@ import (
 	"net/url"
 )
 
+// HostControlCredentialEnv is injected by the launcher when the host control
+// endpoint is required. The host must use the same name to publish its
+// readiness address.
+const HostControlCredentialEnv = "KB_HOST_CONTROL_TOKEN"
+
+// HostActiveWorkAddressHeader carries the loopback control address on the
+// host's health response so the launcher can validate readiness.
+const HostActiveWorkAddressHeader = "x-kb-host-active-work-address"
+
 // HostSpec tells the launcher how to run the platform host as one supervised
 // process (ADR-0043 / ADR-0045). The release index declares it for every
 // platform bundle and the resolver copies it into the plan: the launcher has no
