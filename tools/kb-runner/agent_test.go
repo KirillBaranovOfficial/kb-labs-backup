@@ -117,6 +117,92 @@ func TestVendorAdapterChildEnvironmentExcludesParentSession(t *testing.T) {
 	}
 }
 
+func TestVendorWorkerEnvironmentCarriesExplicitFakeBinaryWithoutParentSession(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "codex")
+	t.Setenv("CODEX_BIN", fake)
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "parent-session-secret")
+
+	env, err := vendorWorkerEnvironment("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make(map[string]string, len(env))
+	for _, entry := range env {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			t.Fatalf("invalid environment entry %q", entry)
+		}
+		values[name] = value
+	}
+	if values["CODEX_BIN"] != fake {
+		t.Fatalf("worker environment lost explicit provider binary: CODEX_BIN=%q want %q", values["CODEX_BIN"], fake)
+	}
+	if _, ok := values["CLAUDE_CODE_MESSAGING_TOKEN"]; ok {
+		t.Fatal("worker environment forwarded parent-session token")
+	}
+}
+
+func TestProviderFailureDiagnosticIncludesStderrTail(t *testing.T) {
+	detail := providerFailureDetail("provider command exited with code 23", strings.Repeat("x", 5000)+"\nlast diagnostic line\n")
+	if !strings.Contains(detail, "provider command exited with code 23") || !strings.Contains(detail, "last diagnostic line") {
+		t.Fatalf("provider failure diagnostic=%q", detail)
+	}
+	if strings.Contains(detail, strings.Repeat("x", 5000)) {
+		t.Fatalf("provider diagnostic did not keep a tail: %q", detail)
+	}
+}
+
+func TestAgentProcessFailureSurfacesPersistedProviderDiagnostic(t *testing.T) {
+	store := newJobStore(t.TempDir())
+	if _, err := store.Create(Job{ID: "provider-failed", Stream: "diagnostic", Vendor: "codex", State: JobRunning, Phase: PhaseRun}); err != nil {
+		t.Fatal(err)
+	}
+	detail := providerFailureDetail("provider command exited with code 23", "provider stderr detail")
+	if err := store.Terminate("provider-failed", JobTerminal{State: JobFailed, Phase: PhaseRun, Reason: ReasonVendorError, Error: detail, Next: "kb-runner status"}); err != nil {
+		t.Fatal(err)
+	}
+	failure := agentProcessFailure(store, "provider-failed", errors.New("exit status 1"), runnerRoot{invocation: "kb-runner"})
+	if !strings.Contains(failure.Error(), "provider stderr detail") || !strings.Contains(failure.Error(), "status --json") {
+		t.Fatalf("agent start failure=%q", failure)
+	}
+	job, err := store.Get("provider-failed")
+	if err != nil || job.Final == nil || !strings.Contains(job.Final.Error, "provider stderr detail") {
+		t.Fatalf("terminal provider diagnostic=%+v err=%v", job.Final, err)
+	}
+}
+
+func TestAgentWorkerPersistsAndReturnsProviderStderr(t *testing.T) {
+	base := t.TempDir()
+	state := filepath.Join(base, "state")
+	work := filepath.Join(base, "work")
+	if err := os.Mkdir(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prompt := filepath.Join(base, "prompt")
+	if err := os.WriteFile(prompt, []byte("test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(base, "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' 'provider stderr marker' >&2\nexit 23\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_BIN", fake)
+	id := "provider-stderr"
+	store := newJobStore(state)
+	if _, err := store.Create(Job{ID: id, Stream: "stderr", Vendor: "codex", State: JobQueued, Phase: PhaseWorktree}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	code, err := agentStartCommand(runnerRoot{invocation: "kb-runner"}, []string{"--job-id", id, "--state", state, "--stream", "stderr", "--vendor", "codex", "--workdir", work, "--prompt-file", prompt}, &stdout, &stderr)
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "provider stderr marker") {
+		t.Fatalf("worker failure code=%d err=%v stdout=%s stderr=%s", code, err, stdout.String(), stderr.String())
+	}
+	job, err := store.Get(id)
+	if err != nil || job.Final == nil || !strings.Contains(job.Final.Error, "provider stderr marker") {
+		t.Fatalf("terminal diagnostic=%+v err=%v", job.Final, err)
+	}
+}
+
 func TestAgentWaitCLIBlocksUntilTerminalRecord(t *testing.T) {
 	state := t.TempDir()
 	store := newJobStore(state)
