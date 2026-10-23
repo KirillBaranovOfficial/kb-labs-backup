@@ -108,9 +108,9 @@ func run() diag.ExitStatus {
 			return
 		}
 		installed := make([]contracts.MarketplaceInstallRecord, 0, len(request.Specs))
-		for _, identity := range request.Specs {
+		for _, spec := range request.Specs {
 			installed = append(installed, contracts.MarketplaceInstallRecord{
-				ID: identity, Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
+				ID: spec, Spec: spec, Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")

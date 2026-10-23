@@ -283,6 +283,8 @@ export interface ManifestCache {
 // ---------------------------------------------------------------------------
 
 export interface InstallResultEntry {
+  /** Exact Marketplace install spec supplied for this entry. */
+  spec?: string;
   id: string;
   version: string;
   primaryKind: EntityKind;

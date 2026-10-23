@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	marketplaceidentity "github.com/kb-labs/create/v2/marketplace/identity"
+	marketplaceinstallspec "github.com/kb-labs/create/v2/marketplace/install_spec"
 )
 
 const RequestSchema = "kb.create/v2"
@@ -65,10 +65,11 @@ type MarketplaceSources struct {
 	NpmURL              string `json:"npmUrl,omitempty"`
 }
 
-// MarketplaceInstallRecord is the source and version Marketplace resolved for
-// a scenario identity after the platform host became ready.
+// MarketplaceInstallRecord joins the exact Marketplace install spec with the
+// resolved manifest identity and source after the host becomes ready.
 type MarketplaceInstallRecord struct {
 	ID              string `json:"id"`
+	Spec            string `json:"spec"`
 	Version         string `json:"version"`
 	PrimaryKind     string `json:"primaryKind"`
 	Source          string `json:"source"`
@@ -80,21 +81,21 @@ type MarketplaceInstallRecord struct {
 // resolution. Values only carry non-secret input; secret input is referenced by
 // key and retrieved through the engine's secret store at apply time.
 type InstallRequest struct {
-	Schema              string              `json:"schema"`
-	Platform            VersionSelector     `json:"platform"`
-	SDK                 VersionSelector     `json:"sdk,omitempty"`
-	ServiceProfile      string              `json:"serviceProfile,omitempty"`
-	GatewayURL          string              `json:"gatewayUrl,omitempty"`
-	MarketplaceSources  *MarketplaceSources `json:"marketplaceSources,omitempty"`
-	Plugins             []ComponentRequest  `json:"plugins,omitempty"`
-	MarketplacePlugins  []string            `json:"marketplacePlugins,omitempty"`
-	Adapters            []ComponentRequest  `json:"adapters,omitempty"`
-	ProviderPreferences map[string]string   `json:"providerPreferences,omitempty"`
-	Values              map[string]string   `json:"values,omitempty"`
-	SecretInputs        []string            `json:"secretInputs,omitempty"`
-	Policy              CompatibilityPolicy `json:"policy"`
-	Source              ArtifactSource      `json:"source"`
-	ScenarioID          string              `json:"scenarioId,omitempty"`
+	Schema                  string              `json:"schema"`
+	Platform                VersionSelector     `json:"platform"`
+	SDK                     VersionSelector     `json:"sdk,omitempty"`
+	ServiceProfile          string              `json:"serviceProfile,omitempty"`
+	GatewayURL              string              `json:"gatewayUrl,omitempty"`
+	MarketplaceSources      *MarketplaceSources `json:"marketplaceSources,omitempty"`
+	Plugins                 []ComponentRequest  `json:"plugins,omitempty"`
+	MarketplaceInstallSpecs []string            `json:"marketplaceInstallSpecs,omitempty"`
+	Adapters                []ComponentRequest  `json:"adapters,omitempty"`
+	ProviderPreferences     map[string]string   `json:"providerPreferences,omitempty"`
+	Values                  map[string]string   `json:"values,omitempty"`
+	SecretInputs            []string            `json:"secretInputs,omitempty"`
+	Policy                  CompatibilityPolicy `json:"policy"`
+	Source                  ArtifactSource      `json:"source"`
+	ScenarioID              string              `json:"scenarioId,omitempty"`
 	// ScenarioStateDigest is a non-secret checksum of persisted scenario
 	// answers. It is provenance only: the resolver never treats it as input.
 	ScenarioStateDigest string `json:"scenarioStateDigest,omitempty"`
@@ -248,9 +249,9 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		return InstallRequest{}, err
 	}
 	r.Plugins = plugins
-	for _, identity := range r.MarketplacePlugins {
-		if err := marketplaceidentity.Validate(identity); err != nil {
-			return InstallRequest{}, invalidRequestField("marketplacePlugins", "scenario contains an invalid Marketplace identity", "Correct the scenario plugin identity and rerun `kb-create plan`.", err)
+	for _, spec := range r.MarketplaceInstallSpecs {
+		if err := marketplaceinstallspec.Validate(spec); err != nil {
+			return InstallRequest{}, invalidRequestField("marketplaceInstallSpecs", "scenario contains an invalid Marketplace install spec", "Correct the Marketplace install spec and rerun `kb-create plan`.", err)
 		}
 	}
 	r.Adapters = adapters

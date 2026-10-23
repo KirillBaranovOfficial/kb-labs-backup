@@ -118,10 +118,18 @@ def assert_commit_marketplace_receipt(receipt: dict) -> None:
         raise RuntimeError("Commit scenario receipt does not identify the commit scenario")
     installs = receipt.get("marketplaceInstalls", [])
     commit = next((entry for entry in installs if entry.get("id") == "@kb-labs/commit"), None)
-    if not commit or not commit.get("version") or not commit.get("source"):
-        raise RuntimeError("Commit scenario receipt omitted its Marketplace source or resolved version")
+    if (not commit or commit.get("spec") != "@kb-labs/commit-entry"
+            or not commit.get("version") or not commit.get("source")):
+        raise RuntimeError("Commit scenario receipt omitted requested spec, Marketplace source, or resolved version")
     if any(artifact.get("id") == "@kb-labs/commit" for artifact in receipt.get("plan", {}).get("artifacts", [])):
         raise RuntimeError("Commit Marketplace identity was incorrectly resolved from the release index")
+
+
+def assert_apply_shim_owner(result: dict, platform_root: Path) -> None:
+    """Check the apply result's shim when the invocation owns or links it."""
+    shim = result.get("shim")
+    if shim is not None and shim != {"linked": True, "owner": str(platform_root.resolve())}:
+        raise RuntimeError("apply result reported a shim that is not linked to the canonical platform root")
 
 
 def _extract_candidate_tarball(tarball: Path, package_root: Path, package: str) -> None:
@@ -1748,6 +1756,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                       "PC-001 apply")
         if result.get("operation") != "apply" or not result.get("receipt") or not result.get("logPath"):
             raise RuntimeError("apply result omitted operation, receipt, or logPath")
+        assert_apply_shim_owner(result, apply_root)
         assert_commit_marketplace_receipt(result["receipt"])
         status = _data(run_command([launcher, "status", "--json", "--platform-root", str(apply_root)]),
                        "PC-001 apply status")
