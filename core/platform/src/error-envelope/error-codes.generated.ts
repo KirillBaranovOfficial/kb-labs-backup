@@ -187,6 +187,7 @@ export type CatalogErrorCode =
   | "KB_RELEASE_TOKEN_MISSING"
   | "KB_RELEASE_TREE_DIRTY"
   | "KB_RELEASE_VERSION_CONFLICT"
+  | "KB_RESTART_WORK_IN_FLIGHT"
   | "KB_RUNTIME_APPROVAL_INPUT_INVALID"
   | "KB_RUNTIME_APPROVAL_LIST_FAILED"
   | "KB_RUNTIME_APPROVAL_NOT_PENDING"
@@ -453,6 +454,7 @@ export interface CatalogTemplateParameters {
   "KB_RELEASE_TOKEN_MISSING": Record<never, never>;
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
+  "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<never, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<never, never>;
@@ -719,6 +721,7 @@ export interface CatalogDetailsFor {
   "KB_RELEASE_TOKEN_MISSING": { "check"?: string; "classification"?: string };
   "KB_RELEASE_TREE_DIRTY": { "check"?: string; "classification"?: string; "changes"?: string; "toolGenerated"?: string };
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
+  "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string; "items": readonly { "kind": string; "id": string; "owningService": string }[] };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<string, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<string, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<string, never>;
@@ -985,6 +988,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_TOKEN_MISSING": [],
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
+  "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -1251,6 +1255,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RELEASE_TOKEN_MISSING": [],
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
+  "KB_RESTART_WORK_IN_FLIGHT": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -1517,6 +1522,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RELEASE_TOKEN_MISSING": [],
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": [],
+  "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -1783,6 +1789,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_TOKEN_MISSING": [],
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
+  "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -2049,6 +2056,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RELEASE_TOKEN_MISSING": [],
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
+  "KB_RESTART_WORK_IN_FLIGHT": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -2315,6 +2323,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_TOKEN_MISSING": [],
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": [],
+  "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -2518,7 +2527,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_MARKETPLACE_AUTH_FAILED": [],
   "KB_MARKETPLACE_IDENTITY_RESERVED": [],
   "KB_MARKETPLACE_INSTALL_FAILED": ["source"],
-  "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
+  "KB_MARKETPLACE_INTEGRITY_MISMATCH": ["package","scope"],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
@@ -2581,6 +2590,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_TOKEN_MISSING": ["check","classification"],
   "KB_RELEASE_TREE_DIRTY": ["check","classification","changes","toolGenerated"],
   "KB_RELEASE_VERSION_CONFLICT": [],
+  "KB_RESTART_WORK_IN_FLIGHT": ["items"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -2847,6 +2857,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RELEASE_TOKEN_MISSING": Record<never, never>;
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
+  "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<never, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<never, never>;
@@ -3113,6 +3124,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RELEASE_TOKEN_MISSING": Record<never, never>;
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": Record<never, never>;
+  "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<never, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<never, never>;
@@ -3379,6 +3391,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RELEASE_TOKEN_MISSING": Record<never, never>;
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": Record<never, never>;
+  "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<never, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<never, never>;

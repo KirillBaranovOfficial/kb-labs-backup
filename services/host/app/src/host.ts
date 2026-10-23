@@ -59,6 +59,7 @@ import { createProjectRouting } from "./project-runtime/routing.js";
 import { findScheduledProjects } from "./project-runtime/workflow-schedules.js";
 import { createProjectsRoutes } from "./projects-routes.js";
 import { createPluginsRoutes } from "./plugins-routes.js";
+import { startHostActiveWorkControl } from "./active-work-control.js";
 import {
   parseHostSettings,
   type HostModuleId,
@@ -420,6 +421,10 @@ export async function createHostConfig(
           });
         },
       });
+      const hostControlCredential = process.env.KB_HOST_CONTROL_TOKEN;
+      const activeWorkControl = hostControlCredential
+        ? await startHostActiveWorkControl(hostControlCredential, ctx.activeWork, manager)
+        : undefined;
       const refreshScheduledProjects = async (): Promise<void> => {
         const scheduled = await findScheduledProjects(registry);
         await manager.syncScheduledProjects(scheduled);
@@ -467,6 +472,7 @@ export async function createHostConfig(
             createProjectsRoutes({ registry, manager }),
             ...pluginsRoutes,
           ),
+          ...(activeWorkControl ? { readinessControlAddress: activeWorkControl.address } : {}),
         },
       );
       return releaseHookBeforeTeardown(async () => {
@@ -475,7 +481,11 @@ export async function createHostConfig(
         try {
           await stopGateway();
         } finally {
-          await manager.stopAll();
+          try {
+            await activeWorkControl?.close();
+          } finally {
+            await manager.stopAll();
+          }
         }
       });
     },

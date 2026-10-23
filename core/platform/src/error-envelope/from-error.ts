@@ -362,7 +362,7 @@ export function decodeErrorEnvelope(envelope: unknown, options: DecodeEnvelopeOp
         details: {
           ...protocolDetails,
           remoteCode: envelope.code,
-          fields: reconstructed.details?.fields ?? 'details',
+          fields: typeof reconstructed.details?.fields === 'string' ? reconstructed.details.fields : 'details',
         },
       });
     }
@@ -422,7 +422,7 @@ export interface ProductErrorInput extends ToEnvelopeOptions {
   message: string;
   hint: string;
   retryable: boolean;
-  details?: Record<string, string>;
+  details?: Record<string, unknown>;
 }
 
 /** Builds and validates a product error for both thrown and returned failures. */

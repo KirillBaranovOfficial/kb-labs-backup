@@ -345,7 +345,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		if planned.Host != nil {
 			starter := postInstallStarter
 			if starter == nil {
-				starter = installedHostStarter{root: installRoot}
+				starter = installedHostStarter{root: installRoot, executable: input.Executable}
 			}
 			if securedAdmin && !bootstrapCompleted {
 				starter = bootstrapOutcomeHost{starter: starter, store: store}
@@ -535,7 +535,8 @@ func optionalShim(executable string, result shim.EnsureResult) *shim.EnsureResul
 }
 
 type installedHostStarter struct {
-	root string
+	root       string
+	executable string
 }
 
 func (starter installedHostStarter) Start(ctx context.Context, spec contracts.HostSpec) (func() error, error) {
@@ -554,12 +555,13 @@ func (starter installedHostStarter) Start(ctx context.Context, spec contracts.Ho
 	if err != nil {
 		return nil, err
 	}
-	if _, err := runner.Start(ctx); err != nil {
-		return nil, err
+	command := hostCommand{PlatformRoot: starter.root, Executable: starter.executable, Version: buildVersion}
+	if _, failure := command.start(ctx, runner, runner.State); failure != nil {
+		return nil, failure
 	}
 	return func() error {
-		_, err := runner.Stop(context.Background())
-		return err
+		_, failure := command.stop(context.Background(), runner, runner.State)
+		return failure
 	}, nil
 }
 

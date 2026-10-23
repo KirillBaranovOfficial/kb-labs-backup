@@ -17,6 +17,7 @@ import { createProductErrorEnvelope, getCatalogEntry, isErrorCode } from '@kb-la
 type PluginErrorArguments<C extends ErrorCode> = C extends PlatformErrorCode
   ? [code: C, ...DetailsArgumentFor<C>, hint?: string]
   : [code: C, statusCode: number, details?: Record<string, string>, hint?: string];
+type PluginErrorDetails<C extends ErrorCode> = C extends PlatformErrorCode ? DetailsFor<C> : Record<string, string>;
 
 /**
  * Base plugin error class
@@ -32,7 +33,7 @@ export class PluginError<C extends ErrorCode = PlatformErrorCode> extends Error 
   /**
    * Additional error details
    */
-  public readonly details?: DetailsFor<Extract<C, PlatformErrorCode>> | Record<string, string>;
+  public readonly details?: PluginErrorDetails<C>;
   public readonly hint?: string;
 
   constructor(message: string, ...args: PluginErrorArguments<C>);
@@ -47,7 +48,7 @@ export class PluginError<C extends ErrorCode = PlatformErrorCode> extends Error 
     this.name = 'PluginError';
     this.code = code as C;
     this.statusCode = statusCode;
-    this.details = details;
+    this.details = details as PluginErrorDetails<C> | undefined;
     this.hint = hint;
 
     // Ensure prototype chain is correct
@@ -62,7 +63,7 @@ export class ProductPluginError extends PluginError<ProductErrorCode> {
 
   constructor(message: string, code: ProductErrorCode, statusCode: number, details: Record<string, string> | undefined, hint: string) {
     const envelope = createProductErrorEnvelope({ code, message, details, hint, retryable: false });
-    super(message, envelope.code, statusCode, envelope.details, envelope.hint);
+    super(message, envelope.code, statusCode, details, envelope.hint);
     this.name = 'ProductPluginError';
     this.envelope = envelope;
     Object.setPrototypeOf(this, new.target.prototype);

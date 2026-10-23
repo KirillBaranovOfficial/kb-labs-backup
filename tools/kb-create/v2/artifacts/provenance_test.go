@@ -193,7 +193,7 @@ func TestVerifyInstalledProvenanceReportsStructuredMismatchFields(t *testing.T) 
 				t.Fatal(err)
 			}
 			var output struct {
-				Details map[string]string `json:"details"`
+				Details map[string]any `json:"details"`
 			}
 			if err := json.Unmarshal(encoded, &output); err != nil {
 				t.Fatal(err)
@@ -270,17 +270,17 @@ func TestVerifyInstalledProvenanceReportsAbsentLockIntegrity(t *testing.T) {
 				t.Fatal(err)
 			}
 			var output struct {
-				Details map[string]string `json:"details"`
+				Details map[string]any `json:"details"`
 			}
 			if err := json.Unmarshal(encoded, &output); err != nil {
 				t.Fatal(err)
 			}
-			for key, value := range map[string]string{
+			for key, value := range map[string]any{
 				"field": "integrity", "expected": "sha512-sealed", "actual": actual,
-				"actualPresent": "false", "packagePath": packagePath, "digestVersion": DistDigestVersion,
+				"actualPresent": false, "packagePath": packagePath, "digestVersion": DistDigestVersion,
 			} {
 				if output.Details[key] != value {
-					t.Errorf("JSON details[%q] = %q, want %q; envelope: %s", key, output.Details[key], value, encoded)
+					t.Errorf("JSON details[%q] = %#v, want %#v; envelope: %s", key, output.Details[key], value, encoded)
 				}
 			}
 		})

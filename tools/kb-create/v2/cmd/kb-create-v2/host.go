@@ -33,6 +33,7 @@ type hostCommand struct {
 	identityReader        func(int) (string, error)
 	testSupervisorHealthy func(context.Context, host.State) bool
 	testBackstopGrace     time.Duration
+	Interrupt             bool
 }
 
 type hostCommandResult map[string]any
@@ -425,23 +426,16 @@ func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, st
 		}
 		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot, host.GatewayURLForState(state))
 	}
-	// A live supervisor owns the host: restart through its channel so its view
-	// of the child stays consistent.
-	if client, err := control.Connect(state); err == nil {
-		response, restartErr := client.Restart(ctx)
-		if restartErr != nil {
-			return nil, asDiag(restartErr)
-		}
-		return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": response.Stopped, "host": response.Host}), nil
+	// The supervisor owns the host control credential and must approve the stop.
+	client, connectErr := control.Connect(state)
+	if connectErr != nil {
+		return nil, asDiag(host.HostUnreachable(runner.Spec.HealthURL, connectErr))
 	}
-	outcome, restartErr := host.RestartWithRecovery(ctx, c.PlatformRoot, runner,
-		func(ctx context.Context, current *host.ProcessRunner) (host.Info, error) {
-			return c.spawnSupervisor(ctx, current, current.State)
-		})
+	response, restartErr := client.Restart(ctx, c.Interrupt)
 	if restartErr != nil {
 		return nil, asDiag(restartErr)
 	}
-	return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": outcome.Stopped, "host": outcome.Info}), nil
+	return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": response.Stopped, "host": response.Host}), nil
 }
 
 // lifecycleHost is the supervised host as the swap operations see it. Both

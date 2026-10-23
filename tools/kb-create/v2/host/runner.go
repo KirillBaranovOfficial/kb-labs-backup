@@ -23,9 +23,10 @@ const (
 
 // Info describes a host that Start brought up.
 type Info struct {
-	Runner    string `json:"runner"`
-	PID       int    `json:"pid,omitempty"`
-	HealthURL string `json:"healthUrl,omitempty"`
+	Runner         string `json:"runner"`
+	PID            int    `json:"pid,omitempty"`
+	HealthURL      string `json:"healthUrl,omitempty"`
+	ControlAddress string `json:"-"`
 }
 
 // StopResult reports how a stop ended. Forced means the grace period expired

@@ -65,8 +65,8 @@ var operationDescriptors = []operationDescriptor{
 	{Name: "stop", Short: "Stop the local host", Args: cobra.NoArgs, Flags: []string{"platform-root"}, Human: renderStop, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		return executeHostStop(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Executable: deps.Executable, Version: buildVersion})
 	}},
-	{Name: "restart", Short: "Restart the local host", Args: cobra.NoArgs, Flags: []string{"platform-root"}, Human: renderRestart, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
-		return executeHostRestart(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Executable: deps.Executable, Version: buildVersion})
+	{Name: "restart", Short: "Restart the local host", Args: cobra.NoArgs, Flags: []string{"platform-root", "interrupt"}, Human: renderRestart, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		return executeHostRestart(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Interrupt: flags.Bool("interrupt"), Executable: deps.Executable, Version: buildVersion})
 	}},
 	{Name: "update", Short: "Update the installation", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "scenario", "scenario-answers", "resume", "registry", "marketplace-registry-url", "marketplace-registry-public-key-env", "marketplace-registry-token-env", "marketplace-npm-url", "telemetry-endpoint", "telemetry-consent"}, Human: renderUpdate, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		invocation, err := flags.Invocation()

@@ -854,6 +854,30 @@
       "httpStatus": 500
     },
     {
+      "code": "KB_RESTART_WORK_IN_FLIGHT",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "The host has active work and cannot be restarted.",
+      "hint": "Wait for active work to finish, or rerun with `{interruptCommand}`.",
+      "structuredDetailFields": ["items"],
+      "requiredStructuredDetailFields": ["items"],
+      "structuredDetailSchemas": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "id", "owningService"],
+            "properties": {"kind": {"type": "string"}, "id": {"type": "string"}, "owningService": {"type": "string"}},
+            "additionalProperties": false
+          }
+        }
+      },
+      "httpStatus": 409
+    },
+    {
       "code": "KB_HOST_UNREACHABLE",
       "area": "host",
       "stage": "run",
@@ -1535,7 +1559,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The requested package version does not match its immutable Marketplace integrity pin.",
-      "hint": "Do not use this version. Verify the source publication, then run `kb marketplace install {package} --scope {scope}` after correcting it."
+      "hint": "Do not use this version. Verify the source publication, then run `kb marketplace install {package} --scope {scope}` after correcting it.",
+      "structuredDetailFields": ["package", "scope"]
     },
     {
       "code": "KB_MARKETPLACE_PACKAGE_INVALID",

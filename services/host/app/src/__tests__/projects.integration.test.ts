@@ -27,7 +27,7 @@ import { createChildProcessLauncher } from "../project-runtime/launcher.js";
 import type { RuntimeLauncher, RuntimeProject } from "../project-runtime/manager.js";
 
 interface ErrorBody {
-  error: { code: string; message: string; hint: string; cause?: string; details?: Record<string, string> };
+  error: { code: string; message: string; hint: string; cause?: string; details?: Record<string, unknown> };
 }
 
 interface HealthBody {

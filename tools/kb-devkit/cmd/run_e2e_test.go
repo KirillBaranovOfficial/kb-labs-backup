@@ -113,9 +113,9 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 	var failure struct {
 		OK    bool `json:"ok"`
 		Error struct {
-			Code    string            `json:"code"`
-			Hint    string            `json:"hint"`
-			Details map[string]string `json:"details"`
+			Code    string         `json:"code"`
+			Hint    string         `json:"hint"`
+			Details map[string]any `json:"details"`
 		} `json:"error"`
 		Data struct {
 			Results []struct {
