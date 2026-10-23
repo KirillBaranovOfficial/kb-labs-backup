@@ -93,4 +93,15 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
     const passedPlatform = vi.mocked(runInProcess).mock.calls[0]?.[0]?.platform;
     expect(passedPlatform).toBe(platform);
   });
+
+  it('preserves a named handler export through in-process dispatch', async () => {
+    const backend = new InProcessBackend({
+      platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'],
+    });
+
+    await backend.execute(makeRequest({ handlerRef: './dist/sessions-handler.js#createSessionHandler' }));
+
+    expect(vi.mocked(runInProcess).mock.calls[0]?.[0]?.handlerPath)
+      .toMatch(/sessions-handler\.js#createSessionHandler$/);
+  });
 });
