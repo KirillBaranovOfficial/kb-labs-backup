@@ -237,6 +237,29 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             "S-030.1": "PASS", "S-030.2": "PASS", "S-030.3": "PASS", "S-030.4": "PASS",
         })
 
+    def test_commit_fixture_recovers_repository_without_head(self):
+        (self.project / ".git").mkdir()
+        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
+            "schema": "kb.marketplace/3",
+            "plugins": {"@kb-labs/commit": {
+                "enabled": True,
+                "version": "2.120.1",
+                "integrity": "sha256-fixture",
+                "source": "marketplace",
+                "package": "@kb-labs/commit-entry",
+            }},
+        }))
+
+        journey = Journey("local", "commit-case-headless-repository")
+        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                              subprocess.run, self.env)
+
+        result = journey.result()
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.project,
+                              capture_output=True, text=True, check=True)
+        self.assertTrue(head.stdout.strip())
+        self.assertEqual(result.steps[0]["status"], "PASS", result.steps)
+
     # case: S-003.1
     # case: S-210.1
     def test_scaffold_add_edit_invoke_and_remove_records_all_case_steps(self):

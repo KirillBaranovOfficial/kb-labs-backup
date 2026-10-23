@@ -432,7 +432,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                     output = {"ok": True, "data": {"enabled": False}}
                 elif args[:3] == ["workflow", "crons", "enable"]:
                     if args[3].startswith("plugin:"):
-                        return CompletedProcess(args, 1, "CronMutationRefused: plugin crons are read-only")
+                        return CompletedProcess(args, 1, "", stderr="CronMutationRefused: plugin crons are read-only")
                     schedule_file = cwd / ".kb" / "crons" / "journey-cron.yml"
                     schedule_file.write_text(schedule_file.read_text().replace("enabled: false", "enabled: true"))
                     output = {"ok": True, "data": {"enabled": True}}

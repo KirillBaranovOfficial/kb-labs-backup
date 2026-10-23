@@ -31,6 +31,13 @@ from invocations import catalogued_error_hint, catalogued_error_message, invocat
 import jsonl
 
 
+def _release_entity(identity: str) -> dict:
+    root = Path(__file__).resolve().parents[2]
+    index = json.loads((root / "e2e" / "platform" / "fixtures" / "release-index-v2.json").read_text())
+    return next((entity for collection in ("plugins", "adapters") for entity in index[collection]
+                 if entity["id"] == identity or entity["package"] == identity), None)
+
+
 class MarketplaceStepTests(unittest.TestCase):
     def test_s268_ordered_source_rows_are_wired_to_installed_journey_steps(self):
         with tempfile.TemporaryDirectory(prefix="kb-s268-journey-wiring-") as directory:
@@ -435,6 +442,7 @@ class MarketplaceStepTests(unittest.TestCase):
             publisher_configs: list[tuple[str | None, str | None]] = []
             host_running = True
             registry_version = "2.120.1"
+            published_versions: dict[str, str] = {}
 
             def lock(path: Path, *, platform: bool = False) -> dict:
                 lock_file = path / ".kb" / "marketplace.lock"
@@ -466,19 +474,21 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if command[0] == "npm":
                     package_id = command[2]
-                    versions = {
-                        "@kb-labs/commit-entry": registry_version,
-                        "@kb-labs/qa-entry": "2.120.1",
-                        "@kb-labs/e2e-analytics-emitter": "1.0.0",
-                        "@kb-labs/adapters-fs": "2.107.0",
-                    }
-                    return subprocess.CompletedProcess(command, 0, json.dumps(versions[package_id]), "")
+                    entity = _release_entity(package_id)
+                    if entity is None:
+                        return subprocess.CompletedProcess(command, 1, "", "package not present in release fixture")
+                    version = published_versions.get(entity["package"], entity["version"])
+                    return subprocess.CompletedProcess(command, 0, json.dumps(version), "")
 
                 args = command[2:] if command[0] == "node" else command[1:]
                 stdout = "{}"
                 if args[:2] == ["hub", "publish"]:
-                    stdout = json.dumps({"handle": "fixture", "name": "@kb-labs/commit-entry",
-                                         "version": registry_version, "trust": "trusted"})
+                    package_path = Path(args[args.index("--path") + 1])
+                    package = json.loads((package_path / "package.json").read_text())
+                    published = {"handle": "fixture", "name": package["name"],
+                                 "version": registry_version, "trust": "trusted"}
+                    published_versions[published["name"]] = published["version"]
+                    stdout = json.dumps(published)
                 elif args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/not-published":
                     payload = {"ok": False, "error": {"code": "KB_PLUGIN_NOT_FOUND",
                         "message": "Plugin @kb-labs/not-published was not found in the registry.",
@@ -528,9 +538,14 @@ class MarketplaceStepTests(unittest.TestCase):
                             },
                         }), "")
                 elif args[:3] == ["journey", "analytics", "emit"]:
-                    return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {
-                        "code": "KB_RUNTIME_COMMAND_NOT_FOUND", "message": "Unknown command journey analytics emit", "hint": "Run kb help",
-                    }}), "")
+                    policy = json.loads((cwd_path / ".kb" / "kb.config.json").read_text())
+                    installed = any(entry.get("package") == "@kb-labs/e2e-analytics-emitter"
+                                    for entry in lock(cwd_path)["plugins"].values())
+                    if policy.get("plugins", {}).get("block") == 7 or not installed:
+                        return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {
+                            "code": "KB_RUNTIME_COMMAND_NOT_FOUND", "message": "Unknown command journey analytics emit", "hint": "Run kb help",
+                        }}), "")
+                    return subprocess.CompletedProcess(command, 0, "", "")
                 elif args[:1] == ["version"]:
                     stdout = json.dumps({"version": "1.0.0"})
                 elif args[:2] == ["marketplace", "install"]:
@@ -538,18 +553,29 @@ class MarketplaceStepTests(unittest.TestCase):
                         package_id, version = args[2].rsplit("@", 1)
                     else:
                         package_id, version = args[2], registry_version
-                    if package_id == "@kb-labs/commit":
-                        version = "2.120.1"
+                    entity = _release_entity(package_id)
+                    if entity is None:
+                        error = {
+                            "code": "KB_PLUGIN_NOT_FOUND",
+                            "message": catalogued_error_message("KB_PLUGIN_NOT_FOUND").format(plugin=package_id),
+                            "hint": catalogued_error_hint("KB_PLUGIN_NOT_FOUND", plugin=package_id),
+                        }
+                        if "--json" in args:
+                            return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
+                        return subprocess.CompletedProcess(command, 1,
+                            f"{error['message']} [{error['code']}]\nHint: {error['hint']}\n", "")
+                    plugin_id = entity["id"]
+                    package_name = entity["package"]
+                    version = published_versions.get(package_name, version)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
                     lock_root = active_platform if platform else cwd_path
                     value = lock(lock_root, platform=platform)
                     value.setdefault("adapters", {})
                     collection = value["plugins"]
-                    plugin_id = "@kb-labs/commit" if package_id in ("@kb-labs/commit-entry", "@kb-labs/commit") else package_id
                     collection[plugin_id] = {
                         "version": version, "integrity": "sha512-fixture", "source": "marketplace",
                         "marketplaceSource": "registry", "signatureStatus": "verified",
-                        "enabled": True, "package": "@kb-labs/commit-entry" if plugin_id == "@kb-labs/commit" else package_id,
+                        "enabled": True, "package": package_name,
                     }
                     save_lock(lock_root, value)
                     stdout = json.dumps({
@@ -598,11 +624,14 @@ class MarketplaceStepTests(unittest.TestCase):
                     if lock(cwd_path)["plugins"].get("@kb-labs/commit", {}).get("enabled") is False:
                         return subprocess.CompletedProcess(command, 1, "", "Command not found: commit")
                     stdout = "Commands: commit open"
+                elif args == ["review", "--help"]:
+                    installed = _release_entity("@kb-labs/review-entry")["id"] in lock(cwd_path)["plugins"]
+                    return subprocess.CompletedProcess(command, 0 if installed else 2, "", "")
                 elif args[:2] == ["commit", "open"]:
                     value = lock(cwd_path)
                     if "@kb-labs/commit" not in value["plugins"]:
                         return subprocess.CompletedProcess(command, 2, json.dumps({"ok": False, "error": {
-                            "code": "KB_RUNTIME_INPUT_INVALID",
+                            "code": "KB_RUNTIME_UNKNOWN_COMMAND",
                             "message": "Unknown command: commit open",
                             "hint": 'Check the command name or run "kb --help" to list available commands.',
                         }}), "")
@@ -772,7 +801,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(route_observations[-2], (False, False))
             self.assertNotIn(("npm", "view", "@kb-labs/adapters-fs", "version", "--json", "--registry=http://registry.test"), calls)
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs@2.107.0", "--scope", "platform", "--json"), calls)
-            self.assertIn(("kb", "qa", "cases", "list", "--json"), calls)
+            self.assertIn(("kb", "review", "--help"), calls)
             self.assertIn(("kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"), calls)
             self.assertNotIn("port", json.loads(platform_config.read_text())["gateway"])
             self.assertFalse(any(item.name.startswith("kb-marketplace-project-b-") for item in home.iterdir()))
