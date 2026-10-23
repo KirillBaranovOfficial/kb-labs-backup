@@ -1,6 +1,7 @@
 import type { JobRun, StepRun, WorkflowRun } from '@kb-labs/workflow-contracts'
 import type { ICache, IStorage } from '@kb-labs/core-platform'
 import {
+  isActive,
   assertTransition,
   isTerminal,
   type AssertTransitionOptions,
@@ -35,6 +36,11 @@ const DAEMON_LEASE_KEY = 'kb:daemon:lease'
 export interface DaemonLease {
   instanceId: string
   heartbeatAt: string
+}
+
+export interface ActiveWorkflowWork {
+  runs: string[];
+  jobs: string[];
 }
 
 export class StateStore {
@@ -156,6 +162,21 @@ export class StateStore {
       })
     }
     return sorted.map(({ id }) => id)
+  }
+
+  async listActiveWork(): Promise<ActiveWorkflowWork> {
+    const runIds = await this.getAllRunIds()
+    const runs = await Promise.all(runIds.map((id) => this.getRun(id)))
+    const activeRuns: string[] = []
+    const activeJobs: string[] = []
+    for (const run of runs) {
+      if (!run) { continue }
+      if (isActive(run.status, 'run')) { activeRuns.push(run.id) }
+      for (const job of run.jobs) {
+        if (isActive(job.status, 'job')) { activeJobs.push(job.id) }
+      }
+    }
+    return { runs: activeRuns.sort(), jobs: activeJobs.sort() }
   }
 
   /**

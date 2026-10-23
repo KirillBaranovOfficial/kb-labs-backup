@@ -23,6 +23,7 @@ import { createRegistry } from "@kb-labs/core-registry";
 import { requireProjectContext } from "@kb-labs/core-runtime";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { createWorkflowActiveWorkProvider } from "./active-work.js";
 
 /**
  * Bootstrap workflow daemon.
@@ -59,6 +60,7 @@ export async function setup({
   projectRoot,
   projectId: contextProjectId,
   platformRoot,
+  activeWork,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
   const projectId = requireWorkflowProjectId(contextProjectId);
@@ -143,6 +145,10 @@ export async function setup({
     workspaceRoot,
     projectId,
   });
+  const unregisterActiveWork = activeWork.register(
+    "workflow",
+    createWorkflowActiveWorkProvider(engine.getStateStore()),
+  );
 
   bootstrapLogger.info(
     "Cleaning up stale runs from previous daemon process",
@@ -275,6 +281,7 @@ export async function setup({
 
   return async () => {
     bootstrapLogger.warn("Stopping workflow daemon components");
+    unregisterActiveWork();
     clearInterval(leaseHeartbeat);
     fileWatcher.close();
     await cronScheduler.stop();

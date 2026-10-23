@@ -11,6 +11,7 @@ import {
   type IContextLogger,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
+import { ActiveWorkRegistry } from "./active-work.js";
 
 export interface ServiceContext {
   platform: PlatformContainer;
@@ -26,6 +27,7 @@ export interface ServiceContext {
   platformRoot: string;
   projectRoot?: string;
   projectId?: string;
+  activeWork: ActiveWorkRegistry;
 }
 
 type ServiceSetup = (
@@ -194,6 +196,7 @@ export async function runHost(config: HostConfig): Promise<void> {
   const netOffset = Number(process.env.KB_NET_OFFSET) || 0;
   const multi = config.modules.length > 1;
   const started: StartedModule[] = [];
+  const activeWork = new ActiveWorkRegistry();
 
   for (const module of config.modules) {
     const { port, host } = resolveNetwork(module, runtime.platform, netOffset);
@@ -216,6 +219,7 @@ export async function runHost(config: HostConfig): Promise<void> {
         projectRoot: runtime.roots.projectRoot,
         platformRoot: runtime.roots.platformRoot,
         projectId: config.projectId,
+        activeWork,
       });
       started.push({ id: module.id, teardown });
     } catch (error) {
