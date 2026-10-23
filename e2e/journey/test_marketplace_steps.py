@@ -683,7 +683,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 service_path = path.split(project_marker, 1)[1] if project_marker in path else ""
                 if "/unknown-service/" in path:
                     return FakeResponse(404, {"ok": False, "error": {
-                        "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
+                        "code": "KB_PROJECT_SERVICE_NOT_FOUND",
                         "message": "Project service was not found.",
                         "hint": "Check the project service ID and retry the request.",
                         "correlationId": "request-fixture"}})
@@ -738,6 +738,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(journey.result().status, "FAIL")
             self.assertEqual(claims_by_id["S-051.2"], "FAIL")
             self.assertEqual(claims_by_id["S-203.25"], "FAIL")
+            self.assertEqual(claims_by_id["S-192.1"], "PASS")
             self.assertEqual(actual, expected, [(step.name, step.status, step.message) for step in journey.steps])
             self.assertEqual(commit_case_hook_calls, [True])
             self.assertIn(("kb", "hub", "publish", "--path", str(Path(__file__).resolve().parents[2] / "plugins" / "commit" / "entry"), "--json"), calls)
