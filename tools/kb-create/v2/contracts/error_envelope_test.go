@@ -17,7 +17,7 @@ import (
 
 func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	cause := errors.New("invalid config: token=top-secret-value")
-	value := (&RequestValidationError{Code: CodeInputRequired, Field: "platformRoot", Cause: cause}).Diagnostic()
+	value := (&RequestValidationError{Field: "platformRoot", Cause: cause}).Diagnostic()
 	if value.Code != CodeInputRequired || value.Unwrap() != cause {
 		t.Fatalf("diag = %#v; cause was not kept internal", value)
 	}
@@ -79,6 +79,34 @@ func TestNewDiagRejectsMissingCauseForCauseRequiredInstallCodes(t *testing.T) {
 				NewDiag(code, "failure", "retry", missing.cause)
 			})
 		}
+	}
+}
+
+func TestNewUpdateIncompatibleRequiresCatalogDetailFields(t *testing.T) {
+	for _, details := range []UpdateIncompatibleDetails{
+		{Kind: "plugin", ID: "commit"},
+		{Kind: "plugin", ID: "commit", SelectedVersion: "1.0.0"},
+		{Kind: "plugin", ID: "commit", RequiredRange: "<2.0.0"},
+	} {
+		func() {
+			defer func() {
+				if recovered := recover(); recovered == nil {
+					t.Fatalf("NewUpdateIncompatible accepted incomplete details: %+v", details)
+				}
+			}()
+			NewUpdateIncompatible(details)
+		}()
+	}
+
+	failure := NewUpdateIncompatible(UpdateIncompatibleDetails{
+		ID: "commit", Kind: "plugin", RequiredRange: "<2.0.0", SelectedVersion: "2.0.0",
+	})
+	envelope, err := diag.ToEnvelope(failure)
+	if err != nil {
+		t.Fatalf("complete update incompatibility does not satisfy catalog contract: %v", err)
+	}
+	if envelope.Message == "" || envelope.Hint == "" || envelope.Details["id"] != "commit" {
+		t.Fatalf("update incompatibility did not render catalog text and details: %+v", envelope)
 	}
 }
 

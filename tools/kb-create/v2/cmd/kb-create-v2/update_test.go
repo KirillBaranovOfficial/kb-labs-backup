@@ -1714,8 +1714,11 @@ func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T
 	withoutAdapter.Adapters = nil
 	_, failure = planUpdateWithMarketplaceLock(root, *initial.Plan, withoutAdapter,
 		"kb-create update --platform-root "+root)
-	if failure == nil || failure.Code != contracts.CodeUpdateIncompatible || failure.Meta["id"] != adapterID {
-		t.Fatalf("missing installed adapter failure = %#v; want typed refusal naming %s", failure, adapterID)
+	if failure == nil || failure.Code != contracts.CodeIncompatibleComponents || failure.Meta["id"] != adapterID {
+		t.Fatalf("missing installed adapter failure = %#v; want a component-selection refusal naming %s", failure, adapterID)
+	}
+	if _, err := diag.ToEnvelope(failure); err != nil {
+		t.Fatalf("missing installed adapter diagnostic violated its catalog contract: %v", err)
 	}
 }
 

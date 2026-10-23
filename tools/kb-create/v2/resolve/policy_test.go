@@ -83,7 +83,7 @@ func TestCompatiblePolicyUsesPrereleaseAwareComparatorRanges(t *testing.T) {
 }
 
 func TestIncompatibleComponentErrorExposesRangeAndRemediationHint(t *testing.T) {
-	err := compatible("=3.2.0", "3.3.0", "adapter", "fixture-adapter", "adapter fixture-adapter platform")
+	err := compatible("=3.2.0", "3.3.0", "adapter", "fixture-adapter", "adapter fixture-adapter platform", OperationInstall)
 	launcherErr, ok := err.(*diag.Diag)
 	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents {
 		t.Fatalf("component error = %#v", err)
@@ -96,6 +96,23 @@ func TestIncompatibleComponentErrorExposesRangeAndRemediationHint(t *testing.T) 
 	}
 	if launcherErr.Hint != "Choose compatible versions or pass an explicit supported provider." {
 		t.Fatalf("component error hint = %q", launcherErr.Hint)
+	}
+}
+
+func TestPlanWithUpdateClassifiesDeclaredRangeIncompatibilityAtResolution(t *testing.T) {
+	source := policyCatalog()
+	source.Platforms[0].SDKRange = "<3.0.0"
+	request := contracts.InstallRequest{
+		PlatformRoot: t.TempDir(),
+		Platform:     contracts.VersionSelector{Version: "3.2.0"},
+		SDK:          contracts.VersionSelector{Version: "3.2.0"},
+		Policy:       contracts.PolicyCompatible,
+	}
+	_, err := PlanWith(request, source, Options{Operation: OperationUpdate})
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodeUpdateIncompatible || failure.Meta["kind"] != "sdk" ||
+		failure.Meta["id"] != "sdk" || failure.Meta["selectedVersion"] != "3.2.0" || failure.Meta["requiredRange"] != "<3.0.0" {
+		t.Fatalf("update plan incompatibility = %#v", err)
 	}
 }
 
@@ -112,17 +129,22 @@ func TestUpdateValidationRefusesDowngradeAndNamesInstalledPluginRange(t *testing
 	target.ServiceGraph.PlatformVersion = "3.3.0"
 	_, err = ValidateUpdate(active, target, policyCatalog())
 	launcherErr, ok := err.(*diag.Diag)
-	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents || launcherErr.Meta["kind"] != "plugin" || launcherErr.Meta["id"] != "fixture-compat" || launcherErr.Meta["requiredRange"] != "=3.2.0" || launcherErr.Meta["selectedVersion"] != "3.3.0" {
+	if !ok || launcherErr.Code != contracts.CodeUpdateIncompatible || launcherErr.Meta["kind"] != "plugin" || launcherErr.Meta["id"] != "fixture-compat" || launcherErr.Meta["requiredRange"] != "=3.2.0" || launcherErr.Meta["selectedVersion"] != "3.3.0" {
 		t.Fatalf("component compatibility error = %#v", err)
 	}
-	if launcherErr.Hint != "Update or remove plugin fixture-compat first, then rerun `kb-create update`." {
-		t.Fatalf("component compatibility hint = %q", launcherErr.Hint)
+	envelope, envelopeErr := diag.ToEnvelope(launcherErr)
+	if envelopeErr != nil {
+		t.Fatalf("component compatibility diagnostic violates its catalog: %v", envelopeErr)
+	}
+	entry, ok := diag.LookupCatalog(contracts.CodeUpdateIncompatible)
+	if !ok || envelope.Hint == entry.Hint {
+		t.Fatalf("component compatibility hint was not rendered from the catalog: %q", envelope.Hint)
 	}
 }
 
 // case: S-053.1
 func TestStrictPolicyStillAcceptsDeclaredSemverRanges(t *testing.T) {
-	if err := compatible("^2.0.0", "2.0.0", "plugin", "commit", "plugin commit platform"); err != nil {
+	if err := compatible("^2.0.0", "2.0.0", "plugin", "commit", "plugin commit platform", OperationInstall); err != nil {
 		t.Fatalf("strict selection rejected a version its declared range admits: %v", err)
 	}
 }
