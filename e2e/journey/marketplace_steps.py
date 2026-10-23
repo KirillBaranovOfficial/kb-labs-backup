@@ -624,7 +624,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         return _run(kb_command(args), cwd=cwd, env=base_env, runner=runner)
 
     commit_package = "@kb-labs/commit"
-    commit_install_package = "@kb-labs/commit"
+    commit_install_package = "@kb-labs/commit-entry"
     unrelated_package = "@kb-labs/review-entry"
     authenticate_secured_marketplace(journey, project, base_env, runner)
 
@@ -651,21 +651,25 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         # Commit fixture that produces the project lock state.
         commit_version = (fixture_entry or {}).get("version")
         if not isinstance(commit_version, str) or not commit_version:
-            raise RuntimeError("published Commit fixture has no version to pin in lifecycle checks")
+            raise RuntimeError("Commit fixture has no version to pin in lifecycle checks")
     # S-047 requires a second project plugin to survive target uninstall.
-    install_unrelated = ["marketplace", "install", unrelated_package, "--json"]
+    unrelated_version = _registry_version(unrelated_package, registry, project, base_env, runner)
+    install_unrelated = ["marketplace", "install", f"{unrelated_package}@{unrelated_version}", "--json"]
     sealed_platform_before_unrelated = _platform_snapshot(platform_root)
     unrelated_install = _json(cli(install_unrelated), install_unrelated)
     unrelated_installed = unrelated_install.get("installed")
     if not isinstance(unrelated_installed, list) or len(unrelated_installed) != 1:
-        raise RuntimeError("Registry-installed unrelated fixture did not return one installed plugin identity")
+        raise RuntimeError("npm-installed unrelated fixture did not return one installed plugin identity")
     unrelated_plugin_id = unrelated_installed[0].get("id")
     if not isinstance(unrelated_plugin_id, str) or not unrelated_plugin_id:
-        raise RuntimeError("Registry-installed unrelated fixture did not return its canonical plugin ID")
+        raise RuntimeError("npm-installed unrelated fixture did not return its canonical plugin ID")
+    if (unrelated_installed[0].get("version") != unrelated_version
+            or unrelated_installed[0].get("source") != "npm"):
+        raise RuntimeError("npm-installed unrelated fixture did not preserve its selected npm version")
     unrelated_entry = json.loads((project / ".kb" / "marketplace.lock").read_text()).get("plugins", {}).get(unrelated_plugin_id)
-    unrelated_version = unrelated_entry.get("version") if isinstance(unrelated_entry, dict) else None
-    if not isinstance(unrelated_version, str) or not unrelated_version:
-        raise RuntimeError("Registry-installed unrelated fixture did not produce a versioned lock entry")
+    locked_unrelated_version = unrelated_entry.get("version") if isinstance(unrelated_entry, dict) else None
+    if locked_unrelated_version != unrelated_version:
+        raise RuntimeError("npm-installed unrelated fixture did not produce its selected version in the lock")
     if _platform_snapshot(platform_root) != sealed_platform_before_unrelated:
         raise RuntimeError("marketplace install changed the platform receipt or installed package versions")
 
@@ -673,8 +677,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     before = json.loads(lock_file.read_text()) if lock_file.exists() else {"plugins": {}}
     if commit_package not in before.get("plugins", {}):
         raise RuntimeError(f"{commit_package} fixture is missing before the marketplace lifecycle")
-    install_commit = ["marketplace", "install", commit_install_package, "--json"]
-    install_commit_platform = ["marketplace", "install", commit_install_package,
+    install_commit = ["marketplace", "install", f"{commit_install_package}@{commit_version}", "--json"]
+    install_commit_platform = ["marketplace", "install", f"{commit_install_package}@{commit_version}",
                               "--scope", "platform", "--json"]
     sealed_platform_before = _platform_snapshot(platform_root)
     def install_exact_commit() -> None:
@@ -682,13 +686,15 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         project_installed = project_result.get("installed")
         if (project_result.get("scope") != "project" or not isinstance(project_installed, list)
                 or not any(isinstance(item, dict) and item.get("id") == commit_package
-                           and item.get("version") == commit_version for item in project_installed)):
+                           and item.get("version") == commit_version and item.get("source") == "npm"
+                           for item in project_installed)):
             raise RuntimeError(f"project marketplace install did not return the selected plugin version as JSON: {project_result!r}; expected {commit_package}@{commit_version}")
         platform_result = _json(cli(install_commit_platform), install_commit_platform)
         platform_installed = platform_result.get("installed")
         if (platform_result.get("scope") != "platform" or not isinstance(platform_installed, list)
                 or not any(isinstance(item, dict) and item.get("id") == commit_package
-                           and item.get("version") == commit_version for item in platform_installed)):
+                           and item.get("version") == commit_version and item.get("source") == "npm"
+                           for item in platform_installed)):
             raise RuntimeError("platform marketplace install did not return the selected plugin version as JSON")
         project_lock = json.loads(lock_file.read_text())
         project_entry = project_lock.get("plugins", {}).get(commit_package)
@@ -1151,6 +1157,9 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, project_id
         version = fixture_entry.get("version")
         if not isinstance(version, str) or not version:
             raise RuntimeError("captured Commit fixture lock entry has no exact version")
+        package = fixture_entry.get("package")
+        if not isinstance(package, str) or not package:
+            raise RuntimeError("captured Commit fixture lock entry has no package name")
         lock_file = project / ".kb" / "marketplace.lock"
         try:
             lock = json.loads(lock_file.read_text())
@@ -1162,7 +1171,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, project_id
         if isinstance(entry, dict):
             uninstall = kb_command([ "marketplace", "uninstall", "@kb-labs/commit", "--json"])
             _output(_run(uninstall, cwd=project, env=base_env, runner=runner), uninstall)
-        install = kb_command([ "marketplace", "install", "@kb-labs/commit", "--json"])
+        install = kb_command(["marketplace", "install", f"{package}@{version}", "--json"])
         _output(_run(install, cwd=project, env=base_env, runner=runner), install)
         lock = json.loads(lock_file.read_text())
         entry = lock.get("plugins", {}).get("@kb-labs/commit")
