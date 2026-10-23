@@ -51,3 +51,15 @@ func TestInstallWizardCarriesMarketplaceSourcesFromInstallFlags(t *testing.T) {
 		t.Fatalf("marketplace sources = %#v, want %#v", request.MarketplaceSources, want)
 	}
 }
+
+func TestInstallWizardCarriesNpmOnlyMarketplaceMirror(t *testing.T) {
+	request, err := mergeDirectRequest(contracts.InstallRequest{
+		PlatformRoot: "/tmp/platform", Platform: contracts.VersionSelector{Channel: contracts.ChannelStable},
+	}, directRequest{MarketplaceNpmURL: "http://verdaccio:4873"})
+	if err != nil {
+		t.Fatalf("mergeDirectRequest() rejected an npm-only Marketplace mirror: %v", err)
+	}
+	if request.MarketplaceSources == nil || request.MarketplaceSources.NpmURL != "http://verdaccio:4873" {
+		t.Fatalf("MarketplaceSources = %#v, want the Verdaccio npm source", request.MarketplaceSources)
+	}
+}

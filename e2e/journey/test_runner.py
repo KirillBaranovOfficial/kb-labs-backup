@@ -18,6 +18,14 @@ import jsonl
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
+from runner import REGISTRY, marketplace_install_flags
+
+
+class MarketplaceInstallFlagTests(unittest.TestCase):
+    def test_default_lane_passes_npm_mirror_without_registry_credentials(self):
+        env = {"HOME": "/tmp/kb-journey-test-home"}
+
+        self.assertEqual(marketplace_install_flags(env), ["--marketplace-npm-url", REGISTRY])
 
 
 def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:
