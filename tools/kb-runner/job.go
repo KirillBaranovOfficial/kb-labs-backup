@@ -70,6 +70,7 @@ type JobTerminal struct {
 	State       JobState  `json:"state"`
 	Phase       JobPhase  `json:"phase"`
 	Reason      JobReason `json:"reason,omitempty"`
+	Error       string    `json:"error,omitempty"`
 	Next        string    `json:"next"`
 	MessagePath string    `json:"messagePath,omitempty"`
 	SessionID   string    `json:"sessionId,omitempty"`

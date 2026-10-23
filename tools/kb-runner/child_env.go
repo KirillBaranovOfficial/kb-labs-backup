@@ -46,3 +46,15 @@ func vendorChildEnvironment(vendor string) ([]string, error) {
 	}
 	return childEnvironment(spec.childEnv)
 }
+
+func vendorWorkerEnvironment(vendor string) ([]string, error) {
+	spec, ok := vendorRegistry[vendor]
+	if !ok {
+		return nil, fmt.Errorf("unsupported vendor %q", vendor)
+	}
+	declared := append([]string(nil), spec.childEnv...)
+	if binary := os.Getenv(spec.binaryEnv); binary != "" {
+		declared = append(declared, spec.binaryEnv+"="+binary)
+	}
+	return childEnvironment(declared)
+}

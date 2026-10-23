@@ -97,7 +97,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 			return failAgentJob(store, id, PhaseWorktree, ReasonSetup, root, finalPath, fmt.Errorf("locate agent process owner: %w", err))
 		}
 		argsForWorker := append([]string{"__agent_worker", "--job-id", id}, args...)
-		workerEnv, envErr := vendorChildEnvironment(*vendor)
+		workerEnv, envErr := vendorWorkerEnvironment(*vendor)
 		if envErr != nil {
 			return failAgentJob(store, id, PhaseWorktree, ReasonSetup, root, finalPath, fmt.Errorf("build agent child environment: %w", envErr))
 		}
@@ -127,7 +127,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 			}
 		}
 		if waitErr != nil {
-			return 1, fmt.Errorf("agent job %s failed under process owner: %s; next: %s status --json", id, exitSummary(waitErr), root.InvocationCommand())
+			return 1, agentProcessFailure(store, id, waitErr, root)
 		}
 		_, err = fmt.Fprintf(out, "job %s completed\n", id)
 		return 0, err
@@ -341,16 +341,41 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		if strings.Contains(strings.ToLower(stderr.String()), "rate limit") {
 			reason = ReasonRateLimited
 		}
-		err = store.Terminate(id, JobTerminal{State: state, Phase: PhaseRun, Reason: reason, Next: root.InvocationCommand() + " status", MessagePath: finalPath, SessionID: completedJob.SessionID})
+		diagnostic := providerFailureDetail(exitSummary(waitErr), stderr.String())
+		err = store.Terminate(id, JobTerminal{State: state, Phase: PhaseRun, Reason: reason, Error: diagnostic, Next: root.InvocationCommand() + " status", MessagePath: finalPath, SessionID: completedJob.SessionID})
 	}
 	if err != nil {
 		return 1, err
 	}
 	if waitErr != nil {
-		return 1, fmt.Errorf("agent job %s ended in %s: %s; next: %s status", id, PhaseRun, exitSummary(waitErr), root.InvocationCommand())
+		return 1, fmt.Errorf("agent job %s ended in %s: %s; next: %s status", id, PhaseRun, providerFailureDetail(exitSummary(waitErr), stderr.String()), root.InvocationCommand())
 	}
 	_, err = fmt.Fprintf(out, "job %s ok\n", id)
 	return 0, err
+}
+
+func agentProcessFailure(store *jobStore, id string, waitErr error, root runnerRoot) error {
+	detail := exitSummary(waitErr)
+	job, err := store.Get(id)
+	if err != nil {
+		return fmt.Errorf("agent job %s failed under process owner: %s; terminal diagnostic unavailable: %w; next: %s status --json", id, detail, err, root.InvocationCommand())
+	}
+	if job.Final != nil && job.Final.Error != "" {
+		detail = job.Final.Error
+	}
+	return fmt.Errorf("agent job %s failed under process owner: %s; next: %s status --json", id, detail, root.InvocationCommand())
+}
+
+func providerFailureDetail(summary, stderr string) string {
+	const maxTailBytes = 4096
+	tail := strings.TrimSpace(stderr)
+	if len(tail) > maxTailBytes {
+		tail = strings.ToValidUTF8(tail[len(tail)-maxTailBytes:], "�")
+	}
+	if tail == "" {
+		return summary
+	}
+	return summary + "\nstderr tail:\n" + tail
 }
 
 func failAgentJob(store *jobStore, id string, phase JobPhase, reason JobReason, root runnerRoot, messagePath string, cause error) (int, error) {
