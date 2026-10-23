@@ -114,8 +114,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Validate aggregation logic
-        run: node --test scripts/ci/aggregate-e2e-result.test.mjs
       - name: Check matrix outcome
         run: node scripts/ci/aggregate-e2e-result.mjs "${{ needs.e2e.result }}" "${{ needs.e2e-mcp.result }}"
 

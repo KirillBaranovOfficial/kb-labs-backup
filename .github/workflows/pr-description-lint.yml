@@ -23,7 +23,7 @@ jobs:
           node-version: 24
       - name: Validate PR title and body
         id: validate
-        run: node scripts/ci/validate-pr-description.mjs
+        run: ./tools/kb-devkit/kb-devkit check --only pr-description
 
       - name: Comment with the failure report
         if: failure() && steps.validate.outcome == 'failure'

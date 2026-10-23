@@ -346,11 +346,15 @@ describe('plugin-peer-deps (0.3)', () => {
 
   test('scans plugins/* and templates/plugin-template packages', () => {
     const root = fixtureRepo({
-      'tools/kb-create/config/platform-release.jsonc': JSON.stringify({ profiles: [{ id: 'default', products: { release: { flows: { platform: { platformMembers: ['@kb-labs/sdk'] } } } } }], platform: { adapters: {} } }),
+      'tools/kb-create/config/platform-release.jsonc': JSON.stringify({ profiles: [{ id: 'default', products: { release: { flows: { platform: { platformMembers: ['@kb-labs/sdk', '@kb-labs/plugin-contracts'] } } } } }], platform: { adapters: {} } }),
       'e2e/platform/registry-manifest.json': { core: [], services: [], plugins: [] },
       ...pluginEntry('plugins/bad/entry', '@kb-labs/bad', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
       ...pluginEntry('plugins/good/entry', '@kb-labs/good', { peerDependencies: { '@kb-labs/sdk': '*' }, devDependencies: { '@kb-labs/sdk': 'workspace:*' } }),
-      'packages/sdk/package.json': { name: '@kb-labs/sdk', peerDependencies: { '@kb-labs/plugin-contracts': '*', '@kb-labs/core-platform': '*' } },
+      'packages/sdk/package.json': {
+        name: '@kb-labs/sdk',
+        dependencies: { '@kb-labs/plugin-contracts': 'workspace:*' },
+        peerDependencies: { '@kb-labs/core-platform': '*' },
+      },
       'packages/plugin-contracts/package.json': { name: '@kb-labs/plugin-contracts' },
       'packages/core-platform/package.json': { name: '@kb-labs/core-platform' },
       // platform parts under plugins/ (daemon, engine) are out of scope

@@ -69,7 +69,10 @@ async function writeFixturePackage(packageRoot, name, manifest) {
     name,
     version: '1.0.0',
     type: 'module',
-    kb: { manifest: './dist/manifest.js' },
+    kb: {
+      manifest: './dist/manifest.js',
+      adapter: { manifest: './dist/manifest.js' },
+    },
   }));
   await writeFile(path.join(packageRoot, 'dist', 'manifest.js'), manifest);
 }
