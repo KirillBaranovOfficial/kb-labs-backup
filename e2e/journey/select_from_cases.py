@@ -24,7 +24,7 @@ from invocations import (
     print_report_text,
     read_ux_cli_result,
 )
-from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
+from dispatch_registry import RUNNERS, RUNNER_GROUPS, lanes_for_runners, runners_for_source
 from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import read_journey_selection, read_requested_cases
 from journey_resources import resource_root
@@ -205,19 +205,33 @@ def _imported_journey_sources(sources: set[str], root: Path) -> set[str]:
     return set(_imported_journey_sources_cached(tuple(sorted(sources)), root))
 
 
-def journey_source_group_declaration(source: str, root: Path) -> dict[str, tuple[str, ...]]:
+def journey_source_group_declaration(source: str, root: Path,
+                                     selector: str = "") -> dict[str, tuple[str, ...]]:
     """Resolve every step and claim registered by a journey module and its local imports."""
     sources = _imported_journey_sources({source}, root)
     registrations = _source_step_declarations(sources, root)
     cases: set[str] = set()
     steps: set[str] = set()
+    mode = RUNNERS[selector].mode if selector else ""
     for declaration in registrations.values():
         name = declaration.get("name")
         if name is None:
             continue
+        declared_runners = declaration.get("runners", ())
+        if selector:
+            if declared_runners and selector not in declared_runners:
+                continue
+            if not declared_runners and RUNNERS[selector].lane:
+                continue
         steps.add(str(name))
     for registered_source in sources:
         for declaration in _case_declarations(registered_source, root).values():
+            declared_runners = declaration.get("runners") or ()
+            if selector:
+                if declared_runners and selector not in declared_runners:
+                    continue
+                if not declared_runners and RUNNERS[selector].lane:
+                    continue
             cases.update(str(case) for case in declaration.get("cases") or ())
     return {"cases": tuple(sorted(cases)), "steps": tuple(sorted(steps))}
 
@@ -887,6 +901,7 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
             "steps": sorted(selected),
             "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
             "stepSources": sorted(sources), "capabilities": sorted(capabilities),
+            "composeProfiles": lanes_for_runners(runners),
             "selectedOwningSteps": {key: sorted(value) for key, value in sorted(selected_owners.items())}}
 
 

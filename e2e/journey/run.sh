@@ -51,6 +51,40 @@ if (( prepare_only )); then
   exit
 fi
 
+selection_json=""
+selected_selectors=""
+compose_profiles_json='[]'
+unset COMPOSE_PROFILES
+if [[ -z "$compose_action" && -z "${KB_JOURNEY_ONLY:-}" ]]; then
+  python3 e2e/journey/hermetic_cli.py -- node ./cli/bin/dist/bin.js qa cases validate
+fi
+if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
+  selection_json="$(python3 e2e/journey/select_from_cases.py)"
+  selected_selectors="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["runners"]))' <<< "$selection_json")"
+  compose_profiles_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["composeProfiles"]))' <<< "$selection_json")"
+elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
+  selected_selectors="$KB_JOURNEY_ONLY"
+  compose_profiles_json="$(python3 e2e/journey/dispatch_registry.py --lanes "$selected_selectors")"
+elif [[ -z "$compose_action" ]]; then
+  selected_selectors="$(python3 e2e/journey/select_from_cases.py)"
+  compose_profiles_json="$(python3 e2e/journey/dispatch_registry.py --lanes "$selected_selectors")"
+fi
+compose_profiles=""
+if [[ -n "$selected_selectors" ]]; then
+  compose_profiles="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)))' <<< "$compose_profiles_json")"
+fi
+if [[ -n "$compose_profiles" ]]; then export COMPOSE_PROFILES="$compose_profiles"; fi
+if [[ -n "$selection_json" ]]; then
+  export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
+  export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
+  export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
+  export KB_JOURNEY_SELECTED_OWNING_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["selectedOwningSteps"], separators=(",",":")))' <<< "$selection_json")"
+  export KB_JOURNEY_SELECTED_CAPABILITIES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<< "$selection_json")"
+else
+  unset KB_JOURNEY_SELECTED_STEPS KB_JOURNEY_PREREQUISITE_STEPS KB_JOURNEY_PREREQUISITE_FLOWS
+  unset KB_JOURNEY_SELECTED_OWNING_STEPS KB_JOURNEY_SELECTED_CAPABILITIES KB_JOURNEY_NEEDED_STATES
+fi
+
 ACTIVE_MONITORS=()
 MONITORED_CONTAINER_IDS=()
 source "$ROOT/e2e/journey/compose-owner.sh"
@@ -123,27 +157,6 @@ export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
 if (( ! COMPOSE_AVAILABLE )); then
   echo "Docker Compose is required for journey runs; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
   exit 127
-fi
-
-if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
-  python3 e2e/journey/hermetic_cli.py -- node ./cli/bin/dist/bin.js qa cases validate
-fi
-
-if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
-  selection_json="$(python3 e2e/journey/select_from_cases.py)"
-  export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
-  export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
-  export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
-  export KB_JOURNEY_SELECTED_OWNING_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["selectedOwningSteps"], separators=(",",":")))' <<< "$selection_json")"
-  export KB_JOURNEY_SELECTED_CAPABILITIES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<< "$selection_json")"
-  selected_selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["runners"]))' <<< "$selection_json")"
-else
-  unset KB_JOURNEY_SELECTED_STEPS
-  unset KB_JOURNEY_PREREQUISITE_STEPS
-  unset KB_JOURNEY_PREREQUISITE_FLOWS
-  unset KB_JOURNEY_SELECTED_OWNING_STEPS
-  unset KB_JOURNEY_SELECTED_CAPABILITIES
-  unset KB_JOURNEY_NEEDED_STATES
 fi
 
 dispatch_selector() {
@@ -236,11 +249,9 @@ if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
 elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
   run_selector "$KB_JOURNEY_ONLY"
 else
-  selectors_json="$(python3 e2e/journey/select_from_cases.py)"
-  selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))' <<< "$selectors_json")"
-  if [[ -n "$selectors" ]]; then while IFS= read -r selector; do
+  if [[ -n "$selected_selectors" ]]; then while IFS= read -r selector; do
     if ! run_selector "$selector"; then status=1; fi
-  done <<< "$selectors"; fi
+  done <<< "$(printf '%s' "$selected_selectors" | tr ',' '\n')"; fi
 fi
 
 echo "Journey matrix complete (exit $status)"

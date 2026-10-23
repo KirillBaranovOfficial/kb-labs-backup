@@ -45,8 +45,10 @@ from invocations import (
     write_report_text,
 )
 from plugin_author_steps import run_plugin_author_flow
-from marketplace_steps import prepare_commit_project_fixture, run_marketplace_steps, run_ordered_source_journey_steps
+from marketplace_steps import (prepare_commit_project_fixture, prepare_registry_commit_project_fixture,
+                               run_marketplace_steps, run_ordered_source_journey_steps)
 from marketplace_steps import _registry_version, _output
+from dispatch_registry import MARKETPLACE_REGISTRY_LANE, lane_for_runner
 from adapter_defaults_steps import _config_difference_keys, run_adapter_default_steps
 from analytics_steps import run_analytics_steps
 from gateway_steps import run_adapter_catalog_step, run_gateway_steps
@@ -859,6 +861,8 @@ SERVICE_GROUPS = {
                      "depends_on": ("host-running", "project-registered", "service-api-session")},
     "marketplace-lifecycle": {"capabilities": set(),
                               "depends_on": ("host-running", "project-registered", "marketplace-available", "service-api-session")},
+    "marketplace-registry": {"capabilities": {"marketplace-registry"},
+                             "depends_on": ("host-running", "project-registered", "service-api-session")},
     "marketplace-fixtures": {"capabilities": set(),
                              "depends_on": ("host-running", "project-registered", "marketplace-available"),
                              "produces": ("fixtures-installed",)},
@@ -882,15 +886,19 @@ SERVICE_GROUPS = {
 }
 
 
-def service_selection_groups(root: Path | None = None) -> dict[str, dict]:
+def service_selection_groups(root: Path | None = None, runner_selector: str = "") -> dict[str, dict]:
     """Attach resolver-owned marketplace registrations to the service graph."""
     groups = {name: dict(spec) for name, spec in SERVICE_GROUPS.items()}
     source_root = root or resource_root()
-    declaration = journey_source_group_declaration("e2e/journey/marketplace_steps.py", source_root)
-    lifecycle = dict(groups["marketplace-lifecycle"])
-    lifecycle["cases"] = tuple(sorted(set(lifecycle.get("cases", ())) | set(declaration["cases"])))
-    lifecycle["steps"] = tuple(sorted(set(lifecycle.get("steps", ())) | set(declaration["steps"])))
-    groups["marketplace-lifecycle"] = lifecycle
+    declaration = journey_source_group_declaration(
+        "e2e/journey/marketplace_steps.py", source_root, runner_selector)
+    group_name = ("marketplace-registry" if runner_selector
+                  and lane_for_runner(runner_selector) == MARKETPLACE_REGISTRY_LANE
+                  else "marketplace-lifecycle")
+    group = dict(groups[group_name])
+    group["cases"] = tuple(sorted(set(group.get("cases", ())) | set(declaration["cases"])))
+    group["steps"] = tuple(sorted(set(group.get("steps", ())) | set(declaration["steps"])))
+    groups[group_name] = group
     return groups
 STATE_PRODUCERS = {
     state: group for group, spec in SERVICE_GROUPS.items()
@@ -1213,7 +1221,7 @@ def main() -> int:
     os.environ.setdefault("KB_JOURNEY_INVOCATIONS", str(Path(args.output).resolve().parent))
     journey = Journey(args.mode, args.run_id or str(uuid.uuid4()))
     inherited_states = json.loads(journey_value("KB_JOURNEY_STATES", "{}"))
-    service_groups = service_selection_groups()
+    service_groups = service_selection_groups(runner_selector=journey.runner_selector)
     graph = FlowGraph(
         journey, {name: spec["depends_on"] for name, spec in service_groups.items()},
         diagnostics_path=Path(args.output).resolve().with_name("journey-diagnostics.log"),
@@ -1290,13 +1298,32 @@ def main() -> int:
                                     "marketplace lifecycle service API bearer")
             flow_env["KB_JOURNEY_PLATFORM_ROOT"] = journey_value("KB_JOURNEY_PLATFORM_ROOT", required=True)
             flow_env["KB_JOURNEY_REGISTRY"] = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
-            run_ordered_source_journey_steps(journey, project_root, flow_env, run_command)
             run_marketplace_steps(journey, project_root, project_id, registry, flow_env,
                                   fixture_entry=fixture_entry)
 
         graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
                    marketplace_lifecycle,
                    record_empty_success=False)
+
+        def registry_marketplace_lane() -> str | None:
+            if not project_root:
+                return "project-registered state did not provide the Registry lane project root"
+            flow_env = env.copy()
+            token = service_api_token(graph)
+            if token is not None:
+                store_report_secret(flow_env, "KB_JOURNEY_SERVICE_TOKEN", token,
+                                    "Registry Marketplace lane service API bearer")
+            flow_env["KB_JOURNEY_PLATFORM_ROOT"] = journey_value("KB_JOURNEY_PLATFORM_ROOT", required=True)
+            flow_env["KB_JOURNEY_REGISTRY"] = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
+            # This runner has its own installed project/platform lifecycle; its Marketplace lock is not the shared npm fixture lock.
+            entry = prepare_registry_commit_project_fixture(journey, project_root, registry, flow_env, run_command)
+            if entry is None:
+                return "Registry lane did not capture the verified Commit provenance entry"
+            run_ordered_source_journey_steps(journey, project_root, flow_env, run_command)
+            return None
+
+        graph.flow("Registry ordered-source Marketplace assertions", "marketplace-registry",
+                   "marketplace-registry", registry_marketplace_lane, record_empty_success=False)
         export_project_state_to_child_environment(graph)
         declared_steps = list(checks(args.mode, graph))
         run_service_steps(journey, declared_steps, args.mode, graph=graph)
