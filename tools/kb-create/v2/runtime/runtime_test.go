@@ -572,6 +572,29 @@ func TestRollbackRestoresSnapshotAndVerifiesTheRestoredInstallation(t *testing.T
 	}
 }
 
+func TestRollbackVerifiesConfigAtRestoredRootWhenReceiptKeepsItsOriginalRequestPath(t *testing.T) {
+	root := t.TempDir()
+	installed, err := Apply(context.Background(), planIn(root, "before"), Dependencies{Artifacts: &fakeInstaller{}, Clock: fixedClock{time.Unix(18, 0)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed.Plan.Request.PlatformRoot = filepath.Join(t.TempDir(), "removed-version-root")
+	if err := receipt.Write(root, installed); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := receipt.CreateSnapshot(root, layout.SnapshotsDir(), time.Unix(19, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rollback(root, snapshot.ID, Dependencies{Artifacts: &fakeInstaller{}}); err != nil {
+		t.Fatalf("rollback must verify the restored config under %s, not the stale plan path: %v", root, err)
+	}
+}
+
 func TestDoctorFixRejectsRequiredInputBeforeMutating(t *testing.T) {
 	_, err := DoctorFix(t.TempDir(), doctor.RepairPlan{RequiredInput: []doctor.Finding{{Path: "/token"}}}, Dependencies{})
 	if err == nil {

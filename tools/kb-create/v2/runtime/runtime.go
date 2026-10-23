@@ -419,7 +419,7 @@ func Rollback(platformRoot, snapshotID string, deps Dependencies) (contracts.Sna
 	if err != nil {
 		return snapshot, fmt.Errorf("rollback: read restored receipt: %w", err)
 	}
-	if _, err := verify.Run(active.Plan, now(deps.Clock)); err != nil {
+	if _, err := verify.RunWithConfigRoot(active.Plan, now(deps.Clock), platformRoot); err != nil {
 		return snapshot, fmt.Errorf("rollback: verify restored installation: %w", err)
 	}
 	return snapshot, nil
