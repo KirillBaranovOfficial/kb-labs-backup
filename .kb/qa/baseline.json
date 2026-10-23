@@ -1082,10 +1082,6 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/telemetry-client": {
-        "ok": true,
-        "issues": null
-      },
       "@kb-labs/workflow-artifacts": {
         "ok": true,
         "issues": null
@@ -2044,11 +2040,6 @@
             "capability": "scaffoldable"
           }
         ]
-      },
-      {
-        "package": "@kb-labs/telemetry-client",
-        "ok": true,
-        "issues": null
       },
       {
         "package": "@kb-labs/mind-core",

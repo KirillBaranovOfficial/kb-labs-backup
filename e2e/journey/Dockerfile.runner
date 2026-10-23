@@ -35,7 +35,7 @@ COPY e2e/platform/journey-update-packages.mjs /opt/kb-journey/e2e/platform/journ
 COPY e2e/platform/package-provenance.mjs /opt/kb-journey/e2e/platform/package-provenance.mjs
 COPY e2e/platform/registry-manifest.json /opt/kb-journey/e2e/platform/registry-manifest.json
 COPY e2e/publisher/publish.sh /opt/kb-journey/e2e/publisher/publish.sh
-COPY contracts/ux-result /opt/kb-journey/contracts/ux-result
+COPY core/platform/contracts/ux-result /opt/kb-journey/contracts/ux-result
 COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-journey/core/platform/src/error-envelope/error-envelope.schema.json
 COPY core/platform/src/error-envelope/errors.catalog.json /opt/kb-journey/core/platform/src/error-envelope/errors.catalog.json
 COPY tools/kb-create/v2/contracts/platform-layout.json /opt/kb-journey/tools/kb-create/v2/contracts/platform-layout.json
@@ -52,7 +52,7 @@ COPY tools/kb-devkit/main.go /opt/kb-journey/tools/kb-devkit/main.go
 COPY tools/kb-env/main.go /opt/kb-journey/tools/kb-env/main.go
 COPY tools/kb-dev/main.go /opt/kb-journey/tools/kb-dev/main.go
 COPY tools/kb-monitor/main.go /opt/kb-journey/tools/kb-monitor/main.go
-COPY contracts/ux-result /opt/kb-contracts/ux-result
+COPY core/platform/contracts/ux-result /opt/kb-contracts/ux-result
 COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-contracts/error-envelope.schema.json
 COPY e2e/journey/entrypoint.py /usr/local/bin/kb-journey-runner
 ENV PYTHONPATH="/opt/kb-journey/e2e/journey"

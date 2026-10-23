@@ -2155,27 +2155,6 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
-  core/telemetry-client:
-    devDependencies:
-      '@kb-labs/devkit':
-        specifier: workspace:*
-        version: link:../../infra/devkit
-      '@types/node':
-        specifier: ^24.3.3
-        version: 24.12.2
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      tsup:
-        specifier: ^8.4.0
-        version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
-
   core/tenant:
     dependencies:
       '@kb-labs/core-platform':
