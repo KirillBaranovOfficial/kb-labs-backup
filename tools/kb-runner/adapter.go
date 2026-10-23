@@ -20,18 +20,24 @@ import (
 
 type EventKind string
 
+type vendorLimitsMode uint8
+
+const (
+	vendorLimitsAppServer vendorLimitsMode = iota + 1
+	vendorLimitsRecorded
+)
+
 type vendorSpec struct {
 	agent         bool
 	binaryEnv     string
 	binaryDefault string
-	unavailable   string
 	childEnv      []string
+	limitsMode    vendorLimitsMode
 }
 
 var vendorRegistry = map[string]vendorSpec{
-	"codex":  {agent: true, binaryEnv: "CODEX_BIN", binaryDefault: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"},
-	"claude": {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude"},
-	"gemini": {binaryEnv: "GEMINI_BIN", binaryDefault: "gemini", unavailable: "Gemini is available for limits only"},
+	"codex":  {agent: true, binaryEnv: "CODEX_BIN", binaryDefault: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex", limitsMode: vendorLimitsAppServer},
+	"claude": {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsRecorded},
 }
 
 func vendors() []string {
@@ -237,7 +243,7 @@ func newAdapter(vendor string) (AgentAdapter, error) {
 		return nil, fmt.Errorf("unsupported vendor %q", vendor)
 	}
 	if !spec.agent {
-		return nil, errors.New(spec.unavailable)
+		return nil, fmt.Errorf("vendor %q is not available for agent runs", vendor)
 	}
 	bin := os.Getenv(spec.binaryEnv)
 	if bin == "" {
@@ -249,6 +255,9 @@ func newLimitsProvider(vendor string) (limitsProvider, error) {
 	spec, ok := vendorRegistry[vendor]
 	if !ok {
 		return nil, fmt.Errorf("unsupported vendor %q", vendor)
+	}
+	if spec.limitsMode != vendorLimitsAppServer {
+		return nil, fmt.Errorf("vendor %q has no automatic limits provider", vendor)
 	}
 	bin := os.Getenv(spec.binaryEnv)
 	if bin == "" {
@@ -322,28 +331,22 @@ func (a commandAdapter) Parse(line []byte) (VendorEvent, error) {
 	return parseVendorEvent(a.vendor, line)
 }
 func (a commandAdapter) Limits(ctx context.Context) ([]VendorLimit, error) {
-	switch a.vendor {
-	case "codex":
+	spec, ok := vendorRegistry[a.vendor]
+	if !ok {
+		return nil, fmt.Errorf("unsupported vendor %q", a.vendor)
+	}
+	switch spec.limitsMode {
+	case vendorLimitsAppServer:
 		return collectVendorLimits(ctx, a.vendor,
 			limitSource{name: "app-server", read: func(ctx context.Context) limitSourceOutput {
 				limits, response, err := readCodexLimitsDetailed(ctx, a.binary)
 				return limitSourceOutput{Limits: limits, Structured: response, Err: err}
 			}},
-			limitSource{name: "tty", read: func(ctx context.Context) limitSourceOutput {
-				probe := readTTYLimitsDetailed(ctx, a.vendor, a.binary)
-				return limitSourceOutput{Limits: probe.Limits, TTYScreen: probe.Screen, Steps: probe.Steps, Err: probe.Err}
-			}},
 		)
-	case "claude":
-		return collectVendorLimits(ctx, a.vendor, limitSource{name: "tty", read: func(ctx context.Context) limitSourceOutput {
-			probe := readTTYLimitsDetailed(ctx, a.vendor, a.binary)
-			return limitSourceOutput{Limits: probe.Limits, TTYScreen: probe.Screen, Steps: probe.Steps, Err: probe.Err}
-		}})
+	case vendorLimitsRecorded:
+		return []VendorLimit{}, nil
 	default:
-		return collectVendorLimits(ctx, a.vendor, limitSource{name: "tty", read: func(ctx context.Context) limitSourceOutput {
-			probe := readTTYLimitsDetailed(ctx, a.vendor, a.binary)
-			return limitSourceOutput{Limits: probe.Limits, TTYScreen: probe.Screen, Steps: probe.Steps, Err: probe.Err}
-		}})
+		return nil, fmt.Errorf("vendor %q has no limits source", a.vendor)
 	}
 }
 

@@ -16,27 +16,19 @@ import (
 	"time"
 )
 
-type LimitStepTiming struct {
-	Step       string `json:"step"`
-	DurationMS int64  `json:"durationMs"`
-}
-
 type LimitAttempt struct {
-	Source       string            `json:"source"`
-	Outcome      string            `json:"outcome"`
-	Error        string            `json:"error,omitempty"`
-	DurationMS   int64             `json:"durationMs"`
-	StartedAt    time.Time         `json:"startedAt"`
-	CapturePath  string            `json:"capturePath,omitempty"`
-	CaptureError string            `json:"captureError,omitempty"`
-	Steps        []LimitStepTiming `json:"steps,omitempty"`
+	Source       string    `json:"source"`
+	Outcome      string    `json:"outcome"`
+	Error        string    `json:"error,omitempty"`
+	DurationMS   int64     `json:"durationMs"`
+	StartedAt    time.Time `json:"startedAt"`
+	CapturePath  string    `json:"capturePath,omitempty"`
+	CaptureError string    `json:"captureError,omitempty"`
 }
 
 type limitSourceOutput struct {
 	Limits     []VendorLimit
 	Structured json.RawMessage
-	TTYScreen  string
-	Steps      []LimitStepTiming
 	Err        error
 }
 
@@ -53,7 +45,6 @@ type limitCaptureFile struct {
 	Vendor             string          `json:"vendor"`
 	Attempt            LimitAttempt    `json:"attempt"`
 	StructuredResponse json.RawMessage `json:"structuredResponse,omitempty"`
-	TTYScreen          string          `json:"ttyScreen,omitempty"`
 }
 
 var captureEmailPattern = regexp.MustCompile(`[A-Za-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+`)
@@ -75,16 +66,13 @@ func collectVendorLimits(ctx context.Context, vendor string, sources ...limitSou
 		started := time.Now().UTC()
 		output := source.read(ctx)
 		finished := time.Now().UTC()
-		attempt := LimitAttempt{Source: source.name, Outcome: "unavailable", StartedAt: started, DurationMS: finished.Sub(started).Milliseconds(), Steps: output.Steps}
+		attempt := LimitAttempt{Source: source.name, Outcome: "unavailable", StartedAt: started, DurationMS: finished.Sub(started).Milliseconds()}
 		if output.Err != nil {
 			attempt.Error = output.Err.Error()
 		} else if hasVendorLimits(output.Limits) {
 			attempt.Outcome = "available"
 		} else if len(output.Limits) > 0 {
 			attempt.Error = output.Limits[0].Error
-		}
-		if output.TTYScreen != "" {
-			output.TTYScreen = redactLimitText(output.TTYScreen)
 		}
 		config := limitsCaptureFromContext(ctx)
 		if config.directory != "" {
@@ -133,7 +121,7 @@ func writeLimitCapture(directory, vendor string, attempt LimitAttempt, output li
 			return path, fmt.Errorf("redact structured response: %w", err)
 		}
 	}
-	file := limitCaptureFile{Vendor: vendor, Attempt: attempt, StructuredResponse: payload, TTYScreen: redactLimitText(output.TTYScreen)}
+	file := limitCaptureFile{Vendor: vendor, Attempt: attempt, StructuredResponse: payload}
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return path, fmt.Errorf("encode capture: %w", err)

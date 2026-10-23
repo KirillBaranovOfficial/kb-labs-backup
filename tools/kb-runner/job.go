@@ -370,6 +370,10 @@ type VendorLimit struct {
 	Source      string         `json:"source"`
 	Error       string         `json:"error,omitempty"`
 	FetchedAt   time.Time      `json:"fetchedAt"`
+	RecordedAt  *time.Time     `json:"recordedAt,omitempty"`
+	Age         string         `json:"age,omitempty"`
+	Stale       bool           `json:"stale,omitempty"`
+	Pace        *ClaudePace    `json:"pace,omitempty"`
 	Attempts    []LimitAttempt `json:"attempts,omitempty"`
 }
 type AgentStatus struct {

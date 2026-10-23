@@ -15,9 +15,12 @@ import (
 )
 
 func statusCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
-	return agentStatusCommand(args, out)
+	return agentStatusCommandWithRoot(root, args, out)
 }
 func agentStatusCommand(args []string, out io.Writer) (int, error) {
+	return agentStatusCommandWithRoot(runnerRoot{invocation: "kb-runner"}, args, out)
+}
+func agentStatusCommandWithRoot(root runnerRoot, args []string, out io.Writer) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		_, err := fmt.Fprintln(out, "Usage: kb-runner status [--state <dir>] [--json]")
 		return 0, err
@@ -34,7 +37,7 @@ func agentStatusCommand(args []string, out io.Writer) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	status := AgentStatus{Jobs: jobs, Limits: readStatusLimits(*state), DailyTokens: dailyTokenTotals(jobs)}
+	status := AgentStatus{Jobs: jobs, Limits: readStatusLimits(*state, root), DailyTokens: dailyTokenTotals(jobs)}
 	if *asJSON {
 		return 0, json.NewEncoder(out).Encode(status)
 	}
@@ -67,9 +70,20 @@ func agentStatusCommand(args []string, out io.Writer) (int, error) {
 	return 0, nil
 }
 
-func readStatusLimits(state string) []VendorLimit {
+func readStatusLimits(state string, root runnerRoot) []VendorLimit {
 	all := []VendorLimit{}
 	for _, vendor := range vendors() {
+		spec := vendorRegistry[vendor]
+		if spec.limitsMode == vendorLimitsRecorded {
+			limits, _, err := newClaudeReadingStore(state, time.Now, time.Local).Limits()
+			if err != nil {
+				err = fmt.Errorf("Claude usage has no current recorded reading: %w; next: %s limits record claude --help", err, root.InvocationCommand())
+				all = append(all, unavailableLimits(vendor, "recorded", err)...)
+				continue
+			}
+			all = append(all, limits...)
+			continue
+		}
 		b, err := os.ReadFile(filepath.Join(state, "limits", vendor+".json"))
 		if err == nil {
 			var cache struct {
@@ -81,7 +95,8 @@ func readStatusLimits(state string) []VendorLimit {
 				continue
 			}
 		}
-		all = append(all, unavailableLimits(vendor, "cache", fmt.Errorf("run kb-runner limits to fetch current usage"))[0])
+		err = fmt.Errorf("no cached Codex usage; next: %s limits --state %s", root.InvocationCommand(), shellQuote(state))
+		all = append(all, unavailableLimits(vendor, "cache", err)[0])
 	}
 	return all
 }
@@ -109,14 +124,56 @@ func defaultRunnerState() string {
 }
 
 func limitsCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
+	if len(args) > 0 && args[0] == "record" {
+		return limitsRecordCommand(root, args[1:], out)
+	}
 	return limitsCommandWithProviderFactory(root, args, out, errOut, newLimitsProvider)
+}
+
+func limitsRecordCommand(root runnerRoot, args []string, out io.Writer) (int, error) {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") || len(args) == 0 {
+		_, err := fmt.Fprintf(out, "Usage: %s limits record claude --state <dir> --session <pct> --session-resets <duration|local-time> --weekly <pct> --weekly-resets <local-time|weekday-time>\n", root.Name())
+		return 0, err
+	}
+	if args[0] != "claude" {
+		return 2, fmt.Errorf("%s limits record: only Claude has a recorded limits source; next: %s limits record claude --help", root.Name(), root.InvocationCommand())
+	}
+	if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+		_, err := fmt.Fprintf(out, "Usage: %s limits record claude --state <dir> --session <pct> --session-resets <duration|local-time> --weekly <pct> --weekly-resets <local-time|weekday-time>\n", root.Name())
+		return 0, err
+	}
+	fs := flag.NewFlagSet("limits record claude", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	state := fs.String("state", defaultRunnerState(), "runner state directory")
+	session := fs.Float64("session", -1, "session usage percent")
+	sessionResets := fs.String("session-resets", "", "session reset duration or local date/time")
+	weekly := fs.Float64("weekly", -1, "weekly usage percent")
+	weeklyResets := fs.String("weekly-resets", "", "weekly local date/time or weekday and time")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2, fmt.Errorf("%s limits record claude: %w; next: %s limits record claude --help", root.Name(), err, root.InvocationCommand())
+	}
+	if len(fs.Args()) != 0 || *session < 0 || *weekly < 0 || *sessionResets == "" || *weeklyResets == "" {
+		return 2, fmt.Errorf("%s limits record claude: provide --session, --session-resets, --weekly, and --weekly-resets; next: %s limits record claude --help", root.Name(), root.InvocationCommand())
+	}
+	store := newClaudeReadingStore(*state, time.Now, time.Local)
+	if err := store.Record(*session, *sessionResets, *weekly, *weeklyResets); err != nil {
+		var saveErr claudeReadingWriteError
+		if errors.As(err, &saveErr) {
+			return 1, fmt.Errorf("%s limits record claude: %w; next: ls -ld %s %s", root.InvocationCommand(), err, shellQuote(filepath.Dir(saveErr.directory)), shellQuote(saveErr.directory))
+		}
+		return 1, fmt.Errorf("%s limits record claude: %w; next: %s limits record claude --help", root.InvocationCommand(), err, root.InvocationCommand())
+	}
+	if _, err := fmt.Fprintf(out, "Recorded Claude usage: session %.1f%%, weekly %.1f%%\n", *session, *weekly); err != nil {
+		return 1, fmt.Errorf("%s limits record claude: write confirmation: %w", root.Name(), err)
+	}
+	return 0, nil
 }
 
 type limitsProviderFactory func(string) (limitsProvider, error)
 
 func limitsCommandWithProviderFactory(root runnerRoot, args []string, out, errOut io.Writer, providerFactory limitsProviderFactory) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprintf(out, "Usage: %s limits [--state <dir>] [--json] [--capture <dir>]\n", root.Name())
+		_, err := fmt.Fprintf(out, "Usage: %s limits [--state <dir>] [--json] [--capture <dir>] | %s limits record claude --state <dir> --session <pct> --session-resets <duration|local-time> --weekly <pct> --weekly-resets <local-time|weekday-time>\n", root.Name(), root.Name())
 		return 0, err
 	}
 	fs := flag.NewFlagSet("limits", flag.ContinueOnError)
@@ -131,6 +188,17 @@ func limitsCommandWithProviderFactory(root runnerRoot, args []string, out, errOu
 	all := []VendorLimit{}
 	var captureFailures []error
 	for _, vendor := range vendors() {
+		spec := vendorRegistry[vendor]
+		if spec.limitsMode == vendorLimitsRecorded {
+			limits, _, err := newClaudeReadingStore(*state, time.Now, time.Local).Limits()
+			if err != nil {
+				err = fmt.Errorf("Claude usage has no current recorded reading: %w; next: %s limits record claude --help", err, root.InvocationCommand())
+				all = append(all, unavailableLimits(vendor, "recorded", err)...)
+				continue
+			}
+			all = append(all, limits...)
+			continue
+		}
 		provider, createErr := providerFactory(vendor)
 		if createErr != nil {
 			all = append(all, unavailableLimits(vendor, "adapter", createErr)...)
@@ -167,8 +235,26 @@ func limitsCommandWithProviderFactory(root runnerRoot, args []string, out, errOu
 		return 0, nil
 	}
 	for _, l := range all {
-		if _, err := fmt.Fprintf(out, "%-8s %-8s %6.1f%% %-12s %s %s\n", l.Vendor, l.Window, l.UsedPercent, l.Confidence, l.Source, l.Error); err != nil {
+		if _, err := fmt.Fprintf(out, "%-8s %-8s %6.1f%% %-12s %s %s", l.Vendor, l.Window, l.UsedPercent, l.Confidence, l.Source, l.Error); err != nil {
 			return 1, err
+		}
+		if l.Age != "" {
+			if _, err := fmt.Fprintf(out, " age=%s", l.Age); err != nil {
+				return 1, err
+			}
+		}
+		if l.Stale {
+			if _, err := fmt.Fprint(out, " stale=true"); err != nil {
+				return 1, err
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
+			return 1, err
+		}
+		if l.Pace != nil && l.Window == "week" {
+			if _, err := fmt.Fprintln(out, formatClaudePace(*l.Pace)); err != nil {
+				return 1, err
+			}
 		}
 		for _, attempt := range l.Attempts {
 			if _, err := fmt.Fprintf(out, "  source=%s outcome=%s duration=%dms error=%s\n", attempt.Source, attempt.Outcome, attempt.DurationMS, attempt.Error); err != nil {
