@@ -70,13 +70,19 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	merge(config, extra)
 	if plan.Request.MarketplaceSources != nil {
 		source := plan.Request.MarketplaceSources
-		registry := map[string]any{"kind": "registry", "url": source.RegistryURL, "signingPublicKey": "${" + source.SigningPublicKeyEnv + "}"}
-		if source.RegistryTokenEnv != "" {
-			registry["authToken"] = "${" + source.RegistryTokenEnv + "}"
+		var sources []any
+		if source.RegistryURL != "" {
+			registry := map[string]any{"kind": "registry", "url": source.RegistryURL, "signingPublicKey": "${" + source.SigningPublicKeyEnv + "}"}
+			if source.RegistryTokenEnv != "" {
+				registry["authToken"] = "${" + source.RegistryTokenEnv + "}"
+			}
+			sources = append(sources, registry)
 		}
-		sources := []any{registry}
 		if source.NpmURL != "" {
 			sources = append(sources, map[string]any{"kind": "npm", "url": source.NpmURL})
+		}
+		if len(sources) == 0 {
+			return Output{}, fmt.Errorf("Marketplace source configuration must include a Registry or npm URL")
 		}
 		marketplace, _ := config["marketplace"].(map[string]any)
 		if marketplace == nil {

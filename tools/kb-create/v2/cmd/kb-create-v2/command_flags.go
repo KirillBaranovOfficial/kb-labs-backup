@@ -56,7 +56,7 @@ var flagCatalog = map[string]flagDefinition{
 	"marketplace-registry-url":            {Name: "marketplace-registry-url", Usage: "KB Marketplace Registry URL for plugin resolution"},
 	"marketplace-registry-public-key-env": {Name: "marketplace-registry-public-key-env", Usage: "environment variable containing the Registry Ed25519 public key"},
 	"marketplace-registry-token-env":      {Name: "marketplace-registry-token-env", Usage: "environment variable containing the Registry bearer token"},
-	"marketplace-npm-url":                 {Name: "marketplace-npm-url", Usage: "optional npm URL for unowned Marketplace identities"},
+	"marketplace-npm-url":                 {Name: "marketplace-npm-url", Usage: "npm source or fallback mirror URL for Marketplace identities"},
 	"telemetry-endpoint":                  {Name: "telemetry-endpoint", Usage: "opt-in anonymous telemetry endpoint"},
 	"foreground":                          {Name: "foreground", Usage: "run the host directly in this process", Kind: boolFlag},
 	"telemetry-consent":                   {Name: "telemetry-consent", Usage: "allow anonymous operational telemetry", Kind: boolFlag},

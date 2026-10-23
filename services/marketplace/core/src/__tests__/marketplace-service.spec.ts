@@ -12,7 +12,7 @@ import * as crypto from 'node:crypto';
 import type { PackageSource, MarketplaceSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
 import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
 import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
-import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
+import { readMarketplaceLock, DiagnosticCollector, createMarketplaceEntry } from '@kb-labs/core-discovery';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
 import { MarketplaceService, mergeScopedEntries, type MarketplaceServiceOptions } from '../marketplace-service.js';
 
@@ -380,7 +380,7 @@ describe('MarketplaceService', () => {
 
     async function expectUpdateVersionError(installedVersion: string, requestedVersion: string): Promise<void> {
       const packageId = '@kb-labs/update-plugin';
-      const projectRoot = path.join(tmpDir, 'project');
+      const projectRoot = path.join(tmpDir, `project-${requestedVersion}`);
       const { dir, integrity } = await createPluginDir(projectRoot, 'update-plugin', packageId, installedVersion);
       const info = { dir, version: installedVersion, integrity };
       const source = createMockSource(new Map([[packageId, info]]));
@@ -1268,16 +1268,18 @@ describe('MarketplaceService', () => {
 
 function makeEntry(id: string, version: string): MarketplaceEntryWithId {
   return {
+    ...createMarketplaceEntry({
+      version,
+      resolvedPath: `./node_modules/${id}`,
+      source: 'marketplace',
+      package: id,
+      primaryKind: 'plugin',
+      provides: ['plugin'],
+      integrity: 'sha256-test',
+      marketplaceSource: 'registry',
+      signatureStatus: 'verified',
+    }),
     id,
-    version,
-    resolvedPath: `./node_modules/${id}`,
-    source: 'marketplace',
-    package: id,
-    primaryKind: 'plugin',
-    provides: ['plugin'],
-    integrity: 'sha256-test',
-    marketplaceSource: 'registry',
-    signatureStatus: 'verified',
   };
 }
 

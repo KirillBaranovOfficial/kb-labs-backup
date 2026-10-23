@@ -34,6 +34,7 @@ export {
   removeFromMarketplaceLock,
   createEmptyLock,
   createMarketplaceEntry,
+  createInstallOwnedRelativePath,
   MarketplaceLockValidationError,
   validateMarketplaceLock,
   enablePlugin,
@@ -73,6 +74,8 @@ export type {
   MarketplaceEntry,
   MarketplaceAdapterEntry,
   MarketplaceLockEntry,
+  UserOwnedLinkPath,
+  InstallOwnedRelativePath,
   // Discovery result
   DiscoveredPlugin,
   DiscoveryResult,

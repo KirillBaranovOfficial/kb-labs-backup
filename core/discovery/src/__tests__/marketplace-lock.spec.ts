@@ -186,7 +186,7 @@ describe('marketplace-lock v3', () => {
   });
 
   // case: S-268.10
-  it('rejects normalized paths that escape their scope for every lock entry kind', () => {
+  it('rejects escaping installed paths while preserving user-owned link pointers', () => {
     const paths = ['../../outside/plugin', 'a/../../x', '..\\..\\outside\\plugin', 'a\\..\\..\\x'];
     for (const resolvedPath of paths) {
       const marketplacePlugin = validateMarketplaceLock({
@@ -210,10 +210,17 @@ describe('marketplace-lock v3', () => {
         adapters: { database: { version: '1.0.0', integrity: 'sha512-x', resolvedPath, enabled: true, source: 'marketplace', marketplaceSource: 'npm', signatureStatus: 'unsigned' } },
       }, 'platform');
 
-      for (const result of [marketplacePlugin, platformPlugin, linkedPlugin, platformAdapter, marketplaceAdapter]) {
+      for (const result of [marketplacePlugin, platformPlugin, platformAdapter, marketplaceAdapter]) {
         expect(result).toMatchObject({ valid: false, reasonCode: 'invalid-lock' });
       }
+      expect(linkedPlugin.valid, `user-owned link ${resolvedPath} must be retained`).toBe(true);
     }
+
+    const absoluteLink = validateMarketplaceLock({
+      schema: 'kb.marketplace/3',
+      plugins: { demo: { link: path.join(tmpDir, 'developer-plugin'), enabled: true, source: 'local' } },
+    }, 'platform');
+    expect(absoluteLink.valid).toBe(true);
   });
 
   it('maps the structured provenance reason to the public doctor code', async () => {

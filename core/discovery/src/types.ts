@@ -72,6 +72,15 @@ export interface MarketplaceLock {
   adapters?: Record<string, MarketplaceAdapterEntry>;
 }
 
+declare const userOwnedLinkPathBrand: unique symbol;
+declare const installOwnedRelativePathBrand: unique symbol;
+
+/** A user-created pointer; it may be absolute or relative to the lock scope. */
+export type UserOwnedLinkPath = string & { readonly [userOwnedLinkPathBrand]: true };
+
+/** A serialized install path that must stay relative to its lock scope. */
+export type InstallOwnedRelativePath = string & { readonly [installOwnedRelativePathBrand]: true };
+
 interface MarketplaceEntryMetadata {
   /**
    * Trust level: 'trusted' = signed by KB Labs Registry (sealed, no self-upgrade).
@@ -95,7 +104,7 @@ export type MarketplaceEntry = MarketplaceEntryMetadata & (
       version: string;
       integrity: string;
       package: string;
-      resolvedPath?: string;
+      resolvedPath?: InstallOwnedRelativePath;
       /** Source in the configured ordered Marketplace source list. */
       marketplaceSource: 'registry' | 'npm';
       /** Trust result from the source that served this artifact. */
@@ -107,12 +116,12 @@ export type MarketplaceEntry = MarketplaceEntryMetadata & (
       version: string;
       integrity: string;
       package: string;
-      resolvedPath: string;
+      resolvedPath: InstallOwnedRelativePath;
       link?: never;
     }
   | {
       source: 'local';
-      link: string;
+      link: UserOwnedLinkPath;
       package?: never;
       version?: string;
       integrity?: string;
@@ -122,8 +131,8 @@ export type MarketplaceEntry = MarketplaceEntryMetadata & (
 
 /** Machine-local adapter lock entry; adapters use package IDs as their keys. */
 export type MarketplaceAdapterEntry =
-  | { source: 'platform'; version: string; integrity: string; resolvedPath: string; enabled: boolean }
-  | { source: 'marketplace'; version: string; integrity: string; resolvedPath: string; enabled: boolean; marketplaceSource: 'registry' | 'npm'; signatureStatus: 'verified' | 'unsigned' };
+  | { source: 'platform'; version: string; integrity: string; resolvedPath: InstallOwnedRelativePath; enabled: boolean }
+  | { source: 'marketplace'; version: string; integrity: string; resolvedPath: InstallOwnedRelativePath; enabled: boolean; marketplaceSource: 'registry' | 'npm'; signatureStatus: 'verified' | 'unsigned' };
 
 export type MarketplaceLockEntry = MarketplaceEntry | MarketplaceAdapterEntry;
 
