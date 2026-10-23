@@ -119,7 +119,10 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         Boolean(effectiveAdapters.logRingBuffer || effectiveAdapters.logPersistence);
       const hostStatus = hostStatuses.get(slot);
       const slotRuntimeKnown = runtimeStatus === 'known' && hostStatus !== undefined;
-      const implementation = projectEffectiveAdapterImplementation(
+      const unconfigured = ADAPTER_DEFAULTS[slot].defaultFallback === 'noop' && !packageId &&
+        (runtimeStatus === 'known' && !hostStatus ||
+          slotRuntimeKnown && hostStatus.mode === 'noop' && !hostStatus.configuredPackage);
+      const implementation = unconfigured ? null : projectEffectiveAdapterImplementation(
         slot,
         effectiveAdapters,
         slotRuntimeKnown ? hostStatus.implementation : undefined,
@@ -128,9 +131,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       return {
         slot,
         implementation,
-        mode: slotRuntimeKnown
-          ? hostStatus.mode === 'noop' && !hostStatus.configuredPackage ? 'unconfigured' : hostStatus.mode
-          : 'unknown',
+        mode: unconfigured ? 'unconfigured' : slotRuntimeKnown ? hostStatus.mode : 'unknown',
         runtimeStatus: slotRuntimeKnown ? 'known' : 'unknown',
         ...(!slotRuntimeKnown ? { runtimeReason: runtimeStatus === 'known' ? `Host did not report slot ${slot}.` : runtimeReason } : {}),
         ...(hostStatus?.reason === 'load-failed' ? { reason: hostStatus.reason } : {}),

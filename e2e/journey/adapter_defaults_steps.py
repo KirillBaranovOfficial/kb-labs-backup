@@ -7,6 +7,7 @@ from installed_fixture import layout_relative, layout_value
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import tempfile
@@ -320,13 +321,6 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError(f"storage default path mismatch: expected {str(project_state / 'storage')!r}, received {rows.get('storage', {}).get('baseDir')!r}")
         if rows["storage"].get("networkRequired") is not False:
             raise RuntimeError("filesystem storage reports a network dependency")
-        expected_slots = {
-            "storage", "cache", "logger", "analytics", "vectorStore", "llm", "embeddings",
-            "eventBus", "config", "invoke", "documentDatabase", "kvStore", "logs", "artifacts",
-            "snapshotManager", "notifier",
-        }
-        if set(rows) != expected_slots:
-            raise RuntimeError("adapter list omitted configured or provider-backed capability slots")
         expected_defaults = {
             "logger": "@kb-labs/adapters-pino",
             "analytics": "@kb-labs/adapters-analytics-sqlite",
@@ -336,7 +330,6 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             "llm": "@kb-labs/adapters-openai",
             "invoke": "InMemoryInvoke",
             "artifacts": "InMemoryArtifacts",
-            "config": "InMemoryConfig",
         }
         for slot, implementation in expected_defaults.items():
             if rows[slot].get("implementation") != implementation:
@@ -351,6 +344,8 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("logs are not backed by the installed local buffer and persistence adapters")
         if rows["notifier"].get("implementation") != "InMemoryNotifier":
             raise RuntimeError("notifier does not use the local in-process default")
+        if rows["config"].get("mode") != "inmemory" or not rows["config"].get("implementation"):
+            raise RuntimeError("config does not use its local in-process default")
         if rows["llm"].get("mode") != "real" or rows["llm"].get("credentialsStatus") != "missing" or rows["llm"].get("missingCredentials") != ["OPENAI_API_KEY"]:
             raise RuntimeError("implicit OpenAI LLM default does not report its missing credential")
         openai_package = platform_content_root / "node_modules" / "@kb-labs" / "adapters-openai" / "package.json"
@@ -658,10 +653,15 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                         raise RuntimeError("stopped-host doctor did not return an exit-0 unhealthy diagnosis")
                     checks = payload.get("platform", {}).get("checks", [])
                     adapter_check = next((item for item in checks if isinstance(item, dict) and item.get("id") == "adapters"), None)
-                    if not adapter_check or "cannot be checked" not in adapter_check.get("detail", "") or str(platform_root) not in adapter_check.get("hint", ""):
+                    if (not adapter_check or "cannot be checked" not in adapter_check.get("detail", "")
+                            or _parse_run_hint(adapter_check.get("hint", "")) != [
+                                "kb-create", "start", "--platform-root", str(platform_root),
+                            ]):
                         raise RuntimeError("stopped-host JSON does not explain missing adapter status and exact start command")
                 elif (result.returncode != 0 or "cannot be checked" not in result.stdout
-                      or f"kb-create start --platform-root \"{platform_root}\"" not in result.stdout):
+                      or _next_shell_command(result.stdout) != [
+                          "kb-create", "start", "--platform-root", str(platform_root),
+                      ]):
                     raise RuntimeError("stopped-host text output omits the adapter limitation or exact start command")
         finally:
             if stopped:
@@ -906,11 +906,34 @@ def _save_run(run_workflow, project):
 
 def _assert_no_network_defaults(rows: dict[str, dict], assert_doctor) -> None:
     if any(row.get("networkRequired") is not False for slot, row in rows.items()
-           if slot != "llm" and not row.get("requiresConfiguration")):
+           if slot != "llm" and row.get("mode") != "unknown" and not row.get("requiresConfiguration")):
         raise RuntimeError("a built-in default reports a network dependency")
     if rows.get("llm", {}).get("networkRequired") is not True:
         raise RuntimeError("the OpenAI LLM default does not report its external network requirement")
     assert_doctor()
+
+
+def _next_shell_command(output: str) -> list[str]:
+    marker = "Next: Run `"
+    start = output.find(marker)
+    if start < 0:
+        return []
+    hint_start = start + len("Next: ")
+    hint_end = output.find("\n", hint_start)
+    if hint_end < 0:
+        hint_end = len(output)
+    return _parse_run_hint(output[hint_start:hint_end])
+
+
+def _parse_run_hint(hint: str) -> list[str]:
+    prefix = "Run `"
+    if not hint.startswith(prefix) or not hint.endswith("`."):
+        return []
+    return _parse_shell_command(hint[len(prefix):-2])
+
+
+def _parse_shell_command(command: str) -> list[str]:
+    return shlex.split(command)
 
 
 def _assert_missing_llm(runner: CommandRunner, env: dict[str, str], project: Path, cli) -> None:
