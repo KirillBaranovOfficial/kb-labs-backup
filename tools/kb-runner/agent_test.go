@@ -6,9 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,10 +30,6 @@ func TestProviderTestsUseOnlyTemporaryHomeAndExplicitExecutables(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("fake executable %s is unavailable: %v", name, err)
 		}
-	}
-	security, err := exec.LookPath("security")
-	if err != nil || !strings.HasPrefix(security, home+string(os.PathSeparator)) {
-		t.Fatalf("Keychain access is not blocked by the package fake: path=%q err=%v", security, err)
 	}
 }
 
@@ -89,6 +82,41 @@ func TestClaudeAdapterFakeStartResumeAndInterrupt(t *testing.T) {
 	}
 }
 
+func TestVendorAdapterChildEnvironmentExcludesParentSession(t *testing.T) {
+	for _, name := range []string{"CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_OTHER_PARENT_FLAG", "CODEX_PARENT_SESSION"} {
+		t.Setenv(name, "parent-session-secret")
+	}
+	for _, vendor := range []string{"codex", "claude"} {
+		t.Run(vendor, func(t *testing.T) {
+			fake := filepath.Join(t.TempDir(), vendor)
+			if err := os.WriteFile(fake, []byte("#!/bin/sh\nexec /usr/bin/env\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			adapter := commandAdapter{vendor: vendor, binary: fake, childEnv: []string{"VENDOR_REQUIRED=test-required"}}
+			cmd, err := adapter.Start(context.Background(), AgentRequest{Workdir: t.TempDir(), Prompt: "safe"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cmd.Env == nil {
+				t.Fatal("vendor child inherits the parent environment")
+			}
+			output, err := cmd.Output()
+			if err != nil {
+				t.Fatal("fake vendor CLI failed")
+			}
+			for _, entry := range strings.Split(string(output), "\n") {
+				name, _, _ := strings.Cut(entry, "=")
+				if strings.HasPrefix(name, "CLAUDE") || name == "CODEX_PARENT_SESSION" {
+					t.Fatalf("vendor child inherited parent session variable %s", name)
+				}
+			}
+			if !strings.Contains(string(output), "VENDOR_REQUIRED=test-required") {
+				t.Fatal("vendor child omitted its adapter-declared environment")
+			}
+		})
+	}
+}
+
 func TestAgentWaitCLIBlocksUntilTerminalRecord(t *testing.T) {
 	state := t.TempDir()
 	store := newJobStore(state)
@@ -122,10 +150,14 @@ func TestAgentStartUsesSharedProcessOwnerAndAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := filepath.Join(base, "codex")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"owned-session\"}' '{\"type\":\"turn.completed\",\"message\":\"done\"}'\n"), 0o700); err != nil {
+	envDump := filepath.Join(base, "vendor-environment")
+	quotedEnvDump := "'" + strings.ReplaceAll(envDump, "'", "'\\''") + "'"
+	script := "#!/bin/sh\n/usr/bin/env > " + quotedEnvDump + "\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"owned-session\"}' '{\"type\":\"turn.completed\",\"message\":\"done\"}'\n"
+	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_BIN", fake)
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "parent-session-secret")
 	runner := buildRunnerBinary(t)
 	cmd := exec.Command(runner, "agent", "start", "--state", state, "--stream", "owned-stream", "--vendor", "codex", "--workdir", work, "--prompt-file", prompt, "--slot-group", "codex-test", "--slots", "1", "--hold-gate", "batch", "--min-free", "1")
 	cmd.Env = os.Environ()
@@ -136,6 +168,16 @@ func TestAgentStartUsesSharedProcessOwnerAndAdmission(t *testing.T) {
 	jobs, err := newJobStore(state).List()
 	if err != nil || len(jobs) != 1 || jobs[0].State != JobOK || jobs[0].SessionID != "owned-session" {
 		t.Fatalf("jobs=%+v err=%v", jobs, err)
+	}
+	childEnv, err := os.ReadFile(envDump)
+	if err != nil {
+		t.Fatalf("fake Codex did not dump its child environment: %v", err)
+	}
+	for _, entry := range strings.Split(string(childEnv), "\n") {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "CLAUDE") {
+			t.Fatalf("agent provider inherited parent-session variable %s", name)
+		}
 	}
 	listing := proc.List(state)
 	if listing.Error != nil || len(listing.Runs) != 1 {
@@ -192,7 +234,7 @@ func TestAgentJobLifecycleAndTerminalUniqueness(t *testing.T) {
 	}
 }
 
-func TestAgentPersistenceFailureNamesTheExactStatusCommand(t *testing.T) {
+func TestAgentPersistenceFailureWritesFallbackAndNamesStatusCommand(t *testing.T) {
 	state := t.TempDir()
 	store := newJobStore(state)
 	if _, err := store.Create(Job{ID: "persist-failure", Stream: "stream", Vendor: "codex"}); err != nil {
@@ -206,12 +248,23 @@ func TestAgentPersistenceFailureNamesTheExactStatusCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := failAgentJob(store, "persist-failure", PhaseBuild, ReasonSetup, runnerRoot{invocation: "kb-runner"}, "", errors.New("build failed"))
-	if err == nil || !strings.Contains(err.Error(), "could not persist terminal job record") {
-		t.Fatalf("persistence failure error=%v", err)
+	if err == nil || !strings.Contains(err.Error(), "build failed") {
+		t.Fatalf("job failure was not reported after terminal persistence: %v", err)
 	}
 	want := "next: " + shellQuote("kb-runner") + " status --state " + shellQuote(state) + " --json"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("persistence failure omitted exact next command %q: %v", want, err)
+	}
+	job, err := store.Get("persist-failure")
+	if err != nil || job.Final == nil || job.Final.State != JobFailed || job.Final.Phase != PhaseBuild || job.Final.Reason != ReasonSetup || job.Final.Next != strings.TrimPrefix(want, "next: ") {
+		t.Fatalf("terminal record was not recoverable after primary record failure: job=%+v err=%v", job, err)
+	}
+	jobs, err := store.List()
+	if err != nil || len(jobs) != 1 || jobs[0].ID != job.ID || jobs[0].Final == nil {
+		t.Fatalf("job listing omitted recovered terminal record: jobs=%+v err=%v", jobs, err)
+	}
+	if err := store.Terminate(job.ID, JobTerminal{State: JobFailed, Phase: PhaseBuild, Reason: ReasonSetup, Next: want}); err == nil || !strings.Contains(err.Error(), "already has a terminal record") {
+		t.Fatalf("fallback allowed a duplicate terminal record: %v", err)
 	}
 }
 
@@ -403,82 +456,6 @@ func TestDailyTokenTotalsAggregateDurableJobsByVendorAndUTCDate(t *testing.T) {
 	got := dailyTokenTotals([]Job{{Vendor: "codex", StartedAt: day, Tokens: 20}, {Vendor: "codex", StartedAt: day.Add(time.Hour), Tokens: 22}, {Vendor: "claude", StartedAt: day, Tokens: 7}})
 	if len(got) != 2 || got[0].Vendor != "claude" || got[1].Tokens != 42 {
 		t.Fatalf("daily totals=%+v", got)
-	}
-}
-
-func TestClaudeUsageSchemaAndNonSuccessAreUnavailableWithoutTokenOutput(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		code       int
-		body       string
-		confidence string
-	}{
-		{"valid", 200, `{"five_hour":{"utilization":91,"resets_at":"2026-10-23T15:00:00Z"},"seven_day":{"utilization":22,"resets_at":"2026-10-28T00:00:00Z"}}`, "vendor"},
-		{"changed schema", 200, `{"new":true}`, "unavailable"},
-		{"unauthorized", 401, `{"error":"unauthorized"}`, "unavailable"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Authorization") != "Bearer secret-test-token" {
-					t.Errorf("missing in-process auth header")
-				}
-				if r.Header.Get("anthropic-beta") != "oauth-2025-04-20" {
-					t.Errorf("missing beta header")
-				}
-				w.WriteHeader(tc.code)
-				_, _ = w.Write([]byte(tc.body))
-			}))
-			defer srv.Close()
-			limits, _, _ := fetchClaudeLimitsDetailed(context.Background(), srv.URL, claudeCredential{AccessToken: "secret-test-token"}, srv.Client())
-			if len(limits) == 0 || limits[0].Confidence != tc.confidence {
-				t.Fatalf("limits=%+v", limits)
-			}
-			for _, l := range limits {
-				if strings.Contains(l.Error, "secret-test-token") {
-					t.Fatal("token leaked into error")
-				}
-			}
-		})
-	}
-}
-
-func TestClaudeKeychainCredentialDiscoversServiceAndExtractsTokenWithInjectedCommandRunner(t *testing.T) {
-	calls := [][]string{}
-	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
-		calls = append(calls, append([]string{name}, args...))
-		if len(calls) == 1 {
-			return []byte("keychain: login\nclass: genp\n    \"svce\"<blob>=\"Claude Code session-qa\"\n"), nil
-		}
-		return []byte(`{"claudeAiOauth":{"accessToken":"test-token-must-stay-in-process","expiresAt":2082758400000}}`), nil
-	}
-	credential, err := claudeCredentialWith(context.Background(), run, "darwin", t.TempDir(), "runner-test")
-	if err != nil || credential.AccessToken != "test-token-must-stay-in-process" {
-		t.Fatalf("credential expiry=%v err=%v", credential.ExpiresAt, err)
-	}
-	if len(calls) != 2 || !slices.Contains(calls[1], "Claude Code session-qa") || !slices.Contains(calls[1], "-w") {
-		t.Fatalf("security calls=%q", calls)
-	}
-	if strings.Contains(fmt.Sprint(calls), credential.AccessToken) {
-		t.Fatal("OAuth token was passed back through the command runner arguments")
-	}
-}
-
-func TestClaudeKeychainFailuresNeverExposeCredentialOutput(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  commandOutput
-	}{
-		{name: "security error", run: func(context.Context, string, ...string) ([]byte, error) {
-			return []byte("secret-output"), errors.New("secret-output")
-		}},
-		{name: "unknown metadata", run: func(context.Context, string, ...string) ([]byte, error) { return []byte("class: genp"), nil }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := claudeCredentialWith(context.Background(), tc.run, "darwin", t.TempDir(), "runner-test")
-			if err == nil || strings.Contains(err.Error(), "secret-output") {
-				t.Fatalf("keychain failure error=%v", err)
-			}
-		})
 	}
 }
 

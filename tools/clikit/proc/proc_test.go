@@ -1429,8 +1429,10 @@ func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 		err error
 	}
 	startedResult := make(chan startResult, 1)
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	t.Cleanup(cancelStart)
 	go func() {
-		_, err := startTest(context.Background(), proc.Config{
+		_, err := startTest(startCtx, proc.Config{
 			HelperPath: badHelper, StateDir: state, Tag: "wrong-helper", Stall: time.Hour,
 			StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 			Command: []string{"/usr/bin/true"},
@@ -1442,9 +1444,14 @@ func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 	case result := <-startedResult:
 		err = result.err
 	case <-time.After(4 * time.Second):
+		cancelStart()
 		killBadHelper()
-		<-startedResult
-		t.Fatal("Start did not reject an incorrect helper within four seconds")
+		select {
+		case <-startedResult:
+			t.Fatal("Start did not reject an incorrect helper within four seconds")
+		case <-time.After(2 * time.Second):
+			t.Fatal("Start did not stop after its context was cancelled")
+		}
 	}
 	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
 		t.Fatalf("Start error = %v, want clear helper-dispatch error", err)
@@ -2142,7 +2149,12 @@ func TestMinFreeWaitIsVisibleAndEmitsOneEvent(t *testing.T) {
 func TestWaitReturnsRecordedExitAndFilteredEvents(t *testing.T) {
 	state := t.TempDir()
 	runner := buildRunner(t)
-	command := exec.Command(runner,
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	t.Cleanup(func() {
+		cancel()
+		forceKillRecordedTree(t, state)
+	})
+	command := exec.CommandContext(ctx, runner,
 		"run", "--tag", "result", "--state", state, "--stall", "100ms",
 		"--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"),
 		"--", "/bin/sh", "-c", "/bin/sleep 0.4; exit 7",

@@ -66,13 +66,7 @@ func TestMain(m *testing.M) {
 		}
 		setTestEnv(envName, fake)
 	}
-	fakeSecurity := filepath.Join(home, "bin", "security")
-	if err := os.WriteFile(fakeSecurity, []byte("#!/bin/sh\nexit 97\n"), 0o700); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		_ = os.RemoveAll(home)
-		os.Exit(2)
-	}
-	setTestEnv("PATH", filepath.Dir(fakeSecurity)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	setTestEnv("PATH", filepath.Join(home, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	code := m.Run()
 	if err := os.RemoveAll(home); err != nil {
 		fmt.Fprintln(os.Stderr, err)
