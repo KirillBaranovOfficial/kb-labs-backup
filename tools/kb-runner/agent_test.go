@@ -284,8 +284,8 @@ func TestAgentLimitsCacheAndUnavailableSchema(t *testing.T) {
 	if len(unavailable) == 0 || unavailable[0].Confidence != "unavailable" || strings.TrimSpace(unavailable[0].Error) == "" {
 		t.Fatalf("schema drift = %+v", unavailable)
 	}
-	valid := decodeCodexLimits([]byte(`{"rateLimits":{"primary":{"usedPercent":37,"resetsAt":"2026-10-23T15:00:00Z"},"secondary":{"usedPercent":12,"resetsAt":"2026-10-29T00:00:00Z"}}}`), time.Now)
-	if len(valid) != 2 || valid[0].Confidence != "vendor" || valid[0].Window != "5h" || valid[0].UsedPercent != 37 || valid[0].ResetsAt == nil {
+	valid := decodeCodexLimits([]byte(realCodexRateLimitsFixture), time.Now)
+	if len(valid) != 2 || valid[0].Confidence != "vendor" || valid[0].Window != "5h" || valid[0].UsedPercent != 82 || valid[0].ResetsAt == nil || valid[0].ResetsAt.Unix() != 1792775628 {
 		t.Fatalf("Codex limits=%+v", valid)
 	}
 	b, _ := json.Marshal(first)
@@ -429,7 +429,7 @@ func TestClaudeUsageSchemaAndNonSuccessAreUnavailableWithoutTokenOutput(t *testi
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
-			limits := fetchClaudeLimits(context.Background(), srv.URL, "secret-test-token")
+			limits, _, _ := fetchClaudeLimitsDetailed(context.Background(), srv.URL, claudeCredential{AccessToken: "secret-test-token"}, srv.Client())
 			if len(limits) == 0 || limits[0].Confidence != tc.confidence {
 				t.Fatalf("limits=%+v", limits)
 			}
@@ -442,23 +442,23 @@ func TestClaudeUsageSchemaAndNonSuccessAreUnavailableWithoutTokenOutput(t *testi
 	}
 }
 
-func TestClaudeKeychainTokenDiscoversServiceWithInjectedCommandRunner(t *testing.T) {
+func TestClaudeKeychainCredentialDiscoversServiceAndExtractsTokenWithInjectedCommandRunner(t *testing.T) {
 	calls := [][]string{}
 	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
 		calls = append(calls, append([]string{name}, args...))
 		if len(calls) == 1 {
 			return []byte("keychain: login\nclass: genp\n    \"svce\"<blob>=\"Claude Code session-qa\"\n"), nil
 		}
-		return []byte("test-token-must-stay-in-process\n"), nil
+		return []byte(`{"claudeAiOauth":{"accessToken":"test-token-must-stay-in-process","expiresAt":2082758400000}}`), nil
 	}
-	token, err := claudeTokenWith(context.Background(), run, "darwin", t.TempDir(), "runner-test")
-	if err != nil || token != "test-token-must-stay-in-process" {
-		t.Fatalf("token=%q err=%v", token, err)
+	credential, err := claudeCredentialWith(context.Background(), run, "darwin", t.TempDir(), "runner-test")
+	if err != nil || credential.AccessToken != "test-token-must-stay-in-process" {
+		t.Fatalf("credential expiry=%v err=%v", credential.ExpiresAt, err)
 	}
 	if len(calls) != 2 || !slices.Contains(calls[1], "Claude Code session-qa") || !slices.Contains(calls[1], "-w") {
 		t.Fatalf("security calls=%q", calls)
 	}
-	if strings.Contains(fmt.Sprint(calls), token) {
+	if strings.Contains(fmt.Sprint(calls), credential.AccessToken) {
 		t.Fatal("OAuth token was passed back through the command runner arguments")
 	}
 }
@@ -474,7 +474,7 @@ func TestClaudeKeychainFailuresNeverExposeCredentialOutput(t *testing.T) {
 		{name: "unknown metadata", run: func(context.Context, string, ...string) ([]byte, error) { return []byte("class: genp"), nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := claudeTokenWith(context.Background(), tc.run, "darwin", t.TempDir(), "runner-test")
+			_, err := claudeCredentialWith(context.Background(), tc.run, "darwin", t.TempDir(), "runner-test")
 			if err == nil || strings.Contains(err.Error(), "secret-output") {
 				t.Fatalf("keychain failure error=%v", err)
 			}
@@ -560,7 +560,7 @@ if [ "$1" = app-server ]; then
   while IFS= read -r line; do
     case "$line" in
       *'"id":1'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}' ;;
-      *'"id":2'*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"rateLimits":{"primary":{"usedPercent":10,"resetsAt":"2026-10-24T00:00:00Z"},"secondary":{"usedPercent":20,"resetsAt":"2026-10-30T00:00:00Z"}}}}' ;;
+      *'"id":2'*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"ordinaryUsageAllowed":true,"rateLimits":{"limitId":"codex","primary":{"usedPercent":82,"windowDurationMins":300,"resetsAt":1792775628},"secondary":{"usedPercent":24,"windowDurationMins":10080,"resetsAt":1793298749},"credits":{"hasCredits":true},"planType":"plus","rateLimitReachedType":null,"spendControlReached":false},"rateLimitsByLimitId":{"codex":{"limitId":"codex"}},"accountId":"private-account"}}' ;;
     esac
   done
   exit 0

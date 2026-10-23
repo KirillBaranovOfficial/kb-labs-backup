@@ -20,7 +20,7 @@ IFS= read -r command || exit 0
 printf '\033[32mWeekly\\nusage: 42%% reset in 3h 15m\\033[0m\\n> '
 IFS= read -r command || exit 0
 `)
-		limits := readTTYLimits(context.Background(), "gemini", binary)
+		limits := readTTYLimitsDetailed(context.Background(), "gemini", binary).Limits
 		if len(limits) != 1 {
 			t.Fatalf("got %d limits: %#v", len(limits), limits)
 		}
@@ -40,7 +40,7 @@ IFS= read -r command || exit 0
 printf 'Background task progress: 42%% complete\\n> '
 IFS= read -r command || exit 0
 `)
-		limits := readTTYLimits(context.Background(), "gemini", binary)
+		limits := readTTYLimitsDetailed(context.Background(), "gemini", binary).Limits
 		if len(limits) != 1 || limits[0].Confidence != "unavailable" || limits[0].Error == "" {
 			t.Fatalf("unknown layout was accepted: %#v", limits)
 		}
