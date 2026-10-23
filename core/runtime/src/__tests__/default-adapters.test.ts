@@ -229,7 +229,7 @@ describe('resolveDiscoveredAdapterDefaults', () => {
       llm: '@kb-labs/adapters-openai/llm',
     });
 
-    const secondMultiEntryAdapter = discovered('@kb-labs/adapters-second-multi-entry', {
+    const secondMultiEntryAdapter = discovered('@kb-labs/adapters-second-multi', {
       defaultFor: { cache: ['cache'], vectorStore: ['vector'] },
       implements: ['ICache', 'IVectorStore'],
     });
@@ -237,8 +237,8 @@ describe('resolveDiscoveredAdapterDefaults', () => {
       [secondMultiEntryAdapter.packageName, secondMultiEntryAdapter],
     ]), '/project');
     expect(secondDefaults.adapters).toEqual({
-      cache: '@kb-labs/adapters-second-multi-entry/cache',
-      vectorStore: '@kb-labs/adapters-second-multi-entry/vector',
+      cache: '@kb-labs/adapters-second-multi/cache',
+      vectorStore: '@kb-labs/adapters-second-multi/vector',
     });
   });
 

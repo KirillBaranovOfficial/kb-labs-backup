@@ -212,7 +212,7 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 				Services: []contracts.Service{{ID: "workflow", Command: "kb-workflow", Port: 7778, Required: true}},
 			}},
 		}},
-		Plugins: []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb-labs/commit-entry", SHA256: "commit", PlatformRange: "^2.0.0"}},
+		Plugins: []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb-labs/commit", SHA256: "commit", PlatformRange: "^2.0.0"}},
 	}
 	primeOfflineCatalog(t, root, &source)
 	plan, err := resolve.Plan(contracts.InstallRequest{

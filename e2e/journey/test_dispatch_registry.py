@@ -778,14 +778,14 @@ class DispatchRegistryTests(unittest.TestCase):
             source.write_text(
                 "import { runKbCommand } from './kb-command'\n"
                 "runKbCommand(['commit', 'open', '--help'])\n"
-                "runKbCommand(['marketplace', 'install', '@kb-labs/commit-entry', '--json'])\n",
+                "runKbCommand(['marketplace', 'install', '@kb-labs/commit', '--json'])\n",
                 encoding="utf-8",
             )
             paths, violations = _studio_command_path_sites(fixture)
             self.assertEqual(violations, [])
             self.assertEqual(paths, {
                 "commit open --help": ["e2e/studio/scenario.ts:2 (TypeScript owner call)"],
-                "marketplace install @kb-labs/commit-entry": [
+                "marketplace install @kb-labs/commit": [
                     "e2e/studio/scenario.ts:3 (TypeScript owner call)"
                 ],
             })

@@ -88,7 +88,7 @@ describe('Marketplace → Discovery Integration', () => {
   }
 
   it('install → discover: plugin is available after marketplace install', async () => {
-    const { dir, integrity } = await createPluginOnDisk('commit', '@kb-labs/commit-entry', '2.0.0');
+    const { dir, integrity } = await createPluginOnDisk('commit', '@kb-labs/commit', '2.0.0');
     await fs.writeFile(
       path.join(dir, 'kb.plugin.json'),
       JSON.stringify({
@@ -118,7 +118,7 @@ describe('Marketplace → Discovery Integration', () => {
     };
 
     const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
-    const installResult = await marketplace.install({ scope: "platform" }, ['@kb-labs/commit-entry']);
+    const installResult = await marketplace.install({ scope: "platform" }, ['@kb-labs/commit']);
 
     expect(installResult.installed).toHaveLength(1);
     expect(installResult.installed[0]!.id).toBe('@kb-labs/commit');
@@ -134,8 +134,7 @@ describe('Marketplace → Discovery Integration', () => {
     expect(discoverResult.plugins[0]!.provides).toContain('cli-command');
     const lock = JSON.parse(await fs.readFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'utf8')) as { plugins: Record<string, unknown> };
     expect(lock.plugins).toHaveProperty('@kb-labs/commit');
-    expect(lock.plugins).not.toHaveProperty('@kb-labs/commit-entry');
-    expect(lock.plugins['@kb-labs/commit']).toMatchObject({ package: '@kb-labs/commit-entry' });
+    expect(lock.plugins['@kb-labs/commit']).toMatchObject({ package: '@kb-labs/commit' });
     const listed = await marketplace.list({ scope: 'platform' }, { kind: 'plugin' });
     expect(listed.map(entry => entry.id)).toEqual(['@kb-labs/commit']);
 
@@ -146,13 +145,13 @@ describe('Marketplace → Discovery Integration', () => {
     expect(manifest!.cli?.commands?.[0]?.path).toBe('commit run');
 
     await marketplace.uninstall({ scope: 'platform' }, ['@kb-labs/commit']);
-    expect(removedPackages).toEqual(['@kb-labs/commit-entry']);
+    expect(removedPackages).toEqual(['@kb-labs/commit']);
     expect(await marketplace.list({ scope: 'platform' })).toEqual([]);
     expect((await new DiscoveryManager({ root: tmpDir, verifyIntegrity: false }).discover()).plugins).toEqual([]);
   });
 
   it('refuses invalid Registry signatures and tampered tarballs before publishing store entries or locks', async () => {
-    const packageId = '@kb-labs/signed-fixture-entry';
+    const packageId = '@kb-labs/signed-fixture';
     const identity = 'fixture/signed-fixture';
     const subject = identity;
     const version = '1.0.0';
@@ -255,7 +254,7 @@ describe('Marketplace → Discovery Integration', () => {
     const dir = path.join(projectRoot, 'packages', 'demo-entry');
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
-      name: '@kb-labs/demo-entry',
+      name: '@kb-labs/demo',
       version: '0.1.0',
       kb: { manifest: './kb.plugin.json' },
     }));
@@ -282,7 +281,6 @@ describe('Marketplace → Discovery Integration', () => {
 
     expect(result.id).toBe('@kb-labs/demo');
     expect(lock.plugins).toHaveProperty('@kb-labs/demo');
-    expect(lock.plugins).not.toHaveProperty('@kb-labs/demo-entry');
     const discovered = await new DiscoveryManager({ root: projectRoot, verifyIntegrity: false }).discover();
     expect(discovered.plugins.map(plugin => plugin.id)).toContain('@kb-labs/demo');
   });
@@ -335,7 +333,7 @@ describe('Marketplace → Discovery Integration', () => {
   }, 60_000);
 
   it('installs platform plugin entries into the shared store and discovers them without a platform graph install', async () => {
-    const { dir, integrity } = await createPluginOnDisk('platform-entry', '@kb-labs/platform-entry', '1.0.0');
+    const { dir, integrity } = await createPluginOnDisk('platform-entry', '@kb-labs/platform', '1.0.0');
     const installer = {
       async install(options: { name: string; projectDir: string }): Promise<{ packageRoot: string; integrity: string }> {
         const packageRoot = path.join(options.projectDir, 'node_modules', ...options.name.split('/'));
@@ -356,10 +354,10 @@ describe('Marketplace → Discovery Integration', () => {
     const store = createExtensionStore({ root: path.join(tmpDir, 'machine-store'), installer });
     const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
 
-    await marketplace.install({ scope: 'platform' }, ['@kb-labs/platform-entry']);
+    await marketplace.install({ scope: 'platform' }, ['@kb-labs/platform']);
 
     const lock = JSON.parse(await fs.readFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'utf8'));
-    expect(lock.plugins['@kb-labs/platform-entry']).toMatchObject({
+    expect(lock.plugins['@kb-labs/platform']).toMatchObject({
       source: 'marketplace',
       version: '1.0.0',
       enabled: true,
@@ -371,7 +369,7 @@ describe('Marketplace → Discovery Integration', () => {
       workspace: false,
       verifyIntegrity: false,
     }).discover();
-    expect(discovered.plugins.map((plugin) => plugin.id)).toEqual(['@kb-labs/platform-entry']);
+    expect(discovered.plugins.map((plugin) => plugin.id)).toEqual(['@kb-labs/platform']);
   });
 
   it('install → uninstall → discover: plugin is gone after uninstall', async () => {

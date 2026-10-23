@@ -73,7 +73,7 @@ describe("plugin route not-found response", () => {
       code: "KB_PLUGIN_NOT_INSTALLED",
       hint: "Run `kb marketplace plugins list` to discover available plugins.",
     });
-    expect(JSON.stringify(response.json())).not.toContain("@kb-labs/mistyped-entry");
+    expect(JSON.stringify(response.json())).not.toContain("@kb-labs/mistyped");
   });
 
   // case: S-203.2

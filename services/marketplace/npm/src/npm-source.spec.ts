@@ -190,8 +190,8 @@ describe('NpmPackageSource', () => {
   });
 
   it('fails with a typed error when exact-version metadata cannot classify the package', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => packument('@kb-labs/unknown-entry', {})));
-    await expect(new NpmPackageSource({ registryUrl: 'https://registry.test' }).resolve('@kb-labs/unknown-entry@1.0.0'))
+    vi.stubGlobal('fetch', vi.fn(async () => packument('@kb-labs/unknown', {})));
+    await expect(new NpmPackageSource({ registryUrl: 'https://registry.test' }).resolve('@kb-labs/unknown@1.0.0'))
       .rejects.toMatchObject({ name: 'PackageMetadataError', code: 'UNKNOWN_ENTITY_KIND' });
   });
 

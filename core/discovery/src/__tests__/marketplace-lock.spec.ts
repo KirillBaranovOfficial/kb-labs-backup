@@ -255,7 +255,7 @@ describe('marketplace-lock v3', () => {
     await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
     await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
       schema: 'kb.marketplace/3',
-      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'platform', resolvedPath: 'node_modules/@kb-labs/commit-entry' } },
+      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'platform', resolvedPath: 'node_modules/@kb-labs/commit' } },
     }));
     const diag = new DiagnosticCollector();
     expect(await readMarketplaceLock(tmpDir, diag)).toBeNull();

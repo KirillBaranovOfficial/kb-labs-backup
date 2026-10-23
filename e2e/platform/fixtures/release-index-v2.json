@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "bcc75d99660163875f9c24a61a22e9d5190664a1ce0e43ca9ee7eef35d7907c4",
+  "digest": "00819b2d5bf1e67dc480ad5ea106bc47763c78058b833fc9c55fb03c086401a4",
   "channels": {
     "stable": "2.120.1"
   },
@@ -514,9 +514,9 @@
     {
       "id": "@kb-labs/agents",
       "version": "2.120.1",
-      "package": "@kb-labs/agent-entry",
+      "package": "@kb-labs/agents",
       "sha256": "b251883e6f4269eeb7e55372ceac221947fcf65cf1ba728dccbf31ba8706e549",
-      "tarball": "http://verdaccio:4873/@kb-labs/agent-entry/-/agent-entry-2.120.1.tgz",
+      "tarball": "http://verdaccio:4873/@kb-labs/agents/-/agents-2.120.1.tgz",
       "sizeBytes": 1284528,
       "requires": [
         {
@@ -528,9 +528,9 @@
     {
       "id": "@kb-labs/commit",
       "version": "2.120.1",
-      "package": "@kb-labs/commit-entry",
+      "package": "@kb-labs/commit",
       "sha256": "c1dec8a4de2336f87a6c00c3e25af2379b7a971cb2bb7aad3a8cfee9b4476e55",
-      "tarball": "http://verdaccio:4873/@kb-labs/commit-entry/-/commit-entry-2.120.1.tgz",
+      "tarball": "http://verdaccio:4873/@kb-labs/commit/-/commit-2.120.1.tgz",
       "sizeBytes": 1181896,
       "requires": [
         {
@@ -564,9 +564,9 @@
     {
       "id": "@kb-labs/mind",
       "version": "2.120.1",
-      "package": "@kb-labs/mind-entry",
+      "package": "@kb-labs/mind",
       "sha256": "01cc5b0e75ca3e0a6d7fb801874f36d55f20bb2a61019b3f20930293350a5784",
-      "tarball": "http://verdaccio:4873/@kb-labs/mind-entry/-/mind-entry-2.120.1.tgz",
+      "tarball": "http://verdaccio:4873/@kb-labs/mind/-/mind-2.120.1.tgz",
       "sizeBytes": 26961,
       "requires": [
         {
@@ -582,9 +582,9 @@
     {
       "id": "@kb-labs/quality",
       "version": "2.120.1",
-      "package": "@kb-labs/quality-entry",
+      "package": "@kb-labs/quality",
       "sha256": "ae1536811da52a8fab69aab9387b8650e4a89a6ae4122acfd334ecbac28130a9",
-      "tarball": "http://verdaccio:4873/@kb-labs/quality-entry/-/quality-entry-2.120.1.tgz",
+      "tarball": "http://verdaccio:4873/@kb-labs/quality/-/quality-2.120.1.tgz",
       "sizeBytes": 1215422,
       "requires": [
         {
@@ -600,9 +600,9 @@
     {
       "id": "@kb-labs/release",
       "version": "2.120.1",
-      "package": "@kb-labs/release-manager-cli",
+      "package": "@kb-labs/release",
       "sha256": "2166164f4e267f2ee91d0a9c2e401e015bdc4cdc6e8aa1537794bceefd033f94",
-      "tarball": "http://verdaccio:4873/@kb-labs/release-manager-cli/-/release-manager-cli-2.120.1.tgz",
+      "tarball": "http://verdaccio:4873/@kb-labs/release/-/release-2.120.1.tgz",
       "sizeBytes": 1414931,
       "requires": [
         {
@@ -618,9 +618,9 @@
     {
       "id": "@kb-labs/review",
       "version": "2.120.1",
-      "package": "@kb-labs/review-entry",
+      "package": "@kb-labs/review",
       "sha256": "ac07ed2ee7452ea50fb34027a4f1e40f95e851b51ffbd9cbf77575b263c37bc2",
-      "tarball": "http://verdaccio:4873/@kb-labs/review-entry/-/review-entry-2.120.1.tgz",
+      "tarball": "http://verdaccio:4873/@kb-labs/review/-/review-2.120.1.tgz",
       "sizeBytes": 21457,
       "requires": [
         {
@@ -644,9 +644,9 @@
     {
       "id": "@kb-labs/steward",
       "version": "2.120.1",
-      "package": "@kb-labs/steward-entry",
+      "package": "@kb-labs/steward",
       "sha256": "548c23998db5c4f06bb31f2b41a356fdfef669624164bd432318b89f2ef4374a",
-      "tarball": "http://verdaccio:4873/@kb-labs/steward-entry/-/steward-entry-2.120.1.tgz",
+      "tarball": "http://verdaccio:4873/@kb-labs/steward/-/steward-2.120.1.tgz",
       "sizeBytes": 39700,
       "requires": [
         {
@@ -946,7 +946,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-iJHOFzXxvhOY1OeFBLHyqyjxZljPI67EpeeRr1rDTCG7C4Cv6MU8YpTQvch4F+LBHRxZA7Ff1WuwML3xdSpw8Q==",
       "distSha256": "8fbd7f387bd1af2e55953c3e3441ce68c5a061bdbeae4b57c8f9a7bcfd128923",
-      "package": "@kb-labs/agent-entry",
+      "package": "@kb-labs/agents",
       "version": "2.120.1"
     },
     {
@@ -974,7 +974,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-u3/aNHL16LvfV83qNeLImVf10lrEG+Eo43SwKC/J4fFIcG3X52ReI4B3QayQZmMPtHloD1Q0/wmYTLrwzxZg3g==",
       "distSha256": "44c344bd785079c3bdde4a05e884ca777e36742470905df27a65083f5e37ba43",
-      "package": "@kb-labs/commit-entry",
+      "package": "@kb-labs/commit",
       "version": "2.120.1"
     },
     {
@@ -1121,7 +1121,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-ywxv7+rQiNfKDM78W3wdCeLe2wXmibwalSIPk4qjVhMiC5gKFh7xvj1xgAzl731ouri9GuVXNo+rIhhAcCUDiA==",
       "distSha256": "ba107b40af7d215cea3ed95d6456422ce915076e544b1fcd354a268b199226b1",
-      "package": "@kb-labs/mind-entry",
+      "package": "@kb-labs/mind",
       "version": "2.120.1"
     },
     {
@@ -1156,14 +1156,14 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-VmsHPJzsYvkv/mDfPLkFfd1/yo/zLpAupUyyWsHc4JrUG7wjxrgLrYFEem/auVxtA/SEfzA9v9gXgT9UrdOISg==",
       "distSha256": "cd1bff2d8db5ba258b580f651ef0b53adb41c3a2a669e366b835e301bad935b0",
-      "package": "@kb-labs/quality-entry",
+      "package": "@kb-labs/quality",
       "version": "2.120.1"
     },
     {
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-Prx8S9xczddYbrX0hHL78BvbeoQR/zaKmlqwcN5uMpNxsV0p3sA1mkZUWW6gJSh5barhYQYkG81tspq7ujHR+Q==",
       "distSha256": "a43a642e477a61674d9999ae84fc4e852d08464552824d3f11762dd50dcf7fa3",
-      "package": "@kb-labs/release-manager-cli",
+      "package": "@kb-labs/release",
       "version": "2.120.1"
     },
     {
@@ -1177,7 +1177,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-QMxJSlGpP5LPbiLqFrD5wES8EqaQjCtVKON9g2NOjGDCiQ1i0zW8fsm5mM3W14jX/m765ezJwDPkFNuzufMt2g==",
       "distSha256": "79e57290779a587b0bd2160139666e38051fcdc7891eebb7cf88671a546a4103",
-      "package": "@kb-labs/review-entry",
+      "package": "@kb-labs/review",
       "version": "2.120.1"
     },
     {
@@ -1219,7 +1219,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-SsY0XU2tHzZcjF9KbPWkg911Onx+I4eJWAXG/AIQYvgujBv2XbA3HTJ8SXPzsmB6WxNEfaYGdHzJEKS721mjKA==",
       "distSha256": "ebd76a2b6c9e14248a95076e01dbf347f513814451ad0c4b68b3685659a57cee",
-      "package": "@kb-labs/steward-entry",
+      "package": "@kb-labs/steward",
       "version": "2.120.1"
     },
     {

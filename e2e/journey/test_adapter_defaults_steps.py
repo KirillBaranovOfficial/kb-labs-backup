@@ -516,13 +516,13 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                              "details": {"service": "vectorStore"},
                              "actions": [{"command": "kb adapter bind vectorStore @kb-labs/adapters-qdrant"}]}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
-                if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/mind-entry":
+                if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/mind":
                     if args[3:] != ["--scope", "platform", "--json"]:
                         (root / ".kb").mkdir(exist_ok=True)
                         (root / ".kb" / "project-plugin-lock.json").write_text("project install")
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
-                if args[:3] == ["marketplace", "install", "@kb-labs/commit-entry"]:
-                    project_plugins.setdefault(root.resolve(), set()).add("@kb-labs/commit-entry")
+                if args[:3] == ["marketplace", "install", "@kb-labs/commit"]:
+                    project_plugins.setdefault(root.resolve(), set()).add("@kb-labs/commit")
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:3] == ["marketplace", "plugins", "list"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "plugins": sorted(project_plugins.get(root.resolve(), set()))}), "")
@@ -634,7 +634,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertNotIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)
             self.assertIn(("kb", "commit", "generate", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind-entry", "--scope", "platform", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(install_root), "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(install_root)), calls)

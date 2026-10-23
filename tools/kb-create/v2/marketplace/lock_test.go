@@ -15,12 +15,12 @@ import (
 
 func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	root := t.TempDir()
-	writePackageJSON(t, root, "@kb-labs/commit-entry", `{"name":"@kb-labs/commit-entry"}`)
+	writePackageJSON(t, root, "@kb-labs/commit", `{"name":"@kb-labs/commit"}`)
 	writePackageJSON(t, root, "@kb-labs/adapters-sqlite", `{"name":"@kb-labs/adapters-sqlite"}`)
 	artifacts := []contracts.Artifact{
 		{ID: "@kb-labs/platform-core", Kind: "platform", Package: "@kb-labs/platform-core", Version: "1.0.0"},
 		{ID: "@kb-labs/binary-kbdev", Kind: "binary", Version: "1.0.0"},
-		{ID: "@kb-labs/commit", Kind: "plugin", Package: "@kb-labs/commit-entry", Version: "1.2.3", SHA256: strings.Repeat("a", 64)},
+		{ID: "@kb-labs/commit", Kind: "plugin", Package: "@kb-labs/commit", Version: "1.2.3", SHA256: strings.Repeat("a", 64)},
 		{ID: "@kb-labs/adapters-sqlite", Kind: "adapter", Package: "@kb-labs/adapters-sqlite", Version: "4.5.6"},
 	}
 
@@ -39,10 +39,10 @@ func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	if !ok {
 		t.Fatal("plugin entry missing")
 	}
-	if plugin.ResolvedPath != "node_modules/@kb-labs/commit-entry" {
+	if plugin.ResolvedPath != "node_modules/@kb-labs/commit" {
 		t.Errorf("resolvedPath = %q", plugin.ResolvedPath)
 	}
-	if plugin.Package != "@kb-labs/commit-entry" {
+	if plugin.Package != "@kb-labs/commit" {
 		t.Errorf("package = %q", plugin.Package)
 	}
 	if !plugin.Enabled {
@@ -62,7 +62,7 @@ func TestReadLockRejectsPluginWithoutPackage(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	data := []byte(`{"schema":"kb.marketplace/3","plugins":{"@kb-labs/commit":{"version":"1.0.0","integrity":"sha256-abc","resolvedPath":"node_modules/@kb-labs/commit-entry","source":"platform","enabled":true}}}`)
+	data := []byte(`{"schema":"kb.marketplace/3","plugins":{"@kb-labs/commit":{"version":"1.0.0","integrity":"sha256-abc","resolvedPath":"node_modules/@kb-labs/commit","source":"platform","enabled":true}}}`)
 	if err := os.WriteFile(lockPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestPreserveInstalledComponentsAddsOnlyPlatformAdaptersToUpdateRequest(t *t
 	writeRaw(t, root, Lock{
 		Schema: Schema,
 		Plugins: map[string]Item{
-			"commit": {Version: "1.2.3", Package: "@kb-labs/commit-entry", Source: "platform", Enabled: true},
+			"commit": {Version: "1.2.3", Package: "@kb-labs/commit", Source: "platform", Enabled: true},
 		},
 		Adapters: map[string]Item{
 			"vibeproxy": {Version: "2.0.0", Source: "platform", Enabled: true},

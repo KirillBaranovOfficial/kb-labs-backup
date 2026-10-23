@@ -14,7 +14,7 @@ class CommitFixtureTests(unittest.TestCase):
             package = workspace / "plugins/commit/entry"
             package.mkdir(parents=True)
             (package / "package.json").write_text(
-                '{"name":"@kb-labs/commit-entry","version":"2.120.1"}', encoding="utf-8")
+                '{"name":"@kb-labs/commit","version":"2.120.1"}', encoding="utf-8")
 
             self.assertEqual(commit_fixture_source_version(workspace), "2.120.1")
 

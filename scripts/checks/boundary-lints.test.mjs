@@ -222,10 +222,10 @@ describe('plugin-imports (0.2a)', () => {
 
   test('failing fixture: plugin source importing core-* is reported; tests and sdk imports are not', () => {
     const root = fixtureRepo({
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry'),
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad'),
       'plugins/bad/entry/src/index.ts': `import { platform } from '@kb-labs/core-platform';\nexport const x = platform;\n`,
       'plugins/bad/entry/src/index.test.ts': `import { platform } from '@kb-labs/core-platform';\n`,
-      ...pluginEntry('plugins/good/entry', '@kb-labs/good-entry'),
+      ...pluginEntry('plugins/good/entry', '@kb-labs/good'),
       'plugins/good/entry/src/index.ts': `import { platform } from '@kb-labs/sdk';\n`,
       // platform parts under plugins/ (no kb.plugin/3 manifest) are out of scope
       'plugins/bad/daemon/package.json': { name: '@kb-labs/bad-daemon', kb: { manifest: './dist/manifest.js' } },
@@ -244,7 +244,7 @@ describe('plugin-imports (0.2a)', () => {
 
   test('CLI exits 1 on a new violation and 0 once it is in the exceptions file', () => {
     const root = fixtureRepo({
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry'),
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad'),
       'plugins/bad/entry/src/index.ts': `import x from '@kb-labs/core-contracts';\n`,
       'ex-empty.json': { version: 1, exceptions: [] },
       'ex-full.json': {
@@ -301,7 +301,7 @@ describe('platform-spawn (0.2b)', () => {
       'studio/backend/src/run.ts': bad,
       'plugins/p/daemon/package.json': { name: '@kb-labs/p-daemon' },
       'plugins/p/daemon/src/run.ts': bad,
-      'plugins/p/entry/package.json': { name: '@kb-labs/p-entry' }, // CLI entry: out of scope
+      'plugins/p/entry/package.json': { name: '@kb-labs/p' }, // CLI entry: out of scope
       'plugins/p/entry/src/run.ts': bad,
       'services/svc/app/src/run.test.ts': bad, // tests ignored
     });
@@ -348,8 +348,8 @@ describe('plugin-peer-deps (0.3)', () => {
     const root = fixtureRepo({
       'tools/kb-create/config/platform-release.jsonc': JSON.stringify({ profiles: [{ id: 'default', products: { release: { flows: { platform: { platformMembers: ['@kb-labs/sdk'] } } } } }], platform: { adapters: {} } }),
       'e2e/platform/registry-manifest.json': { core: [], services: [], plugins: [] },
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
-      ...pluginEntry('plugins/good/entry', '@kb-labs/good-entry', { peerDependencies: { '@kb-labs/sdk': '*' }, devDependencies: { '@kb-labs/sdk': 'workspace:*' } }),
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
+      ...pluginEntry('plugins/good/entry', '@kb-labs/good', { peerDependencies: { '@kb-labs/sdk': '*' }, devDependencies: { '@kb-labs/sdk': 'workspace:*' } }),
       'packages/sdk/package.json': { name: '@kb-labs/sdk', peerDependencies: { '@kb-labs/plugin-contracts': '*', '@kb-labs/core-platform': '*' } },
       'packages/plugin-contracts/package.json': { name: '@kb-labs/plugin-contracts' },
       'packages/core-platform/package.json': { name: '@kb-labs/core-platform' },
@@ -370,7 +370,7 @@ describe('plugin-peer-deps (0.3)', () => {
       'tools/kb-create/config/platform-release.jsonc': JSON.stringify({ profiles: [{ id: 'default', products: { release: { flows: { platform: { platformMembers: ['@kb-labs/sdk'] } } } } }], platform: { adapters: {} } }),
       'e2e/platform/registry-manifest.json': { core: [], services: [], plugins: [] },
       'packages/sdk/package.json': { name: '@kb-labs/sdk' },
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
       'ex.json': { version: 1, exceptions: [] },
     });
     const r = runScript('check-plugin-peer-deps.mjs', ['--root', root, '--exceptions', join(root, 'ex.json')]);
@@ -411,11 +411,11 @@ describe('manifest-command-naming (0.5)', () => {
     assert.match(v[0].message, /kb unknown open --dry-run/);
 
     const root = fixtureRepo({
-      'plugins/commit/entry/package.json': { name: '@kb-labs/commit-entry', kb: { manifest: './dist/manifest.js' } },
+      'plugins/commit/entry/package.json': { name: '@kb-labs/commit', kb: { manifest: './dist/manifest.js' } },
       'plugins/commit/entry/dist/manifest.json': manifest([
         { path: 'commit', examples: ['kb unknown open --dry-run'] },
       ]),
-      'plugins/nested/entry/package.json': { name: '@kb-labs/nested-entry', kb: { manifest: './dist/manifest.js' } },
+      'plugins/nested/entry/package.json': { name: '@kb-labs/nested', kb: { manifest: './dist/manifest.js' } },
       'plugins/nested/entry/dist/manifest.json': manifest([
         { path: 'nested run', examples: ['kb other run'] },
       ]),
@@ -485,11 +485,11 @@ describe('manifest-command-naming (0.5)', () => {
 
   test('collect reads dist manifest.json of plugin packages; unbuilt packages warn', () => {
     const root = fixtureRepo({
-      'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
+      'plugins/p/entry/package.json': { name: '@kb-labs/p', kb: { manifest: './dist/manifest.js' } },
       'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
       'plugins/v3/core/package.json': { name: '@kb-labs/v3-core', kb: { manifest: './dist/manifest.v3.js' } },
       'plugins/v3/core/dist/manifest.json': manifest([{ path: 'v3 frobnicate' }]),
-      ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
+      ...pluginEntry('plugins/q/entry', '@kb-labs/q'),
       'plugins/r/core/package.json': { name: '@kb-labs/r-core' }, // no kb.manifest: ignored
     });
     const v = collectManifests(root);
@@ -513,10 +513,10 @@ describe('manifest-command-naming (0.5)', () => {
     };
     function affectedRepo() {
       const root = fixtureRepo({
-        'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
+        'plugins/p/entry/package.json': { name: '@kb-labs/p', kb: { manifest: './dist/manifest.js' } },
         'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
-        ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
-        ...pluginEntry('plugins/r/entry', '@kb-labs/r-entry'),
+        ...pluginEntry('plugins/q/entry', '@kb-labs/q'),
+        ...pluginEntry('plugins/r/entry', '@kb-labs/r'),
       });
       run(root, 'init', '-q', '-b', 'main');
       run(root, 'add', '-A', '-f');
@@ -550,9 +550,9 @@ describe('manifest-command-naming (0.5)', () => {
   test('an unbuilt package does not make its exceptions stale, a built one does', () => {
     const exFor = (pkg) => ({ rule: 'command-verb-vocabulary', package: pkg, target: 'q gone', since: '2026-09-26', reason: 'fixture' });
     const root = fixtureRepo({
-      'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
+      'plugins/p/entry/package.json': { name: '@kb-labs/p', kb: { manifest: './dist/manifest.js' } },
       'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p list' }]),
-      ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
+      ...pluginEntry('plugins/q/entry', '@kb-labs/q'),
     });
     const { stale } = applyExceptions(collectManifests(root), [exFor('plugins/p/entry'), exFor('plugins/q/entry')], RULES);
     assert.deepEqual(stale.map((e) => e.package), ['plugins/p/entry']);
@@ -560,7 +560,7 @@ describe('manifest-command-naming (0.5)', () => {
 
   test('CLI exits 1 on a naming violation, 0 with an exception', () => {
     const root = fixtureRepo({
-      'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
+      'plugins/p/entry/package.json': { name: '@kb-labs/p', kb: { manifest: './dist/manifest.js' } },
       'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
       'ex-empty.json': { version: 1, exceptions: [] },
       'ex-full.json': {
@@ -613,7 +613,7 @@ describe('exceptions file', () => {
       'tools/kb-create/config/platform-release.jsonc': JSON.stringify({ profiles: [{ id: 'default', products: { release: { flows: { platform: { platformMembers: ['@kb-labs/sdk'] } } } } }], platform: { adapters: {} } }),
       'e2e/platform/registry-manifest.json': { core: [], services: [], plugins: [] },
       'packages/sdk/package.json': { name: '@kb-labs/sdk' },
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
       'ex.json': { version: 1, exceptions: [] },
     });
     const run = (pkg) =>

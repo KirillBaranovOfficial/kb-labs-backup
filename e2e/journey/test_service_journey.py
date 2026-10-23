@@ -786,9 +786,9 @@ raise SystemExit(1)
                         lock_path = Path(project_root) / ".kb" / "marketplace.lock"
                         lock_path.parent.mkdir(parents=True, exist_ok=True)
                         lock_path.write_text(json.dumps({"plugins": {"@kb-labs/commit": {
-                            "package": "@kb-labs/commit-entry", "version": "2.120.1",
+                            "package": "@kb-labs/commit", "version": "2.120.1",
                         }}}))
-                        return {"name": "@kb-labs/commit", "package": "@kb-labs/commit-entry",
+                        return {"name": "@kb-labs/commit", "package": "@kb-labs/commit",
                                 "version": "2.120.1"}
 
                     def capture_workspace_command(argv, **_kwargs):
@@ -889,7 +889,7 @@ raise SystemExit(1)
                 install_project_agents_plugin(str(project), "http://registry.test", {"HOME": temp})
 
             self.assertEqual(calls[0][0], [
-                "kb", "marketplace", "install", "@kb-labs/agent-entry@2.120.1", "--json",
+                "kb", "marketplace", "install", "@kb-labs/agents@2.120.1", "--json",
             ])
             self.assertEqual(calls[0][1]["cwd"], str(project.resolve()))
 
@@ -1703,7 +1703,7 @@ raise SystemExit(1)
         self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit", "--json"])
         registration_calls = [call for call in calls if call[:3] == ["kb", "project", "add"]]
         self.assertEqual(len(registration_calls), 1)
-        self.assertEqual(calls[2], ["kb", "marketplace", "install", "@kb-labs/review-entry@2.120.1", "--json"])
+        self.assertEqual(calls[2], ["kb", "marketplace", "install", "@kb-labs/review@2.120.1", "--json"])
         self.assertEqual(registration_calls[0][0:3], ["kb", "project", "add"])
         self.assertEqual(registered_project_exists, [True])
         self.assertEqual(plan["gitStatus"]["staged"], ["note.txt"])

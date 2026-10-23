@@ -298,7 +298,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                 output = {}
                 if args[:2] == ["marketplace", "install"]:
                     marketplace_install_calls.append(args)
-                    output = {"ok": True, "data": {"installed": [{"id": "@kb-labs/steward-entry"}]}}
+                    output = {"ok": True, "data": {"installed": [{"id": "@kb-labs/steward"}]}}
                 elif args == ["workflow", "create"]:
                     target = cwd / ".kb" / "workflows" / "hello.yml"
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -478,7 +478,7 @@ class WorkflowJourneyTests(unittest.TestCase):
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
-        self.assertEqual(marketplace_install_calls, [["marketplace", "install", "@kb-labs/steward-entry", "--json"]])
+        self.assertEqual(marketplace_install_calls, [["marketplace", "install", "@kb-labs/steward", "--json"]])
         self.assertEqual(restart_calls, [
             "kb-create restart --platform-root <platform>",
             "kb-create restart --platform-root <platform>",
