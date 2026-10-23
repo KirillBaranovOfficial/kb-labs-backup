@@ -2,14 +2,8 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
-import {
-  defineCommand,
-  validationError,
-  handleError,
-  type CommandResult,
-  type PluginCommandContextV3,
-  type CLIInput,
-} from '@kb-labs/sdk';
+import { defineSystemCommand, type SystemCommandContext } from '@kb-labs/shared-command-kit';
+import { validationError, handleError, type CommandResult } from '@kb-labs/sdk';
 import {
   build,
   inspectTarget,
@@ -127,17 +121,21 @@ function parsePositional(argv: string[] | undefined): {
 }
 
 async function runDefault(
-  ctx: PluginCommandContextV3,
-  rawInput: CLIInput<ScaffoldFlags>,
+  ctx: SystemCommandContext,
+  argv: string[],
+  flags: ScaffoldFlags,
 ): Promise<CommandResult<ScaffoldResult>> {
   const start = Date.now();
-  const input = { ...rawInput.flags, argv: rawInput.argv };
+  const input = { ...flags, argv };
 
   const { entity: entityArg, name: nameArg } = parsePositional(input.argv);
 
   const available = await listEntities(TEMPLATES_ROOT);
   if (available.length === 0) {
-    return validationError('No scaffold templates found. Reinstall @kb-labs/scaffold.');
+    return validationError(
+      'No scaffold templates were found in the platform package.',
+      'Run `kb-create update` to restore platform packages, then retry `kb scaffold run <entity> <name>`.',
+    );
   }
 
   if (!entityArg) {
@@ -288,11 +286,31 @@ async function runDefault(
   return { outRoot, files: result.files.length };
 }
 
-export default defineCommand({
-  id: 'scaffold:run',
+export const scaffoldRun = defineSystemCommand({
+  name: 'run',
+  scope: 'project',
+  jsonTest: { noSafeValidPath: 'Scaffold writes generated files into the selected output directory.' },
   description: 'Scaffold <entity> <name> from blocks',
-
-  handler: {
-    execute: runDefault,
+  category: 'scaffold',
+  flags: {
+    blocks: { type: 'string', description: 'Comma-separated block ids to include' },
+    yes: { type: 'boolean', description: 'Accept defaults and skip prompts' },
+    force: { type: 'boolean', description: 'Overwrite non-empty target directory' },
+    'dry-run': { type: 'boolean', description: 'Print the tree that would be written and exit' },
+    out: { type: 'string', description: 'Override the output directory' },
+    scope: { type: 'string', description: 'npm scope for the generated package' },
+    mode: {
+      type: 'string',
+      description: 'Layout mode: "in-workspace" (workspace:* deps) or "standalone" (semver deps + pnpm-workspace.yaml)',
+    },
+  },
+  examples: [
+    'kb scaffold run plugin my-plugin',
+    'kb scaffold run adapter my-llm --blocks base',
+    'kb scaffold run plugin ui --scope @acme --yes',
+    'kb scaffold run plugin demo --dry-run',
+  ],
+  async handler(ctx, argv, flags) {
+    return runDefault(ctx, argv, flags);
   },
 });

@@ -73,7 +73,8 @@
     "pino": "^9.0.0",
     "semver": "^7.6.3",
     "yaml": "^2.8.0",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@kb-labs/scaffold": "workspace:*"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

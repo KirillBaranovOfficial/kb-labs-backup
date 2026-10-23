@@ -3,6 +3,7 @@ packages:
   - core/*
   - sdk/*
   - cli/*
+  - cli/scaffold/*
   - shared/*
   - plugins/*/*
   - '!plugins/fixtures/*'

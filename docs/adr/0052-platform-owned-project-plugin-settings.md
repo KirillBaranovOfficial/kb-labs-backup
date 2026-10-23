@@ -97,7 +97,7 @@ files. They are based on the remaining `.kb` dependents inventory in
 3. **Marketplace and plugin-install state:**
    `services/marketplace/core/src/manifest-cache.ts`,
    `cli/commands/src/commands/system/marketplace/commands/sync.ts`,
-   `plugins/scaffold/core/src/doctor/scan.ts`,
+   `cli/scaffold/core/src/doctor/scan.ts`,
    `cli/commands/src/registry/plugins-state.ts`,
    `core/registry/src/snapshot/`, and `core/registry/src/state/`.
    Move project lock and plugin state into platform state keyed by project ID.
@@ -122,7 +122,7 @@ files. They are based on the remaining `.kb` dependents inventory in
    `plugins/review/core/`, `plugins/review/llm/`,
    `plugins/release/manager-core/`, `plugins/release/manager-cli/`,
    `plugins/qa/entry/`,
-   `plugins/scaffold/core/src/engine.ts`,
+   `cli/scaffold/core/src/engine.ts`,
    `plugins/quality/entry/src/cli/commands/snapshot.ts`,
    `plugins/commit/contracts/src/env.ts`,
    `plugins/commit/entry/src/lifecycle/setup.ts`,

@@ -935,3 +935,12 @@ field; the value and source environment-variable name never enter installer
 output or persisted artifacts. The provenance is stored atomically with the
 bootstrap password and survives retries until the successful result removes
 the supplied value. Cases: S-100.1, S-181.3.
+
+### S-203.26 verifies plugin failure correlation through the installed boundary
+
+A plain error thrown by an installed plugin command is governed by S-203.3 and
+returns `KB_PLUGIN_COMMAND_FAILED`, names the plugin and command, and carries a
+correlation ID. S-203.26 therefore uses a packaged journey fixture plugin to
+prove the second-process structured-log round trip for that contract. Uncatalogued
+platform failures remain `KB_RUNTIME_UNEXPECTED` and are tested at the platform
+error boundary. Cases: S-203.3, S-203.26.

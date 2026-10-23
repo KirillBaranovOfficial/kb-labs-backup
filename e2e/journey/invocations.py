@@ -769,20 +769,25 @@ def invocation_link(step_id: str) -> str | None:
     return reference
 
 
-def parse_unexpected_correlation_id(stdout: str, stderr: str = "") -> tuple[bool, str | None]:
-    """Read unexpected status and its correlation ID from JSON or human output."""
+def parse_error_correlation_id(
+    stdout: str,
+    stderr: str = "",
+    *,
+    expected_code: str,
+) -> tuple[bool, str | None]:
+    """Read a catalogued failure code and correlation ID from JSON or human output."""
     try:
         result = json.loads(stdout)
     except json.JSONDecodeError:
         result = None
     error = result.get("error") if isinstance(result, dict) and result.get("ok") is False else None
-    if isinstance(error, dict) and error.get("code") == "KB_RUNTIME_UNEXPECTED":
+    if isinstance(error, dict) and error.get("code") == expected_code:
         correlation_id = error.get("correlationId")
         return True, correlation_id if isinstance(correlation_id, str) and correlation_id else None
 
     retrieval_command = 'kb logs query --correlation-id '
     for output in (stderr, stdout):
-        if "KB_RUNTIME_UNEXPECTED" not in output:
+        if expected_code not in output:
             continue
         before, separator, after = output.partition(retrieval_command)
         if separator and before:
@@ -831,7 +836,11 @@ def _failure_log_query(kind: str, exit_code: int | None, argv: list[str], stdout
     if kind == "command" and not is_installed_cli:
         return None
     is_unexpected, human_correlation_id = (
-        parse_unexpected_correlation_id(stdout, stderr) if kind == "command" and is_installed_cli
+        parse_error_correlation_id(
+            stdout,
+            stderr,
+            expected_code="KB_RUNTIME_UNEXPECTED",
+        ) if kind == "command" and is_installed_cli
         else (False, None)
     )
     if error is None and not is_unexpected:

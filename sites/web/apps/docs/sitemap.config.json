@@ -107,7 +107,7 @@
       "stalenessRisk": "medium",
       "note": "Step-by-step tutorials. Code snippets must match real SDK API.",
       "pages": [
-        { "slug": "guides/first-plugin",         "type": "manual", "owners": ["sdk/**", "plugins/scaffold/**"] },
+        { "slug": "guides/first-plugin",         "type": "manual", "owners": ["sdk/**", "cli/scaffold/**"] },
         { "slug": "guides/first-adapter",        "type": "manual", "owners": ["sdk/**", "adapters/**"] },
         { "slug": "guides/first-workflow",       "type": "manual", "owners": ["cli/commands/src/commands/system/workflow.ts", "services/workflow/entry/src/commands/create.ts", "services/workflow/entry/src/http-client.ts", "services/workflow/contracts/src/routes.ts", "services/workflow/engine/**", "services/workflow/contracts/**", "services/workflow/builtins/**", "services/workflow/daemon/src/api/workflows-api.ts", "services/host/app/src/project-runtime/**", "tools/kb-dev/**", "studio/**"] },
         { "slug": "guides/add-studio-page",      "type": "manual", "owners": ["studio/**", "sdk/**"] },
