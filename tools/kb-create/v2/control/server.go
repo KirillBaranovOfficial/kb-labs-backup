@@ -210,7 +210,7 @@ func (s *Server) failWith(w http.ResponseWriter, err error) {
 	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		status := http.StatusInternalServerError
-		if typed.Code == "KB_HOST_ALREADY_RUNNING" {
+		if typed.Code == contracts.CodeHostAlreadyRunning {
 			status = http.StatusConflict
 		}
 		s.fail(w, status, typed)

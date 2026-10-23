@@ -4,6 +4,18 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-23
+
+### Host exclusivity follows claimed resources, not machine identity
+
+Independent install roots may run at the same time when they hold different
+resources. Each root owns its resolved Gateway address and service ports. A
+start or apply is refused with `KB_HOST_ALREADY_RUNNING` only when the requested
+host needs a Gateway address or port held by another verified live host; the
+diagnostic names that root and PID after process identity verification. A
+stopped root retains its allocation, and stale or malformed root indexes remain
+diagnosed by the index owner. Cases: PC-001.10, PC-001.12, PC-001.16, S-025.8.
+
 ## 2026-10-22
 
 ### Release 1 is local-only

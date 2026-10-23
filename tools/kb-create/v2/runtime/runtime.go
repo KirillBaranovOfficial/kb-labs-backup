@@ -107,11 +107,15 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	if err != nil {
 		return contracts.InstallReceipt{}, err
 	}
+	var launchHost *contracts.HostSpec
 	if plan.Host != nil {
-		if plan.Host.Env == nil {
-			plan.Host.Env = map[string]string{}
+		declared := *plan.Host
+		declared.Env = make(map[string]string, len(plan.Host.Env)+1)
+		for key, value := range plan.Host.Env {
+			declared.Env[key] = value
 		}
-		plan.Host.Env["KB_INSTALLATION_ID"] = installationID
+		declared.Env["KB_INSTALLATION_ID"] = installationID
+		launchHost = &declared
 	}
 	if err := verifySecrets(plan, deps.Secrets); err != nil {
 		return contracts.InstallReceipt{}, err
@@ -170,9 +174,9 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		var stop func() error
 		var startErr error
 		if deps.Host != nil {
-			stop, startErr = deps.Host.Start(ctx, *plan.Host)
+			stop, startErr = deps.Host.Start(ctx, *launchHost)
 		} else if deps.Probe != nil {
-			startErr = deps.Probe.Probe(ctx, *plan.Host)
+			startErr = deps.Probe.Probe(ctx, *launchHost)
 		}
 		if startErr != nil {
 			progressErr := emit("Start host", false)

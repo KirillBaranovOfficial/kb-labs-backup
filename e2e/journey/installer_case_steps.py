@@ -2486,6 +2486,12 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 raise RuntimeError("doctor --fix did not preserve unresolved requiredInput in its result")
             if not any(item.get("path") == "/fixture/secret" for item in required if isinstance(item, dict)):
                 raise RuntimeError(f"doctor --fix returned the wrong required-input finding: {required}")
+            if payload.get("hostRestarted") is not False:
+                raise RuntimeError("doctor --fix restarted the host while required input remains unresolved")
+            host_status = _data(run_command([launcher, "status", "--platform-root", str(root), "--json"]),
+                                "status after unresolved-input doctor repair")
+            if host_status.get("host", {}).get(layout_value("sharedStateDirectory")) != "stopped":
+                raise RuntimeError("doctor --fix did not keep the host stopped while required input remains unresolved")
             if "fixture-secret-value" in result.stdout:
                 raise RuntimeError("doctor --fix serialized a secret value")
 
@@ -2558,7 +2564,8 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
     """Prove the per-user launcher never controls a different platform root."""
     journey = Journey(mode, f"doctor-root-isolation-{mode}")
     root = platform_root.parent / "installer-case-fixtures" / "s025-root-isolation"
-    main_receipt_id = json.loads((platform_root / layout_relative('currentLink', '.kb/v2/receipt.json')).read_text()).get("id")
+    main_receipt = json.loads((platform_root / layout_relative('currentLink', '.kb/v2/receipt.json')).read_text())
+    main_receipt_id = main_receipt.get("id")
 
     def repair_fixture_without_stopping_main() -> None:
         requirement = {"id": "fixture.default", "path": "/fixture/default", "required": True,
@@ -2610,9 +2617,14 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
     def refuse_start_for_other_root() -> None:
         try:
             cleanup_installer_fixture_root(root, launcher, run_command)
+            gateway_health = main_receipt.get("verification", {}).get("hostHealthUrl", "")
+            gateway = urlsplit(gateway_health)
+            if not gateway.scheme or not gateway.netloc:
+                raise RuntimeError("platform A's active receipt omitted its Gateway health URL")
+            main_gateway_url = f"{gateway.scheme}://{gateway.netloc}"
             _seed_installed_fixture(root, launcher=launcher, index=stable_index,
                                     run_command=run_command, label="cross-root start fixture",
-                                    gateway_url=unused_loopback_gateway_url())
+                                    gateway_url=main_gateway_url)
             stop_installer_fixture_host(root, launcher, run_command)
             lifecycle = InstallerHostLifecycle(launcher, run_command)
             with lifecycle.preserve([platform_root]) as initial:

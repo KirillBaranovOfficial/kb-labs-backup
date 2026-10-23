@@ -203,7 +203,8 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 		planned = *response.Plan
 	}
-	if running := refuseApplyBesideRunningHost(planned, installRoot); running != nil {
+	reusedHost, running := reusableApplyHost(planned, installRoot)
+	if running != nil {
 		return applyCommandResult{}, running
 	}
 	if err := preflight.CheckInstallResources(operationRoot); err != nil {
@@ -299,7 +300,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 	}
 	if runtimeDeps.Host == nil && planned.Host != nil {
-		if !initialInstall {
+		if !initialInstall && reusedHost == nil {
 			runtimeDeps.Host = prober
 		}
 	}
@@ -313,6 +314,16 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	applied, applyErr := runtime.Apply(applyCtx, planned, runtimeDeps)
 	if applyErr != nil {
 		return applyCommandResult{}, applyDossier(root, correlationID, transcript.Path(), planned, redactions, applyErr)
+	}
+	if reusedHost != nil {
+		applied.ID = reusedHost.ID
+		applied.CreatedAt = reusedHost.CreatedAt
+		applied.InstallationID = reusedHost.InstallationID
+		if err := receipt.Write(operationRoot, applied); err != nil {
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable,
+				"the running host identity could not be preserved in the active receipt.",
+				"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` and repair the active receipt before retrying.", err)
+		}
 	}
 	var firstAdmin *firstAdminCredential
 	if initialInstall {

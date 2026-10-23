@@ -237,6 +237,7 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 	result, err := swap.Run(ctx, lifecycleHost{command: command, state: state}, swap.Operation{
 		Name:            "repair",
 		PreviousVersion: installedVersion(platformRoot),
+		KeepStoppedIf:   func() bool { return unresolvedRequiredInput },
 		Change: func(context.Context, bool) (string, error) {
 			active, receiptErr := receipt.Read(activeRoot)
 			if receiptErr != nil {
@@ -295,7 +296,7 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 	// user input. Return through clikit's success boundary so that the structured
 	// repair.requiredInput details remain in data instead of becoming a generic
 	// unhealthy-status error.
-	return doctorFixResult{OK: fixOK, Operation: "doctor-fix", Findings: response.Findings, Repair: response.Repair, Snapshot: snapshotSummary(snapshot), HostRestarted: result.WasRunning}, nil
+	return doctorFixResult{OK: fixOK, Operation: "doctor-fix", Findings: response.Findings, Repair: response.Repair, Snapshot: snapshotSummary(snapshot), HostRestarted: result.WasRunning && !unresolvedRequiredInput}, nil
 }
 
 // runRecover runs the platform's recovery tool with the host stopped, so the

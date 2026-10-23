@@ -323,9 +323,12 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			return resolvedPlan{}, asDiag(claimErr)
 		}
 		if claimed {
+			if running := host.GatewayResourceConflict(selectedURL, input.Operation, claimant.PlatformRoot); running != nil {
+				return resolvedPlan{}, running
+			}
 			diagnostic, diagnosticErr := gatewayAddressClaimConflict(selectedURL, claimant.PlatformRoot, input.Operation)
 			if diagnosticErr != nil {
-			return resolvedPlan{}, contracts.HostSpecDiagnostic("the selected Gateway address is invalid", "choose a valid loopback Gateway URL, then rerun `kb-create "+input.Operation+"`", diagnosticErr.Error(), diagnosticErr)
+				return resolvedPlan{}, contracts.HostSpecDiagnostic("the selected Gateway address is invalid", "choose a valid loopback Gateway URL, then rerun `kb-create "+input.Operation+"`", diagnosticErr.Error(), diagnosticErr)
 			}
 			return resolvedPlan{}, diagnostic
 		}

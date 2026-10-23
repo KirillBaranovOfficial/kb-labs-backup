@@ -9,7 +9,6 @@ export function releaseArtifactPackageNames(manifest, platformMembers) {
   return [...new Set([
     ...(manifest.core ?? []).map(item => item.name),
     ...(manifest.services ?? []).map(item => item.pkg),
-    ...(manifest.plugins ?? []).map(item => item.pkg),
     ...(manifest.adapters ?? []).map(item => item.name),
     ...platformMembers,
   ].filter(Boolean))];

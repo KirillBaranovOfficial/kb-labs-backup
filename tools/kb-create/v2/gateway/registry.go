@@ -121,6 +121,10 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 	if err != nil {
 		return "", err
 	}
+	roots, err = r.removeMissingRoots(roots)
+	if err != nil {
+		return "", err
+	}
 	installationID, err := allocationInstallationID(platformRoot)
 	if err != nil {
 		return "", err
@@ -168,6 +172,10 @@ func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (
 	if err != nil {
 		return Root{}, false, err
 	}
+	roots, err = r.removeMissingRoots(roots)
+	if err != nil {
+		return Root{}, false, err
+	}
 	installationID, err := allocationInstallationID(platformRoot)
 	if err != nil {
 		return Root{}, false, err
@@ -181,6 +189,29 @@ func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (
 		}
 	}
 	return Root{}, false, nil
+}
+
+// removeMissingRoots releases address rows whose owned installation root has
+// been removed. Existing roots remain reserved even when their receipt or host
+// is temporarily unavailable; only a definitive missing path releases a row.
+func (r Registry) removeMissingRoots(roots []Root) ([]Root, error) {
+	kept := make([]Root, 0, len(roots))
+	removed := false
+	for _, root := range roots {
+		if _, err := os.Stat(root.PlatformRoot); errors.Is(err, os.ErrNotExist) {
+			removed = true
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("check registered Gateway installation root %s: %w", root.PlatformRoot, err)
+		}
+		kept = append(kept, root)
+	}
+	if removed {
+		if err := r.write(kept); err != nil {
+			return nil, err
+		}
+	}
+	return kept, nil
 }
 
 func (r Registry) RegisterMany(values []Root) error {
