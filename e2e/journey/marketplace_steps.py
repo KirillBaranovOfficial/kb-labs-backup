@@ -671,8 +671,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         unknown_url = f"{gateway}{project_service_path(project_id, 'unknown-service', 'health')}"
         status, raw, _ = open_http(http_opener, urllib.request.Request(unknown_url, headers=headers), timeout=30, env=base_env)
         unknown = read_ux_http_result(raw, status)
-        if status != 404 or unknown.get("error", {}).get("code") != "KB_RUNTIME_RESOURCE_NOT_FOUND":
-            raise RuntimeError("unknown project service did not return catalogued KB_RUNTIME_RESOURCE_NOT_FOUND")
+        if status != 404 or unknown.get("error", {}).get("code") != "KB_PROJECT_SERVICE_NOT_FOUND":
+            raise RuntimeError("unknown project service did not return catalogued KB_PROJECT_SERVICE_NOT_FOUND")
         health_status, health_raw, _ = open_http(
             http_opener, urllib.request.Request(f"{gateway}/health", headers=headers), timeout=30, env=base_env,
         )
