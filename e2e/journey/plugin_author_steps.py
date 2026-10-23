@@ -413,6 +413,18 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     journey.step("remove temporary Review plugin fixture", "plugin-author", cleanup_review_plugin)
 
+    def finalize_project_baseline() -> None:
+        _git(["add", "-A"], project=project, env=env)
+        status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
+        if not status:
+            return
+        _git(["commit", "-m", "chore(journey): finalize Commit case fixture"], project=project, env=env)
+        remaining = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
+        if remaining:
+            raise RuntimeError("Commit case fixture still has staged or untracked changes after finalization")
+
+    finalize_project_baseline()
+
 
 def run_plugin_author_flow(
     journey: Journey,

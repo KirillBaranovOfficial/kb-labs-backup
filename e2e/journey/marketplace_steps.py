@@ -31,6 +31,7 @@ from invocations import (
     run_with_runner,
 )
 from plugin_author_steps import run_commit_case_steps
+from commit_fixture import commit_fixture_source_version
 
 
 CommandRunner = Callable[..., CompletedProcess[str]]
@@ -347,7 +348,8 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
 
     def install_fixture() -> None:
         wait_for_marketplace_ready(project, base_env, runner)
-        version = _registry_version("@kb-labs/commit-entry", registry, project, base_env, runner)
+        workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+        version = commit_fixture_source_version(workspace)
         command = ["marketplace", "install", f"@kb-labs/commit-entry@{version}", "--json"]
         result = _json(_run(kb_command(command), cwd=project, env=base_env, runner=runner), command)
         installed = result.get("installed")

@@ -237,6 +237,26 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             "S-030.1": "PASS", "S-030.2": "PASS", "S-030.3": "PASS", "S-030.4": "PASS",
         })
 
+    def test_commit_and_review_fixture_finishes_with_a_clean_worktree(self):
+        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
+            "schema": "kb.marketplace/3",
+            "plugins": {"@kb-labs/commit": {
+                "enabled": True,
+                "version": "2.120.1",
+                "integrity": "sha256-fixture",
+                "source": "marketplace",
+                "package": "@kb-labs/commit-entry",
+            }},
+        }))
+
+        journey = Journey("local", "commit-case-clean-worktree")
+        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                              subprocess.run, self.env)
+
+        status = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                                cwd=self.project, capture_output=True, text=True, check=True)
+        self.assertEqual(status.stdout, "", journey.result().steps)
+
     def test_commit_fixture_recovers_repository_without_head(self):
         (self.project / ".git").mkdir()
         (self.project / ".kb/marketplace.lock").write_text(json.dumps({
