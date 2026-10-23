@@ -229,6 +229,10 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		supervisorLog, _ := os.ReadFile(state.SupervisorLog())
 		t.Fatalf("install argv exit=%d: stdout=%s stderr=%s hostLog=%s supervisorLog=%s", installCode.Code(), installOutput.String(), installError.String(), hostLog, supervisorLog)
 	}
+	installedReceipt, err := receipt.Read(platformRootForTest(t, root))
+	if err != nil || installedReceipt.Plan.Request.PlatformRoot != root {
+		t.Fatalf("install receipt request root = %q, error=%v; want selected install root %q", installedReceipt.Plan.Request.PlatformRoot, err, root)
+	}
 	layout, err := versionroot.New(root)
 	if err != nil {
 		t.Fatal(err)

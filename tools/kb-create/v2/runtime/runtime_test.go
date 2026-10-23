@@ -467,6 +467,9 @@ func TestFreshApplyGeneratesStableInstallationIdentityForHostAndReceipt(t *testi
 	if result.InstallationID == "" || probe.specs[0].Env["KB_INSTALLATION_ID"] != result.InstallationID {
 		t.Fatalf("receipt identity %q, probed host identity %q", result.InstallationID, probe.specs[0].Env["KB_INSTALLATION_ID"])
 	}
+	if result.Plan.Host == nil || result.Plan.Host.Env["KB_INSTALLATION_ID"] != "" {
+		t.Fatalf("launcher-owned process identity leaked into the persisted host declaration: %#v", result.Plan.Host)
+	}
 	if stored, present, err := store.Get("installation.id"); err != nil || !present || stored != result.InstallationID {
 		t.Fatalf("persistent installation ID = %q, present=%v, error=%v", stored, present, err)
 	}

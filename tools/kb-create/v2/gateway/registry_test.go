@@ -197,30 +197,36 @@ func TestSameInstallationRejectsUnvalidatablePathsIncludingEqualSpellings(t *tes
 	}
 }
 
-func TestUnvalidatablePathCannotClaimItsFormerGatewayRow(t *testing.T) {
+func TestAllocationReleasesAddressFromRemovedInstallation(t *testing.T) {
 	registry := Registry{Path: filepath.Join(t.TempDir(), "gateway-roots.json")}
-	platformRoot := filepath.Join(t.TempDir(), "platform")
-	installRoot, _, _ := installedRootSpellings(t, platformRoot)
-	if err := registry.Register(installRoot, "http://127.0.0.1:4100"); err != nil {
+	base := t.TempDir()
+	rootA, _, _ := installedRootSpellings(t, filepath.Join(base, "a"))
+	removedRoot, _, _ := installedRootSpellings(t, filepath.Join(base, "removed"))
+	rootB, _, _ := installedRootSpellings(t, filepath.Join(base, "b"))
+	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
-	layout, err := versionroot.ForPlatformPath(installRoot)
+	if err := registry.Register(removedRoot, "http://127.0.0.1:4100"); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := versionroot.ForPlatformPath(removedRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := layout.RemoveOwned(); err != nil {
 		t.Fatal(err)
 	}
-	if SameInstallation(installRoot, installRoot) {
-		t.Fatal("unvalidatable path matched its stale Gateway row by path spelling")
+	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
+	if err != nil || allocated != "http://127.0.0.1:4100" {
+		t.Fatalf("allocation with a removed root's stale address row = %q, %v; want next free address 4100", allocated, err)
 	}
-	allocated, err := registry.Allocate(installRoot, "http://127.0.0.1:4000", "")
-	if err != nil || allocated != "http://127.0.0.1:4000" {
-		t.Fatalf("allocation for unvalidatable former root = %q, %v; want an independent allocation", allocated, err)
+	roots, err := registry.Read()
+	if err != nil || len(roots) != 1 || roots[0].URL != "http://127.0.0.1:4000" {
+		t.Fatalf("registry after allocation = %#v, %v; want only the remaining installed root", roots, err)
 	}
-	claimant, claimed, err := registry.Claimant(installRoot, "http://127.0.0.1:4100")
-	if err != nil || !claimed || claimant.URL != "http://127.0.0.1:4100" {
-		t.Fatalf("stale row claimant = %#v, %v, %v; want the recorded row to retain its address claim", claimant, claimed, err)
+	claimant, claimed, err := registry.Claimant(rootB, "http://127.0.0.1:4100")
+	if err != nil || claimed || claimant.URL != "" {
+		t.Fatalf("removed root claimant = %#v, %v, %v; removed installations must not reserve an address", claimant, claimed, err)
 	}
 }
 

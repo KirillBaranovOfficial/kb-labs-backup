@@ -112,7 +112,7 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 	}
 	if status.State != host.StateStopped {
 		command := contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot)
-		failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
+		failure := contracts.NewDiag(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
 		failure.Meta = map[string]any{"nextCommand": command}
 		return nil, failure
 	}
@@ -121,7 +121,7 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 	}
 	if pid, alive := supervisor.LivePID(state, process.InstallRoot); alive {
 		command := contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot)
-		e := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
+		e := contracts.NewDiag(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
 		e.Meta = map[string]any{"supervisorPid": fmt.Sprint(pid), "nextCommand": command}
 		return nil, e
 	}

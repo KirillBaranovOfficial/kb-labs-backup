@@ -81,6 +81,7 @@ const (
 	CodeInstallLayoutUnsupported  = "KB_INSTALL_LAYOUT_UNSUPPORTED"
 	CodeHostSpecInvalid           = "KB_HOST_SPEC_INVALID"
 	CodeHostStateDirUnwritable    = "KB_HOST_STATE_DIR_UNWRITABLE"
+	CodeHostAlreadyRunning        = "KB_HOST_ALREADY_RUNNING"
 	CodeOperationLockUnsupported  = "KB_HOST_OPERATION_LOCK_UNSUPPORTED"
 	CodeHostProcessIdentityStale  = "KB_HOST_PROCESS_IDENTITY_STALE"
 	CodeGatewayIndexUnavailable   = "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE"
@@ -127,6 +128,14 @@ func NewUpdateIncompatible(details UpdateIncompatibleDetails) *diag.Diag {
 	if err != nil {
 		panic(err)
 	}
+	return failure
+}
+
+// HostSpecDiagnostic supplies the required reason template value for the
+// catalogued host-specification error at every producer boundary.
+func HostSpecDiagnostic(message, hint, reason string, cause error) *diag.Diag {
+	failure := NewDiag(CodeHostSpecInvalid, message, hint, cause)
+	failure.Meta = map[string]any{"reason": reason}
 	return failure
 }
 

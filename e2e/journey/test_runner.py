@@ -914,8 +914,8 @@ thread.join()
                       outer["case_run"]["claims"])
         self.assertTrue(service["states"]["fixtures-installed"]["value"]["projectBRoot"])
         self.assertEqual(len(variant_args), 1)
-        self.assertEqual(variant_args[0]["project_b"],
-                         Path(service["states"]["fixtures-installed"]["value"]["projectBRoot"]))
+        self.assertEqual(variant_args[0]["project_b"].resolve(),
+                         Path(service["states"]["fixtures-installed"]["value"]["projectBRoot"]).resolve())
         self.assertEqual(observed["fixture_calls"], isolated_groups)
         self.assertEqual(observed["host_cycle"], ["stop", "start", "stop", "start"])
         self.assertEqual(observed["events"], [

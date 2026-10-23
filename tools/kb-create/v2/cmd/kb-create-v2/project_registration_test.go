@@ -30,9 +30,12 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
+	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/transport"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 )
@@ -145,6 +148,17 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	}
 	countingProxy := httputil.NewSingleHostReverseProxy(countingProxyTarget)
 
+	_, fakehost := binaries(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	hostSpec := &contracts.HostSpec{Command: fakehost, Args: []string{"-port", fmt.Sprint(port)},
+		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
 	active := contracts.InstallReceipt{
 		ID: "secured-install-before-project-registration",
 		Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{
@@ -160,9 +174,9 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	active.Schema = contracts.ReceiptSchema
 	active.Plan.Schema = contracts.ResolvedPlanSchema
 	active.Plan.PlatformChannel = "stable"
-	active.Plan.ServiceGraph = contracts.ServiceGraph{PlatformVersion: "2.0.0"}
+	active.Plan.ServiceGraph = contracts.ServiceGraph{PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway"}}}
 	active.Plan.Artifacts = []contracts.Artifact{{ID: "platform", Kind: "platform", Package: "@kb/platform", Version: "2.0.0"}}
-	active.Plan.Host = testHostOnFreePort(t)
+	active.Plan.Host = hostSpec
 	writeVersionedReceipt(t, root, active)
 	const password = "bootstrap-password-for-test"
 	if err := (secrets.Store{PlatformRoot: root}).Put("gateway.bootstrap.password", password); err != nil {
@@ -225,14 +239,32 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		t.Fatal(err)
 	}
 	source := testReleaseCatalog(t, "2.0.0")
-	source.Platforms[0].Host = testHostOnFreePort(t)
-	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
+	source.Platforms[0].Host = hostSpec
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {
+		PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}},
+	}}
 	source.Platforms[0].Config = []catalog.ConfigRequirement{
 		{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`},
 		{ID: "gateway.bootstrap.adminEmail", Path: "/gateway/bootstrap/adminEmail", Default: `"admin@example.test"`},
 		{ID: "gateway.bootstrap.tenantId", Path: "/gateway/bootstrap/tenantId", Default: `"workspace"`},
+		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`},
 	}
 	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
+	planInput, err := json.Marshal(unregisteredBeforeRepeat.Plan.Request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned := transport.PlanWith(planInput, source, resolve.Options{})
+	if !planned.OK {
+		t.Fatalf("resolve repeat-install plan for the live-host fixture: %v", planned.Error)
+	}
+	unregisteredBeforeRepeat.Plan = *planned.Plan
+	unregisteredBeforeRepeat.Plan.Request.PlatformRoot = activeRoot
+	unregisteredBeforeRepeat.Plan.ServiceGraph.Services[0].Port = port
+	unregisteredBeforeRepeat.Verification.HostHealthURL = hostSpec.HealthURL
+	if err := receipt.Write(activeRoot, unregisteredBeforeRepeat); err != nil {
+		t.Fatal(err)
+	}
 	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
@@ -246,18 +278,29 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	}
 	registrarCalls := 0
 	clock := projectRegistrationTestClock{now: time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)}
+	activeRoot = platformRootForTest(t, root)
+	runner, err := host.NewRunner(activeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("start real supervised test host: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := runner.Stop(context.Background()); err != nil {
+			t.Errorf("stop real supervised test host: %v", err)
+		}
+	})
+	initialStatus, err := runner.Status(context.Background())
+	if err != nil || initialStatus.State != host.StateRunning || !initialStatus.Healthy {
+		t.Fatalf("initial supervised host status = %#v, %v", initialStatus, err)
+	}
 	testHost := &projectRegistrationTestHost{gatewayProxy: countingProxy}
 	t.Cleanup(testHost.stop)
 	for _, projectPath := range []string{selected, canonical, ""} {
 		_, storedPasswordPresent, err := secretStore.Get(secrets.BootstrapPassword)
 		if err != nil {
 			t.Fatal(err)
-		}
-		if testHost.running() {
-			testHost.stop()
-		}
-		if testHost.running() {
-			t.Fatal("test host did not stop before repeat install")
 		}
 		requestPath := filepath.Join(t.TempDir(), "request.json")
 		request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root, ProjectRoot: projectPath,
@@ -279,7 +322,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 			deps := productionCommandDependencies(cmd)
 			deps.NodeCheck = func() error { return nil }
 			deps.Executable = launcher
-			deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: testHost, Clock: clock}
+			deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Clock: clock}
 			deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
 				registrarCalls++
 				return registerInstalledProject(platformRoot, selectedProject, nil)
@@ -297,6 +340,12 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		}
 		if code.Code() != 0 {
 			t.Fatalf("secured repeat install for %q exit=%d output:\n%s", projectPath, code.Code(), output)
+		}
+		status, statusErr := runner.Status(context.Background())
+		current, receiptErr := receipt.Read(activeRoot)
+		if statusErr != nil || receiptErr != nil || status.State != host.StateRunning || !status.Healthy ||
+			current.ID != identityBefore.ID || status.ReceiptID != identityBefore.ID {
+			t.Fatalf("repeat apply changed the live host identity: status=%#v statusErr=%v receipt=%#v receiptErr=%v", status, statusErr, current, receiptErr)
 		}
 		if storedPasswordPresent {
 			if strings.Count(output, password) != 1 || strings.Count(output, `"password":`) != 1 {
@@ -356,11 +405,8 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		} else if !strings.Contains(output, `"projectId":"`+registered.ID+`"`) {
 			t.Fatalf("repeat install did not return recorded project identity: %s", output)
 		}
-		if !strings.Contains(output, `"phase":"Start host"`) {
-			t.Fatalf("repeat install output did not report apply progress: %s", output)
-		}
-		if !testHost.running() {
-			t.Fatalf("repeat install with %q did not leave the host running", projectPath)
+		if status.State != host.StateRunning || !status.Healthy {
+			t.Fatalf("repeat install with %q did not leave the host running: %#v", projectPath, status)
 		}
 		response, err := http.Get(source.Platforms[0].Host.HealthURL)
 		if err != nil {
@@ -392,8 +438,8 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 			}
 		}
 	}
-	if testHost.running() {
-		testHost.stop()
+	if _, err := runner.Stop(context.Background()); err != nil {
+		t.Fatalf("stop real supervised test host before the remaining registration assertions: %v", err)
 	}
 	unregistered, err := receipt.Read(activeRoot)
 	if err != nil {
@@ -463,6 +509,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		t.Fatalf("unregistered completed install calls = registrar %d, Gateway login %d, registration %d; want zero",
 			registrarCalls-registrarCallsBefore, loginCalls, registrationCalls)
 	}
+	testHost.stop()
 
 	activeLayout, err := versionroot.New(root)
 	if err != nil {
@@ -567,6 +614,34 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		}
 		assertSecretAbsent(t, label+" from human repeat install", output, password)
 	}
+	registrationListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registrationPort := registrationListener.Addr().(*net.TCPAddr).Port
+	if err := registrationListener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	registrationHost := &contracts.HostSpec{Command: fakehost, Args: []string{"-port", fmt.Sprint(registrationPort)},
+		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", registrationPort), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
+	source.Platforms[0].Host = registrationHost
+	registrationRelease, err := sealTestCatalog(t, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registrationIndexBytes, err := json.Marshal(registrationRelease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registrationIndexPath := filepath.Join(t.TempDir(), "registration-release-index.json")
+	if err := os.WriteFile(registrationIndexPath, registrationIndexBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	indexPath = registrationIndexPath
+	identityBefore.Plan.Host = registrationHost
+	identityBefore.Verification.HostHealthURL = registrationHost.HealthURL
+	unregistered.Plan.Host = registrationHost
+	unregistered.Verification.HostHealthURL = registrationHost.HealthURL
 	logsAfter, err := os.ReadDir(activeLayout.OperationLogsDir())
 	if err != nil {
 		t.Fatal(err)
@@ -627,6 +702,13 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 			t.Run(label, func(t *testing.T) {
 				if testHost.running() {
 					testHost.stop()
+				}
+				probe, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+				if err != nil {
+					t.Fatalf("project registration fixture left its Gateway port %d occupied: %v", port, err)
+				}
+				if err := probe.Close(); err != nil {
+					t.Fatal(err)
 				}
 				identity.Plan.ServiceGraph.Services = []contracts.Service{{ID: "gateway", Command: "gateway"}}
 				if err := receipt.Write(activeRoot, identity); err != nil {

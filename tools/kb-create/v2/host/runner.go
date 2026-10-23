@@ -177,7 +177,7 @@ func (p Prober) Probe(ctx context.Context, declared contracts.HostSpec) error {
 }
 
 func specInvalid(cause error) *diag.Diag {
-	return contracts.NewDiag(contracts.CodeHostSpecInvalid, "The host specification in the installation receipt is invalid: "+cause.Error()+".", "Reinstall the platform with \"kb-create apply\".", cause)
+	return contracts.HostSpecDiagnostic("The host specification in the installation receipt is invalid: "+cause.Error()+".", "Reinstall the platform with \"kb-create apply\".", cause.Error(), cause)
 }
 
 func hostError(code, message, hint string, cause error, details map[string]string) *diag.Diag {

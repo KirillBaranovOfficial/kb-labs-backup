@@ -320,7 +320,7 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		}
 		defaultURL, originErr := gateway.OriginFromHealthURL(response.Plan.Host.HealthURL)
 		if originErr != nil {
-			return resolvedPlan{}, failure(contracts.CodeHostSpecInvalid, "the release Gateway address is invalid", "select a release with a valid loopback Gateway health URL", originErr)
+			return resolvedPlan{}, contracts.HostSpecDiagnostic("the release Gateway address is invalid", "select a release with a valid loopback Gateway health URL", originErr.Error(), originErr)
 		}
 		selectedURL, allocErr := registry.AllocateWithKnown(root, defaultURL, requestedURL, known)
 		if allocErr != nil {
@@ -331,9 +331,12 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			return resolvedPlan{}, asDiag(claimErr)
 		}
 		if claimed {
+			if running := host.GatewayResourceConflict(selectedURL, input.Operation, claimant.PlatformRoot); running != nil {
+				return resolvedPlan{}, running
+			}
 			diagnostic, diagnosticErr := gatewayAddressClaimConflict(selectedURL, claimant.PlatformRoot, input.Operation)
 			if diagnosticErr != nil {
-				return resolvedPlan{}, failure(contracts.CodeHostSpecInvalid, "the selected Gateway address is invalid", "choose a valid loopback Gateway URL, then rerun `kb-create "+input.Operation+"`", diagnosticErr)
+				return resolvedPlan{}, contracts.HostSpecDiagnostic("the selected Gateway address is invalid", "choose a valid loopback Gateway URL, then rerun `kb-create "+input.Operation+"`", diagnosticErr.Error(), diagnosticErr)
 			}
 			return resolvedPlan{}, diagnostic
 		}

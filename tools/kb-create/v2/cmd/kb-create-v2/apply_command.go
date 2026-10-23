@@ -203,7 +203,8 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 		planned = *response.Plan
 	}
-	if running := refuseApplyBesideRunningHost(planned, installRoot); running != nil {
+	reusedHost, running := reusableApplyHost(planned, installRoot)
+	if running != nil {
 		return applyCommandResult{}, running
 	}
 	if err := preflight.CheckInstallResources(operationRoot); err != nil {
@@ -299,7 +300,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 	}
 	if runtimeDeps.Host == nil && planned.Host != nil {
-		if !initialInstall {
+		if !initialInstall && reusedHost == nil {
 			runtimeDeps.Host = prober
 		}
 	}
@@ -314,6 +315,16 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if applyErr != nil {
 		return applyCommandResult{}, applyDossier(root, correlationID, transcript.Path(), planned, redactions, applyErr)
 	}
+	if reusedHost != nil {
+		applied.ID = reusedHost.ID
+		applied.CreatedAt = reusedHost.CreatedAt
+		applied.InstallationID = reusedHost.InstallationID
+		if err := receipt.Write(operationRoot, applied); err != nil {
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable,
+				"the running host identity could not be preserved in the active receipt.",
+				"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` and repair the active receipt before retrying.", err)
+		}
+	}
 	var firstAdmin *firstAdminCredential
 	if initialInstall {
 		if _, err := layout.ActivateInitial(initialStage, applied.Plan.ServiceGraph.PlatformVersion, applied.Plan.PlanHash); err != nil {
@@ -326,7 +337,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			return applyCommandResult{}, unsupportedPlatformLayout(root, activeErr)
 		}
 		store = secrets.Store{PlatformRoot: activeRoot}
-		applied.Plan.Request.PlatformRoot = platformRoot
+		applied.Plan.Request.PlatformRoot = installRoot
 		if err := receipt.Write(platformRoot, applied); err != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the activated installation receipt could not be finalized", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` and resolve the reported layout issue", err)
 		}
@@ -368,7 +379,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 		origin, originErr := gateway.OriginFromHealthURL(applied.Verification.HostHealthURL)
 		if originErr != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the applied Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", root)+"` after checking the receipt", originErr)
+			return applyCommandResult{}, contracts.HostSpecDiagnostic("the applied Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", root)+"` after checking the receipt", originErr.Error(), originErr)
 		}
 		roots = append(roots, gateway.Root{PlatformRoot: platformRoot, URL: origin})
 		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}).RegisterMany(roots); err != nil {

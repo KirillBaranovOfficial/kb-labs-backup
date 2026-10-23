@@ -177,7 +177,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                     run_command=install, label="active path fixture")
             config = active_path(platform, "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
             self.assertTrue(config.is_file())
-            self.assertEqual(config, platform / "versions/1.0.0/.kb/kb.config.jsonc")
+            self.assertEqual(config.resolve(), (platform / "versions/1.0.0/.kb/kb.config.jsonc").resolve())
 
     def test_immutable_publish_conflict_assertion_uses_catalogue_and_compares_digests(self):
         package = "@kb-labs/sample"
@@ -1090,6 +1090,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 (root / ".kb/v2/bin/kb").touch()
                 (root / ".kb/v2/receipt.json").write_text(json.dumps({
                     "installationId": installation,
+                    "plan": {"request": {"gatewayUrl": f"http://127.0.0.1:{port}"}},
                     "verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
                 }))
             for root in (primary, secondary):
@@ -1142,6 +1143,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(len(adapter_calls), 2)
         login_calls = [(args, kwargs) for args, kwargs in calls if "login" in args]
         self.assertEqual(len(login_calls), 1)
+        self.assertEqual(login_calls[0][0][login_calls[0][0].index("--gateway-url") + 1], "http://127.0.0.1:4100")
         self.assertNotIn("fixture-admin-secret", repr(login_calls[0][0]))
 
     # case: S-054.23
@@ -1323,6 +1325,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="journey-port-conflict-") as temp:
             root = Path(temp) / "platform"
             root.mkdir()
+            conflict_root = root.parent / "pc001-port-conflict-root"
             index = Path(temp) / "release-index.json"
             index.write_text("{}")
             calls = []
@@ -1335,7 +1338,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
                 error = {"code": "KB_INSTALL_PORT_IN_USE", "area": "install", "stage": "preflight",
                          "severity": "error", "retryable": False, "message": "port is in use",
-                         "hint": "Stop process 42 (fixture) and rerun `kb-create apply`.",
+                         "hint": "Stop process 42 (fixture), then rerun `kb-create apply --platform-root '" + str(conflict_root) + "'`. Use `kb-create apply --platform-root '" + str(conflict_root) + "' --gateway-url 'http://127.0.0.1:4273'`.",
                          "details": {"port": "4173", "pid": "42", "command": "fixture"}}
                 return subprocess.CompletedProcess(args, 1,
                     json.dumps({"ok": False, "error": error}), "")
@@ -1711,12 +1714,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
             source = root / "KB Labs ' primary"
             receipt = source / ".kb/v2/receipt.json"
             receipt.parent.mkdir(parents=True)
-            receipt.write_text(json.dumps({"plan": {"artifacts": [
+            main_gateway_health_url = "http://127.0.0.1:4100/health"
+            receipt.write_text(json.dumps({"verification": {"hostHealthUrl": main_gateway_health_url},
+                                           "plan": {"artifacts": [
                 {"kind": "platform", "id": "platform", "package": "@kb/platform", "version": "1.0.0"},
             ]}}))
             move_test_platform_into_container(source)
             calls = []
-            primary_running = True
+            primary_running = False
             fixture_running = {}
             installed_at_cross_root_start = False
 
@@ -1778,17 +1783,19 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["S-025.7"])
         self.assertEqual(journey.steps[0].status, "PASS")
+        self.assertGreaterEqual(sum(call[1] == "start" and str(source) in call for call in calls), 2)
         self.assertEqual(journey.steps[1].cases, ["S-025.8"])
         self.assertEqual(journey.steps[1].status, "PASS")
         isolated_installs = [call for call in calls if call[1] == "install"
                              and "s025-root-isolation" in call[call.index("--platform-root") + 1]]
         self.assertEqual(len(isolated_installs), 2,
                          "S-025.8 must create its own installed fixture when selected independently")
-        start_call = next(call for call in calls if call[1] == "start")
         self.assertTrue(installed_at_cross_root_start)
-        self.assertEqual(calls[0][1], "install")
-        self.assertIn("--gateway-url", calls[0])
-        self.assertNotEqual(calls[0][calls[0].index("--gateway-url") + 1], "http://127.0.0.1:4100")
+        fixture_install = isolated_installs[1]
+        self.assertIn("--gateway-url", fixture_install)
+        self.assertEqual(fixture_install[fixture_install.index("--gateway-url") + 1],
+                         main_gateway_health_url.removesuffix("/health"),
+                         "S-025.8 must make B claim A's receipt-recorded Gateway URL")
         self.assertEqual(calls[-1][1], "uninstall")
 
     def test_fixture_seeder_uses_product_install_and_requirement_is_an_explicit_fault(self):

@@ -253,7 +253,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 			if record.InstallationID != r.InstallationID {
 				return Info{}, RootConflict(record.PlatformRoot, record.PID)
 			}
-			return Info{}, hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)+"` to inspect it.", nil, map[string]string{"pid": strconv.Itoa(record.PID), "nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)})
+			return Info{}, hostError(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.", "Use `"+contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)+"` to inspect it.", nil, map[string]string{"pid": strconv.Itoa(record.PID), "nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)})
 		case ProcessIdentityMismatch:
 			if processAlive(record.PID) {
 				return Info{}, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
@@ -757,7 +757,7 @@ func appendLauncherFailure(state State, failure *diag.Diag) error {
 
 type portOwner struct{ PID, Command string }
 
-func portInUseError(port, address, purpose string, owner portOwner, operation string, cause error) *diag.Diag {
+func portInUseError(port, address, purpose string, owner portOwner, operation, platformRoot string, cause error) *diag.Diag {
 	if operation == "" {
 		operation = "start"
 	}
@@ -765,9 +765,13 @@ func portInUseError(port, address, purpose string, owner portOwner, operation st
 	if purpose != "" {
 		message = "Port " + port + " required by " + purpose + " is already in use."
 	}
-	hint := "Stop the process using port " + port + ", then rerun `" + contracts.ShellCommand("kb-create", operation) + "`."
+	command := []string{"kb-create", operation}
+	if platformRoot != "" {
+		command = append(command, "--platform-root", platformRoot)
+	}
+	hint := "Stop the process using port " + port + ", then rerun `" + contracts.ShellCommand(command...) + "`."
 	if owner.PID != "" && owner.Command != "" {
-		hint = "Stop process " + owner.PID + " (" + owner.Command + ") using port " + port + ", then rerun `" + contracts.ShellCommand("kb-create", operation) + "`."
+		hint = "Stop process " + owner.PID + " (" + owner.Command + ") using port " + port + ", then rerun `" + contracts.ShellCommand(command...) + "`."
 	}
 	meta := map[string]string{"port": port, "pid": owner.PID, "command": owner.Command, "operation": operation}
 	if address != "" {
@@ -795,7 +799,30 @@ func portConflictError(port, address, purpose string, owner portOwner, operation
 			}
 		}
 	}
-	return portInUseError(port, address, purpose, owner, operation, cause)
+	return portInUseError(port, address, purpose, owner, operation, platformRoot, cause)
+}
+
+// GatewayResourceConflict reports a verified live installation holding a
+// Gateway port claimed by another root. Unregistered listeners remain the
+// caller's ordinary address/port conflict, while registered identities use
+// the same ownership verification as other host port conflicts.
+func GatewayResourceConflict(gatewayURL, operation, platformRoot string) *diag.Diag {
+	parsed, err := url.Parse(gatewayURL)
+	if err != nil || parsed.Port() == "" {
+		return nil
+	}
+	port := parsed.Port()
+	owner := listenerOwner(port)
+	if owner.PID == "" {
+		return nil
+	}
+	failure := portConflictError(port, parsed.Host, "gateway", owner, operation, platformRoot,
+		fmt.Errorf("the selected Gateway port %s is already occupied", port))
+	if failure.Code == contracts.CodeHostAlreadyRunning || failure.Code == contracts.CodeHostProcessIdentityStale ||
+		failure.Code == contracts.CodeGatewayIndexUnavailable || failure.Code == contracts.CodeOperationFailed {
+		return failure
+	}
+	return nil
 }
 
 func registeredGatewayRoot(port string, pid int, platformRoot string) (string, string, error) {
@@ -893,11 +920,11 @@ func RootConflict(platformRoot string, pid int) *diag.Diag {
 	meta := map[string]string{"platformRoot": platformRoot, "pid": pidText}
 	if platformRoot == "" {
 		meta["nextCommand"] = contracts.ShellCommand("kb-create", "status")
-		return hostError("KB_HOST_ALREADY_RUNNING", "A KB Labs host started by an earlier launcher is already running (pid "+pidText+").", "Stop process "+pidText+", then rerun the command.", nil, meta)
+		return hostError(contracts.CodeHostAlreadyRunning, "A KB Labs host started by an earlier launcher is already running (pid "+pidText+").", "Stop process "+pidText+", then rerun the command.", nil, meta)
 	}
 	command := contracts.ShellCommand("kb-create", "stop", "--platform-root", platformRoot)
 	meta["nextCommand"] = command
-	return hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host for platform root "+platformRoot+" is already running (pid "+pidText+").", "Stop that platform first with `"+command+"`.", nil, meta)
+	return hostError(contracts.CodeHostAlreadyRunning, "The KB Labs host for platform root "+platformRoot+" is already running (pid "+pidText+").", "Stop that platform first with `"+command+"`.", nil, meta)
 }
 
 func listenerOwner(port string) portOwner {
@@ -956,7 +983,7 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 		if operation == "plan" || operation == "apply" {
 			if plan.Host != nil {
 				if gatewayURL, suggestionErr := nextGatewayURL(plan.Host.HealthURL); suggestionErr == nil {
-					failure.Hint += " Use `" + contracts.ShellCommand("kb-create", operation, "--gateway-url", gatewayURL) + "`."
+					failure.Hint += " Use `" + contracts.ShellCommand("kb-create", operation, "--platform-root", plan.Request.PlatformRoot, "--gateway-url", gatewayURL) + "`."
 				}
 			}
 		}

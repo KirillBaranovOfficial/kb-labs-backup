@@ -192,7 +192,8 @@ class PtyInvocationTest(unittest.TestCase):
                     "command", 1, [str(cli), "adapter", "list", "--json"],
                     failure, "", root, env)
 
-        self.assertEqual(run.call_args.args[0], [str(target), "logs", "query", "--correlation-id", correlation_id, "--json"])
+        command = run.call_args.args[0]
+        self.assertEqual(command, [str(Path(target).resolve()), "logs", "query", "--correlation-id", correlation_id, "--json"])
         self.assertEqual(diagnostic, {
             "code": "KB_RUNTIME_UNEXPECTED",
             "correlationId": correlation_id,
