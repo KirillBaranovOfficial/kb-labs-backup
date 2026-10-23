@@ -91,6 +91,9 @@ while IFS= read -r extra; do
   fi
 done < <(jq -c '.[]' "$REPO_ROOT/e2e/scripts/pack-extras.json")
 
+node "$REPO_ROOT/e2e/scripts/prepare-commit-update-fixture.mjs" --packages-dir "$OUT_DIR"
+PACKED=$((PACKED+1))
+
 echo ""
 echo "==> Done: $PACKED packed, $SKIPPED skipped (private/not-built), $FAILED failed"
 echo "    Output: $OUT_DIR ($(find "$OUT_DIR" -maxdepth 1 -type f -name '*.tgz' 2>/dev/null | wc -l | tr -d ' ') tarballs)"
