@@ -277,14 +277,16 @@ func (s *jobStore) Wait(ids []string, all bool, since string) ([]Job, string, er
 }
 
 type VendorLimit struct {
-	Vendor      string     `json:"vendor"`
-	Window      string     `json:"window"`
-	UsedPercent float64    `json:"usedPercent"`
-	ResetsAt    *time.Time `json:"resetsAt,omitempty"`
-	Confidence  string     `json:"confidence"`
-	Source      string     `json:"source"`
-	Error       string     `json:"error,omitempty"`
-	FetchedAt   time.Time  `json:"fetchedAt"`
+	Vendor      string         `json:"vendor"`
+	Window      string         `json:"window"`
+	UsedPercent float64        `json:"usedPercent"`
+	Blocked     bool           `json:"blocked,omitempty"`
+	ResetsAt    *time.Time     `json:"resetsAt,omitempty"`
+	Confidence  string         `json:"confidence"`
+	Source      string         `json:"source"`
+	Error       string         `json:"error,omitempty"`
+	FetchedAt   time.Time      `json:"fetchedAt"`
+	Attempts    []LimitAttempt `json:"attempts,omitempty"`
 }
 type AgentStatus struct {
 	Jobs        []Job         `json:"jobs"`

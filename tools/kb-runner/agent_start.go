@@ -397,7 +397,7 @@ func waitForQuotaAdmission(ctx context.Context, limits []VendorLimit, provider l
 func nextBlockedReset(limits []VendorLimit, fiveHour, week float64) *time.Time {
 	var next *time.Time
 	for _, limit := range limits {
-		blocked := (limit.Window == "5h" && limit.UsedPercent >= fiveHour) || (limit.Window == "week" && limit.UsedPercent >= week)
+		blocked := limit.Blocked || (limit.Window == "5h" && limit.UsedPercent >= fiveHour) || (limit.Window == "week" && limit.UsedPercent >= week)
 		if !blocked || limit.Confidence != "vendor" || limit.ResetsAt == nil {
 			continue
 		}

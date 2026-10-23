@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -108,8 +109,14 @@ func defaultRunnerState() string {
 }
 
 func limitsCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
+	return limitsCommandWithProviderFactory(root, args, out, errOut, newLimitsProvider)
+}
+
+type limitsProviderFactory func(string) (limitsProvider, error)
+
+func limitsCommandWithProviderFactory(root runnerRoot, args []string, out, errOut io.Writer, providerFactory limitsProviderFactory) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprintf(out, "Usage: %s limits [--state <dir>] [--json]\n", root.Name())
+		_, err := fmt.Fprintf(out, "Usage: %s limits [--state <dir>] [--json] [--capture <dir>]\n", root.Name())
 		return 0, err
 	}
 	fs := flag.NewFlagSet("limits", flag.ContinueOnError)
@@ -117,32 +124,60 @@ func limitsCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, 
 	state := fs.String("state", defaultRunnerState(), "runner state directory")
 	asJSON := fs.Bool("json", false, "write JSON")
 	ttl := fs.Duration("ttl", time.Minute, "cached result lifetime")
+	captureDir := fs.String("capture", "", "write redacted per-source diagnostics to this directory")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
 	all := []VendorLimit{}
+	var captureFailures []error
 	for _, vendor := range vendors() {
-		provider, e := newLimitsProvider(vendor)
-		if e != nil {
-			all = append(all, unavailableLimits(vendor, "adapter", e)...)
+		provider, createErr := providerFactory(vendor)
+		if createErr != nil {
+			all = append(all, unavailableLimits(vendor, "adapter", createErr)...)
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		cached, e := cachedLimits(filepath.Join(*state, "limits", vendor+".json"), *ttl, contextLimitProvider{ctx: ctx, adapter: provider}, time.Now)
-		cancel()
-		if e != nil {
-			all = append(all, unavailableLimits(vendor, "provider", e)...)
-		} else {
-			all = append(all, cached...)
+		if *captureDir != "" {
+			ctx = withLimitsCapture(ctx, *captureDir)
 		}
+		var cached []VendorLimit
+		var sourceErr error
+		if *captureDir != "" {
+			cached, sourceErr = contextLimitProvider{ctx: ctx, adapter: provider}.Limits(ctx)
+		} else {
+			cached, sourceErr = cachedLimits(filepath.Join(*state, "limits", vendor+".json"), *ttl, contextLimitProvider{ctx: ctx, adapter: provider}, time.Now)
+		}
+		cancel()
+		if sourceErr != nil {
+			if *captureDir == "" {
+				all = append(all, unavailableLimits(vendor, "provider", sourceErr)...)
+			} else {
+				captureFailures = append(captureFailures, sourceErr)
+			}
+		}
+		all = append(all, cached...)
 	}
 	if *asJSON {
-		return 0, json.NewEncoder(out).Encode(all)
+		if err := json.NewEncoder(out).Encode(all); err != nil {
+			return 1, err
+		}
+		if len(captureFailures) > 0 {
+			return 1, fmt.Errorf("limits capture failed: %w", errors.Join(captureFailures...))
+		}
+		return 0, nil
 	}
 	for _, l := range all {
 		if _, err := fmt.Fprintf(out, "%-8s %-8s %6.1f%% %-12s %s %s\n", l.Vendor, l.Window, l.UsedPercent, l.Confidence, l.Source, l.Error); err != nil {
 			return 1, err
 		}
+		for _, attempt := range l.Attempts {
+			if _, err := fmt.Fprintf(out, "  source=%s outcome=%s duration=%dms error=%s\n", attempt.Source, attempt.Outcome, attempt.DurationMS, attempt.Error); err != nil {
+				return 1, err
+			}
+		}
+	}
+	if len(captureFailures) > 0 {
+		return 1, fmt.Errorf("limits capture failed: %w", errors.Join(captureFailures...))
 	}
 	return 0, nil
 }

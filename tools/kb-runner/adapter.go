@@ -103,7 +103,7 @@ func quotaBlocked(limits []VendorLimit, fiveHour, week float64) bool {
 		if limit.Confidence != "vendor" {
 			continue
 		}
-		if (limit.Window == "5h" && limit.UsedPercent >= fiveHour) || (limit.Window == "week" && limit.UsedPercent >= week) {
+		if limit.Blocked || (limit.Window == "5h" && limit.UsedPercent >= fiveHour) || (limit.Window == "week" && limit.UsedPercent >= week) {
 			return true
 		}
 	}
@@ -226,7 +226,12 @@ func parseVendorEvent(vendor string, line []byte) (VendorEvent, error) {
 	return e, nil
 }
 
-type commandAdapter struct{ vendor, binary string }
+type commandAdapter struct {
+	vendor                   string
+	binary                   string
+	claudeCredentialResolver func(context.Context) (claudeCredential, error)
+	claudeHTTPClient         *http.Client
+}
 
 func newAdapter(vendor string) (AgentAdapter, error) {
 	spec, ok := vendorRegistry[vendor]
@@ -240,7 +245,7 @@ func newAdapter(vendor string) (AgentAdapter, error) {
 	if bin == "" {
 		bin = spec.binaryDefault
 	}
-	return commandAdapter{vendor: vendor, binary: bin}, nil
+	return commandAdapter{vendor: vendor, binary: bin, claudeCredentialResolver: readClaudeCredential, claudeHTTPClient: http.DefaultClient}, nil
 }
 func newLimitsProvider(vendor string) (limitsProvider, error) {
 	spec, ok := vendorRegistry[vendor]
@@ -251,7 +256,7 @@ func newLimitsProvider(vendor string) (limitsProvider, error) {
 	if bin == "" {
 		bin = spec.binaryDefault
 	}
-	return commandAdapter{vendor: vendor, binary: bin}, nil
+	return commandAdapter{vendor: vendor, binary: bin, claudeCredentialResolver: readClaudeCredential, claudeHTTPClient: http.DefaultClient}, nil
 }
 func (a commandAdapter) Start(ctx context.Context, r AgentRequest) (*exec.Cmd, error) {
 	var args []string
@@ -306,19 +311,41 @@ func (a commandAdapter) Parse(line []byte) (VendorEvent, error) {
 func (a commandAdapter) Limits(ctx context.Context) ([]VendorLimit, error) {
 	switch a.vendor {
 	case "codex":
-		structured, err := readCodexLimits(ctx, a.binary)
-		if hasVendorLimits(structured) {
-			return structured, err
-		}
-		return preferTTYLimits(ctx, a.vendor, a.binary, structured)
+		return collectVendorLimits(ctx, a.vendor,
+			limitSource{name: "app-server", read: func(ctx context.Context) limitSourceOutput {
+				limits, response, err := readCodexLimitsDetailed(ctx, a.binary)
+				return limitSourceOutput{Limits: limits, Structured: response, Err: err}
+			}},
+			limitSource{name: "tty", read: func(ctx context.Context) limitSourceOutput {
+				probe := readTTYLimitsDetailed(ctx, a.vendor, a.binary)
+				return limitSourceOutput{Limits: probe.Limits, TTYScreen: probe.Screen, Steps: probe.Steps, Err: probe.Err}
+			}},
+		)
 	case "claude":
-		structured, err := readClaudeLimits(ctx)
-		if hasVendorLimits(structured) {
-			return structured, err
+		resolver := a.claudeCredentialResolver
+		client := a.claudeHTTPClient
+		if client == nil {
+			client = http.DefaultClient
 		}
-		return preferTTYLimits(ctx, a.vendor, a.binary, structured)
+		return collectVendorLimits(ctx, a.vendor,
+			limitSource{name: "oauth-usage", read: func(ctx context.Context) limitSourceOutput {
+				if resolver == nil {
+					err := errors.New("Claude credential resolver is not configured")
+					return limitSourceOutput{Limits: unavailableLimits(a.vendor, "oauth-usage", err), Err: err}
+				}
+				limits, response, err := readClaudeLimitsDetailed(ctx, "https://api.anthropic.com/api/oauth/usage", resolver, client)
+				return limitSourceOutput{Limits: limits, Structured: response, Err: err}
+			}},
+			limitSource{name: "tty", read: func(ctx context.Context) limitSourceOutput {
+				probe := readTTYLimitsDetailed(ctx, a.vendor, a.binary)
+				return limitSourceOutput{Limits: probe.Limits, TTYScreen: probe.Screen, Steps: probe.Steps, Err: probe.Err}
+			}},
+		)
 	default:
-		return readGeminiLimits(ctx, a.binary)
+		return collectVendorLimits(ctx, a.vendor, limitSource{name: "tty", read: func(ctx context.Context) limitSourceOutput {
+			probe := readTTYLimitsDetailed(ctx, a.vendor, a.binary)
+			return limitSourceOutput{Limits: probe.Limits, TTYScreen: probe.Screen, Steps: probe.Steps, Err: probe.Err}
+		}})
 	}
 }
 
@@ -329,21 +356,6 @@ func hasVendorLimits(limits []VendorLimit) bool {
 		}
 	}
 	return false
-}
-
-func preferTTYLimits(ctx context.Context, vendor, binary string, structured []VendorLimit) ([]VendorLimit, error) {
-	tty := readTTYLimits(ctx, vendor, binary)
-	if hasVendorLimits(tty) {
-		return tty, nil
-	}
-	if len(structured) > 0 {
-		return structured, nil
-	}
-	return tty, nil
-}
-
-func readGeminiLimits(ctx context.Context, binary string) ([]VendorLimit, error) {
-	return readTTYLimits(ctx, "gemini", binary), nil
 }
 
 type limitsProvider interface {
@@ -381,59 +393,60 @@ func cachedLimits(path string, ttl time.Duration, p limitsProvider, now func() t
 	return limits, nil
 }
 
-func readCodexLimits(ctx context.Context, binary string) ([]VendorLimit, error) {
+func readCodexLimitsDetailed(ctx context.Context, binary string) ([]VendorLimit, json.RawMessage, error) {
 	cmd := exec.CommandContext(ctx, binary, "app-server")
 	in, err := cmd.StdinPipe()
 	if err != nil {
-		return unavailableLimits("codex", "app-server", err), nil
+		return unavailableLimits("codex", "app-server", err), nil, err
 	}
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return unavailableLimits("codex", "app-server", err), nil
+		return unavailableLimits("codex", "app-server", err), nil, err
 	}
 	cmd.Stderr = io.Discard
 	if err = cmd.Start(); err != nil {
-		return unavailableLimits("codex", "app-server", err), nil
+		return unavailableLimits("codex", "app-server", err), nil, err
 	}
-	cleanup := func(limits []VendorLimit, prior error) ([]VendorLimit, error) {
+	cleanup := func(limits []VendorLimit, response json.RawMessage, prior error) ([]VendorLimit, json.RawMessage, error) {
+		if closeErr := in.Close(); closeErr != nil {
+			prior = errors.Join(prior, fmt.Errorf("close app-server stdin: %w", closeErr))
+		}
 		killErr := cmd.Process.Kill()
 		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
-			return unavailableLimits("codex", "app-server", killErr), nil
+			killErr = fmt.Errorf("terminate app-server: %w", killErr)
+			return unavailableLimits("codex", "app-server", killErr), response, errors.Join(prior, killErr)
 		}
 		waitErr := cmd.Wait()
 		var exitErr *exec.ExitError
 		if waitErr != nil && !errors.As(waitErr, &exitErr) {
-			return unavailableLimits("codex", "app-server", waitErr), nil
+			return unavailableLimits("codex", "app-server", waitErr), response, errors.Join(prior, waitErr)
 		}
-		return limits, prior
+		return limits, response, prior
 	}
 	enc := json.NewEncoder(in)
 	if err = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]string{"name": "kb-runner", "version": "1"}}}); err != nil {
-		return cleanup(unavailableLimits("codex", "app-server", err), nil)
+		return cleanup(unavailableLimits("codex", "app-server", err), nil, err)
 	}
 	scan := bufio.NewScanner(out)
 	initialized := false
 	for scan.Scan() {
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal(scan.Bytes(), &m); err != nil {
-			return cleanup(unavailableLimits("codex", "app-server", fmt.Errorf("invalid JSON-RPC response: %w", err)), nil)
+			return cleanup(unavailableLimits("codex", "app-server", fmt.Errorf("invalid JSON-RPC response: %w", err)), nil, err)
 		}
 		if m["id"] == nil {
 			continue
 		}
 		var id int
 		if err := json.Unmarshal(m["id"], &id); err != nil {
-			return cleanup(unavailableLimits("codex", "app-server", fmt.Errorf("invalid JSON-RPC response id: %w", err)), nil)
+			return cleanup(unavailableLimits("codex", "app-server", fmt.Errorf("invalid JSON-RPC response id: %w", err)), nil, err)
 		}
 		if id == 1 && !initialized {
 			if err = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}}); err != nil {
-				return cleanup(unavailableLimits("codex", "app-server", err), nil)
+				return cleanup(unavailableLimits("codex", "app-server", err), nil, err)
 			}
 			if err = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": map[string]any{}}); err != nil {
-				return cleanup(unavailableLimits("codex", "app-server", err), nil)
-			}
-			if err = in.Close(); err != nil {
-				return cleanup(unavailableLimits("codex", "app-server", err), nil)
+				return cleanup(unavailableLimits("codex", "app-server", err), nil, err)
 			}
 			initialized = true
 			continue
@@ -441,71 +454,103 @@ func readCodexLimits(ctx context.Context, binary string) ([]VendorLimit, error) 
 		if id != 2 || !initialized {
 			continue
 		}
-		return cleanup(decodeCodexLimits(m["result"], time.Now), nil)
+		if len(m["error"]) > 0 {
+			return cleanup(unavailableLimits("codex", "app-server", errors.New("app-server rate limit request failed")), m["error"], errors.New("app-server rate limit request failed"))
+		}
+		return cleanup(decodeCodexLimits(m["result"], time.Now), m["result"], nil)
 	}
 	if scan.Err() != nil {
-		return cleanup(unavailableLimits("codex", "app-server", scan.Err()), nil)
+		return cleanup(unavailableLimits("codex", "app-server", scan.Err()), nil, scan.Err())
 	}
-	return cleanup(unavailableLimits("codex", "app-server", errors.New("app-server returned no rate limit result")), nil)
+	err = errors.New("app-server returned no rate limit result")
+	return cleanup(unavailableLimits("codex", "app-server", err), nil, err)
 }
 func decodeCodexLimits(data []byte, now func() time.Time) []VendorLimit {
 	type window struct {
-		Used  *float64 `json:"usedPercent"`
-		Reset string   `json:"resetsAt"`
+		Used     *float64 `json:"usedPercent"`
+		Duration int      `json:"windowDurationMins"`
+		Reset    *int64   `json:"resetsAt"`
 	}
 	var r struct {
 		RateLimits struct {
-			Primary   window `json:"primary"`
-			Secondary window `json:"secondary"`
+			RateLimitReachedType json.RawMessage `json:"rateLimitReachedType"`
+			SpendControlReached  bool            `json:"spendControlReached"`
 		} `json:"rateLimits"`
 	}
-	if json.Unmarshal(data, &r) != nil || len(data) == 0 || r.RateLimits.Primary.Used == nil || r.RateLimits.Secondary.Used == nil || r.RateLimits.Primary.Reset == "" || r.RateLimits.Secondary.Reset == "" {
+	if len(data) == 0 || json.Unmarshal(data, &r) != nil {
 		return unavailableLimits("codex", "app-server", errors.New("unexpected app-server rate limit schema"))
 	}
-	parse := func(v window) (*time.Time, error) {
-		t, e := time.Parse(time.RFC3339, v.Reset)
-		if e != nil {
-			return nil, e
+	var envelope struct {
+		RateLimits map[string]json.RawMessage `json:"rateLimits"`
+	}
+	if json.Unmarshal(data, &envelope) != nil || len(envelope.RateLimits) == 0 {
+		return unavailableLimits("codex", "app-server", errors.New("unexpected app-server rate limit schema"))
+	}
+	blocked := r.RateLimits.SpendControlReached || len(r.RateLimits.RateLimitReachedType) > 0 && string(r.RateLimits.RateLimitReachedType) != "null"
+	limits := make([]VendorLimit, 0, len(envelope.RateLimits))
+	for _, raw := range envelope.RateLimits {
+		var value window
+		if err := json.Unmarshal(raw, &value); err != nil || value.Used == nil || value.Duration <= 0 || value.Reset == nil {
+			continue
 		}
-		return &t, nil
+		windowName := fmt.Sprintf("%dm", value.Duration)
+		switch value.Duration {
+		case 300:
+			windowName = "5h"
+		case 10080:
+			windowName = "week"
+		}
+		reset := time.Unix(*value.Reset, 0).UTC()
+		limits = append(limits, VendorLimit{Vendor: "codex", Window: windowName, UsedPercent: *value.Used, Blocked: blocked, ResetsAt: &reset, Confidence: "vendor", Source: "app-server", FetchedAt: now().UTC()})
 	}
-	five, err := parse(r.RateLimits.Primary)
-	if err != nil {
-		return unavailableLimits("codex", "app-server", errors.New("invalid primary reset timestamp"))
+	if len(limits) != 2 {
+		return unavailableLimits("codex", "app-server", errors.New("unexpected app-server rate limit schema"))
 	}
-	week, err := parse(r.RateLimits.Secondary)
-	if err != nil {
-		return unavailableLimits("codex", "app-server", errors.New("invalid secondary reset timestamp"))
-	}
-	return []VendorLimit{{Vendor: "codex", Window: "5h", UsedPercent: *r.RateLimits.Primary.Used, ResetsAt: five, Confidence: "vendor", Source: "app-server", FetchedAt: now().UTC()}, {Vendor: "codex", Window: "week", UsedPercent: *r.RateLimits.Secondary.Used, ResetsAt: week, Confidence: "vendor", Source: "app-server", FetchedAt: now().UTC()}}
+	sort.Slice(limits, func(i, j int) bool { return limits[i].Window < limits[j].Window })
+	return limits
 }
 func unavailableLimits(vendor, source string, err error) []VendorLimit {
 	return []VendorLimit{{Vendor: vendor, Window: "unknown", Confidence: "unavailable", Source: source, Error: err.Error(), FetchedAt: time.Now().UTC()}}
 }
-func readClaudeLimits(ctx context.Context) ([]VendorLimit, error) {
-	token, err := claudeToken(ctx)
+func readClaudeLimitsDetailed(ctx context.Context, endpoint string, resolver func(context.Context) (claudeCredential, error), client *http.Client) ([]VendorLimit, json.RawMessage, error) {
+	credential, err := resolver(ctx)
 	if err != nil {
-		return unavailableLimits("claude", "oauth-usage", err), nil
+		return unavailableLimits("claude", "oauth-usage", err), nil, err
 	}
-	return fetchClaudeLimits(ctx, "https://api.anthropic.com/api/oauth/usage", token), nil
+	if credential.Expired(time.Now()) {
+		err := errors.New("token expired (owner session refreshes it)")
+		return unavailableLimits("claude", "oauth-usage", err), nil, err
+	}
+	return fetchClaudeLimitsDetailed(ctx, endpoint, credential, client)
 }
-func fetchClaudeLimits(ctx context.Context, endpoint, token string) []VendorLimit {
+
+func fetchClaudeLimitsDetailed(ctx context.Context, endpoint string, credential claudeCredential, client *http.Client) ([]VendorLimit, json.RawMessage, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return unavailableLimits("claude", "oauth-usage", err)
+		return unavailableLimits("claude", "oauth-usage", err), nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+credential.AccessToken)
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
-	resp, err := http.DefaultClient.Do(req)
-	token = ""
+	resp, err := client.Do(req)
+	req.Header.Del("Authorization")
+	credential.AccessToken = ""
 	if err != nil {
-		return unavailableLimits("claude", "oauth-usage", err)
+		return unavailableLimits("claude", "oauth-usage", err), nil, err
+	}
+	bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	closeErr := resp.Body.Close()
+	response := json.RawMessage(bodyBytes)
+	if readErr != nil {
+		err := fmt.Errorf("read usage response: %w", readErr)
+		return unavailableLimits("claude", "oauth-usage", err), response, err
+	}
+	if closeErr != nil {
+		err := fmt.Errorf("close usage response: %w", closeErr)
+		return unavailableLimits("claude", "oauth-usage", err), response, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		if err := resp.Body.Close(); err != nil {
-			return unavailableLimits("claude", "oauth-usage", fmt.Errorf("close usage response: %w", err))
-		}
-		return unavailableLimits("claude", "oauth-usage", fmt.Errorf("usage endpoint returned HTTP %d", resp.StatusCode))
+		err := fmt.Errorf("usage endpoint returned HTTP %d", resp.StatusCode)
+		return unavailableLimits("claude", "oauth-usage", err), response, err
 	}
 	var body struct {
 		FiveHour struct {
@@ -517,30 +562,31 @@ func fetchClaudeLimits(ctx context.Context, endpoint, token string) []VendorLimi
 			ResetsAt    string  `json:"resets_at"`
 		} `json:"seven_day"`
 	}
-	bodyBytes, readErr := io.ReadAll(resp.Body)
-	closeErr := resp.Body.Close()
-	if readErr != nil {
-		return unavailableLimits("claude", "oauth-usage", fmt.Errorf("read usage response: %w", readErr))
-	}
-	if closeErr != nil {
-		return unavailableLimits("claude", "oauth-usage", fmt.Errorf("close usage response: %w", closeErr))
-	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil || body.FiveHour.ResetsAt == "" || body.SevenDay.ResetsAt == "" {
-		return unavailableLimits("claude", "oauth-usage", errors.New("unrecognized usage schema"))
+		err := errors.New("unrecognized usage schema")
+		return unavailableLimits("claude", "oauth-usage", err), response, err
 	}
 	five, err := time.Parse(time.RFC3339, body.FiveHour.ResetsAt)
 	if err != nil {
-		return unavailableLimits("claude", "oauth-usage", errors.New("unrecognized 5h reset timestamp"))
+		err = errors.New("unrecognized 5h reset timestamp")
+		return unavailableLimits("claude", "oauth-usage", err), response, err
 	}
 	week, err := time.Parse(time.RFC3339, body.SevenDay.ResetsAt)
 	if err != nil {
-		return unavailableLimits("claude", "oauth-usage", errors.New("unrecognized weekly reset timestamp"))
+		err = errors.New("unrecognized weekly reset timestamp")
+		return unavailableLimits("claude", "oauth-usage", err), response, err
 	}
 	now := time.Now().UTC()
-	return []VendorLimit{{Vendor: "claude", Window: "5h", UsedPercent: body.FiveHour.Utilization, ResetsAt: &five, Confidence: "vendor", Source: "oauth-usage", FetchedAt: now}, {Vendor: "claude", Window: "week", UsedPercent: body.SevenDay.Utilization, ResetsAt: &week, Confidence: "vendor", Source: "oauth-usage", FetchedAt: now}}
+	return []VendorLimit{{Vendor: "claude", Window: "5h", UsedPercent: body.FiveHour.Utilization, ResetsAt: &five, Confidence: "vendor", Source: "oauth-usage", FetchedAt: now}, {Vendor: "claude", Window: "week", UsedPercent: body.SevenDay.Utilization, ResetsAt: &week, Confidence: "vendor", Source: "oauth-usage", FetchedAt: now}}, response, nil
 }
-func claudeToken(ctx context.Context) (string, error) {
-	return claudeTokenWith(ctx, execCommandOutput, runtime.GOOS, os.Getenv("HOME"), os.Getenv("USER"))
+
+type claudeCredential struct {
+	AccessToken string
+	ExpiresAt   *time.Time
+}
+
+func (c claudeCredential) Expired(now time.Time) bool {
+	return c.ExpiresAt != nil && !c.ExpiresAt.After(now)
 }
 
 type commandOutput func(context.Context, string, ...string) ([]byte, error)
@@ -550,56 +596,87 @@ func execCommandOutput(ctx context.Context, name string, args ...string) ([]byte
 	return cmd.Output()
 }
 
-func claudeTokenWith(ctx context.Context, run commandOutput, goos, home, username string) (string, error) {
+func readClaudeCredential(ctx context.Context) (claudeCredential, error) {
+	return claudeCredentialWith(ctx, execCommandOutput, runtime.GOOS, os.Getenv("HOME"), os.Getenv("USER"))
+}
+
+func claudeCredentialWith(ctx context.Context, run commandOutput, goos, home, username string) (claudeCredential, error) {
 	if goos == "darwin" {
-		return claudeKeychainToken(ctx, run, username)
+		return claudeKeychainCredential(ctx, run, username)
 	}
 	if goos != "linux" {
-		return "", fmt.Errorf("Claude OAuth credentials are unavailable on %s", goos)
+		return claudeCredential{}, fmt.Errorf("Claude OAuth credentials are unavailable on %s", goos)
 	}
 	path := filepath.Join(home, ".claude", ".credentials.json")
 	b, err := os.ReadFile(path)
 	if err == nil {
-		var v struct {
-			OAuth struct {
-				AccessToken string `json:"accessToken"`
-			} `json:"claudeAiOauth"`
+		credential, decodeErr := decodeClaudeCredential(b)
+		for i := range b {
+			b[i] = 0
 		}
-		if json.Unmarshal(b, &v) == nil && v.OAuth.AccessToken != "" {
-			return v.OAuth.AccessToken, nil
-		}
-		return "", errors.New("Claude credentials file has an unsupported schema")
+		return credential, decodeErr
 	}
-	return "", fmt.Errorf("Claude OAuth credentials unavailable: %w", err)
+	return claudeCredential{}, fmt.Errorf("Claude OAuth credentials unavailable: %w", err)
 }
 
-func claudeKeychainToken(ctx context.Context, run commandOutput, username string) (string, error) {
+func decodeClaudeCredential(data []byte) (claudeCredential, error) {
+	var envelope struct {
+		OAuth struct {
+			AccessToken string          `json:"accessToken"`
+			ExpiresAt   json.RawMessage `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil || envelope.OAuth.AccessToken == "" {
+		return claudeCredential{}, errors.New("Claude credentials have an unsupported schema")
+	}
+	credential := claudeCredential{AccessToken: envelope.OAuth.AccessToken}
+	if len(envelope.OAuth.ExpiresAt) == 0 || string(envelope.OAuth.ExpiresAt) == "null" {
+		return credential, nil
+	}
+	var unixValue int64
+	if json.Unmarshal(envelope.OAuth.ExpiresAt, &unixValue) == nil {
+		if unixValue > 10_000_000_000 {
+			unixValue /= 1000
+		}
+		expiry := time.Unix(unixValue, 0).UTC()
+		credential.ExpiresAt = &expiry
+		return credential, nil
+	}
+	var timestamp string
+	if json.Unmarshal(envelope.OAuth.ExpiresAt, &timestamp) == nil {
+		expiry, err := time.Parse(time.RFC3339, timestamp)
+		if err == nil {
+			credential.ExpiresAt = &expiry
+			return credential, nil
+		}
+	}
+	return claudeCredential{}, errors.New("Claude credential expiry has an unsupported schema")
+}
+
+func claudeKeychainCredential(ctx context.Context, run commandOutput, username string) (claudeCredential, error) {
 	if username == "" {
-		return "", errors.New("Claude Keychain lookup requires the current account name")
+		return claudeCredential{}, errors.New("Claude Keychain lookup requires the current account name")
 	}
 	metadata, err := run(ctx, "security", "find-generic-password", "-a", username)
 	if err != nil {
-		return "", errors.New("Claude Keychain item discovery failed; check that Claude Code is signed in")
+		return claudeCredential{}, errors.New("Claude Keychain item discovery failed; check that Claude Code is signed in")
 	}
 	service, err := keychainService(metadata)
 	for i := range metadata {
 		metadata[i] = 0
 	}
 	if err != nil {
-		return "", err
+		return claudeCredential{}, err
 	}
 	secret, err := run(ctx, "security", "find-generic-password", "-a", username, "-s", service, "-w")
 	if err != nil {
-		return "", errors.New("Claude Keychain credential read failed; sign in to Claude Code again")
+		return claudeCredential{}, errors.New("Claude Keychain credential read failed; sign in to Claude Code again")
 	}
-	token := strings.TrimSpace(string(secret))
+	credential, err := decodeClaudeCredential(secret)
 	for i := range secret {
 		secret[i] = 0
 	}
-	if token == "" {
-		return "", errors.New("Claude Keychain item contained no OAuth credential")
-	}
-	return token, nil
+	return credential, err
 }
 
 func keychainService(metadata []byte) (string, error) {
