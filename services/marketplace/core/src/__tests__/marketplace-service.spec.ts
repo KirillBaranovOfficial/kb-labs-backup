@@ -171,7 +171,7 @@ describe('MarketplaceService', () => {
   // ── install ──────────────────────────────────────────────────────────
 
   describe('install', () => {
-    it('reports the attempted sources when no Marketplace source resolves the identity', async () => {
+    it('preserves plugin-not-found and records each source result when no source resolves the install spec', async () => {
       const registry: MarketplaceSource = {
         kind: 'registry',
         async resolveIdentity() { return { status: 'not-found-unowned' }; },
@@ -190,9 +190,9 @@ describe('MarketplaceService', () => {
 
       await expect(service.install({ scope: 'platform' }, ['@kb-labs/commit']))
         .rejects.toMatchObject({ envelope: {
-          code: 'KB_MARKETPLACE_INSTALL_FAILED',
-          message: 'Marketplace could not install @kb-labs/commit through registry, npm.',
-          details: { package: '@kb-labs/commit', scope: 'platform', source: 'registry, npm' },
+          code: 'KB_PLUGIN_NOT_FOUND',
+          cause: 'registry: not-found-unowned; npm: not-found-unowned',
+          details: { plugin: '@kb-labs/commit' },
         } });
     });
 
@@ -231,8 +231,8 @@ describe('MarketplaceService', () => {
         async remove() {}, async commitInstall() {}, async rollbackInstall() {},
       };
       const registrySource: PackageSource = {
-        async resolve(identity) {
-          if (identity !== '@kb-labs/commit') { throw new Error(`unexpected Registry identity ${identity}`); }
+        async resolve(spec) {
+          if (spec !== '@kb-labs/commit-entry') { throw new Error(`unexpected Marketplace install spec ${spec}`); }
           return { id: '@kb-labs/commit', version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin', signature: { algorithm: 'ed25519', value: 'test', signer: 'test', signedAt: new Date(0).toISOString(), verifiedChecks: ['integrity'] } };
         },
         async install(pkg) { return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity }; },
@@ -240,8 +240,8 @@ describe('MarketplaceService', () => {
       };
       const service = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source: npmSource, registrySource });
 
-      await expect(service.install({ scope: 'project', projectRoot }, ['@kb-labs/commit']))
-        .resolves.toMatchObject({ installed: [{ id: '@kb-labs/commit', source: 'registry', signatureStatus: 'verified' }] });
+      await expect(service.install({ scope: 'project', projectRoot }, ['@kb-labs/commit-entry']))
+        .resolves.toMatchObject({ installed: [{ spec: '@kb-labs/commit-entry', id: '@kb-labs/commit', source: 'registry', signatureStatus: 'verified' }] });
       const lock = await readMarketplaceLock(projectRoot, new DiagnosticCollector(), 'project');
       expect(lock?.plugins['@kb-labs/commit']).toMatchObject({ marketplaceSource: 'registry', signatureStatus: 'verified' });
     });

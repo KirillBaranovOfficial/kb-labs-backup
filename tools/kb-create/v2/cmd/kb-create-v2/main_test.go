@@ -235,7 +235,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	if err != nil || installedReceipt.Plan.Request.PlatformRoot != root {
 		t.Fatalf("install receipt request root = %q, error=%v; want selected install root %q", installedReceipt.Plan.Request.PlatformRoot, err, root)
 	}
-	if len(installedReceipt.MarketplaceInstalls) != 1 || installedReceipt.MarketplaceInstalls[0].ID != "@kb-labs/commit" ||
+	if len(installedReceipt.MarketplaceInstalls) != 1 || installedReceipt.MarketplaceInstalls[0].Spec != "@kb-labs/commit-entry" || installedReceipt.MarketplaceInstalls[0].ID != "@kb-labs/commit-entry" ||
 		installedReceipt.MarketplaceInstalls[0].Version != "1.0.0" || installedReceipt.MarketplaceInstalls[0].Source != "registry" ||
 		installedReceipt.MarketplaceInstalls[0].SignatureStatus != "verified" {
 		t.Fatalf("install receipt Marketplace results = %#v; want @kb-labs/commit", installedReceipt.MarketplaceInstalls)

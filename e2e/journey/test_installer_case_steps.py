@@ -715,7 +715,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     "providerPreferences": {"cache": "state-broker"},
                     "scenarioId": "commit",
                 }, "artifacts": []}, "marketplaceInstalls": [
-                    {"id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+                    {"spec": "@kb-labs/commit-entry", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
                 ]}
                 apply_result = {"operation": "apply", "receipt": receipt, "logPath": "/tmp/apply.log"}
                 return subprocess.CompletedProcess(args, 0,
@@ -739,10 +739,25 @@ class InstallerCaseStepsTest(unittest.TestCase):
         receipt = {"plan": {"request": {"scenarioId": "commit"}, "artifacts": [
             {"id": "@kb-labs/commit"},
         ]}, "marketplaceInstalls": [
-            {"id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+            {"spec": "@kb-labs/commit-entry", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
         ]}
         with self.assertRaisesRegex(RuntimeError, "incorrectly resolved from the release index"):
             installer_case_steps.assert_commit_marketplace_receipt(receipt)
+
+    def test_commit_scenario_receipt_requires_requested_spec(self):
+        receipt = {"plan": {"request": {"scenarioId": "commit"}, "artifacts": []},
+                   "marketplaceInstalls": [{"id": "@kb-labs/commit", "version": "1.2.3", "source": "npm"}]}
+        with self.assertRaisesRegex(RuntimeError, "requested spec"):
+            installer_case_steps.assert_commit_marketplace_receipt(receipt)
+
+    def test_apply_shim_owner_uses_the_canonical_platform_root(self):
+        with tempfile.TemporaryDirectory(prefix="journey-apply-shim-owner-") as temp:
+            root = Path(temp)
+            installer_case_steps.assert_apply_shim_owner(
+                {"shim": {"linked": True, "owner": str(root.resolve())}}, root)
+            with self.assertRaisesRegex(RuntimeError, "canonical platform root"):
+                installer_case_steps.assert_apply_shim_owner(
+                    {"shim": {"linked": False, "owner": str(root.resolve())}}, root)
 
     # case: S-039.1
     def test_apply_scenario_claim_rejects_receipt_with_wrong_provider(self):
