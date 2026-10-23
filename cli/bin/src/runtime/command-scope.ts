@@ -17,7 +17,10 @@ export function resolveProjectScope(
   if (route.type === 'system-cmd') {
     const requestedScope = declaredScope(route.cmd.flags, flags);
     if (requestedScope) {return requestedScope === 'platform' ? 'platform' : 'required';}
-    return route.cmd.scope === 'platform' ? 'platform' : 'required';
+    const scope = typeof route.cmd.scope === 'function'
+      ? route.cmd.scope(route.rest, flags)
+      : route.cmd.scope;
+    return scope === 'platform' ? 'platform' : 'required';
   }
   if (route.type === 'command') {
     const requestedScope = declaredScope(route.command.manifest.flags, flags);

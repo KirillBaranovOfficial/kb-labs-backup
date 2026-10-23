@@ -168,6 +168,7 @@ export class InProcessBackend implements RawExecutionBackend {
       // handlerRef format: './path/to/file.js#exportName' or './path/to/file.js'
       const hashIndex = requestToExecute.handlerRef.indexOf('#');
       const relPath = hashIndex > 0 ? requestToExecute.handlerRef.slice(0, hashIndex) : requestToExecute.handlerRef;
+      const exportSelector = hashIndex > 0 ? requestToExecute.handlerRef.slice(hashIndex) : '';
       let handlerPath = path.resolve(lease.pluginRoot, relPath);
       // Manifest handler paths are relative to the manifest file (typically in dist/).
       // If not found at pluginRoot, try resolving from dist/ subdirectory.
@@ -241,7 +242,7 @@ export class InProcessBackend implements RawExecutionBackend {
         ui,
         pluginInvoker,
         eventEmitter,
-        handlerPath,
+        handlerPath: `${handlerPath}${exportSelector}`,
         input: requestToExecute.input,
         environment: requestToExecute.env,
         signal: options?.signal,
