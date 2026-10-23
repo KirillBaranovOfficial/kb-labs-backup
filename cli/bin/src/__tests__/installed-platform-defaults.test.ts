@@ -398,7 +398,7 @@ describe('installed platform adapter defaults', () => {
     const installRoot = path.join(tempRoot, 'install');
     const versionRoot = path.join(installRoot, 'versions', 'v1');
     const platformRoot = path.join(installRoot, 'current');
-    const installedCommitRoot = path.join(versionRoot, 'plugins', 'commit-entry');
+    const installedCommitRoot = path.join(versionRoot, 'plugins', 'commit');
     const projectRoot = path.join(tempRoot, 'project');
     const secondProjectRoot = path.join(tempRoot, 'project-b');
     const home = path.join(tempRoot, 'home');
@@ -519,7 +519,7 @@ describe('installed platform adapter defaults', () => {
         '@kb-labs/commit': {
           version: commitPackage.version,
           integrity: `sha256-${createHash('sha256').update(commitPackageJSON).digest('base64')}`,
-          package: '@kb-labs/commit-entry',
+          package: '@kb-labs/commit',
           resolvedPath: path.relative(platformRoot, installedCommitRoot),
           source: 'platform',
           enabled: true,

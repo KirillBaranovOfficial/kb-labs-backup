@@ -8,14 +8,15 @@ export function requiredAuthEnvelope(gatewayUrl: string): ErrorEnvelope {
 
 /** Fill catalog template values known to the CLI without changing the error code or copy. */
 export function withGatewayUrl(envelope: ErrorEnvelope, gatewayUrl?: string): ErrorEnvelope {
-  const resolvedGatewayUrl = gatewayUrl ?? envelope.details?.gatewayUrl;
+  const detailGatewayUrl = envelope.details?.gatewayUrl;
+  const resolvedGatewayUrl = gatewayUrl ?? (typeof detailGatewayUrl === 'string' ? detailGatewayUrl : undefined);
   if (!resolvedGatewayUrl || resolvedGatewayUrl === '<url>') { return envelope; }
   const fill = (value: string) => value.replaceAll('{gatewayUrl}', resolvedGatewayUrl).replaceAll('<url>', resolvedGatewayUrl);
   return {
     ...envelope,
     message: fill(envelope.message),
     hint: fill(envelope.hint),
-    ...(envelope.details?.gatewayUrl === '<url>'
+    ...(detailGatewayUrl === '<url>'
       ? { details: { ...envelope.details, gatewayUrl: resolvedGatewayUrl } }
       : {}),
   };

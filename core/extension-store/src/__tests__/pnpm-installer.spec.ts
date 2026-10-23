@@ -29,7 +29,7 @@ describe('PnpmInstaller registry tarball integrity', () => {
     const projectDir = path.join(dir, 'project');
 
     const installed = await new PnpmInstaller({ pnpmPath }).install({
-      name: '@kb-labs/demo-entry',
+      name: '@kb-labs/demo',
       version: '1.2.3',
       spec: 'https://registry.example.test/demo-entry-1.2.3.tgz',
       expectedIntegrity,
@@ -40,7 +40,7 @@ describe('PnpmInstaller registry tarball integrity', () => {
     expect(installed.integrity).toBe(expectedIntegrity);
     expect(await fs.readFile(path.join(projectDir, 'observed-spec.txt'), 'utf8')).toContain('file:');
     const packageRoot = await fs.realpath(installed.packageRoot);
-    expect(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).toContain('demo-entry');
+    expect(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).toContain('@kb-labs/demo');
   });
 
   it('rejects tarball bytes that do not match the registry integrity', async () => {
@@ -49,7 +49,7 @@ describe('PnpmInstaller registry tarball integrity', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(Buffer.from('different'))));
 
     await expect(new PnpmInstaller({ pnpmPath }).install({
-      name: '@kb-labs/demo-entry',
+      name: '@kb-labs/demo',
       version: '1.2.3',
       spec: 'https://registry.example.test/demo-entry-1.2.3.tgz',
       expectedIntegrity,

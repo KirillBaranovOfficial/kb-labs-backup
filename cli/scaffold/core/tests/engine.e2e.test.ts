@@ -77,8 +77,13 @@ describe('engine e2e: plugin/base block', () => {
     );
     expect(manifestFile).toBeDefined();
     expect(manifestFile!.contents).toContain('kb.plugin/3');
+    expect(manifestFile!.contents).toContain('"id": "@kb-labs/demo"');
     expect(manifestFile!.contents).toContain('combinePermissions');
     expect(manifestFile!.contents).toContain('@kb-labs/sdk');
+    const entryPackage = result.files.find(
+      (f) => f.path === 'packages/demo-entry/package.json',
+    )!;
+    expect(JSON.parse(entryPackage.contents).name).toBe('@kb-labs/demo');
 
     // No leaking internal imports anywhere in the generated tree.
     for (const f of result.files) {

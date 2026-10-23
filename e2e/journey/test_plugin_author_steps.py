@@ -209,7 +209,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                 "version": "2.120.1",
                 "integrity": "sha256-fixture",
                 "source": "marketplace",
-                "package": "@kb-labs/commit-entry",
+                "package": "@kb-labs/commit",
             }},
         }))
         journey = Journey("local", "commit-case-fixture")
@@ -245,7 +245,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                 "version": "2.120.1",
                 "integrity": "sha256-fixture",
                 "source": "marketplace",
-                "package": "@kb-labs/commit-entry",
+                "package": "@kb-labs/commit",
             }},
         }))
 
@@ -266,7 +266,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                 "version": "2.120.1",
                 "integrity": "sha256-fixture",
                 "source": "marketplace",
-                "package": "@kb-labs/commit-entry",
+                "package": "@kb-labs/commit",
             }},
         }))
 

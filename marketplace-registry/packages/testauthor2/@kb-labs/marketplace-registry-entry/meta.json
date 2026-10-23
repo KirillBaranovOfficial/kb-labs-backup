@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/marketplace-registry-entry",
+  "name": "@kb-labs/marketplace-registry",
   "authorHandle": "testauthor2",
   "authorNamespaceId": "ns_b06959e5cc8d7e0c3467be7c83a587d4",
   "visibility": "public",
@@ -40,7 +40,7 @@
   "badges": [],
   "tags": [],
   "meta": {
-    "name": "@kb-labs/marketplace-registry-entry",
+    "name": "@kb-labs/marketplace-registry",
     "version": "2.94.4-test",
     "description": "CLI commands for publishing and managing plugins in KB Labs Registry"
   },

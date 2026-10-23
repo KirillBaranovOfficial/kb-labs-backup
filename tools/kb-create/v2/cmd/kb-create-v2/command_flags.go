@@ -59,6 +59,7 @@ var flagCatalog = map[string]flagDefinition{
 	"marketplace-npm-url":                 {Name: "marketplace-npm-url", Usage: "npm source or fallback mirror URL for Marketplace identities"},
 	"telemetry-endpoint":                  {Name: "telemetry-endpoint", Usage: "opt-in anonymous telemetry endpoint"},
 	"foreground":                          {Name: "foreground", Usage: "run the host directly in this process", Kind: boolFlag},
+	"interrupt":                           {Name: "interrupt", Usage: "interrupt active work before restarting the host", Kind: boolFlag},
 	"telemetry-consent":                   {Name: "telemetry-consent", Usage: "allow anonymous operational telemetry", Kind: boolFlag},
 	"json":                                {Name: "json", Usage: "emit machine-readable output", Kind: boolFlag},
 }

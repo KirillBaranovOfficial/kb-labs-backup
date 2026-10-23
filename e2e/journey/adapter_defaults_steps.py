@@ -680,7 +680,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("implicit OpenAI list and doctor report its missing key", "adapter",
                  lambda: _assert_missing_openai_key(runner, base_env, project_a, platform_root, cli), cases=["S-054.8"])
     def assert_missing_vector_store() -> None:
-        install = ["marketplace", "install", "@kb-labs/mind-entry", "--scope", "platform", "--json"]
+        install = ["marketplace", "install", "@kb-labs/mind", "--scope", "platform", "--json"]
         project_before = _repository_tree(project_a)
         if _json(cli(install), install).get("ok") is not True:
             raise RuntimeError("could not install the Mind plugin required by the vector-store adapter case")
@@ -740,13 +740,13 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                      cases=["S-048.3"], requires=("step:configure platform storage options",))
 
         def attach_project_plugin() -> None:
-            command = ["marketplace", "install", "@kb-labs/commit-entry", "--scope", "project", "--json"]
+            command = ["marketplace", "install", "@kb-labs/commit", "--scope", "project", "--json"]
             if _json(cli(command, project_a), command).get("ok") is not True:
                 raise RuntimeError("could not attach a plugin to project A")
             for project, expected in ((project_a, True), (project_b, False)):
                 plugins = ["marketplace", "plugins", "list", "--json"]
                 result = _json(cli(plugins, project), plugins)
-                contains = "@kb-labs/commit-entry" in json.dumps(result)
+                contains = "@kb-labs/commit" in json.dumps(result)
                 if contains is not expected:
                     raise RuntimeError(f"project {project} plugin attachment isolation is incorrect")
                 if rows_for(project).get("storage", {}).get("implementation") != "@kb-labs/adapters-fs":

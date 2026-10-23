@@ -5,7 +5,7 @@ Manage ClickUp workspaces, spaces, folders, lists, and tasks directly from your 
 ## Installation
 
 ```bash
-kb marketplace install kb:kirill/@kb-labs/clickup-entry
+kb marketplace install kb:kirill/@kb-labs/clickup
 ```
 
 ## Configuration

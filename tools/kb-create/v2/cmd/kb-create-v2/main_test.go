@@ -176,7 +176,7 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 
 // case: S-268.9, PC-001.7, PC-002.2, S-040.3
 func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
-	_, fakehost := binaries(t)
+	launcherBinary, fakehost := binaries(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv(host.KBHomeEnv, filepath.Join(home, ".kb"))
@@ -217,7 +217,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Executable: launcher,
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcherBinary}}}
 	commandFactory := func(cmd *cobra.Command) commandDependencies {
 		deps.Command = cmd
 		return deps
@@ -235,7 +235,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	if err != nil || installedReceipt.Plan.Request.PlatformRoot != root {
 		t.Fatalf("install receipt request root = %q, error=%v; want selected install root %q", installedReceipt.Plan.Request.PlatformRoot, err, root)
 	}
-	if len(installedReceipt.MarketplaceInstalls) != 1 || installedReceipt.MarketplaceInstalls[0].Spec != "@kb-labs/commit-entry" || installedReceipt.MarketplaceInstalls[0].ID != "@kb-labs/commit-entry" ||
+	if len(installedReceipt.MarketplaceInstalls) != 1 || installedReceipt.MarketplaceInstalls[0].Spec != "@kb-labs/commit" || installedReceipt.MarketplaceInstalls[0].ID != "@kb-labs/commit" ||
 		installedReceipt.MarketplaceInstalls[0].Version != "1.0.0" || installedReceipt.MarketplaceInstalls[0].Source != "registry" ||
 		installedReceipt.MarketplaceInstalls[0].SignatureStatus != "verified" {
 		t.Fatalf("install receipt Marketplace results = %#v; want @kb-labs/commit", installedReceipt.MarketplaceInstalls)
@@ -1250,7 +1250,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
-	_, fakehost := binaries(t)
+	launcherBinary, fakehost := binaries(t)
 	port := freeLoopbackPortWithOffset(t, 100)
 	root := filepath.Join(home, "kb-platform")
 	index := filepath.Join(home, "release-index.json")
@@ -1295,11 +1295,12 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 			t.Errorf("load interactive-install test host runner: %v", runnerErr)
 			return
 		}
-		if _, runnerErr = runner.Stop(context.Background()); runnerErr != nil {
-			t.Errorf("stop interactive-install test host: %v", runnerErr)
+		command := hostCommand{PlatformRoot: root, Executable: launcherBinary, Version: buildVersion}
+		if _, failure := command.stop(context.Background(), runner, runner.State); failure != nil {
+			t.Errorf("stop interactive-install test host: %v", failure)
 		}
 	})
-	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}, NodePreflight: func() error { return nil }})
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcherBinary}}, NodePreflight: func() error { return nil }})
 	if code != 0 {
 		t.Fatalf("exit code %d, failure=%v, screen:\n%s", code, failure, screen.String())
 	}

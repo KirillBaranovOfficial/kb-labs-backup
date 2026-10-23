@@ -20,20 +20,20 @@ func TestGatewayInstallClientUsesPlatformMarketplaceOperation(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Scope != "platform" || len(body.Specs) != 1 || body.Specs[0] != "@kb-labs/commit-entry" {
+		if body.Scope != "platform" || len(body.Specs) != 1 || body.Specs[0] != "@kb-labs/commit" {
 			t.Fatalf("Marketplace request body = %#v", body)
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusCreated)
-		_, _ = writer.Write([]byte(`{"installed":[{"spec":"@kb-labs/commit-entry","id":"@kb-labs/commit","version":"2.1.0","primaryKind":"plugin","source":"registry","signatureStatus":"verified"}],"scope":"platform"}`))
+		_, _ = writer.Write([]byte(`{"installed":[{"spec":"@kb-labs/commit","id":"@kb-labs/commit","version":"2.1.0","primaryKind":"plugin","source":"registry","signatureStatus":"verified"}],"scope":"platform"}`))
 	}))
 	defer server.Close()
 
-	installed, err := (GatewayInstallClient{HTTP: server.Client()}).Install(context.Background(), server.URL, []string{"@kb-labs/commit-entry"})
+	installed, err := (GatewayInstallClient{HTTP: server.Client()}).Install(context.Background(), server.URL, []string{"@kb-labs/commit"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(installed) != 1 || installed[0].Spec != "@kb-labs/commit-entry" || installed[0].ID != "@kb-labs/commit" || installed[0].Source != "registry" || installed[0].Version != "2.1.0" {
+	if len(installed) != 1 || installed[0].Spec != "@kb-labs/commit" || installed[0].ID != "@kb-labs/commit" || installed[0].Source != "registry" || installed[0].Version != "2.1.0" {
 		t.Fatalf("Marketplace result = %#v", installed)
 	}
 }
@@ -46,9 +46,9 @@ func TestGatewayInstallClientPreservesAttemptedMarketplaceSource(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := (GatewayInstallClient{HTTP: server.Client()}).Install(context.Background(), server.URL, []string{"@kb-labs/commit-entry"})
+	_, err := (GatewayInstallClient{HTTP: server.Client()}).Install(context.Background(), server.URL, []string{"@kb-labs/commit"})
 	failure, ok := err.(*InstallFailure)
-	if !ok || failure.Spec != "@kb-labs/commit-entry" || failure.Code != "KB_PLUGIN_NOT_FOUND" ||
+	if !ok || failure.Spec != "@kb-labs/commit" || failure.Code != "KB_PLUGIN_NOT_FOUND" ||
 		failure.Source != "configured Marketplace sources" || failure.Message != "Requested package spec was not published by the configured sources." ||
 		failure.Cause == nil || failure.Cause.Error() != "registry: not-found-unowned; npm: not-found-unowned" {
 		t.Fatalf("Marketplace failure = %#v", err)
@@ -59,14 +59,14 @@ func TestGatewayInstallClientSelectsTheFailedSpecFromMarketplaceDetails(t *testi
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusNotFound)
-		_, _ = writer.Write([]byte(`{"error":{"code":"KB_PLUGIN_NOT_FOUND","message":"Requested package spec was not published.","cause":"registry: not-found-unowned; npm: not-found-unowned","details":{"plugin":"@kb-labs/review-entry"}}}`))
+		_, _ = writer.Write([]byte(`{"error":{"code":"KB_PLUGIN_NOT_FOUND","message":"Requested package spec was not published.","cause":"registry: not-found-unowned; npm: not-found-unowned","details":{"plugin":"@kb-labs/review"}}}`))
 	}))
 	defer server.Close()
 
 	_, err := (GatewayInstallClient{HTTP: server.Client()}).Install(context.Background(), server.URL,
-		[]string{"@kb-labs/commit-entry", "@kb-labs/review-entry"})
+		[]string{"@kb-labs/commit", "@kb-labs/review"})
 	failure, ok := err.(*InstallFailure)
-	if !ok || failure.Spec != "@kb-labs/review-entry" {
+	if !ok || failure.Spec != "@kb-labs/review" {
 		t.Fatalf("Marketplace failure spec = %#v, want the one identified by error details", err)
 	}
 }
@@ -78,8 +78,8 @@ func TestGatewayInstallClientRejectsResultThatDoesNotEchoRequestedSpec(t *testin
 	}))
 	defer server.Close()
 
-	_, err := (GatewayInstallClient{HTTP: server.Client()}).Install(context.Background(), server.URL, []string{"@kb-labs/commit-entry"})
-	if err == nil || err.Error() != `Marketplace returned install spec "" at position 0, want "@kb-labs/commit-entry"` {
+	_, err := (GatewayInstallClient{HTTP: server.Client()}).Install(context.Background(), server.URL, []string{"@kb-labs/commit"})
+	if err == nil || err.Error() != `Marketplace returned install spec "" at position 0, want "@kb-labs/commit"` {
 		t.Fatalf("Marketplace missing-spec response error = %v", err)
 	}
 }

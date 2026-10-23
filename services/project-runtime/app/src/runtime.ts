@@ -238,6 +238,7 @@ export async function createProjectRuntimeConfig(
         projectRoot: options.projectRoot,
         modules: moduleAddresses,
         logger: ctx.logger.forComponent("guard"),
+        listActiveWork: () => ctx.activeWork.list(),
       });
       await server.listen({ host: ctx.host, port: ctx.port });
       return () => server.close();

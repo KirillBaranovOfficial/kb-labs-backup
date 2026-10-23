@@ -59,7 +59,7 @@ No more hand-writing `feat(auth): ...` for every PR.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/commit-entry
+pnpm kb marketplace install @kb-labs/commit
 ```
 
 ---

@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/clickup-entry",
+  "name": "@kb-labs/clickup",
   "version": "2.120.1",
   "type": "module",
   "description": "V3 manifest + CLI handlers for clickup",

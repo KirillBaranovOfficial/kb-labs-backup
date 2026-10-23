@@ -48,10 +48,10 @@ const BUILD_AFFECTED_OUTPUT = `$ kb-devkit run build --affected
   @kb-labs/core-platform   ●  building   [2.1s]
   @kb-labs/sdk             ●  building   [3.2s]
   @kb-labs/commit-core     ●  building   [0.9s]
-  @kb-labs/commit-entry    ●  building   [1.3s]
-  @kb-labs/qa-entry        ◌  cached     [0ms]
-  @kb-labs/quality-entry   ◌  cached     [0ms]
-  @kb-labs/review-entry    ◌  cached     [0ms]
+  @kb-labs/commit    ●  building   [1.3s]
+  @kb-labs/qa        ◌  cached     [0ms]
+  @kb-labs/quality   ◌  cached     [0ms]
+  @kb-labs/review    ◌  cached     [0ms]
 
   Done in 9.4s  ·  5 built  ·  113 from cache`;
 

@@ -44,6 +44,16 @@ const templateParameterMetadata = entries.map((entry) => {
   };
 });
 const templateParameters = templateParameterMetadata.map(({ type }) => type);
+const schemaType = (schema) => {
+  if (schema.type === 'string') return 'string';
+  if (schema.type === 'array') return `readonly ${schemaType(schema.items)}[]`;
+  if (schema.type === 'object') {
+    const required = new Set(schema.required ?? []);
+    const fields = Object.entries(schema.properties ?? {}).map(([name, value]) => `${JSON.stringify(name)}${required.has(name) ? '' : '?'}: ${schemaType(value)}`);
+    return fields.length ? `{ ${fields.join('; ')} }` : 'Record<string, never>';
+  }
+  throw new Error(`Unsupported structured detail JSON schema type ${schema.type}`);
+};
 const detailParameters = entries.map((entry) => {
   const runtime = entry.runtimeTemplateParameters ?? {};
   const templates = [entry.message, entry.hint, entry.hintWithoutCorrelationId].filter(Boolean);
@@ -51,7 +61,11 @@ const detailParameters = entries.map((entry) => {
   const structured = entry.structuredDetailFields ?? [];
   const fields = [
     ...names.filter((name) => !(name in runtime)).map((name) => `${JSON.stringify(name)}: string`),
-    ...structured.filter((name) => !names.includes(name)).map((name) => `${JSON.stringify(name)}?: string`),
+    ...structured.filter((name) => !names.includes(name)).map((name) => {
+      const schema = entry.structuredDetailSchemas?.[name];
+      const required = (entry.requiredStructuredDetailFields ?? []).includes(name);
+      return `${JSON.stringify(name)}${required ? '' : '?'}: ${schema ? schemaType(schema) : 'string'}`;
+    }),
   ];
   return `  ${JSON.stringify(entry.code)}: ${fields.length ? `{ ${fields.join('; ')} }` : 'Record<string, never>'};`;
 });

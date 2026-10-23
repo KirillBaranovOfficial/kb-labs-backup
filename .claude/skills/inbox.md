@@ -9,7 +9,7 @@ globs:
 # Inbox Plugin
 
 Plugin for managing email via IMAP/SMTP from CLI and REST API.
-Packages: `@kb-labs/inbox-contracts`, `@kb-labs/inbox-core`, `@kb-labs/inbox-entry`.
+Packages: `@kb-labs/inbox-contracts`, `@kb-labs/inbox-core`, `@kb-labs/inbox`.
 
 ## Accounts (KB Labs / Kirill)
 

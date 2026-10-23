@@ -238,7 +238,7 @@ Go binaries are built and sealed as part of the **`platform`** flow's own candid
 |---------|------|
 | `@kb-labs/release-manager-core` | `planRelease()`, `runReleasePipeline()`, `mergeConfigWithFlow()`, versioning strategies, `resolvePublishTag`/`resolvePublishRegistry` (`channel.ts`), `verifyAgainstRegistry` with retry (`verdaccio-verify.ts`), `buildReleaseTag`/`resolveFlowFromTag` (`tag.ts`) |
 | `@kb-labs/release-manager-changelog` | Commit parsing, template rendering (`corporate-ai`) |
-| `@kb-labs/release-manager-cli` | CLI commands (`plan`, `run`, `changelog`, `publish`, `promote`, `stage`, `deliver`), REST handlers. `stage`/`deliver` are the CI-thin pack-once/ship pair used by the agent path. `pack` (verification-only, `npm pack` + static checks) is a different, older command — don't confuse it with `stage` |
+| `@kb-labs/release` | CLI commands (`plan`, `run`, `changelog`, `publish`, `promote`, `stage`, `deliver`), REST handlers. `stage`/`deliver` are the CI-thin pack-once/ship pair used by the agent path. `pack` (verification-only, `npm pack` + static checks) is a different, older command — don't confuse it with `stage` |
 | `@kb-labs/release-manager-contracts` | Zod schemas, TypeScript types for REST API (`ReleaseChannelSchema`, etc.) |
 
 ## Build after changes
@@ -246,6 +246,6 @@ Go binaries are built and sealed as part of the **`platform`** flow's own candid
 ```bash
 pnpm --filter @kb-labs/release-manager-contracts build
 pnpm --filter @kb-labs/release-manager-core build
-pnpm --filter @kb-labs/release-manager-cli build
+pnpm --filter @kb-labs/release build
 ```
 Order matters: contracts → core → cli.

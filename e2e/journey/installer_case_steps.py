@@ -118,7 +118,7 @@ def assert_commit_marketplace_receipt(receipt: dict) -> None:
         raise RuntimeError("Commit scenario receipt does not identify the commit scenario")
     installs = receipt.get("marketplaceInstalls", [])
     commit = next((entry for entry in installs if entry.get("id") == "@kb-labs/commit"), None)
-    if (not commit or commit.get("spec") != "@kb-labs/commit-entry"
+    if (not commit or commit.get("spec") != "@kb-labs/commit"
             or not commit.get("version") or not commit.get("source")):
         raise RuntimeError("Commit scenario receipt omitted requested spec, Marketplace source, or resolved version")
     if any(artifact.get("id") == "@kb-labs/commit" for artifact in receipt.get("plan", {}).get("artifacts", [])):

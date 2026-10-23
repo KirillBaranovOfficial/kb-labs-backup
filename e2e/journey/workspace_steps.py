@@ -270,7 +270,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                     (fixture_plugins / "release" / source.name).symlink_to(source, target_is_directory=True)
             package_dir.mkdir(parents=True)
             (package_dir / "package.json").write_text(json.dumps({
-                "name": "@kb-labs/release-manager-cli",
+                "name": "@kb-labs/release",
                 "kb": {"manifest": "./dist/manifest.js"},
             }), encoding="utf-8")
             locked = json.loads((repo_root / layout_value('versionStatePaths.kb_marketplace_lock')).read_text())

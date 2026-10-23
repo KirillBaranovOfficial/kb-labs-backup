@@ -317,7 +317,7 @@ that mismatch explicit rather than silently choosing one.
     "plugin:@kb-labs/commit": {
       "kind": "plugin",
       "manifestId": "@kb-labs/commit",
-      "package": "@kb-labs/commit-entry",
+      "package": "@kb-labs/commit",
       "packageVersion": "2.107.0",
       "manifestDigest": "sha256:..."
     }

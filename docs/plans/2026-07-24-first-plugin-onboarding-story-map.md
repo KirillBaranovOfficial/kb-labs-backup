@@ -235,7 +235,7 @@ flowchart LR
 | Outcome в `kb-create` | Первая команда / результат | Реальная опора сейчас | Launch-ограничение |
 |---|---|---|---|
 | Подготовить понятные коммиты | `kb commit generate` / dry-run плана коммитов | `@kb-labs/commit` уже есть в installer manifest | Первый запуск не создаёт и не пушит коммиты; apply — осознанный следующий шаг |
-| Подготовить релиз | `kb release plan` с планом версий и проверок | `@kb-labs/release-manager-cli` уже подключён как intent | Не публиковать в first run; `NPM_TOKEN` остаётся необязательным до publish |
+| Подготовить релиз | `kb release plan` с планом версий и проверок | `@kb-labs/release` уже подключён как intent | Не публиковать в first run; `NPM_TOKEN` остаётся необязательным до publish |
 | Создать свою команду | Собственная одна команда, созданная через scaffold; включает узкое безопасное действие для агента | `@kb-labs/scaffold` уже есть в installer manifest | Не открывать ручной picker всех services/plugins до первого результата |
 
 `Review`, `QA` и готовые integration presets не входят в MVP launcher. Они добавляются только когда получат столь же качественную install → first-command цепочку. ClickUp остаётся reference implementation для custom-path, но не auto-installed preset.

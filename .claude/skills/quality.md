@@ -152,7 +152,7 @@ kb quality gate --json
 plugins/quality/
 ├── contracts/   @kb-labs/quality-contracts  — типы, константы, роуты
 ├── core/        @kb-labs/quality-core       — анализаторы (AST, knip, coupling)
-└── entry/       @kb-labs/quality-entry      — CLI, REST handlers, Studio UI
+└── entry/       @kb-labs/quality      — CLI, REST handlers, Studio UI
 ```
 
 Данные хранятся в `.kb/quality/snapshots/quality.json`.

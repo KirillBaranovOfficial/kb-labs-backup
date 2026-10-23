@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/quality-entry",
+  "name": "@kb-labs/quality",
   "description": "Quality Plugin CLI commands for monorepo analysis, health checks, and automated fixes.",
   "version": "2.120.1",
   "type": "module",

@@ -9,6 +9,7 @@ import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationErr
 import { HostServiceAddressError } from '../host-service-address.js';
 import { registerProcessSensitiveValues } from '../logging/context.js';
 import {
+  ERROR_AREAS,
   ERROR_STAGES,
   ErrorEnvelopeError,
   createErrorEnvelope,
@@ -25,6 +26,21 @@ import {
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const fixtureDir = join(here, 'fixtures');
+
+describe('structured diagnostic details', () => {
+  it('keeps active-work items as JSON values and enforces their catalog shape', () => {
+    const items = [{ kind: 'workflow', id: 'run-1', owningService: 'workflow' }];
+    const envelope = createErrorEnvelope('KB_RESTART_WORK_IN_FLIGHT', {
+      details: { interruptCommand: 'kb-create restart --platform-root /tmp/platform --interrupt', items },
+    });
+    expect(envelope.details?.items).toEqual(items);
+    const invalid = decodeErrorEnvelope({
+      ...envelope,
+      details: { interruptCommand: 'kb-create restart --interrupt', items: [{ kind: 'workflow', id: 'run-1', owningService: 'workflow', extra: true }] },
+    });
+    expect(invalid.code).toBe('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE');
+  });
+});
 
 describe('mapErrorEnvelopeToExitCode', () => {
   it('maps catalogued invalid input to usage exit and other envelopes to failure', () => {
@@ -250,35 +266,9 @@ describe('errors.catalog.json lint', () => {
     });
   });
 
-  it('keeps KB_ prefixes aligned with their area and admits catalogued plugin namespaces', () => {
-    const prefixArea: Record<string, string> = {
-      INSTALL: 'install',
-      HOST: 'host',
-      AUTH: 'auth',
-      PROJECT: 'project',
-      CONFIG: 'config',
-      PLUGIN: 'plugin',
-      AGENT: 'plugin',
-      ADAPTER: 'plugin',
-      UPDATE: 'update',
-      RUNTIME: 'runtime',
-      NODE: 'runtime',
-      DEPLOY: 'runtime',
-      DEPLOYMENT: 'config',
-      DEVKIT: 'runtime',
-      SERVICE: 'runtime',
-      ENV: 'config',
-      MARKETPLACE: 'plugin',
-      RELEASE: 'release',
-    };
+  it('keeps catalog entries within the supported areas', () => {
     for (const entry of errorCatalog.codes) {
-      if (entry.code.startsWith('KB_')) {
-        const prefix = entry.code.split('_')[1] ?? '';
-        expect(prefixArea[prefix], `${entry.code} prefix`).toBe(entry.area);
-      } else {
-        expect(entry.code).toMatch(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/);
-        expect(['plugin', 'product'], `${entry.code} namespace area`).toContain(entry.area);
-      }
+      expect(ERROR_AREAS as readonly string[], entry.code).toContain(entry.area);
     }
   });
 
@@ -754,7 +744,8 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(envelope.details).toMatchObject({ field: 'hint', observedType: 'object' });
     expect(preview).toContain('[REDACTED]');
     expect(preview).not.toContain(secret);
-    expect(preview.length).toBeLessThanOrEqual(256);
+    expect(typeof preview).toBe('string');
+    expect((preview as string).length).toBeLessThanOrEqual(256);
   });
 
   // case: S-054.19

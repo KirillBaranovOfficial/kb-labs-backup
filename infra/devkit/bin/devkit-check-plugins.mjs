@@ -16,7 +16,7 @@
  * Usage:
  *   kb-devkit-check-plugins                    # Check all plugin entries
  *   kb-devkit-check-plugins --fix              # Auto-fix what's possible
- *   kb-devkit-check-plugins --package @kb-labs/review-entry
+ *   kb-devkit-check-plugins --package @kb-labs/review
  *   kb-devkit-check-plugins --verbose
  *   kb-devkit-check-plugins --json
  *   kb-devkit-check-plugins --ci

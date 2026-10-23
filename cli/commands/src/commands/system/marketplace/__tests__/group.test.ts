@@ -22,7 +22,7 @@ describe('marketplace system command group', () => {
     vi.stubEnv('KB_PLATFORM_ROOT', isolatedHome);
     const envelope = createValidatedErrorEnvelope('KB_PLUGIN_INTEGRITY_MISMATCH', {
       details: {
-        plugin: '@kb-labs/commit-entry',
+        plugin: '@kb-labs/commit',
         expected: 'sha512-registry-pin',
         actual: 'sha256-package-json-fallback',
       },
@@ -35,7 +35,7 @@ describe('marketplace system command group', () => {
     const install = marketplaceGroup.commands.find(command => command.name === 'install');
     if (!install) { throw new Error('Marketplace install command is missing from its built-in group.'); }
 
-    const exitCode = await install.run(ctx, ['@kb-labs/commit-entry'], { scope: 'platform', json: true });
+    const exitCode = await install.run(ctx, ['@kb-labs/commit'], { scope: 'platform', json: true });
 
     expect(exitCode).toBeGreaterThan(0);
     expect(json).toHaveBeenCalledWith(expect.objectContaining({

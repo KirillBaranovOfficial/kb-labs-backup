@@ -124,14 +124,14 @@ func TestNewProjectRegistrationFailureBuildsCauseFromLocalContext(t *testing.T) 
 }
 
 func TestMarketplaceInstallDiagnosticPreservesCauseAndUsesInstallSpecRetry(t *testing.T) {
-	failure := MarketplaceInstallDiagnostic("@kb-labs/commit-entry", "npm", errors.New("KB_PLUGIN_NOT_FOUND: package spec unavailable"))
-	if failure.Code != CodeMarketplaceInstallFailed || !strings.Contains(failure.Message, "@kb-labs/commit-entry") || !strings.Contains(failure.Message, "npm") {
+	failure := MarketplaceInstallDiagnostic("@kb-labs/commit", "npm", errors.New("KB_PLUGIN_NOT_FOUND: package spec unavailable"))
+	if failure.Code != CodeMarketplaceInstallFailed || !strings.Contains(failure.Message, "@kb-labs/commit") || !strings.Contains(failure.Message, "npm") {
 		t.Fatalf("Marketplace diagnostic = %#v", failure)
 	}
 	if failure.Cause != "KB_PLUGIN_NOT_FOUND: package spec unavailable" || failure.Reason != failure.Cause {
 		t.Fatalf("Marketplace cause = %q, reason = %q", failure.Cause, failure.Reason)
 	}
-	if !strings.Contains(failure.Hint, "kb marketplace install @kb-labs/commit-entry") || !strings.Contains(failure.Hint, "--scope platform") {
+	if !strings.Contains(failure.Hint, "kb marketplace install @kb-labs/commit") || !strings.Contains(failure.Hint, "--scope platform") {
 		t.Fatalf("Marketplace retry hint omitted the install spec or platform scope: %q", failure.Hint)
 	}
 }

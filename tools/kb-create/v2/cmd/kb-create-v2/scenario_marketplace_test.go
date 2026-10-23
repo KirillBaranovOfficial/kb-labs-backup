@@ -40,7 +40,7 @@ func TestScenarioMarketplaceReceiptJoinsRequestedSpecAndResolvedManifestIdentity
 	installed := contracts.InstallReceipt{
 		Schema: contracts.ReceiptSchema, ID: "scenario-receipt",
 		Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{
-			PlatformRoot: root, ScenarioID: "commit", MarketplaceInstallSpecs: []string{"@kb-labs/commit-entry"},
+			PlatformRoot: root, ScenarioID: "commit", MarketplaceInstallSpecs: []string{"@kb-labs/commit"},
 		}},
 		Verification: contracts.Verification{HostHealthURL: "http://127.0.0.1:4000/health"},
 	}
@@ -48,7 +48,7 @@ func TestScenarioMarketplaceReceiptJoinsRequestedSpecAndResolvedManifestIdentity
 		t.Fatal(err)
 	}
 	marketplaceResult := contracts.MarketplaceInstallRecord{
-		Spec: "@kb-labs/commit-entry", ID: "@kb-labs/commit", Version: "2.1.0", PrimaryKind: "plugin", Source: "npm", SignatureStatus: "unsigned",
+		Spec: "@kb-labs/commit", ID: "@kb-labs/commit", Version: "2.1.0", PrimaryKind: "plugin", Source: "npm", SignatureStatus: "unsigned",
 	}
 	if failure := installMarketplaceScenarioPlugins(context.Background(), root, &installed, fixedMarketplaceInstaller{install: marketplaceResult}); failure != nil {
 		t.Fatalf("Marketplace scenario install failed: %#v", failure)
@@ -58,7 +58,7 @@ func TestScenarioMarketplaceReceiptJoinsRequestedSpecAndResolvedManifestIdentity
 		t.Fatalf("Marketplace receipt = %#v, %v", readBack.MarketplaceInstalls, err)
 	}
 	result := readBack.MarketplaceInstalls[0]
-	if result.Spec != "@kb-labs/commit-entry" || result.ID != "@kb-labs/commit" || result.Source != "npm" {
+	if result.Spec != "@kb-labs/commit" || result.ID != "@kb-labs/commit" || result.Source != "npm" {
 		t.Fatalf("Marketplace receipt result = %#v", result)
 	}
 }
@@ -79,7 +79,7 @@ func TestScenarioMarketplaceFailureKeepsVerifiedInstallReceiptAndHost(t *testing
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Scope != "platform" || len(body.Specs) != 1 || body.Specs[0] != "@kb-labs/commit-entry" {
+		if body.Scope != "platform" || len(body.Specs) != 1 || body.Specs[0] != "@kb-labs/commit" {
 			t.Fatalf("Marketplace body = %#v", body)
 		}
 		writer.Header().Set("Content-Type", "application/json")
@@ -92,7 +92,7 @@ func TestScenarioMarketplaceFailureKeepsVerifiedInstallReceiptAndHost(t *testing
 	installed := contracts.InstallReceipt{
 		Schema: contracts.ReceiptSchema, ID: "verified-receipt",
 		Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{
-			PlatformRoot: root, ScenarioID: "commit", MarketplaceInstallSpecs: []string{"@kb-labs/commit-entry"},
+			PlatformRoot: root, ScenarioID: "commit", MarketplaceInstallSpecs: []string{"@kb-labs/commit"},
 		}},
 		Verification: contracts.Verification{HostHealthURL: server.URL + "/health"},
 	}
@@ -106,7 +106,7 @@ func TestScenarioMarketplaceFailureKeepsVerifiedInstallReceiptAndHost(t *testing
 		t.Fatalf("Marketplace failure = %#v", failure)
 	}
 	if failure.Cause != "KB_PLUGIN_NOT_FOUND: Requested package spec was not published by the configured sources.; registry: not-found-unowned; npm: not-found-unowned" ||
-		!strings.Contains(failure.Hint, "@kb-labs/commit-entry") || !strings.Contains(failure.Hint, "--scope platform") {
+		!strings.Contains(failure.Hint, "@kb-labs/commit") || !strings.Contains(failure.Hint, "--scope platform") {
 		t.Fatalf("Marketplace retry hint = %q", failure.Hint)
 	}
 	readBack, err := receipt.Read(root)
@@ -124,10 +124,10 @@ func TestScenarioMarketplaceFailureKeepsVerifiedInstallReceiptAndHost(t *testing
 }
 
 func TestMarketplaceInstallFailureDiagnosticContainsCataloguedIdentitySourceAndRetry(t *testing.T) {
-	diagnostic := contracts.MarketplaceInstallDiagnostic("@kb-labs/commit-entry", "npm", fmt.Errorf("KB_PLUGIN_NOT_FOUND: package spec unavailable"))
+	diagnostic := contracts.MarketplaceInstallDiagnostic("@kb-labs/commit", "npm", fmt.Errorf("KB_PLUGIN_NOT_FOUND: package spec unavailable"))
 	if diagnostic.Code != contracts.CodeMarketplaceInstallFailed || diagnostic.Meta["source"] != "npm" ||
-		!strings.Contains(diagnostic.Message, "@kb-labs/commit-entry") || !strings.Contains(diagnostic.Message, "npm") ||
-		!strings.Contains(diagnostic.Hint, "@kb-labs/commit-entry") || !strings.Contains(diagnostic.Hint, "--scope platform") {
+		!strings.Contains(diagnostic.Message, "@kb-labs/commit") || !strings.Contains(diagnostic.Message, "npm") ||
+		!strings.Contains(diagnostic.Hint, "@kb-labs/commit") || !strings.Contains(diagnostic.Hint, "--scope platform") {
 		t.Fatalf("Marketplace install diagnostic = %#v", diagnostic)
 	}
 }

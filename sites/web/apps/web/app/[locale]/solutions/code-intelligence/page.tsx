@@ -281,8 +281,8 @@ export default async function CodeIntelligencePage({ params }: Props) {
                   </h2>
                   <div className="mx-auto mb-8 flex max-w-md items-center justify-between gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3">
                     {/* i18n-ignore: terminal command */}
-                    <code className="font-mono text-[0.85rem] text-kb-text">kb marketplace install @kb-labs/mind-entry</code>
-                    <CopyButton code="kb marketplace install @kb-labs/mind-entry" className="shrink-0" />
+                    <code className="font-mono text-[0.85rem] text-kb-text">kb marketplace install @kb-labs/mind</code>
+                    <CopyButton code="kb marketplace install @kb-labs/mind" className="shrink-0" />
                   </div>
                   <div className="flex flex-wrap justify-center gap-3">
                     <Button variant="primary" size="lg" href="https://docs.kblabs.ru/use-cases/showcase-mind" target="_blank" rel="noopener noreferrer">

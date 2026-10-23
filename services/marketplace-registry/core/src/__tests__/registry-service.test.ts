@@ -84,11 +84,11 @@ function makeService(extraOpts?: { signingPrivateKey?: string }): RegistryServic
 describe('RegistryService.publish', () => {
   it('resolves canonical identity and returns Registry ownership results', async () => {
     const svc = makeService();
-    await svc.publish(SMALL_TARBALL, makePkg({ name: 'commit-entry', identity: '@kb-labs/commit' }), 'kirill', 'ns-kirill');
+    await svc.publish(SMALL_TARBALL, makePkg({ name: '@kb-labs/commit', identity: '@kb-labs/commit' }), 'kirill', 'ns-kirill');
 
     await expect(svc.resolveIdentity('@kb-labs/commit')).resolves.toMatchObject({
       status: 'found',
-      package: { id: 'commit-entry', signatureSubject: 'kirill/commit-entry' },
+      package: { id: '@kb-labs/commit', signatureSubject: 'kirill/@kb-labs/commit' },
     });
     await expect(svc.resolveIdentity('@kb-labs/unknown')).resolves.toEqual({ status: 'not-found-owned' });
     await expect(svc.resolveIdentity('@other/unknown')).resolves.toEqual({ status: 'not-found-unowned' });

@@ -227,7 +227,9 @@ describe('normalizePluginHandlerFailure', () => {
     const record = JSON.stringify(records[0]);
     expect(record).not.toContain(secret);
     expect(JSON.stringify(envelope.details)).not.toContain(secret);
-    expect((envelope.details?.observedValuePreview ?? '').length).toBeLessThanOrEqual(256);
+    const observedValuePreview = envelope.details?.observedValuePreview;
+    if (typeof observedValuePreview !== 'string') throw new Error('observed value preview must be a string');
+    expect(observedValuePreview.length).toBeLessThanOrEqual(256);
   });
 
   it('preserves diagnostic detail violations with redacted field evidence in the envelope and correlated log', () => {
@@ -340,7 +342,9 @@ describe('normalizePluginHandlerFailure', () => {
         failureMode: 'thrown',
       },
     });
-    expect(envelope.details?.sourceMessage?.length).toBeLessThanOrEqual(256);
+    const sourceMessage = envelope.details?.sourceMessage;
+    if (typeof sourceMessage !== 'string') throw new Error('source message must be a string');
+    expect(sourceMessage.length).toBeLessThanOrEqual(256);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       event: 'plugin.handler.failed',

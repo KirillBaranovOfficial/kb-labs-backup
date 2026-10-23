@@ -267,7 +267,7 @@ async function checkLockSync(
     };
     const pkgName = typeof pkg.name === 'string' ? pkg.name : entry.name;
     // Marketplace lock keys use plugin IDs (e.g. @kb-labs/my-notifier),
-    // not entry package names (e.g. @kb-labs/my-notifier-entry).
+    // not entry package names (e.g. @kb-labs/my-notifier).
     const id = pkgName.replace(/-entry$/, '');
 
     if (!lock || !lock.plugins) {

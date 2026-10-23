@@ -61,7 +61,7 @@ class PluginIsolationStepsTest(unittest.TestCase):
                         return subprocess.CompletedProcess(command, 1, "", "No changed files found")
                     payload = {"findings": [], "metadata": {"mode": "heuristic", "analyzedFiles": 1}}
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": payload}), "")
-                package = "@kb-labs/review-entry" if "review" in command else "@kb-labs/commit-entry"
+                package = "@kb-labs/review" if "review" in command else "@kb-labs/commit"
                 output = f"KB_PLUGIN_NOT_FOUND: {package} is not installed. Run kb marketplace install {package}."
                 return subprocess.CompletedProcess(command, 1, "", output)
 

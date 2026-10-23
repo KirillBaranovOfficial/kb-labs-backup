@@ -48,7 +48,7 @@ No other adapters or configuration are needed — steward has no dependency on `
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/steward-entry
+pnpm kb marketplace install @kb-labs/steward
 ```
 
 ---
@@ -207,7 +207,7 @@ pnpm kb steward project add --name="Test Project"
 
 ```bash
 pnpm --filter @kb-labs/steward-core run test     # business logic
-pnpm --filter @kb-labs/steward-entry run test:cli  # CLI handler tests
+pnpm --filter @kb-labs/steward run test:cli  # CLI handler tests
 ```
 
 **Link into a workspace**

@@ -604,6 +604,58 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	}
 }
 
+func TestRestartRefusesActiveWorkBeforeStoppingUnlessInterrupted(t *testing.T) {
+	inst := newInstallation(t, "-active-work-json", `[{"kind":"workflow","id":"run-23","owningService":"workflow"}]`)
+	started, code, output := inst.run("start", "--json")
+	if code != 0 {
+		t.Fatalf("start host: code=%d output=%s", code, output)
+	}
+	pid := started["host"].(map[string]any)["pid"].(float64)
+	refused, code, output := inst.run("restart", "--json")
+	if code != 1 || errorCode(refused) != "KB_RESTART_WORK_IN_FLIGHT" {
+		t.Fatalf("restart with active work: code=%d payload=%#v output=%s", code, refused, output)
+	}
+	failure := refused["error"].(map[string]any)
+	details := failure["details"].(map[string]any)
+	items := details["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["owningService"] != "workflow" {
+		t.Fatalf("active-work diagnostic details = %#v", details)
+	}
+	status, statusCode, statusOutput := inst.run("status", "--json")
+	if statusCode != 0 || status["host"].(map[string]any)["pid"].(float64) != pid {
+		t.Fatalf("host after refusal: %#v %s", status, statusOutput)
+	}
+	interrupted, code, output := inst.run("restart", "--interrupt", "--json")
+	if code != 0 || interrupted["host"].(map[string]any)["pid"].(float64) == pid {
+		t.Fatalf("explicit interrupt did not replace host: code=%d payload=%#v output=%s", code, interrupted, output)
+	}
+}
+
+func TestRestartControlUnavailableReturnsHostUnreachableWithoutStoppingHost(t *testing.T) {
+	inst := newInstallation(t)
+	started, code, output := inst.run("start", "--json")
+	if code != 0 {
+		t.Fatalf("start host: code=%d output=%s", code, output)
+	}
+	pid := started["host"].(map[string]any)["pid"].(float64)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(state.Control()); err != nil {
+		t.Fatal(err)
+	}
+	restarted, code, output := inst.run("restart", "--json")
+	if code != 1 || errorCode(restarted) != "KB_HOST_UNREACHABLE" {
+		t.Fatalf("restart without supervisor channel: code=%d payload=%#v output=%s", code, restarted, output)
+	}
+	status, statusCode, statusOutput := inst.run("status", "--json")
+	hostStatus := status["host"].(map[string]any)
+	if statusCode != 0 || hostStatus["state"] != "running" || hostStatus["pid"].(float64) != pid {
+		t.Fatalf("host after unreachable restart: code=%d status=%#v output=%s", statusCode, hostStatus, statusOutput)
+	}
+}
+
 // case: S-223.5
 func TestStatusAndStopUseTheDurableHostRecordWhenLayoutMetadataIsUnreadable(t *testing.T) {
 	inst := newInstallation(t)

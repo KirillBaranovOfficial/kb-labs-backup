@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/clickup-entry",
+  "name": "@kb-labs/clickup",
   "authorHandle": "test-user",
   "authorNamespaceId": "ns_72503fc15f5c6298117e53196c127c82",
   "visibility": "public",
@@ -23,7 +23,7 @@
   "badges": [],
   "tags": [],
   "meta": {
-    "name": "@kb-labs/clickup-entry",
+    "name": "@kb-labs/clickup",
     "version": "0.1.0",
     "description": "V3 manifest + CLI handlers for clickup"
   },

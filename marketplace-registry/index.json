@@ -1,8 +1,8 @@
 [
   {
     "handle": "kirill",
-    "name": "@kb-labs/commit-entry",
-    "fullName": "kirill/@kb-labs/commit-entry",
+    "name": "@kb-labs/commit",
+    "fullName": "kirill/@kb-labs/commit",
     "version": "2.94.0",
     "description": "CLI commands and manifest for KB Labs Commit plugin - AI-powered commit generation.",
     "featured": false,

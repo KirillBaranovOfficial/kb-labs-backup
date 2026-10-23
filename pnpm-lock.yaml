@@ -2366,15 +2366,15 @@ importers:
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared
+      '@kb-labs/mind':
+        specifier: workspace:*
+        version: link:../../plugins/mind/entry
       '@kb-labs/mind-contracts':
         specifier: workspace:*
         version: link:../../plugins/mind/contracts
       '@kb-labs/mind-core':
         specifier: workspace:*
         version: link:../../plugins/mind/core
-      '@kb-labs/mind-entry':
-        specifier: workspace:*
-        version: link:../../plugins/mind/entry
       '@kb-labs/rest-api-app':
         specifier: workspace:*
         version: link:../../services/rest-api/app
@@ -2430,7 +2430,7 @@ importers:
 
   e2e/plugins:
     devDependencies:
-      '@kb-labs/commit-entry':
+      '@kb-labs/commit':
         specifier: workspace:*
         version: link:../../plugins/commit/entry
       '@kb-labs/core-platform':
@@ -2445,7 +2445,7 @@ importers:
       '@kb-labs/rest-api-app':
         specifier: workspace:*
         version: link:../../services/rest-api/app
-      '@kb-labs/review-entry':
+      '@kb-labs/review':
         specifier: workspace:*
         version: link:../../plugins/review/entry
       '@playwright/test':
@@ -2556,7 +2556,7 @@ importers:
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared
-      '@kb-labs/release-manager-cli':
+      '@kb-labs/release':
         specifier: workspace:*
         version: link:../../plugins/release/manager-cli
       '@kb-labs/rest-api-app':

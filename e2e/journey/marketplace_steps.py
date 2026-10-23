@@ -126,7 +126,7 @@ def validate_unmounted_commit_response(status: int, payload: object) -> None:
             or not isinstance(failure, dict)
             or failure.get("code") != "KB_PLUGIN_NOT_INSTALLED"
             or failure.get("message") != "Plugin is not installed in this project."
-            or failure.get("hint") != "Run `kb marketplace install @kb-labs/commit-entry` in this project."
+            or failure.get("hint") != "Run `kb marketplace install @kb-labs/commit` in this project."
             or not isinstance(failure.get("correlationId"), str) or not failure["correlationId"]):
         raise RuntimeError(f"unmounted Commit route returned an unexpected gateway failure: HTTP {status} {payload!r}")
 
@@ -137,7 +137,7 @@ def _commit_project_fixture_entry(lock: object, version: str, *, marketplace_sou
     entry = plugins.get("@kb-labs/commit") if isinstance(plugins, dict) else None
     if (isinstance(lock, dict) and lock.get("schema") == "kb.marketplace/3"
             and isinstance(entry, dict) and entry.get("version") == version
-            and entry.get("package") == "@kb-labs/commit-entry" and entry.get("integrity")
+            and entry.get("package") == "@kb-labs/commit" and entry.get("integrity")
             and entry.get("marketplaceSource") == marketplace_source
             and entry.get("signatureStatus") == signature_status
             and entry.get("source") == "marketplace" and entry.get("enabled") is True):
@@ -371,7 +371,7 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
         wait_for_marketplace_ready(project, base_env, runner)
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
         version = commit_fixture_source_version(workspace)
-        command = ["marketplace", "install", f"@kb-labs/commit-entry@{version}", "--json"]
+        command = ["marketplace", "install", f"@kb-labs/commit@{version}", "--json"]
         result = _json(_run(kb_command(command), cwd=project, env=base_env, runner=runner), command)
         installed = result.get("installed")
         if (result.get("scope") != "project" or not isinstance(installed, list)
@@ -410,7 +410,7 @@ def publish_commit_update_fixture(registry: str, source_version: str, env: dict[
         npm_env = dict(env)
         npm_env.update({"HOME": str(root), "npm_config_cache": str(root / ".npm-cache"),
                         "npm_config_userconfig": str(root / ".npmrc")})
-        pack = ["npm", "pack", f"@kb-labs/commit-entry@{source_version}", f"--registry={registry}",
+        pack = ["npm", "pack", f"@kb-labs/commit@{source_version}", f"--registry={registry}",
                 "--pack-destination", str(source_dir)]
         _output(run_with_runner(runner, pack, cwd=root, env=npm_env, timeout=300), pack)
         tarballs = sorted(source_dir.glob("*.tgz"))
@@ -421,7 +421,7 @@ def publish_commit_update_fixture(registry: str, source_version: str, env: dict[
         package_dir = unpacked / "package"
         manifest_path = package_dir / "package.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("name") != "@kb-labs/commit-entry" or manifest.get("version") != source_version:
+        if manifest.get("name") != "@kb-labs/commit" or manifest.get("version") != source_version:
             raise RuntimeError("registry Commit artifact does not match the Commit source identity")
         manifest["version"] = update_version
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -697,7 +697,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         return _run(kb_command(args), cwd=cwd, env=base_env, runner=runner)
 
     commit_package = "@kb-labs/commit"
-    unrelated_package = "@kb-labs/review-entry"
+    unrelated_package = "@kb-labs/review"
     authenticate_secured_marketplace(journey, project, base_env, runner)
 
     def assert_shared_errors() -> None:
@@ -782,7 +782,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         project_entry = project_lock.get("plugins", {}).get(commit_package)
         if (project_lock.get("schema") != "kb.marketplace/3" or not isinstance(project_entry, dict)
                 or project_entry.get("version") != commit_version
-                or project_entry.get("package") != "@kb-labs/commit-entry"
+                or project_entry.get("package") != "@kb-labs/commit"
                 or not project_entry.get("integrity")):
             raise RuntimeError("project marketplace install did not record the portable exact plugin identity")
         platform_lock_file = active_platform_root(platform_root) / ".kb" / "marketplace.lock"
@@ -793,7 +793,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         platform_entry = platform_lock.get("plugins", {}).get(commit_package)
         if (platform_lock.get("schema") != "kb.marketplace/3" or not isinstance(platform_entry, dict)
                 or platform_entry.get("version") != commit_version
-                or platform_entry.get("package") != "@kb-labs/commit-entry"
+                or platform_entry.get("package") != "@kb-labs/commit"
                 or not platform_entry.get("integrity")
                 or platform_entry.get("source") != "marketplace"):
             raise RuntimeError("platform marketplace install did not record the portable exact plugin identity")

@@ -113,7 +113,7 @@ describe('failed enabled plugins', () => {
       diagnostics: [],
       failures: [{
         id: '@kb-labs/release',
-        packageName: '@kb-labs/release-manager-cli',
+        packageName: '@kb-labs/release',
         packageRoot: '/workspace/plugins/release/manager-cli',
         scope: 'platform',
         origin: 'linked',

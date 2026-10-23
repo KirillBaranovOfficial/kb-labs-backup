@@ -156,7 +156,7 @@ jobs:
         run: |
           make build -C tools/kb-devkit
           pnpm install --frozen-lockfile
-          ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa-entry
+          ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa
       - name: Enforce local and secured release case coverage
         run: |
           run_files=$(find .journey/reports -type f -name 'service-*.json' -print | sort | paste -sd, -)

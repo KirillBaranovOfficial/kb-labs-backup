@@ -33,7 +33,7 @@ function makeRequest(overrides: Partial<ExecutionRequest> = {}): ExecutionReques
     input: {},
     descriptor: {
       hostType: 'cli',
-      pluginId: '@kb-labs/release-manager-cli',
+      pluginId: '@kb-labs/release',
       handlerId: 'checks',
     } as unknown as ExecutionRequest['descriptor'],
     ...overrides,
@@ -84,7 +84,7 @@ describe('Worker — execution timeout (real forked child process)', () => {
     expect(error.details).toMatchObject({
       timeoutMs: 300,
       handlerRef: './dist/checks.js',
-      pluginId: '@kb-labs/release-manager-cli',
+      pluginId: '@kb-labs/release',
     });
     expect(error.details?.workerId).toBeTruthy();
     // The fixture script sends one 'log' line before hanging — proof that

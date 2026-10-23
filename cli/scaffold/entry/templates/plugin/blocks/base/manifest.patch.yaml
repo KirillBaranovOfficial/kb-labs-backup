@@ -1,5 +1,5 @@
 schema: kb.plugin/3
-id: "<%= it.scope ? it.scope + '/' : '' %><%= it.name %>"
+id: "<%= it.pluginId %>"
 version: "0.1.0"
 display:
   name: "<%= it.name %>"

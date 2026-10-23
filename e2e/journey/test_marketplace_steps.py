@@ -75,19 +75,19 @@ class MarketplaceStepTests(unittest.TestCase):
         published: list[dict] = []
 
         def fake_run(command, *, cwd=None, env=None, timeout=None, input=None, **_kwargs):
-            if command[:2] == ["npm", "pack"] and command[2].startswith("@kb-labs/commit-entry@"):
+            if command[:2] == ["npm", "pack"] and command[2].startswith("@kb-labs/commit@"):
                 package = Path(cwd) / "fixture" / "package"
                 package.mkdir(parents=True)
                 (package / "package.json").write_text(json.dumps(
-                    {"name": "@kb-labs/commit-entry", "version": "2.120.1"}))
+                    {"name": "@kb-labs/commit", "version": "2.120.1"}))
                 destination = command[command.index("--pack-destination") + 1]
-                subprocess.run(["tar", "-czf", str(Path(destination) / "kb-labs-commit-entry-2.120.1.tgz"),
+                subprocess.run(["tar", "-czf", str(Path(destination) / "kb-labs-commit-2.120.1.tgz"),
                                 "-C", str(package.parent), "package"], check=True)
                 return subprocess.CompletedProcess(command, 0, "", "")
             if command[:3] == ["npm", "pack", "--ignore-scripts"]:
                 manifest = json.loads((Path(cwd) / "package.json").read_text())
                 destination = Path(command[command.index("--pack-destination") + 1])
-                (destination / f"kb-labs-commit-entry-{manifest['version']}.tgz").write_text(manifest["version"])
+                (destination / f"kb-labs-commit-{manifest['version']}.tgz").write_text(manifest["version"])
                 return subprocess.CompletedProcess(command, 0, "", "")
             if command[0] == "tar":
                 return subprocess.run(command, capture_output=True, text=True)
@@ -105,7 +105,7 @@ class MarketplaceStepTests(unittest.TestCase):
         self.assertEqual(version, "3.0.0")
         self.assertEqual(len(published), 1)
         self.assertEqual(published[0]["registry"], "http://registry.test")
-        self.assertEqual(published[0]["files"], ["kb-labs-commit-entry-3.0.0.tgz"])
+        self.assertEqual(published[0]["files"], ["kb-labs-commit-3.0.0.tgz"])
         self.assertNotEqual(published[0]["home"], "/journey-home")
 
     def test_shared_commit_fixture_uses_release_one_npm_source_without_registry_lane(self):
@@ -124,9 +124,9 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0,
                         json.dumps({"ok": True, "data": {"total": 0, "issues": []}}), "")
                 if args[:2] == ["marketplace", "install"]:
-                    self.assertEqual(args[2], f"@kb-labs/commit-entry@{source_version}")
+                    self.assertEqual(args[2], f"@kb-labs/commit@{source_version}")
                     lock = {"schema": "kb.marketplace/3", "plugins": {
-                        "@kb-labs/commit": {"version": source_version, "package": "@kb-labs/commit-entry",
+                        "@kb-labs/commit": {"version": source_version, "package": "@kb-labs/commit",
                             "source": "marketplace", "marketplaceSource": "npm",
                             "signatureStatus": "unsigned", "integrity": "sha512-npm", "enabled": True},
                     }}
@@ -155,7 +155,7 @@ class MarketplaceStepTests(unittest.TestCase):
             lock_path = project / ".kb" / "marketplace.lock"
             lock_path.parent.mkdir()
             lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {
-                "@kb-labs/commit": {"package": "@kb-labs/commit-entry", "version": "1.0.0",
+                "@kb-labs/commit": {"package": "@kb-labs/commit", "version": "1.0.0",
                     "integrity": "sha256-original", "marketplaceSource": "registry", "signatureStatus": "verified"},
                 "journey-npm-only-fixture": {"package": "journey-npm-only-fixture", "version": "1.0.0",
                     "integrity": "sha256-fallback", "marketplaceSource": "npm", "signatureStatus": "unsigned"},
@@ -248,7 +248,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     }), "")
                 if command[0] == "kb":
                     lock = {"schema": "kb.marketplace/3", "plugins": {
-                        "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit-entry",
+                        "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit",
                             "source": "marketplace", "marketplaceSource": "registry",
                             "signatureStatus": "verified", "integrity": "sha512-registry", "enabled": True},
                     }}
@@ -321,7 +321,7 @@ class MarketplaceStepTests(unittest.TestCase):
     def test_commit_route_http_claims_accept_documented_success_and_not_found(self):
         response = {"ok": False, "error": {"code": "KB_PLUGIN_NOT_INSTALLED",
             "message": "Plugin is not installed in this project.",
-            "hint": "Run `kb marketplace install @kb-labs/commit-entry` in this project.",
+            "hint": "Run `kb marketplace install @kb-labs/commit` in this project.",
             "correlationId": "request-fixture"}}
         validate_commit_status_response(200, {"ok": True, "data": {"scope": "root"}})
         validate_unmounted_commit_response(404, response)
@@ -485,7 +485,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertNotEqual(before, _platform_snapshot(root))
 
     def test_marketplace_failure_detail_keeps_error_start_and_end(self):
-        command = ["kb", "marketplace", "install", "@kb-labs/qa-entry"]
+        command = ["kb", "marketplace", "install", "@kb-labs/qa"]
         raw = "ERR_PNPM_RESOLUTION_FAILURE: root cause " + ("detail " * 400) + "final context"
         result = subprocess.CompletedProcess(command, 1, raw, "")
 
@@ -617,7 +617,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 lock_file.write_text(json.dumps(value))
 
             save_lock(active_platform, {"schema": "kb.marketplace/3", "plugins": {
-                "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit-entry",
+                "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit",
                                     "source": "platform", "integrity": "sha512-shipped"},
             }, "adapters": {}})
 
@@ -785,7 +785,7 @@ class MarketplaceStepTests(unittest.TestCase):
                         return subprocess.CompletedProcess(command, 1, "", "Command not found: commit")
                     stdout = "Commands: commit open"
                 elif args == ["review", "--help"]:
-                    installed = _release_entity("@kb-labs/review-entry")["id"] in lock(cwd_path)["plugins"]
+                    installed = _release_entity("@kb-labs/review")["id"] in lock(cwd_path)["plugins"]
                     return subprocess.CompletedProcess(command, 0 if installed else 2, "", "")
                 elif args[:2] == ["commit", "open"]:
                     value = lock(cwd_path)
@@ -800,7 +800,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
                     lock_root = active_platform if platform else cwd_path
                     value = lock(lock_root, platform=platform)
-                    value["plugins"].pop("@kb-labs/commit" if args[2] == "@kb-labs/commit-entry" else args[2], None)
+                    value["plugins"].pop("@kb-labs/commit" if args[2] == "@kb-labs/commit" else args[2], None)
                     save_lock(lock_root, value)
                     stdout = json.dumps({"ok": True})
                 elif args[:2] == ["workflow", "health"]:
@@ -895,7 +895,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 return FakeResponse(404, {"ok": False, "error": {
                     "code": error_code,
                     "message": message,
-                    "hint": "Run `kb marketplace install @kb-labs/commit-entry` in this project.",
+                    "hint": "Run `kb marketplace install @kb-labs/commit` in this project.",
                     "correlationId": "request-fixture"}})
 
             def fake_commit_case_hook():
@@ -937,11 +937,11 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(actual, expected, [(step.name, step.status, step.message) for step in journey.steps])
             self.assertEqual(commit_case_hook_calls, [True])
             self.assertFalse(any("hub" in call for call in calls))
-            pinned_commit = f"@kb-labs/commit-entry@{fixture_entry['version']}"
+            pinned_commit = f"@kb-labs/commit@{fixture_entry['version']}"
             self.assertIn(("kb", "marketplace", "install", pinned_commit, "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", pinned_commit,
                            "--scope", "platform", "--json"), calls)
-            self.assertIn(("npm", "view", "@kb-labs/review-entry", "version", "--json",
+            self.assertIn(("npm", "view", "@kb-labs/review", "version", "--json",
                            "--registry=http://registry.test"), calls)
             self.assertIn(("kb", "marketplace", "uninstall", "@kb-labs/commit",
                            "--scope", "platform", "--json"), calls)

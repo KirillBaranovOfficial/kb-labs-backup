@@ -56,9 +56,9 @@ func (c *Client) Status(ctx context.Context) (StatusResponse, error) {
 }
 
 // Restart calls POST /v1/host/restart.
-func (c *Client) Restart(ctx context.Context) (RestartResponse, error) {
+func (c *Client) Restart(ctx context.Context, interrupt bool) (RestartResponse, error) {
 	var out RestartResponse
-	return out, c.do(ctx, http.MethodPost, "/v1/host/restart", nil, &out)
+	return out, c.do(ctx, http.MethodPost, "/v1/host/restart", RestartRequest{Interrupt: interrupt}, &out)
 }
 
 // RequestUpdate calls POST /v1/update-request.

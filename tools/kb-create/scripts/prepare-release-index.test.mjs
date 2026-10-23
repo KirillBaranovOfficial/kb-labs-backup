@@ -47,10 +47,10 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     packageArtifact(root, packageRoot, stage, '@kb-labs/scaffold', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/commit', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })),
     // The package name doesn't follow the "-entry" convention, so the catalog
     // ID must come from the manifest's own id, not a package-name heuristic.
-    packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/release', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
     packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-daemon', '2.0.0', '{"schema":"kb.service/1","id":"workflow","runtime":{"port":7778,"healthCheck":"/health"}}', { bin: { 'kb-workflow': './dist/index.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', '{"schema":"kb.adapter/1","id":"pino-logger","implements":["ILogger"],"defaultFor":{"logger":[] }}'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-service-transport-http', '2.0.0', '{"schema":"kb.adapter/1","id":"service-transport-http","implements":["IServiceTransport"]}'),
@@ -61,7 +61,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
-  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/scaffold,@kb-labs/release-manager-cli', '--release-notes', 'Candidate release notes from the journey fixture.', '--output', output], { stdio: 'pipe' });
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/scaffold,@kb-labs/release', '--release-notes', 'Candidate release notes from the journey fixture.', '--output', output], { stdio: 'pipe' });
   const index = JSON.parse(readFileSync(output, 'utf8'));
   assert.equal(index.schema, 'kb.create.release-index/v2');
   assert.equal(index.compatibility.schema, 'kb.release-compatibility/2');
@@ -76,7 +76,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   assert.equal(index.platforms[0].releaseNotes, 'Candidate release notes from the journey fixture.');
   assert.ok(index.platforms[0].sizeBytes > 0, 'platform bundle must carry its sealed tarball size');
   assert.equal(index.plugins[0].id, '@kb-labs/commit');
-  assert.equal(index.plugins.find(p => p.package === '@kb-labs/release-manager-cli')?.id, '@kb-labs/release');
+  assert.equal(index.plugins.find(p => p.package === '@kb-labs/release')?.id, '@kb-labs/release');
   // The launcher runs the platform as one host process; the index must say how.
   assert.deepEqual(index.platforms[0].host, {
     command: 'node_modules/.bin/kb-host',
@@ -99,16 +99,16 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     { id: 'platform.adapterOptions', path: '/platform/adapterOptions', default: '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}' },
     { id: 'marketplace.sources', path: '/marketplace/sources', default: '[{"kind":"npm","url":"https://registry.npmjs.org"}]' },
   ]);
-  assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/host-app', '@kb-labs/core-contracts', '@kb-labs/scaffold', '@kb-labs/release-manager-cli', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
+  assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/host-app', '@kb-labs/core-contracts', '@kb-labs/scaffold', '@kb-labs/release', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
   // Regression coverage for the members[]-id divergence bug: this array used
   // to re-derive each member's catalog id from its package name (falling
   // back to idFor() whenever the package wasn't a staged service or adapter),
   // instead of reusing the same normalizedID already written into that
-  // package's own kb-create.manifest.json. For @kb-labs/release-manager-cli
+  // package's own kb-create.manifest.json. For @kb-labs/release
   // that produced "release-manager-cli" here but "release" in the shipped
   // manifest file, so installed.Load()'s id equality check failed at publish
   // time with a misleading "does not match resolved artifact" error.
-  assert.equal(index.platforms[0].members.find(m => m.package === '@kb-labs/release-manager-cli')?.id, '@kb-labs/release');
+  assert.equal(index.platforms[0].members.find(m => m.package === '@kb-labs/release')?.id, '@kb-labs/release');
   assert.equal(index.plugins.some(plugin => plugin.package === '@kb-labs/scaffold'), false);
   assert.ok(index.platforms[0].members.every(member => member.sizeBytes > 0), 'members must carry their sealed tarball sizes');
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.provides, ['logger']);
@@ -163,8 +163,8 @@ test('seals the runtime range from the packed workspace SDK contract', () => {
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', version, ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', version, '', { bin: { 'kb-host': './dist/bin.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0' })),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/commit', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0' })),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/release', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
     ...builtManifests.map(({ packageJSON, manifest }) => packageArtifact(
       root, packageRoot, stage, packageJSON.name, '2.0.0', JSON.stringify(manifest),
       packageJSON.bin ? { bin: packageJSON.bin } : {},
@@ -446,11 +446,11 @@ function provenanceArgs(stage) {
 function writeStageManifest(root, packageRoot, stage, artifacts) {
   const staged = [...artifacts];
   const packages = new Set(staged.map(item => item.name));
-  if (!packages.has('@kb-labs/commit-entry')) {
-    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })));
+  if (!packages.has('@kb-labs/commit')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/commit', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })));
   }
-  if (!packages.has('@kb-labs/release-manager-cli')) {
-    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })));
+  if (!packages.has('@kb-labs/release')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/release', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })));
   }
   if (!packages.has('@kb-labs/adapters-state-broker')) {
     staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', '{"schema":"kb.adapter/1","id":"state-broker","implements":"ICache","defaultFor":{"cache":[] }}'));

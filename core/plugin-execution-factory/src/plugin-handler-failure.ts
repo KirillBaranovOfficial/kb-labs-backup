@@ -10,6 +10,7 @@ import {
   serializeError,
   type SerializedError,
   type ErrorEnvelope,
+  type DetailsFor,
   type ILogger,
   type PlatformLogContext,
 } from '@kb-labs/core-platform';
@@ -161,8 +162,10 @@ export function normalizePluginHandlerFailure(
     canonicalEnvelope?.code === 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION'
     ? canonicalEnvelope
     : undefined;
-  const contractField = typeof contractEnvelope?.details?.field === 'string'
-    ? contractEnvelope.details.field
+  const contractDetails = contractEnvelope?.details as DetailsFor<'KB_PLUGIN_CONTRACT_VIOLATION'> |
+    DetailsFor<'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION'> | undefined;
+  const contractField = contractDetails?.field
+    ? contractDetails.field
     : undefined;
   const malformedField = invalidEnvelopeIssue?.field ??
     contractField ??
@@ -175,11 +178,11 @@ export function normalizePluginHandlerFailure(
   const contextLogger = createContextLogger(context.logger, context.logContext);
   const sourceIdentityCandidate = returnedCandidate ?? context.serializedError ?? envelopeCandidate;
   const sourceFailure = describeSourceFailure(sourceIdentityCandidate, context.returnedFailure === true ? 'returned' : 'thrown', contextLogger);
-  const observedEvidence = contractEnvelope?.details?.observedType &&
-    contractEnvelope.details.observedValuePreview
+  const observedEvidence = contractDetails?.observedType &&
+    contractDetails.observedValuePreview
     ? {
-        observedType: contractEnvelope.details.observedType,
-        observedValuePreview: contractEnvelope.details.observedValuePreview,
+        observedType: contractDetails.observedType,
+        observedValuePreview: contractDetails.observedValuePreview,
       }
     : describeContractValue(malformedValue);
   const safeObservedEvidence = {
@@ -215,7 +218,7 @@ export function normalizePluginHandlerFailure(
           correlationId: context.correlationId,
           message: canonicalEnvelope.message,
           hint: canonicalEnvelope.hint,
-          details: { ...(canonicalEnvelope.details ?? {}), ...sourceFailureDetails(sourceFailure) },
+          details: { ...((canonicalEnvelope.details ?? {}) as DetailsFor<'KB_PLUGIN_COMMAND_FAILED'>), ...sourceFailureDetails(sourceFailure) },
         })
     : canonicalEnvelope
       ? canonicalEnvelope

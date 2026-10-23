@@ -1,5 +1,5 @@
 {
-  "name": "<%= it.scope ? it.scope + '/' : '' %><%= it.name %>-entry",
+  "name": "<%= it.pluginId %>",
   "version": "0.1.0",
   "type": "module",
   "description": "V3 manifest + CLI handlers for <%= it.name %>",
