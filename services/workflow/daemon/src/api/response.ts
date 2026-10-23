@@ -29,7 +29,7 @@ export function ok<T>(data: T): ApiSuccessResponse<Exclude<T, undefined>> {
 export function fail<C extends PlatformErrorCode>(
   reply: FastifyReply,
   code: C,
-  message: string,
+  message?: string,
   ...failureDetails: FailureDetails<C>
 ): ApiErrorResponse {
   const [hint, details] = failureDetails;

@@ -357,7 +357,7 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
 
     def reject_repeat_cancel() -> None:
         result = _case_cli("S-008.4", ["workflow", "runs", "cancel", run_id[0]], env=env, cwd=project)
-        output = result.stdout + result.stderr
+        output = (result.stdout or "") + (result.stderr or "")
         if result.returncode == 0 or "finished" not in output.lower():
             raise AssertionError(f"repeat cancellation was not refused as already finished: {output!r}")
         detail = _case_json_cli("S-008.4", ["workflow", "runs", "view", run_id[0], "--json=status"],
@@ -965,8 +965,9 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
             raise AssertionError("cron list did not include a plugin cron to verify read-only behavior")
         before = {key: plugin.get(key) for key in ("enabled", "schedule", "target", "input")}
         result = _case_cli("S-044.8", ["workflow", "crons", "enable", plugin["id"]], env=env, cwd=cwd)
-        if result.returncode == 0 or "plugin" not in result.stdout.lower() or "read-only" not in result.stdout.lower():
-            raise AssertionError(f"plugin cron enable was not refused with its reason: {result.stdout!r}")
+        output = (result.stdout or "") + (result.stderr or "")
+        if result.returncode == 0 or "plugin" not in output.lower() or "read-only" not in output.lower():
+            raise AssertionError(f"plugin cron enable was not refused with its reason: {output!r}")
         after_list = _case_json_cli("S-044.8", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
         after_crons = _workflow_cron_list_data(after_list)["crons"]
         after = next((item for item in after_crons if item["id"] == plugin["id"]), None)
