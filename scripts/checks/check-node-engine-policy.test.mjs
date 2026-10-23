@@ -97,16 +97,19 @@ test('generated Go Node policy matches the owner and rejects root-owner drift', 
   }
 });
 
-test('node-engine-policy check rejects a second handwritten Go policy constant', async () => {
-  const sourcePath = path.join(root, 'tools/clikit/toolchain/toolchain.go');
-  const source = await readFile(sourcePath, 'utf8');
+test('Go compilation rejects a duplicate generated node policy constant in an isolated package', async () => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-node-policy-duplicate-'));
   try {
-    await writeFile(sourcePath, `${source}\nconst SupportedNodeMajor = 24\n`);
-    const result = runDevkitCheck();
-    assert.notEqual(result.status, 0, result.stdout);
+    const generatedSource = await readFile(path.join(root, 'tools/clikit/toolchain/node_policy_gen.go'), 'utf8');
+    await writeFile(path.join(fixtureRoot, 'go.mod'), 'module fixture\n\ngo 1.22\n');
+    await writeFile(path.join(fixtureRoot, 'node_policy_gen.go'), generatedSource);
+    await writeFile(path.join(fixtureRoot, 'handwritten.go'), generatedSource);
+    const result = spawnSync('go', ['test', './...'], { cwd: fixtureRoot, encoding: 'utf8' });
+
+    assert.notEqual(result.status, 0);
     assert.match(result.stdout + result.stderr, /SupportedNodeMajor redeclared|already declared/);
   } finally {
-    await writeFile(sourcePath, source);
+    await rm(fixtureRoot, { recursive: true, force: true });
   }
 });
 
