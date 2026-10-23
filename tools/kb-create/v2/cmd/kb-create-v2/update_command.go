@@ -80,7 +80,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	resolved, failure := resolvePlan(planInput{Operation: "update", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
 		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable})
 	if failure != nil {
-		return updateCommandResult{}, updateCompatibilityDiag(failure)
+		return updateCommandResult{}, failure
 	}
 	plan := resolved.Plan
 	secretIDs := make([]string, 0)
@@ -119,7 +119,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	}
 	disposition, err := resolve.ValidateUpdate(active, plan, resolved.Catalog)
 	if err != nil {
-		return updateCommandResult{}, updateCompatibilityDiag(asDiag(err))
+		return updateCommandResult{}, asDiag(err)
 	}
 	if disposition == resolve.UpdateAlreadyUpToDate {
 		registrationNotice, noticeErr := completedBootstrapProjectNotice(active, active.Plan.Request.ProjectRoot, false)
@@ -144,9 +144,9 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		if marshalErr != nil {
 			return updateCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the update request could not be encoded", "rerun `kb-create update` with the same request", marshalErr)
 		}
-		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion})
+		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion, Operation: resolve.OperationUpdate})
 		if !response.OK {
-			return updateCommandResult{}, updateCompatibilityDiag(response.Error)
+			return updateCommandResult{}, response.Error
 		}
 		plan = *response.Plan
 	}
@@ -181,7 +181,7 @@ func planUpdateWithMarketplaceLock(activeRoot string, plan contracts.ResolvedIns
 	changed, err := marketplace.PreserveInstalledComponents(activeRoot, &request)
 	if err != nil {
 		doctor := contracts.ShellCommand("kb-create", "doctor", "--platform-root", activeRoot, "--json")
-		failure := contracts.NewDiag(contracts.CodeUpdateIncompatible,
+		failure := contracts.NewDiag(contracts.CodeOperationFailed,
 			"the active marketplace installation could not be read for update staging",
 			"inspect the installation with `"+doctor+"`, then retry `"+retryCommand+"`", err)
 		return contracts.ResolvedInstallPlan{}, failure
@@ -191,14 +191,14 @@ func planUpdateWithMarketplaceLock(activeRoot string, plan contracts.ResolvedIns
 	}
 	encoded, err := json.Marshal(request)
 	if err != nil {
-		failure := contracts.NewDiag(contracts.CodeUpdateIncompatible,
+		failure := contracts.NewDiag(contracts.CodeOperationFailed,
 			"the update request with installed marketplace packages could not be encoded",
 			"retry `"+retryCommand+"` with the same request", err)
 		return contracts.ResolvedInstallPlan{}, failure
 	}
-	response := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion})
+	response := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion, Operation: resolve.OperationUpdate})
 	if !response.OK {
-		return contracts.ResolvedInstallPlan{}, updateCompatibilityDiag(response.Error)
+		return contracts.ResolvedInstallPlan{}, response.Error
 	}
 	return *response.Plan, nil
 }

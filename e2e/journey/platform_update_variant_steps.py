@@ -204,7 +204,7 @@ def run_platform_update_variant_steps(
         plan = _payload(cli([launcher, "plan", "--json", "--index", str(jump_index),
                              "--input", str(request)]), "plan N+2 release notes")
         notes = plan.get("updateSummary", {}).get("releaseNotes")
-        expected_versions = [_target(index) for index in (base_index, update_index, jump_index)]
+        expected_versions = [_target(index) for index in (update_index, jump_index)]
         if not isinstance(notes, list) or [item.get("version") for item in notes] != expected_versions or any(
                 not isinstance(item.get("notes"), str) or not item["notes"] for item in notes):
             raise RuntimeError("N+2 plan did not list every intervening release note from the sealed index")

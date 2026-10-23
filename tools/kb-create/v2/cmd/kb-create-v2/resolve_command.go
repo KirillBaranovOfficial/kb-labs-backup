@@ -185,13 +185,17 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 	if err != nil {
 		return resolvedPlan{}, indexFailure(err, "supply a valid immutable V2 release index")
 	}
+	planOptions := resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"}
+	if input.Operation == "update" {
+		planOptions.Operation = resolve.OperationUpdate
+	}
 	var response transport.PlanResponse
 	if input.Request != nil {
 		data, marshalErr := json.Marshal(input.Request)
 		if marshalErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeInputRequired, "install request could not be encoded", "correct direct CI flags or provide --input", marshalErr)
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"})
+		response = transport.PlanWith(data, source, planOptions)
 	} else if input.RequestFile != "" {
 		data, readErr := readRequest(input.RequestFile)
 		if readErr != nil {
@@ -210,7 +214,7 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 				}
 			}
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"})
+		response = transport.PlanWith(data, source, planOptions)
 	} else {
 		request, requestErr := input.Direct.normalize()
 		if requestErr != nil {
@@ -257,7 +261,11 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		if marshalErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeInputRequired, "direct request is invalid", "correct direct CI flags or provide --input", marshalErr)
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
+		directOptions := resolve.Options{LauncherVersion: buildVersion}
+		if input.Operation == "update" {
+			directOptions.Operation = resolve.OperationUpdate
+		}
+		response = transport.PlanWith(data, source, directOptions)
 	}
 	if !response.OK {
 		if response.Error != nil {

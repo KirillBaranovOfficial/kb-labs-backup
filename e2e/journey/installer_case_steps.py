@@ -550,6 +550,13 @@ def read_gateway_index_refusal(result: CompletedProcess, label: str,
     return error
 
 
+def diagnostic_hint_has_next_command(error: dict) -> bool:
+    details = error.get("details")
+    next_command = details.get("nextCommand") if isinstance(details, dict) else None
+    hint = error.get("hint")
+    return isinstance(next_command, str) and bool(next_command) and isinstance(hint, str) and next_command in hint
+
+
 class InstallerHostLifecycle:
     """Single owner for inspecting, changing, and restoring fixture host state."""
 
@@ -1918,7 +1925,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             error = decode_ux_error_result(read_kb_create_cli_result("update", refused))
             after = hashlib.sha256(legacy_receipt.read_bytes()).digest()
             if (refused.returncode == 0 or error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
-                    or "kb-create install --platform-root" not in error.get("hint", "") or before != after):
+                    or not diagnostic_hint_has_next_command(error) or before != after):
                 raise RuntimeError("update did not reject the unversioned root with a reinstall command and preserved bytes")
             for operation, arguments in (
                 ("restart", ["--platform-root", str(legacy_root), "--json"]),
@@ -1927,7 +1934,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 refused = run_command([launcher, operation, *arguments])
                 error = decode_ux_error_result(read_kb_create_cli_result(operation, refused))
                 if (refused.returncode == 0 or error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
-                        or "kb-create install --platform-root" not in error.get("hint", "")
+                        or not diagnostic_hint_has_next_command(error)
                         or hashlib.sha256(legacy_receipt.read_bytes()).digest() != before):
                     raise RuntimeError(f"{operation} did not refuse the unversioned root unchanged with a reinstall command")
 

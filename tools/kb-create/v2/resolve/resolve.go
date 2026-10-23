@@ -32,7 +32,15 @@ type Options struct {
 	LauncherVersion      string
 	OS, Arch             string
 	ProjectRootSelection bool
+	Operation            Operation
 }
+
+type Operation uint8
+
+const (
+	OperationInstall Operation = iota
+	OperationUpdate
+)
 
 // Plan resolves for the running host without a launcher-version check.
 func Plan(request contracts.InstallRequest, source catalog.Catalog) (contracts.ResolvedInstallPlan, error) {
@@ -95,20 +103,20 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 	}
 	if request.Policy == contracts.PolicyCompatible && platform.SDKRange != "" && sdkVersion != "" {
-		if err := compatible(platform.SDKRange, sdkVersion, "sdk", "sdk", "platform SDK"); err != nil {
+		if err := compatible(platform.SDKRange, sdkVersion, "sdk", "sdk", "platform SDK", options.Operation); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 	}
 	if source.Compatibility != nil {
 		if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, "", "", "", request.Policy); err != nil {
 			if request.Policy == contracts.PolicyStrict && sdkVersion != "" {
-				failure := compatibilityFailure(contracts.CodeIncompatibleComponents, compatibilityIdentity{kind: "sdk", id: "sdk", selectedVersion: sdkVersion, requiredRange: platform.SDKRange},
+				failure := compatibilityFailure(compatibilityIdentity{kind: "sdk", id: "sdk", selectedVersion: sdkVersion, requiredRange: platform.SDKRange},
 					fmt.Sprintf("strict policy requires an exact compatibility-matrix relation for platform %s and SDK %s; declared SDK range is %s", platform.Version, sdkVersion, platform.SDKRange),
 					"Use an exact platform/SDK pair from the release matrix or choose --policy compatible.",
 					map[string]string{"policy": string(request.Policy)})
 				return contracts.ResolvedInstallPlan{}, failure
 			}
-			return contracts.ResolvedInstallPlan{}, compatibilityFailure(contracts.CodeIncompatibleComponents,
+			return contracts.ResolvedInstallPlan{}, compatibilityFailure(
 				compatibilityIdentity{kind: "release set", id: "release set", selectedVersion: sdkVersion, requiredRange: platform.SDKRange}, err.Error(),
 				"Choose compatible versions or pass an explicit supported provider.", nil)
 		}
@@ -202,11 +210,11 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("plugin", item.ID, item.Version.Version, "plugin "+item.ID, "requested version is not present in the release index")
 		}
-		if err := compatible(component.PlatformRange, platform.Version, "plugin", component.ID, "plugin "+component.ID+" platform"); err != nil {
+		if err := compatible(component.PlatformRange, platform.Version, "plugin", component.ID, "plugin "+component.ID+" platform", options.Operation); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 		if sdkVersion != "" {
-			if err := compatible(component.SDKRange, sdkVersion, "plugin", component.ID, "plugin "+component.ID+" SDK"); err != nil {
+			if err := compatible(component.SDKRange, sdkVersion, "plugin", component.ID, "plugin "+component.ID+" SDK", options.Operation); err != nil {
 				return contracts.ResolvedInstallPlan{}, err
 			}
 		}
@@ -222,11 +230,11 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, resolutionDiag(contracts.CodeProviderUnresolved, "no adapter provides required capability "+need.Capability, map[string]string{"capability": need.Capability, "requiredBy": need.RequiredBy})
 		}
-		if err := compatible(adapter.PlatformRange, platform.Version, "adapter", adapter.ID, "adapter "+adapter.ID+" platform"); err != nil {
+		if err := compatible(adapter.PlatformRange, platform.Version, "adapter", adapter.ID, "adapter "+adapter.ID+" platform", options.Operation); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 		if sdkVersion != "" {
-			if err := compatible(adapter.SDKRange, sdkVersion, "adapter", adapter.ID, "adapter "+adapter.ID+" SDK"); err != nil {
+			if err := compatible(adapter.SDKRange, sdkVersion, "adapter", adapter.ID, "adapter "+adapter.ID+" SDK", options.Operation); err != nil {
 				return contracts.ResolvedInstallPlan{}, err
 			}
 		}
@@ -243,11 +251,11 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("adapter", item.ID, item.Version.Version, "adapter "+item.ID, "requested version is not present in the release index")
 		}
-		if err := compatible(adapter.PlatformRange, platform.Version, "adapter", adapter.ID, "adapter "+adapter.ID+" platform"); err != nil {
+		if err := compatible(adapter.PlatformRange, platform.Version, "adapter", adapter.ID, "adapter "+adapter.ID+" platform", options.Operation); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 		if sdkVersion != "" {
-			if err := compatible(adapter.SDKRange, sdkVersion, "adapter", adapter.ID, "adapter "+adapter.ID+" SDK"); err != nil {
+			if err := compatible(adapter.SDKRange, sdkVersion, "adapter", adapter.ID, "adapter "+adapter.ID+" SDK", options.Operation); err != nil {
 				return contracts.ResolvedInstallPlan{}, err
 			}
 		}
@@ -773,7 +781,7 @@ func contains(values []string, wanted string) bool {
 // compatible checks a declared semver range under every policy. The strict
 // policy adds the exact release matrix check (catalog.CheckCompatibility); it
 // does not turn a plugin's declared range into an exact string match.
-func compatible(rangeValue, version, kind, id, name string) error {
+func compatible(rangeValue, version, kind, id, name string, operation Operation) error {
 	if rangeValue == "" {
 		return nil
 	}
@@ -788,10 +796,15 @@ func compatible(rangeValue, version, kind, id, name string) error {
 	if constraint.Satisfies(candidate) {
 		return nil
 	}
-	return compatibilityFailure(contracts.CodeIncompatibleComponents,
-		compatibilityIdentity{kind: kind, id: id, selectedVersion: version, requiredRange: rangeValue},
-		name+" "+version+" is incompatible: it does not satisfy declared range "+rangeValue,
-		"Choose compatible versions or pass an explicit supported provider.", nil)
+	identity := compatibilityIdentity{kind: kind, id: id, selectedVersion: version, requiredRange: rangeValue}
+	message := name + " " + version + " is incompatible: it does not satisfy declared range " + rangeValue
+	hint := "Choose compatible versions or pass an explicit supported provider."
+	if operation == OperationUpdate {
+		return contracts.NewUpdateIncompatible(contracts.UpdateIncompatibleDetails{
+			ID: id, Kind: kind, SelectedVersion: version, RequiredRange: rangeValue,
+		})
+	}
+	return compatibilityFailure(identity, message, hint, nil)
 }
 
 func resolvedChannel(source catalog.Catalog, selector contracts.VersionSelector, version string) string {
@@ -806,7 +819,7 @@ func resolvedChannel(source catalog.Catalog, selector contracts.VersionSelector,
 	return ""
 }
 func incompatible(kind, id, selectedVersion, label, reason string) error {
-	return compatibilityFailure(contracts.CodeIncompatibleComponents,
+	return compatibilityFailure(
 		compatibilityIdentity{kind: kind, id: id, selectedVersion: selectedVersion},
 		label+" is incompatible: "+reason, "Choose compatible versions or pass an explicit supported provider.", nil)
 }
@@ -816,7 +829,7 @@ func incompatibleBinary(id, selectedVersion, target, label, reason string) error
 	if target != "" {
 		extra["target"] = target
 	}
-	return compatibilityFailure(contracts.CodeIncompatibleComponents,
+	return compatibilityFailure(
 		compatibilityIdentity{kind: "binary", id: id, selectedVersion: selectedVersion},
 		label+" is incompatible: "+reason, "Choose compatible versions or pass an explicit supported provider.", extra)
 }
@@ -841,7 +854,7 @@ type compatibilityIdentity struct {
 	kind, id, selectedVersion, requiredRange string
 }
 
-func compatibilityFailure(code string, identity compatibilityIdentity, reason, hint string, extra map[string]string) *diag.Diag {
+func compatibilityFailure(identity compatibilityIdentity, reason, hint string, extra map[string]string) *diag.Diag {
 	if identity.kind == "" || identity.id == "" {
 		panic("compatibility diagnostic requires a component kind and id")
 	}
@@ -854,7 +867,7 @@ func compatibilityFailure(code string, identity compatibilityIdentity, reason, h
 	for key, value := range extra {
 		details[key] = value
 	}
-	d := diag.New(code, reason, diag.WithMeta(stringMap(details)))
+	d := diag.New(contracts.CodeIncompatibleComponents, reason, diag.WithMeta(stringMap(details)))
 	d.Hint = hint
 	return d
 }

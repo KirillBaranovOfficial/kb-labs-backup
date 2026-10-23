@@ -97,7 +97,8 @@
     { "name": "@kb-labs/adapters-sqlite" },
     { "name": "@kb-labs/adapters-openai" },
     { "name": "@kb-labs/adapters-service-transport-http" },
-    { "name": "@kb-labs/adapters-state-broker" }
+    { "name": "@kb-labs/adapters-state-broker" },
+    { "name": "@kb-labs/fixture-adapter" }
   ],
   "plugins": [
     {
@@ -152,6 +153,11 @@
       "id": "@kb-labs/e2e-analytics-emitter",
       "pkg": "@kb-labs/e2e-analytics-emitter",
       "description": "Journey fixture for analytics and LLM provider coverage",
+      "default": false
+    },
+    {
+      "pkg": "@kb-labs/fixture-compat",
+      "description": "Journey fixture for installed plugin update compatibility",
       "default": false
     }
   ],

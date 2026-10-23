@@ -151,6 +151,17 @@ def journey_layout_path_violations(journey_root: Path, layout: dict, owner_modul
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_diagnostic_hint_contains_the_command_declared_in_details(self):
+        command = "next-step"
+        self.assertTrue(installer_case_steps.diagnostic_hint_has_next_command({
+            "details": {"nextCommand": command},
+            "hint": f"Run `{command}`.",
+        }))
+        self.assertFalse(installer_case_steps.diagnostic_hint_has_next_command({
+            "details": {"nextCommand": command},
+            "hint": "Choose a fresh writable path.",
+        }))
+
     def test_active_platform_path_resolves_through_the_product_current_link(self):
         with tempfile.TemporaryDirectory(prefix="journey-active-platform-path-") as temporary:
             root = Path(temporary)

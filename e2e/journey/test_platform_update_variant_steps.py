@@ -182,7 +182,6 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             def fake_runner(args, cwd):
                 if args[1] == "plan":
                     response = {"ok": True, "data": {"updateSummary": {"releaseNotes": [
-                        {"version": "3.0.0", "notes": "Release 3.0.0 notes."},
                         {"version": "3.0.1", "notes": "Release 3.0.1 notes."},
                         {"version": "3.0.2", "notes": "Release 3.0.2 notes."},
                     ]}}}
