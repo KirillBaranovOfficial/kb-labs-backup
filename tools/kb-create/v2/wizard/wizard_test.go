@@ -26,7 +26,7 @@ func TestRequestScenarioUsesSharedProjectSelectionValidation(t *testing.T) {
 		In: bytes.NewBufferString("\n\n"), Out: &bytes.Buffer{},
 	})
 	var validation *contracts.RequestValidationError
-	if !errors.As(err, &validation) || validation.Code != contracts.CodeInputRequired || validation.Field != "projectRoot" {
+	if !errors.As(err, &validation) || validation.Field != "projectRoot" || validation.Diagnostic().Code != contracts.CodeInputRequired {
 		t.Fatalf("RequestScenario() error = %T %v, want shared projectRoot request validation", err, err)
 	}
 	if _, statErr := os.Stat(platformRoot); !os.IsNotExist(statErr) {

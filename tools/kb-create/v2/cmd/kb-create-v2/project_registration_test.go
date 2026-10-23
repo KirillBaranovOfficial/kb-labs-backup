@@ -1204,9 +1204,9 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 			if wantRemoteCorrelationID {
 				var envelope struct {
 					Error struct {
-						CorrelationID string            `json:"correlationId"`
-						Cause         string            `json:"cause"`
-						Details       map[string]string `json:"details"`
+						CorrelationID string         `json:"correlationId"`
+						Cause         string         `json:"cause"`
+						Details       map[string]any `json:"details"`
 					} `json:"error"`
 				}
 				if err := json.Unmarshal(jsonOutput.Bytes(), &envelope); err != nil {

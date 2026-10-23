@@ -846,7 +846,7 @@ func TestGatewayFailureEnvelopePreservesDiagnosticWithoutSecrets(t *testing.T) {
 	}
 	var rendered struct {
 		Error struct {
-			Details map[string]string `json:"details"`
+			Details map[string]any `json:"details"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(jsonOutput.Bytes(), &rendered); err != nil || rendered.Error.Details["remoteCorrelationId"] != gatewayCorrelationID {

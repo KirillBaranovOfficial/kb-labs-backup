@@ -374,7 +374,7 @@ describe('Gateway webhook history through createServer', () => {
       expect(rejected.status).toBe(413);
       const responseEnvelope = await rejected.json() as {
         ok: boolean;
-        error: { code: string; correlationId: string; details: Record<string, string> };
+        error: { code: string; correlationId: string; details: Record<string, unknown> };
       };
       expect(responseEnvelope).toMatchObject({
         ok: false,

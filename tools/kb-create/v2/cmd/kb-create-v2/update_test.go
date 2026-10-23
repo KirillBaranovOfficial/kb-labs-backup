@@ -830,7 +830,7 @@ func TestFreshInstallWritesCompleteRunningIdentityBeforeFirstUpdate(t *testing.T
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway"}}}}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcher}}}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	var processID int
 	t.Cleanup(func() {
@@ -920,7 +920,7 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 	})
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcher}}}
 	runApplyForTest(t, resolved, deps)
 	installed = true
 	if _, code, output := inst.run("status", "--json"); code != 0 {
@@ -1042,7 +1042,7 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 	inst := installation{launcher: installedLauncher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcher}}}
 	registerTestHostProcessTreeCleanup(t, root)
 	installed := false
 	t.Cleanup(func() {
@@ -1313,7 +1313,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		t.Fatal(err)
 	}
 	packageRunner := productionPackageFixtureRunner{}
-	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{}, ArtifactRunner: packageRunner}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{Host: installedHostStarter{root: root, executable: launcher}}, ArtifactRunner: packageRunner}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	t.Cleanup(func() {
 		status, code, output := inst.run("status", "--json")
@@ -1514,7 +1514,7 @@ func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 	})
 	t.Setenv("HOME", home)
 	t.Setenv("COREPACK_HOME", filepath.Join(home, "corepack"))
-	_, fakehost := binaries(t)
+	launcher, fakehost := binaries(t)
 	port := freeLoopbackPort(t)
 	registerTestHostProcessTreeCleanup(t, root)
 	sealed := fixturePackageArtifact(t, "@kb-labs/sealed-runtime", "1.0.0")
@@ -1528,7 +1528,7 @@ func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 		Artifacts: []contracts.Artifact{sealed},
 	}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: productionPackageFixtureRunner{},
-		Runtime: &runtime.Dependencies{}}
+		Runtime: &runtime.Dependencies{Host: installedHostStarter{root: root, executable: launcher}}}
 	if _, failure := executeApply(context.Background(), applyCommandInput{Resolved: &resolvedPlan{Plan: plan, State: host.State{Dir: t.TempDir()}}}, deps); failure != nil {
 		t.Fatalf("fresh kb-create apply: code=%s reason=%s cause=%s meta=%v", failure.Code, failure.Reason, failure.Cause, failure.Meta)
 	}

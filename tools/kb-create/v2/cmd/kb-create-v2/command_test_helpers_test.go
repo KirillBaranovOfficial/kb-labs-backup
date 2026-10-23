@@ -20,6 +20,7 @@ import (
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 )
@@ -32,10 +33,17 @@ func registerTestHostProcessTreeCleanup(t *testing.T, platformRoot string) {
 			t.Errorf("resolve test host state for cleanup: %v", err)
 			return
 		}
-		if _, err := os.Stat(state.HostPID()); errors.Is(err, os.ErrNotExist) {
+		_, hostRecordErr := os.Stat(state.HostPID())
+		_, supervisorRecordErr := os.Stat(state.SupervisorPID())
+		if errors.Is(hostRecordErr, os.ErrNotExist) && errors.Is(supervisorRecordErr, os.ErrNotExist) {
 			return
-		} else if err != nil {
-			t.Errorf("inspect test host process record during cleanup: %v", err)
+		}
+		if hostRecordErr != nil && !errors.Is(hostRecordErr, os.ErrNotExist) {
+			t.Errorf("inspect test host process record during cleanup: %v", hostRecordErr)
+			return
+		}
+		if supervisorRecordErr != nil && !errors.Is(supervisorRecordErr, os.ErrNotExist) {
+			t.Errorf("inspect test supervisor process record during cleanup: %v", supervisorRecordErr)
 			return
 		}
 		runner, err := host.NewRecordedRunner(platformRoot)
@@ -45,8 +53,9 @@ func registerTestHostProcessTreeCleanup(t *testing.T, platformRoot string) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if _, err := runner.Stop(ctx); err != nil {
-			t.Errorf("stop test host process tree during cleanup: %v", err)
+		command := hostCommand{PlatformRoot: platformRoot}
+		if _, failure := command.stop(ctx, runner, runner.State); failure != nil {
+			t.Errorf("stop test host process tree during cleanup: %v", failure)
 			return
 		}
 		status, err := runner.Status(ctx)
@@ -56,6 +65,9 @@ func registerTestHostProcessTreeCleanup(t *testing.T, platformRoot string) {
 		}
 		if status.State == host.StateRunning || status.PID != 0 && host.ProcessAlive(status.PID) {
 			t.Errorf("test host process tree remains alive after cleanup: state=%s pid=%d", status.State, status.PID)
+		}
+		if record, alive := supervisor.ReadRecord(state); alive {
+			t.Errorf("test supervisor process remains alive after cleanup: pid=%d", record.PID)
 		}
 	})
 }

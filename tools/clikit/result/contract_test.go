@@ -193,8 +193,8 @@ func TestRenderResultsMatchSharedContract(t *testing.T) {
 	}
 	var envelope struct {
 		Error struct {
-			CorrelationID string            `json:"correlationId"`
-			Details       map[string]string `json:"details"`
+			CorrelationID string         `json:"correlationId"`
+			Details       map[string]any `json:"details"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(failure.Bytes(), &envelope); err != nil {
