@@ -102,7 +102,7 @@ func TestRequestScenarioCompilesSameDeclarativeAnswersAsMachineRequest(t *testin
 	}
 	machine := request
 	machine.ScenarioID = "commit"
-	if machine.ProviderPreferences["cache"] != request.ProviderPreferences["cache"] || len(machine.Plugins) != 1 || machine.Plugins[0].ID != "@kb-labs/commit" {
+	if machine.ProviderPreferences["cache"] != request.ProviderPreferences["cache"] || len(machine.MarketplacePlugins) != 1 || machine.MarketplacePlugins[0] != "@kb-labs/commit" {
 		t.Fatalf("human/machine request mismatch: %#v / %#v", request, machine)
 	}
 }
