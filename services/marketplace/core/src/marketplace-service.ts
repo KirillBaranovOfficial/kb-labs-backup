@@ -25,6 +25,7 @@ import {
   writeMarketplaceLock,
   createEmptyLock,
   createMarketplaceEntry,
+  createInstallOwnedRelativePath,
   addToMarketplaceLock,
   removeFromMarketplaceLock,
   enablePlugin,
@@ -293,12 +294,10 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         marketplaceSource: source.kind,
         signatureStatus: verification.signatureStatus,
       };
-      const packagePath = usesExtensionStore
-          ? `store:${encodeURIComponent(result.id)}@${encodeURIComponent(result.version)}`
-          : relativeToRoot(scopeRoot, result.packageRoot);
+      const packagePath = relativeToRoot(scopeRoot, result.packageRoot);
       const entrySource = resolved.source;
       const entry = entrySource === 'marketplace'
-        ? createMarketplaceEntry({ ...entryOptions, source: 'marketplace', package: result.id, resolvedPath: packagePath })
+        ? createMarketplaceEntry({ ...entryOptions, source: 'marketplace', package: result.id, resolvedPath: usesExtensionStore ? undefined : packagePath })
         : createMarketplaceEntry({ ...entryOptions, source: 'local', resolvedPath: packagePath });
 
       await addToMarketplaceLock(scopeRoot, canonicalId, entry, ctx.scope);
@@ -751,7 +750,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         source: 'platform',
         version: pkgVersion,
         integrity,
-        resolvedPath,
+        resolvedPath: createInstallOwnedRelativePath(resolvedPath, scopeRoot),
         enabled: autoEnable ?? true,
       };
     } else {
