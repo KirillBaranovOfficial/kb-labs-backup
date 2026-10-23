@@ -626,7 +626,6 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         return _run(kb_command(args), cwd=cwd, env=base_env, runner=runner)
 
     commit_package = "@kb-labs/commit"
-    commit_install_package = "@kb-labs/commit-entry"
     unrelated_package = "@kb-labs/review-entry"
     authenticate_secured_marketplace(journey, project, base_env, runner)
 
@@ -653,7 +652,10 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         # Commit fixture that produces the project lock state.
         commit_version = (fixture_entry or {}).get("version")
         if not isinstance(commit_version, str) or not commit_version:
-            raise RuntimeError("Commit fixture has no version to pin in lifecycle checks")
+            raise RuntimeError("published Commit fixture has no version to pin in lifecycle checks")
+        commit_install_package = (fixture_entry or {}).get("package")
+        if not isinstance(commit_install_package, str) or not commit_install_package:
+            raise RuntimeError("published Commit fixture has no package identity to pin in lifecycle checks")
     # S-047 requires a second project plugin to survive target uninstall.
     unrelated_version = _registry_version(unrelated_package, registry, project, base_env, runner)
     install_unrelated = ["marketplace", "install", f"{unrelated_package}@{unrelated_version}", "--json"]
@@ -679,8 +681,9 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     before = json.loads(lock_file.read_text()) if lock_file.exists() else {"plugins": {}}
     if commit_package not in before.get("plugins", {}):
         raise RuntimeError(f"{commit_package} fixture is missing before the marketplace lifecycle")
-    install_commit = ["marketplace", "install", f"{commit_install_package}@{commit_version}", "--json"]
-    install_commit_platform = ["marketplace", "install", f"{commit_install_package}@{commit_version}",
+    commit_install_spec = f"{commit_install_package}@{commit_version}"
+    install_commit = ["marketplace", "install", commit_install_spec, "--json"]
+    install_commit_platform = ["marketplace", "install", commit_install_spec,
                               "--scope", "platform", "--json"]
     sealed_platform_before = _platform_snapshot(platform_root)
     def install_exact_commit() -> None:
@@ -1106,7 +1109,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
              cases=["S-047.3"], requires=("step:uninstall target project plugin",))
 
     def reinstall_commit_and_assert_route() -> None:
-        reinstall = ["marketplace", "install", f"{commit_install_package}@{commit_version}", "--json"]
+        reinstall = ["marketplace", "install", commit_install_spec, "--json"]
         installed = _json(cli(reinstall), reinstall)
         entries = installed.get("installed")
         if not isinstance(entries, list) or not any(

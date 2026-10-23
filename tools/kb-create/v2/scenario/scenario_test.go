@@ -41,6 +41,16 @@ func TestMigratedBuiltinsCompileToSharedV2Requests(t *testing.T) {
 			if request.ScenarioID != id {
 				t.Fatalf("request = %#v", request)
 			}
+			if len(scenario.Plugins) > 0 {
+				if len(request.Plugins) != 0 || len(request.MarketplacePlugins) != len(scenario.Plugins) {
+					t.Fatalf("scenario plugin identities crossed the release-index boundary: request=%#v scenario=%#v", request.Plugins, scenario.Plugins)
+				}
+				for index, identity := range scenario.Plugins {
+					if request.MarketplacePlugins[index] != identity {
+						t.Fatalf("Marketplace plugin identities = %#v, want %#v", request.MarketplacePlugins, scenario.Plugins)
+					}
+				}
+			}
 			if _, err := resolve.Plan(request, source()); err != nil {
 				t.Fatal(err)
 			}
@@ -448,9 +458,17 @@ func TestValidateCatalogChecksTheCurrentBuiltinScenarioSet(t *testing.T) {
 	if err := ValidateCatalog(source); err != nil {
 		t.Fatalf("current built-in scenarios did not resolve: %v", err)
 	}
-	source.Plugins = source.Plugins[:len(source.Plugins)-1]
-	if err := ValidateCatalog(source); err == nil {
-		t.Fatal("a scenario referencing an absent plugin must fail validation")
+	source.Plugins = nil
+	if err := ValidateCatalog(source); err != nil {
+		t.Fatalf("Marketplace scenario identities must not require release-index plugin entries: %v", err)
+	}
+	definition, err := Load("commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition.Plugins = []string{"@kb-labs/invalid/name"}
+	if err := Validate(definition); err == nil {
+		t.Fatal("malformed Marketplace identity was accepted")
 	}
 }
 

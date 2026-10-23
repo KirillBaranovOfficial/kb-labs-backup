@@ -111,6 +111,19 @@ def _candidate_package_records(index: dict) -> list[dict]:
                                                 for field in ("package", "version", "tarball", "sha256"))]
 
 
+def assert_commit_marketplace_receipt(receipt: dict) -> None:
+    """Require the built-in Commit scenario result to come from Marketplace."""
+    request = receipt.get("plan", {}).get("request", {})
+    if request.get("scenarioId") != "commit":
+        raise RuntimeError("Commit scenario receipt does not identify the commit scenario")
+    installs = receipt.get("marketplaceInstalls", [])
+    commit = next((entry for entry in installs if entry.get("id") == "@kb-labs/commit"), None)
+    if not commit or not commit.get("version") or not commit.get("source"):
+        raise RuntimeError("Commit scenario receipt omitted its Marketplace source or resolved version")
+    if any(artifact.get("id") == "@kb-labs/commit" for artifact in receipt.get("plan", {}).get("artifacts", [])):
+        raise RuntimeError("Commit Marketplace identity was incorrectly resolved from the release index")
+
+
 def _extract_candidate_tarball(tarball: Path, package_root: Path, package: str) -> None:
     with tarfile.open(tarball, "r:gz") as archive:
         for member in archive.getmembers():
@@ -1660,10 +1673,12 @@ def run_apply_scenario_step(*, mode: str, launcher: str, stable_index: Path,
                 raise RuntimeError("apply JSON document did not contain its successful result")
             apply_result = decode_ux_success_result(apply_result)
             request = apply_result.get("receipt", {}).get("plan", {}).get("request", {})
+            receipt_value = apply_result.get("receipt", {})
             if (apply_result.get("operation") != "apply" or request.get("platformRoot") != str(apply_root)
                     or request.get("providerPreferences", {}).get("cache") != "state-broker"
                     or not apply_result.get("logPath")):
                 raise RuntimeError("apply result receipt omitted the isolated root or selected cache provider")
+            assert_commit_marketplace_receipt(receipt_value)
         finally:
             cleanup_installer_fixture_root(apply_root, launcher, run_command)
 
@@ -1733,6 +1748,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                       "PC-001 apply")
         if result.get("operation") != "apply" or not result.get("receipt") or not result.get("logPath"):
             raise RuntimeError("apply result omitted operation, receipt, or logPath")
+        assert_commit_marketplace_receipt(result["receipt"])
         status = _data(run_command([launcher, "status", "--json", "--platform-root", str(apply_root)]),
                        "PC-001 apply status")
         host = status.get("host", {})

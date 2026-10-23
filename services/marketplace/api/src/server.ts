@@ -114,7 +114,8 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
         correlationId,
         message: err.message,
         hint: err.hint,
-        details: { package: err.packageId, scope: err.scope },
+        details: { package: err.packageId, scope: err.scope, source: err.source },
+        templateValues: { sourceName: err.source },
       }),
     };
   }
@@ -172,7 +173,7 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
       details = { package: err.spec, scope };
     } else {
       code = 'KB_MARKETPLACE_INSTALL_FAILED';
-      details = { package: err.spec, scope };
+      details = { package: err.spec, scope, source: 'npm' };
     }
   } else if (err instanceof MarketplaceVersionError) {
     details = {
@@ -216,6 +217,9 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
   const statusCode = getCatalogEntry(code)?.httpStatus ?? 500;
   return {
     statusCode,
-    envelope: createValidatedErrorEnvelope(code, { correlationId, details, message, hint }),
+    envelope: createValidatedErrorEnvelope(code, {
+      correlationId, details, message, hint,
+      ...(code === 'KB_MARKETPLACE_INSTALL_FAILED' && details?.source ? { templateValues: { sourceName: details.source } } : {}),
+    }),
   };
 }

@@ -71,7 +71,7 @@ func TestReadLockRejectsPluginWithoutPackage(t *testing.T) {
 	}
 }
 
-func TestPreserveInstalledComponentsAddsMarketplaceLockEntriesToUpdateRequest(t *testing.T) {
+func TestPreserveInstalledComponentsAddsOnlyPlatformAdaptersToUpdateRequest(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".kb"), 0o750); err != nil {
 		t.Fatal(err)
@@ -102,14 +102,31 @@ func TestPreserveInstalledComponentsAddsMarketplaceLockEntriesToUpdateRequest(t 
 	for _, component := range request.Adapters {
 		adapterIDs[component.ID] = true
 	}
-	if !pluginIDs["commit"] || !pluginIDs["requested-plugin"] {
-		t.Errorf("plugins = %+v; marketplace lock entry and existing request must both remain", request.Plugins)
+	if len(pluginIDs) != 1 || !pluginIDs["requested-plugin"] {
+		t.Errorf("plugins = %+v; Marketplace plugin identities must not enter the release-index request", request.Plugins)
 	}
 	if !adapterIDs["openai"] || !adapterIDs["vibeproxy"] {
 		t.Errorf("adapters = %+v; installed and requested adapters must both remain", request.Adapters)
 	}
 	if len(request.Adapters) != 2 {
 		t.Errorf("adapters = %+v; an existing request must not be duplicated", request.Adapters)
+	}
+}
+
+func TestWriteLockCarriesMarketplacePluginIdentityAcrossPlatformUpdate(t *testing.T) {
+	activeRoot, targetRoot := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(activeRoot, ".kb"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeRaw(t, activeRoot, Lock{Schema: Schema, Plugins: map[string]Item{
+		"@kb-labs/commit": {Version: "2.1.0", Integrity: "sha256-commit", Package: "@kb-labs/commit", Source: "marketplace", MarketplaceSource: "registry", SignatureStatus: "verified", Enabled: true},
+	}})
+	if err := WriteLock(targetRoot, activeRoot, nil, time.Now()); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	entry, ok := readBack(t, targetRoot).Plugins["@kb-labs/commit"]
+	if !ok || entry.Source != "marketplace" || entry.MarketplaceSource != "registry" || entry.Version != "2.1.0" {
+		t.Fatalf("updated Marketplace entry = %#v, present=%v", entry, ok)
 	}
 }
 

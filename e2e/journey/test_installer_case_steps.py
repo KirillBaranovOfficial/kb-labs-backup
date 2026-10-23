@@ -713,7 +713,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 receipt = {"plan": {"request": {
                     "platformRoot": args[args.index("--platform-root") + 1],
                     "providerPreferences": {"cache": "state-broker"},
-                }}}
+                    "scenarioId": "commit",
+                }, "artifacts": []}, "marketplaceInstalls": [
+                    {"id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+                ]}
                 apply_result = {"operation": "apply", "receipt": receipt, "logPath": "/tmp/apply.log"}
                 return subprocess.CompletedProcess(args, 0,
                     json.dumps({"ok": True, "data": apply_result}), "")
@@ -731,6 +734,15 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 "--scenario", "commit",
                 "--scenario-answers", '{"cache":"state-broker"}',
             ])
+
+    def test_commit_scenario_receipt_rejects_release_index_plugin(self):
+        receipt = {"plan": {"request": {"scenarioId": "commit"}, "artifacts": [
+            {"id": "@kb-labs/commit"},
+        ]}, "marketplaceInstalls": [
+            {"id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+        ]}
+        with self.assertRaisesRegex(RuntimeError, "incorrectly resolved from the release index"):
+            installer_case_steps.assert_commit_marketplace_receipt(receipt)
 
     # case: S-039.1
     def test_apply_scenario_claim_rejects_receipt_with_wrong_provider(self):

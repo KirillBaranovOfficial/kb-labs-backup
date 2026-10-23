@@ -30,6 +30,7 @@ import service_runner
 from test_install_layout import create_test_install_container
 from invocations import catalogued_error_hint, catalogued_error_message, invocation_context, open_http, run_command
 import jsonl
+from commit_fixture import commit_fixture_source_version
 
 
 def _release_entity(identity: str) -> dict:
@@ -47,25 +48,24 @@ class MarketplaceStepTests(unittest.TestCase):
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             commands = []
+            source_version = commit_fixture_source_version(Path(__file__).resolve().parents[2])
 
             def runner(command, *, cwd, env, capture_output, text, timeout):
                 commands.append(tuple(command))
-                if command[:2] == ["npm", "view"]:
-                    return subprocess.CompletedProcess(command, 0, '"2.120.1"', "")
                 args = command[1:]
                 if args[:3] == ["marketplace", "plugins", "doctor"]:
                     return subprocess.CompletedProcess(command, 0,
                         json.dumps({"ok": True, "data": {"total": 0, "issues": []}}), "")
                 if args[:2] == ["marketplace", "install"]:
-                    self.assertEqual(args[2], "@kb-labs/commit-entry@2.120.1")
+                    self.assertEqual(args[2], f"@kb-labs/commit-entry@{source_version}")
                     lock = {"schema": "kb.marketplace/3", "plugins": {
-                        "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit-entry",
+                        "@kb-labs/commit": {"version": source_version, "package": "@kb-labs/commit-entry",
                             "source": "marketplace", "marketplaceSource": "npm",
                             "signatureStatus": "unsigned", "integrity": "sha512-npm", "enabled": True},
                     }}
                     (project / ".kb" / "marketplace.lock").write_text(json.dumps(lock))
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
-                        "scope": "project", "installed": [{"id": "@kb-labs/commit", "version": "2.120.1",
+                        "scope": "project", "installed": [{"id": "@kb-labs/commit", "version": source_version,
                             "source": "npm", "signatureStatus": "unsigned"}],
                     }}), "")
                 self.fail(f"unexpected shared-fixture command: {command}")
@@ -77,8 +77,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertIsNotNone(entry)
             self.assertEqual(entry["marketplaceSource"], "npm")
             self.assertEqual(entry["signatureStatus"], "unsigned")
-            self.assertIn(("npm", "view", "@kb-labs/commit-entry", "version", "--json",
-                           "--registry=http://verdaccio.test"), commands)
+            self.assertFalse(any(command[:2] == ("npm", "view") for command in commands))
             self.assertTrue(any(command[:3] == ("kb", "marketplace", "install") for command in commands))
             self.assertFalse(any(command[:2] == ("node",) or "hub" in command for command in commands))
             self.assertFalse((project / ".kb" / "marketplace.lock").read_text().find('"marketplaceSource": "registry"') >= 0)
@@ -639,12 +638,11 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:1] == ["version"]:
                     stdout = json.dumps({"version": "1.0.0"})
                 elif args[:2] == ["marketplace", "install"]:
-                    if args[2].count("@") > 1:
+                    exact_version = args[2].count("@") > 1
+                    if exact_version:
                         package_id, version = args[2].rsplit("@", 1)
-                        version_is_pinned = True
                     else:
                         package_id, version = args[2], registry_version
-                        version_is_pinned = False
                     entity = _release_entity(package_id)
                     if entity is None:
                         error = {
@@ -658,7 +656,7 @@ class MarketplaceStepTests(unittest.TestCase):
                             f"{error['message']} [{error['code']}]\nHint: {error['hint']}\n", "")
                     plugin_id = entity["id"]
                     package_name = entity["package"]
-                    if not version_is_pinned:
+                    if not exact_version:
                         version = published_versions.get(package_name, version)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
                     lock_root = active_platform if platform else cwd_path
@@ -869,8 +867,9 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(actual, expected, [(step.name, step.status, step.message) for step in journey.steps])
             self.assertEqual(commit_case_hook_calls, [True])
             self.assertFalse(any("hub" in call for call in calls))
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1",
+            pinned_commit = f"@kb-labs/commit-entry@{fixture_entry['version']}"
+            self.assertIn(("kb", "marketplace", "install", pinned_commit, "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", pinned_commit,
                            "--scope", "platform", "--json"), calls)
             self.assertIn(("npm", "view", "@kb-labs/review-entry", "version", "--json",
                            "--registry=http://registry.test"), calls)

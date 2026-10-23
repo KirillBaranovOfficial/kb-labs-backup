@@ -6,6 +6,18 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ## 2026-10-23
 
+### Built-in scenario plugins are installed through Marketplace
+
+Scenario `plugins` entries are canonical Marketplace identities, not platform
+release-index members. After the installed host reports ready, kb-create applies
+those identities through the platform Marketplace install operation, which
+uses the rendered `marketplace.sources` order (Registry first with npm
+fallback). The install receipt records Marketplace's resolved source and
+version. A Marketplace failure leaves the installed platform healthy and
+reports a catalogued diagnostic with the identity, attempted source, and exact
+`kb marketplace install <identity> --scope platform` retry command. Cases:
+PC-001.4, S-039.1, S-268.9.
+
 ### Host exclusivity follows claimed resources, not machine identity
 
 Independent install roots may run at the same time when they hold different

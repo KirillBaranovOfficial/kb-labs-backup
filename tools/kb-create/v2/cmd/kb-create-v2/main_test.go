@@ -174,7 +174,7 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	}
 }
 
-// case: PC-001.7, PC-002.2, S-040.3
+// case: S-268.9, PC-001.7, PC-002.2, S-040.3
 func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	_, fakehost := binaries(t)
 	home := t.TempDir()
@@ -202,7 +202,9 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}}
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
 		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}
-	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
+	source.Adapters = append(source.Adapters, catalog.Adapter{Component: catalog.Component{
+		ID: "state-broker", Version: "2.0.0", Package: "@kb-labs/state-broker", Tarball: "https://example.test/state-broker.tgz", SHA256: "state-broker",
+	}, Provides: []string{"cache"}})
 	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +224,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	}
 	var installOutput, installError bytes.Buffer
 	installCode := clikitcommand.Execute(newRootCommandWithDependencyFactory(commandFactory), []string{"install", "--json", "--index", indexPath,
-		"--platform-root", root, "--service-profile", "default", "--scenario", "explore"}, &installOutput, &installError)
+		"--platform-root", root, "--service-profile", "default", "--scenario", "commit"}, &installOutput, &installError)
 	if installCode.Code() != 0 {
 		state, _ := host.StateForRoot(root)
 		hostLog, _ := os.ReadFile(state.HostLog())
@@ -232,6 +234,11 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	installedReceipt, err := receipt.Read(platformRootForTest(t, root))
 	if err != nil || installedReceipt.Plan.Request.PlatformRoot != root {
 		t.Fatalf("install receipt request root = %q, error=%v; want selected install root %q", installedReceipt.Plan.Request.PlatformRoot, err, root)
+	}
+	if len(installedReceipt.MarketplaceInstalls) != 1 || installedReceipt.MarketplaceInstalls[0].ID != "@kb-labs/commit" ||
+		installedReceipt.MarketplaceInstalls[0].Version != "1.0.0" || installedReceipt.MarketplaceInstalls[0].Source != "registry" ||
+		installedReceipt.MarketplaceInstalls[0].SignatureStatus != "verified" {
+		t.Fatalf("install receipt Marketplace results = %#v; want @kb-labs/commit", installedReceipt.MarketplaceInstalls)
 	}
 	layout, err := versionroot.New(root)
 	if err != nil {
@@ -821,6 +828,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 		dependencyFactory := func(cmd *cobra.Command) commandDependencies {
 			return commandDependencies{
 				Runtime:       &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
+				Marketplace:   recordingMarketplaceInstaller{},
 				NodeCheck:     func() error { return nil },
 				InstallInput:  strings.NewReader(strings.Repeat("\n", 12)),
 				InstallOutput: clikitcommand.FromCommand(cmd).ProgressWriter(),
@@ -1065,7 +1073,8 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 				artifactRunner = installArtifacts{root: root}
 			}
 			return commandDependencies{Runtime: &runtime.Dependencies{Artifacts: artifactRunner, Host: installHost{}},
-				NodeCheck: func() error { return nil }, InstallInput: strings.NewReader(strings.Repeat("\n", 12)),
+				Marketplace: recordingMarketplaceInstaller{},
+				NodeCheck:   func() error { return nil }, InstallInput: strings.NewReader(strings.Repeat("\n", 12)),
 				InstallOutput: clikitcommand.FromCommand(cmd).ProgressWriter(), Command: cmd, Executable: launcher,
 				ProjectRegistrar: func(_ string, projectRoot string) (projectRegistrationResult, error) {
 					return projectRegistrationResult{ID: "prj_fixture", CanonicalPath: projectRoot}, nil
@@ -1435,6 +1444,7 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 		Operation: "install", Index: index, Direct: directRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot},
 		Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen,
 		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}},
+		Marketplace:   recordingMarketplaceInstaller{},
 		NodePreflight: func() error { return nil },
 		ProjectRegistrar: func(path string) (projectRegistrationResult, error) {
 			registered = path
@@ -1465,6 +1475,7 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 		InstallInput:  strings.NewReader(strings.Repeat("\n", 12)),
 		InstallOutput: &failedScreen,
 		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: failedRoot}, Host: installHost{}},
+		Marketplace:   recordingMarketplaceInstaller{},
 		NodePreflight: func() error { return nil },
 		ProjectRegistrar: func(string) (projectRegistrationResult, error) {
 			return projectRegistrationResult{}, errors.New("project registry unavailable")
