@@ -18,6 +18,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                _assert_catalogued_marketplace_failure,
                                prepare_commit_project_fixture,
                                prepare_registry_commit_project_fixture,
+                               publish_commit_update_fixture,
                                run_ordered_source_journey_steps,
                                run_plugin_policy_diagnostic_step,
                                run_marketplace_steps, validate_commit_status_response,
@@ -41,6 +42,43 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_commit_update_fixture_publishes_next_major_from_registry_candidate(self):
+        published: list[dict] = []
+
+        def fake_run(command, *, cwd=None, env=None, timeout=None, input=None, **_kwargs):
+            if command[:2] == ["npm", "pack"] and command[2].startswith("@kb-labs/commit-entry@"):
+                package = Path(cwd) / "fixture" / "package"
+                package.mkdir(parents=True)
+                (package / "package.json").write_text(json.dumps(
+                    {"name": "@kb-labs/commit-entry", "version": "2.120.1"}))
+                destination = command[command.index("--pack-destination") + 1]
+                subprocess.run(["tar", "-czf", str(Path(destination) / "kb-labs-commit-entry-2.120.1.tgz"),
+                                "-C", str(package.parent), "package"], check=True)
+                return subprocess.CompletedProcess(command, 0, "", "")
+            if command[:3] == ["npm", "pack", "--ignore-scripts"]:
+                manifest = json.loads((Path(cwd) / "package.json").read_text())
+                destination = Path(command[command.index("--pack-destination") + 1])
+                (destination / f"kb-labs-commit-entry-{manifest['version']}.tgz").write_text(manifest["version"])
+                return subprocess.CompletedProcess(command, 0, "", "")
+            if command[0] == "tar":
+                return subprocess.run(command, capture_output=True, text=True)
+            if command[0] == "sh" and command[1].endswith("e2e/publisher/publish.sh"):
+                directory = Path(env["PUBLISH_PACKAGES_DIR"])
+                published.append({"registry": env["VERDACCIO_URL"],
+                                  "files": sorted(path.name for path in directory.iterdir()),
+                                  "home": env["HOME"]})
+                return subprocess.CompletedProcess(command, 0, "", "")
+            raise AssertionError(command)
+
+        version = publish_commit_update_fixture("http://registry.test", "2.120.1",
+                                                {"HOME": "/journey-home"}, fake_run)
+
+        self.assertEqual(version, "3.0.0")
+        self.assertEqual(len(published), 1)
+        self.assertEqual(published[0]["registry"], "http://registry.test")
+        self.assertEqual(published[0]["files"], ["kb-labs-commit-entry-3.0.0.tgz"])
+        self.assertNotEqual(published[0]["home"], "/journey-home")
+
     def test_shared_commit_fixture_uses_release_one_npm_source_without_registry_lane(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-default-fixture-") as directory:
             home = Path(directory)
@@ -703,11 +741,11 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:3] == ["marketplace", "update", "@kb-labs/commit"]:
                     value = lock(cwd_path)
                     entry = value["plugins"]["@kb-labs/commit"]
-                    entry["version"] = "2.120.2"
+                    entry["version"] = "3.0.0"
                     entry["integrity"] = "sha512-updated-fixture"
                     save_lock(cwd_path, value)
                     stdout = json.dumps({"scope": "project", "warnings": [],
-                        "installed": [{"id": "@kb-labs/commit", "version": "2.120.2", "primaryKind": "plugin"}]})
+                        "installed": [{"id": "@kb-labs/commit", "version": "3.0.0", "primaryKind": "plugin"}]})
                 elif args[:3] == ["marketplace", "update", "@kb-labs/not-published"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"scope": "project",
                         "warnings": ["Plugin @kb-labs/not-published was not found in the registry."]}}), "")
@@ -845,7 +883,8 @@ class MarketplaceStepTests(unittest.TestCase):
             def fail_unrelated_error_claim(*_args, **_kwargs):
                 raise AssertionError("independent S-051 envelope assertion failed")
             with patch("marketplace_steps.run_plugin_policy_diagnostic_step", side_effect=fail_unrelated_policy_claim), \
-                    patch("marketplace_steps.validate_shared_failure", side_effect=fail_unrelated_error_claim):
+                    patch("marketplace_steps.validate_shared_failure", side_effect=fail_unrelated_error_claim), \
+                    patch("marketplace_steps.publish_commit_update_fixture", return_value="3.0.0"):
                 run_marketplace_steps(journey, project, "prj_marketplace_fixture", "http://registry.test", env, fake_run, fake_http,
                                       commit_case_hook=fake_commit_case_hook, fixture_entry=fixture_entry)
 
@@ -979,7 +1018,8 @@ class MarketplaceStepTests(unittest.TestCase):
                     with patch("marketplace_steps.run_plugin_policy_diagnostic_step",
                                side_effect=fail_unrelated_policy_claim), \
                             patch("marketplace_steps.validate_shared_failure",
-                                  side_effect=fail_unrelated_error_claim):
+                                  side_effect=fail_unrelated_error_claim), \
+                            patch("marketplace_steps.publish_commit_update_fixture", return_value="3.0.0"):
                         run_marketplace_steps(trial, project, "prj_marketplace_fixture", "http://registry.test", env, fake_run, fake_http,
                                               commit_case_hook=fake_commit_case_hook,
                                               fixture_entry=trial_fixture_entry)

@@ -8,12 +8,13 @@ from project_service_path import project_service_path
 import json
 import hashlib
 import os
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
 from typing import Callable
 
-from journey_resources import active_platform_root
+from journey_resources import active_platform_root, workspace_resource
 from hermetic_cli import run_hermetic_cli
 from service_steps import Journey
 from invocations import (
@@ -367,6 +368,56 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
     journey.step("produce Commit project fixture", "marketplace-fixtures", install_fixture,
                  role="lifecycle")
     return captured.get("entry")
+
+
+def publish_commit_update_fixture(registry: str, source_version: str, env: dict[str, str],
+                                   runner: CommandRunner = run_command) -> str:
+    """Publish the next-major Commit package to the journey npm registry.
+
+    The candidate package set carries only workspace-source artifacts, so the
+    newer version an update case needs is derived here from the published
+    Commit candidate and published by the shared immutable publisher.
+    """
+    major = source_version.split(".", 1)[0]
+    if not major.isdigit():
+        raise RuntimeError(f"Commit source version is not semver: {source_version}")
+    update_version = f"{int(major) + 1}.0.0"
+    with tempfile.TemporaryDirectory(prefix="kb-commit-update-fixture-") as directory:
+        root = Path(directory)
+        source_dir, unpacked, output = root / "source", root / "unpacked", root / "publish"
+        for path in (source_dir, unpacked, output):
+            path.mkdir()
+        npm_env = dict(env)
+        npm_env.update({"HOME": str(root), "npm_config_cache": str(root / ".npm-cache"),
+                        "npm_config_userconfig": str(root / ".npmrc")})
+        pack = ["npm", "pack", f"@kb-labs/commit-entry@{source_version}", f"--registry={registry}",
+                "--pack-destination", str(source_dir)]
+        _output(run_with_runner(runner, pack, cwd=root, env=npm_env, timeout=300), pack)
+        tarballs = sorted(source_dir.glob("*.tgz"))
+        if len(tarballs) != 1:
+            raise RuntimeError(f"`{' '.join(pack)}` produced {len(tarballs)} tarballs")
+        extract = ["tar", "-xzf", str(tarballs[0]), "-C", str(unpacked)]
+        _output(run_with_runner(runner, extract, cwd=root, env=npm_env, timeout=120), extract)
+        package_dir = unpacked / "package"
+        manifest_path = package_dir / "package.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("name") != "@kb-labs/commit-entry" or manifest.get("version") != source_version:
+            raise RuntimeError("registry Commit artifact does not match the Commit source identity")
+        manifest["version"] = update_version
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        repack = ["npm", "pack", "--ignore-scripts", "--pack-destination", str(output)]
+        _output(run_with_runner(runner, repack, cwd=package_dir, env=npm_env, timeout=300), repack)
+        publish_env = dict(npm_env)
+        publish_env.update({
+            "PUBLISH_PACKAGES_DIR": str(output),
+            "PUBLISH_PARALLELISM": "1",
+            "VERDACCIO_URL": registry,
+            "KB_ERROR_CATALOG_PATH": str(workspace_resource(
+                "core", "platform", "src", "error-envelope", "errors.catalog.json")),
+        })
+        publish = ["sh", str(workspace_resource("e2e", "publisher", "publish.sh"))]
+        _output(run_with_runner(runner, publish, cwd=root, env=publish_env, timeout=300), publish)
+    return update_version
 
 
 def prepare_registry_commit_project_fixture(journey: Journey, project_root: str | Path, registry: str,
@@ -1001,6 +1052,15 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                  assert_missing_disable_preserves_lock, cases=["S-011.6"],
                  requires=("step:install Commit into the project for the route lifecycle",))
 
+    update_fixture: dict[str, str] = {}
+
+    def publish_update_fixture() -> None:
+        workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+        update_fixture["version"] = publish_commit_update_fixture(
+            registry, commit_fixture_source_version(workspace), base_env, runner)
+    journey.step("publish next-major Commit update fixture", "marketplace-fixtures", publish_update_fixture,
+                 role="lifecycle", requires=("step:install Commit into the project for the route lifecycle",))
+
     def update_commit() -> None:
         command = ["marketplace", "update", "@kb-labs/commit", "--scope", "project", "--json"]
         with invocation_context(step_id="S-012.1"):
@@ -1010,14 +1070,12 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                 or not isinstance(payload.get("installed"), list)
                 or not isinstance(payload.get("warnings"), list)):
             raise RuntimeError("marketplace update did not report a successful result")
-        installed = payload["installed"]
-        if installed and not any(
-                isinstance(item, dict) and item.get("id") == commit_package
-                and isinstance(item.get("version"), str) and item["version"]
-                for item in installed):
-            raise RuntimeError("marketplace update did not report the exact updated Commit version")
+        if not any(isinstance(item, dict) and item.get("id") == commit_package
+                   and item.get("version") == update_fixture["version"]
+                   for item in payload["installed"]):
+            raise RuntimeError(f"marketplace update did not report Commit {update_fixture['version']}")
     journey.step("update installed Commit version", "marketplace", update_commit, cases=["S-012.1"],
-                 requires=("step:install Commit into the project for the route lifecycle",))
+                 requires=("step:publish next-major Commit update fixture",))
 
     def assert_updated_pin() -> None:
         command = ["marketplace", "plugins", "list", "--scope", "project", "--json"]
