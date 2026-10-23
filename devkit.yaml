@@ -814,12 +814,16 @@ tasks:
 # ──────────────────────────────────────────────────────────────────────────────
 # CUSTOM CHECKS
 # ──────────────────────────────────────────────────────────────────────────────
-# Each entry runs for all packages that match its `categories` filter (or all
-# packages if omitted). The script runs with cwd = package directory and
-# receives the package JSON on stdin. It must exit 0 and print JSON:
-#   { ok: boolean, items: [{ target, message, fix? }] }
+# Each entry runs for packages matching its `categories` filter, or once at
+# workspace scope. External checks receive the check context on stdin and emit
+# the issue shape defined by tools/kb-devkit/internal/checks/types.go.
 
 custom_checks:
+  - name: new-tests
+    run: node scripts/checks/new-tests.mjs
+    on: [check]
+    scope: workspace
+
   - name: repository-script-tests
     run: env -u KB_DEVKIT_MODE node --test "scripts/**/*.test.mjs" "sites/web/apps/docs/scripts/**/*.test.mjs" "e2e/scripts/test-*.mjs" "e2e/delivery/scripts/**/*.test.mjs" 1>&2 && TMPDIR=/tmp env -u KB_DEVKIT_MODE python3 scripts/local-gate.test.py 1>&2
     on: [check]
