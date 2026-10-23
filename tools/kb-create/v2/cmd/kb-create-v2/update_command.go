@@ -181,7 +181,7 @@ func planUpdateWithMarketplaceLock(activeRoot string, plan contracts.ResolvedIns
 	changed, err := marketplace.PreserveInstalledComponents(activeRoot, &request)
 	if err != nil {
 		doctor := contracts.ShellCommand("kb-create", "doctor", "--platform-root", activeRoot, "--json")
-		failure := contracts.NewDiag(contracts.CodeUpdateIncompatible,
+		failure := contracts.NewDiag(contracts.CodeOperationFailed,
 			"the active marketplace installation could not be read for update staging",
 			"inspect the installation with `"+doctor+"`, then retry `"+retryCommand+"`", err)
 		return contracts.ResolvedInstallPlan{}, failure
@@ -191,7 +191,7 @@ func planUpdateWithMarketplaceLock(activeRoot string, plan contracts.ResolvedIns
 	}
 	encoded, err := json.Marshal(request)
 	if err != nil {
-		failure := contracts.NewDiag(contracts.CodeUpdateIncompatible,
+		failure := contracts.NewDiag(contracts.CodeOperationFailed,
 			"the update request with installed marketplace packages could not be encoded",
 			"retry `"+retryCommand+"` with the same request", err)
 		return contracts.ResolvedInstallPlan{}, failure
