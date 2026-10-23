@@ -124,10 +124,21 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 			fmt.Sprintf("unsupported request schema %q", r.Schema), "Set schema to `kb.create/v2` in the request JSON, then retry.", nil)
 	}
 	if source := r.MarketplaceSources; source != nil {
-		if source.RegistryURL == "" || source.SigningPublicKeyEnv == "" {
+		hasRegistry := source.RegistryURL != "" || source.SigningPublicKeyEnv != ""
+		if hasRegistry && (source.RegistryURL == "" || source.SigningPublicKeyEnv == "") {
 			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "marketplaceSources",
 				"Marketplace Registry URL and signing public-key environment variable are required together",
 				"Set --marketplace-registry-url and --marketplace-registry-public-key-env, then rerun `kb-create plan`.", nil)
+		}
+		if !hasRegistry && source.NpmURL == "" {
+			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "marketplaceSources",
+				"Marketplace source configuration must include a Registry or npm URL",
+				"Set --marketplace-registry-url with its signing-key reference or set --marketplace-npm-url, then rerun `kb-create plan`.", nil)
+		}
+		if source.RegistryTokenEnv != "" && !hasRegistry {
+			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "marketplaceSources.registryTokenEnv",
+				"Marketplace Registry token reference requires a Registry URL and signing-key reference",
+				"Set --marketplace-registry-url and --marketplace-registry-public-key-env with the token reference, then rerun `kb-create plan`.", nil)
 		}
 		for field, name := range map[string]string{"signingPublicKeyEnv": source.SigningPublicKeyEnv, "registryTokenEnv": source.RegistryTokenEnv} {
 			if name != "" && !validEnvironmentVariableName(name) {

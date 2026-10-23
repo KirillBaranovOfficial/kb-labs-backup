@@ -4,6 +4,12 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-23
+
+### Marketplace npm endpoints come from platform source configuration
+
+The npm source URL is explicit in the installed platform configuration: Release 1 declares npmjs, and `kb-create --marketplace-npm-url` replaces it for a mirror. Marketplace resolution does not inherit npmrc or `NPM_CONFIG_REGISTRY`; those settings affect package-manager operations but must not silently change the source used to resolve Marketplace identities. This keeps the URL visible in status/doctor and stable across updates. Cases: S-268.6, S-268.11.
+
 ## 2026-10-22
 
 ### Release 1 Marketplace defaults use npm until the public Registry is deployed

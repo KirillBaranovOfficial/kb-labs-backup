@@ -97,24 +97,25 @@ LAST_COMMAND_CWD: str | None = None
 
 
 def marketplace_install_flags(env: dict[str, str]) -> list[str]:
-    """Translate the journey composition's generated Registry public key into kb-create's env-ref contract."""
+    """Configure the journey npm mirror and translate Registry secrets to env references."""
     registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
     encoded_key = env.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64", "")
-    if not registry_url and not encoded_key:
-        return []
-    if not registry_url or not encoded_key:
+    if bool(registry_url) != bool(encoded_key):
         raise ValueError("journey Marketplace Registry URL and generated public key must be configured together")
-    try:
-        key = base64.b64decode(encoded_key, validate=True).decode("utf-8")
-    except (ValueError, UnicodeDecodeError) as error:
-        raise ValueError("journey Registry public key is not valid base64-encoded UTF-8") from error
-    env["KB_JOURNEY_MARKETPLACE_PUBLIC_KEY"] = key
-    store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
-                        "journey-registry-token-reference-test-value", "journey Marketplace Registry token")
-    return ["--marketplace-registry-url", registry_url,
-            "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
-            "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN",
-            "--marketplace-npm-url", REGISTRY]
+    flags = []
+    if registry_url:
+        try:
+            key = base64.b64decode(encoded_key, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as error:
+            raise ValueError("journey Registry public key is not valid base64-encoded UTF-8") from error
+        env["KB_JOURNEY_MARKETPLACE_PUBLIC_KEY"] = key
+        store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
+                            "journey-registry-token-reference-test-value", "journey Marketplace Registry token")
+        flags.extend(["--marketplace-registry-url", registry_url,
+                      "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
+                      "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN"])
+    flags.extend(["--marketplace-npm-url", REGISTRY])
+    return flags
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
 RUNNER_SCENARIOS = {
     "commit": {
