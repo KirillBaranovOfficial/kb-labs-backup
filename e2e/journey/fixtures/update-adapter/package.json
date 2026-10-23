@@ -4,8 +4,20 @@
   "description": "Journey package used to verify adapter update compatibility checks",
   "type": "module",
   "main": "./manifest.js",
-  "files": ["manifest.js", "dist/manifest.json"],
-  "kb": { "manifest": "./manifest.js", "requiredOutputs": ["./dist/manifest.json"] },
-  "peerDependencies": { "@kb-labs/sdk": "^2.120.0" },
+  "files": [
+    "manifest.js",
+    "dist/manifest.json"
+  ],
+  "kb": {
+    "adapter": {
+      "manifest": "./manifest.js"
+    },
+    "requiredOutputs": [
+      "./dist/manifest.json"
+    ]
+  },
+  "peerDependencies": {
+    "@kb-labs/sdk": "^2.120.0"
+  },
   "license": "UNLICENSED"
 }

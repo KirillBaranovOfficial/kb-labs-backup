@@ -85,6 +85,33 @@ func TestBuildPersistsMarketplaceSourceOrderAndSecretReferences(t *testing.T) {
 	}
 }
 
+// case: S-268.12
+func TestBuildPersistsNpmOnlyMarketplaceMirror(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.Request.MarketplaceSources = &contracts.MarketplaceSources{NpmURL: "http://verdaccio:4873"}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Marketplace struct {
+			Sources []map[string]string `json:"sources"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Marketplace.Sources) != 1 || config.Marketplace.Sources[0]["kind"] != "npm" || config.Marketplace.Sources[0]["url"] != "http://verdaccio:4873" {
+		t.Fatalf("npm-only mirror config = %#v, want one npm source at Verdaccio", config.Marketplace.Sources)
+	}
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate render test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	validateRenderedMarketplaceSources(t, root, output.Config)
+}
+
 func TestGoRenderedMarketplaceSourcesValidateAgainstCoreConfigSchema(t *testing.T) {
 	plan := testPlan(t.TempDir())
 	plan.Request.MarketplaceSources = &contracts.MarketplaceSources{

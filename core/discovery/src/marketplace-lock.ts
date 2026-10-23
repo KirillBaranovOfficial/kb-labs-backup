@@ -7,7 +7,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DISCOVERY_MARKETPLACE_LOCK } from './discovery-inputs.js';
-import type { MarketplaceLock, MarketplaceEntry, MarketplaceAdapterEntry, EntityKind, EntitySignature } from './types.js';
+import type { MarketplaceLock, MarketplaceEntry, MarketplaceAdapterEntry, EntityKind, EntitySignature, UserOwnedLinkPath, InstallOwnedRelativePath } from './types.js';
 import { DiagnosticCollector } from './diagnostics.js';
 
 const SCHEMA_VERSION = 'kb.marketplace/3' as const;
@@ -261,12 +261,12 @@ export function createMarketplaceEntry(opts: {
     trust: opts.trust ?? 'untrusted',
   };
   if (opts.source === 'local') {
-    return { ...metadata, source: 'local', version: opts.version, integrity: opts.integrity, link: opts.resolvedPath };
+    return { ...metadata, source: 'local', version: opts.version, integrity: opts.integrity, link: toUserOwnedLinkPath(opts.resolvedPath) };
   }
   if (opts.source === 'marketplace') {
-    return { ...metadata, source: 'marketplace', version: opts.version, integrity: opts.integrity, package: opts.package, resolvedPath: opts.resolvedPath, marketplaceSource: opts.marketplaceSource, signatureStatus: opts.signatureStatus };
+    return { ...metadata, source: 'marketplace', version: opts.version, integrity: opts.integrity, package: opts.package, resolvedPath: opts.resolvedPath === undefined ? undefined : toInstallOwnedRelativePath(opts.resolvedPath), marketplaceSource: opts.marketplaceSource, signatureStatus: opts.signatureStatus };
   }
-  return { ...metadata, source: 'platform', version: opts.version, integrity: opts.integrity, package: opts.package, resolvedPath: opts.resolvedPath };
+  return { ...metadata, source: 'platform', version: opts.version, integrity: opts.integrity, package: opts.package, resolvedPath: toInstallOwnedRelativePath(opts.resolvedPath) };
 }
 
 // ---------------------------------------------------------------------------
@@ -366,7 +366,7 @@ function pluginEntryError(id: string, raw: unknown, scope: MarketplaceLockScope)
   const unknownKey = Object.keys(entry).find((key) => !allowed.includes(key));
   if (unknownKey) {return invalidLock(`field "${unknownKey}" is not allowed for ${entry.source} entries`);}
   if (entry.source === 'local') {
-    return typeof entry.link === 'string' && isPortableRelativePath(entry.link) ? undefined : invalidLock('link must be a relative path');
+    return isUserOwnedLinkPath(entry.link) ? undefined : invalidLock('link must be a non-empty path');
   }
   if (typeof entry.version !== 'string') {return invalidLock('version must be a string');}
   if (!validIntegrity(entry.integrity)) {return invalidLock('integrity must be a valid sha256 or sha512 SRI value');}
@@ -397,7 +397,11 @@ function adapterEntryError(id: string, raw: unknown): LockValidationFailure | un
   return undefined;
 }
 
-export function isPortableRelativePath(value: string, scopeRoot?: string): boolean {
+export function isUserOwnedLinkPath(value: unknown): value is UserOwnedLinkPath {
+  return typeof value === 'string' && value.length > 0 && !value.includes('\0');
+}
+
+export function isPortableRelativePath(value: string, scopeRoot?: string): value is InstallOwnedRelativePath {
   if (!value || path.isAbsolute(value) || path.win32.isAbsolute(value) || path.win32.parse(value).root !== '') {return false;}
   const normalized = path.posix.normalize(value.replaceAll('\\', '/'));
   if (normalized.startsWith('/') || normalized === '..' || normalized.startsWith('../')) {return false;}
@@ -408,6 +412,21 @@ export function isPortableRelativePath(value: string, scopeRoot?: string): boole
     if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {return false;}
   }
   return true;
+}
+
+/** Parse an install-owned relative path and optionally assert its lock scope. */
+export function createInstallOwnedRelativePath(value: string, scopeRoot?: string): InstallOwnedRelativePath {
+  if (!isPortableRelativePath(value, scopeRoot)) {throw new MarketplaceLockValidationError('Installed lock paths must be relative and remain within their scope root.');}
+  return value;
+}
+
+function toInstallOwnedRelativePath(value: string): InstallOwnedRelativePath {
+  return createInstallOwnedRelativePath(value);
+}
+
+function toUserOwnedLinkPath(value: string): UserOwnedLinkPath {
+  if (!isUserOwnedLinkPath(value)) {throw new MarketplaceLockValidationError('Local link entries require a non-empty path.');}
+  return value;
 }
 
 function validIntegrity(value: unknown): value is string {

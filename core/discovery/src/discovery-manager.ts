@@ -22,7 +22,7 @@ import type {
 import { DiagnosticCollector } from './diagnostics.js';
 import { resolveCliHandlerPath } from './resolve-cli-handler.js';
 import { describeHandlerAccessFailure } from './handler-access.js';
-import { isPortableRelativePath, readMarketplaceLock } from './marketplace-lock.js';
+import { isPortableRelativePath, isUserOwnedLinkPath, readMarketplaceLock } from './marketplace-lock.js';
 import { resolveMarketplaceLockScope, type MarketplaceLockRoots } from './marketplace-lock-scope.js';
 import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
@@ -238,9 +238,11 @@ export class DiscoveryManager {
       const lock = await readMarketplaceLock(root, diag, lockScope, this.onInputRead);
       if (!lock) {continue;}
       for (const [id, entry] of Object.entries(lock.plugins)) {
-        const serializedPath = entry.source === 'local' ? entry.link : entry.resolvedPath;
-        if (serializedPath !== undefined && !isPortableRelativePath(serializedPath, root)) {
-          diag.error('LOCK_SCHEMA_INVALID', `Marketplace lock entry "${id}" resolves outside its scope root.`, {
+        const invalidOwnedPath = entry.source === 'local'
+          ? !isUserOwnedLinkPath(entry.link)
+          : entry.resolvedPath !== undefined && !isPortableRelativePath(entry.resolvedPath, root);
+        if (invalidOwnedPath) {
+          diag.error('LOCK_SCHEMA_INVALID', `Marketplace lock entry "${id}" has an invalid path.`, {
             pluginId: id,
             remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.',
           });

@@ -3737,6 +3737,9 @@ importers:
       '@kb-labs/qa-core':
         specifier: workspace:*
         version: link:../core
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       js-yaml:
         specifier: ^4.3.2
         version: 4.3.2
@@ -3747,9 +3750,6 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       '@kb-labs/studio-plugin-tools':
         specifier: workspace:*
         version: link:../../../studio/plugin-tools
