@@ -181,6 +181,9 @@ describe('kb adapter list', () => {
       action: { command: `kb-create start --platform-root "${platformRoot}"` },
     });
     expect(adapters.find(({ slot }) => slot === 'llm')?.mode).not.toBe('real');
+    expect(adapters.find(({ slot }) => slot === 'vectorStore')).toMatchObject({
+      mode: 'unknown', runtimeStatus: 'unknown',
+    });
   });
 
   it('shows installed platform adapters for the current project', async () => {
@@ -199,7 +202,7 @@ describe('kb adapter list', () => {
       { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs', configuredPackage: '@kb-labs/adapters-fs' },
       { slot: 'llm', mode: 'noop', implementation: 'NoOpLLM' },
       { slot: 'cache', mode: 'real', implementation: '@kb-labs/adapters-state-broker', configuredPackage: '@kb-labs/adapters-state-broker' },
-      { slot: 'vectorStore', mode: 'noop', implementation: 'unavailable' },
+      { slot: 'vectorStore', mode: 'noop', implementation: 'UnavailableVectorStore' },
       { slot: 'logs', mode: 'real', implementation: 'HybridLogReader' },
       { slot: 'documentDatabase', mode: 'real', implementation: '@kb-labs/adapters-sqlite', configuredPackage: '@kb-labs/adapters-sqlite' },
       { slot: 'kvStore', mode: 'real', implementation: '@kb-labs/adapters-sqlite/kv', configuredPackage: '@kb-labs/adapters-sqlite' },
@@ -221,6 +224,9 @@ describe('kb adapter list', () => {
     });
     expect(adapters.find(({ slot }) => slot === 'vectorStore')).toMatchObject({
       implementation: null, mode: 'unconfigured', requiresConfiguration: true, networkRequired: false,
+    });
+    expect(adapters.find(({ slot }) => slot === 'snapshotManager')).toMatchObject({
+      implementation: null, mode: 'unconfigured', requiresConfiguration: true,
     });
     expect(adapters.find(({ slot }) => slot === 'logs')).toMatchObject({
       implementation: 'HybridLogReader', mode: 'real', networkRequired: false,

@@ -26,6 +26,7 @@ from invocations import (
 from journey_resources import active_platform_root
 from project_service_path import project_service_path
 from service_steps import Journey
+from installed_fixture import layout_value
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,40 @@ def _store_studio_llm_model(model: str | None) -> None:
 
 def run_llm_provider_steps(journey: Journey, *, project_id: str, project_root: str,
                            project_b_id: str, project_b_root: str, runner=run_command) -> None:
+    platform_root = Path(journey_value("KB_JOURNEY_PLATFORM_ROOT", str(Path.home() / "kb-platform"))).resolve()
+    platform_config = platform_root / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.statePath')
+    original_config = platform_config.read_bytes() if platform_config.exists() else None
+    cleanup_error = None
+    try:
+        _run_llm_provider_steps(journey, project_id=project_id, project_root=project_root,
+                                project_b_id=project_b_id, project_b_root=project_b_root,
+                                runner=runner)
+    finally:
+        try:
+            current_config = platform_config.read_bytes() if platform_config.exists() else None
+            if current_config != original_config:
+                if original_config is None:
+                    platform_config.unlink(missing_ok=True)
+                else:
+                    platform_config.write_bytes(original_config)
+                restored = runner(
+                    ["kb-create", "restart", "--platform-root", str(platform_root), "--json"],
+                    cwd=project_root, env=os.environ.copy(), timeout=300,
+                    capture_output=True, text=True, check=False,
+                )
+                if restored.returncode != 0:
+                    detail = " ".join(f"{restored.stdout or ''} {restored.stderr or ''}".split())
+                    cleanup_error = f"platform host did not restart after restoring its LLM config: {detail}"
+                elif (platform_config.read_bytes() if platform_config.exists() else None) != original_config:
+                    cleanup_error = "platform LLM config differs from its pre-journey snapshot after restart"
+        except Exception as error:
+            cleanup_error = f"platform LLM config could not be restored: {error}"
+        journey.step("restore platform LLM journey fixture state", "gateway",
+                     lambda: cleanup_error, role="lifecycle")
+
+
+def _run_llm_provider_steps(journey: Journey, *, project_id: str, project_root: str,
+                            project_b_id: str, project_b_root: str, runner=run_command) -> None:
     """Exercise and prove both configured provider protocols with the fixture plugin."""
     mock_base = journey_value("KB_JOURNEY_LLM_MOCK_BASE_URL", "http://mock-llm:8317")
     def cli(command: list[str], step_id: str, command_runner=runner, *, cwd: str | None = None):
@@ -188,7 +223,9 @@ def run_llm_provider_steps(journey: Journey, *, project_id: str, project_root: s
         base_result = {}
         base_result_error = str(error)
     platform_root = Path(journey_value("KB_JOURNEY_PLATFORM_ROOT", str(Path.home() / "kb-platform"))).resolve()
-    expected_platform_config = str(active_platform_root(platform_root) / ".kb" / "kb.config.jsonc")
+    expected_platform_config = str(
+        platform_root / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.statePath')
+    )
     scope_ok = (base_result_error is None and base_result.get("file") == expected_platform_config
                 and project_config_before == (project_config.read_bytes() if project_config.is_file() else None)
                 and base_result.get("nextCommand") == f"kb-create restart --platform-root {json.dumps(str(platform_root))}")

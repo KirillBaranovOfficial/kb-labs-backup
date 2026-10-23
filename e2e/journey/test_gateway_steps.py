@@ -91,6 +91,58 @@ class GatewayStepTests(unittest.TestCase):
         self.assertEqual(stream_status, 200)
         self.assertEqual(stream_failure.stream_error, failure_fixture["error"])
 
+    def test_llm_provider_fixture_restores_platform_config_after_success(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_PROJECT_ROOT": "/fixture/project-a",
+            "KB_JOURNEY_PROJECT_B_ROOT": "/fixture/project-b",
+            "KB_JOURNEY_PROJECT_ID": "project-a",
+            "KB_JOURNEY_PROJECT_B_ID": "project-b",
+            "KB_JOURNEY_LLM_MOCK_BASE_URL": "http://mock-llm:8317",
+            "OPENAI_API_KEY": "fake-openai-key",
+        }, clear=False):
+            config_path = self.platform / "state" / "kb.config.jsonc"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            original = b'{"platform":{"adapters":{"llm":"@kb-labs/adapters-openai"}}}\n'
+            config_path.write_bytes(original)
+            calls = []
+
+            def mutating_cli(command, **_kwargs):
+                calls.append(command)
+                if command[:3] == ["kb", "config", "set"]:
+                    config = json.loads(config_path.read_text())
+                    path = command[5].split(".")
+                    value = command[6]
+                    target = config
+                    for key in path[:-1]:
+                        target = target.setdefault(key, {})
+                    target[path[-1]] = value
+                    config_path.write_text(json.dumps(config) + "\n")
+                elif command[:3] == ["kb", "marketplace", "install"]:
+                    return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
+                elif command[:2] == ["kb-create", "restart"]:
+                    return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
+                elif command[1:3] == ["config", "get"]:
+                    return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{"value":"${OPENAI_API_KEY}"}}', "")
+                elif command[1:4] == ["journey", "llm", "complete"]:
+                    marker = "VIBEPROXY_MOCK_RESPONSE" if "provider-vibeproxy" in " ".join(command) else "OPENAI_MOCK_RESPONSE"
+                    stop_reason = "end_turn" if marker == "VIBEPROXY_MOCK_RESPONSE" else None
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"result": {
+                        "content": marker, "model": "journey-mock-model", "stopReason": stop_reason,
+                    }}}), "")
+                return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
+
+            journey = Journey("local", "provider-config-restore")
+            run_llm_provider_steps(journey, project_id="project-a", project_root="/fixture/project-a",
+                                   project_b_id="project-b", project_b_root="/fixture/project-b",
+                                   runner=mutating_cli)
+
+            self.assertEqual(config_path.read_bytes(), original)
+            self.assertTrue(any(call[:2] == ["kb-create", "restart"] for call in calls))
+            cleanup = next(step for step in journey.steps
+                           if step.name == "restore platform LLM journey fixture state")
+            self.assertEqual(cleanup.status, "PASS", cleanup.message)
+
     def test_stream_failure_claim_requires_typed_error_and_healthy_gateway(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
@@ -175,7 +227,7 @@ class GatewayStepTests(unittest.TestCase):
                     output = json.dumps({
                         "ok": True,
                         "data": {
-                            "file": str((self.platform / "current").resolve() / ".kb/kb.config.jsonc"),
+                            "file": str(self.platform / "state/kb.config.jsonc"),
                             "nextCommand": f"kb-create restart --platform-root {json.dumps(platform_root)}",
                         },
                     })

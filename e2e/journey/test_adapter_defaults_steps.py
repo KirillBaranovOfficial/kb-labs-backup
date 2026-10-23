@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import hashlib
 import io
 import subprocess
@@ -353,14 +354,14 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         result = {"ok": True, "data": {"operation": "doctor", "status": "unhealthy",
                             "findings": [], "platform": {"checks": [
                             {"id": "adapters", "detail": "Adapter status cannot be checked while the host is stopped.",
-                             "hint": f'Run `kb-create start --platform-root "{install_root}"`.'}
+                             "hint": f'Run `{shlex.join(["kb-create", "start", "--platform-root", str(install_root)])}`.'}
                         ]}}}
                         if args[-1] == "--json":
                             result["data"]["findings"] = [{"code": "KB_ADAPTER_CREDENTIALS_MISSING", "component": "openai",
                                 "path": "/platform/adapterOptions/llm/apiKey", "hint": "set OPENAI_API_KEY"}]
                             return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
                         return subprocess.CompletedProcess(command, 0,
-                            f'Finding KB_ADAPTER_CREDENTIALS_MISSING: package=openai path=/platform/adapterOptions/llm/apiKey\nAdapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `kb-create start --platform-root "{install_root}"`.\n', "")
+                            f'Finding KB_ADAPTER_CREDENTIALS_MISSING: package=openai path=/platform/adapterOptions/llm/apiKey\nAdapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `{shlex.join(["kb-create", "start", "--platform-root", str(install_root)])}`.\n', "")
                     analytics_provider = config(platform_root).get("platform", {}).get("adapters", {}).get(
                         "analytics", "@kb-labs/adapters-analytics-sqlite")
                     statuses = [
