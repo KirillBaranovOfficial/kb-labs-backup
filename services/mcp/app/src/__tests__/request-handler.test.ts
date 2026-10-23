@@ -11,9 +11,9 @@ import type { AuthContext } from '@kb-labs/gateway-contracts';
 import type { McpTool } from '../mcp/tool-builder.js';
 import { callOutput } from '../mcp/output-capture.js';
 import { uiOutputContractCases, renderUIOutputText } from '@kb-labs/plugin-contracts';
-import resultSchema from '../../../../../contracts/ux-result/machine-result.schema.json';
-import successFixture from '../../../../../contracts/ux-result/fixtures/valid/success.json';
-import failureFixture from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
+import resultSchema from '../../../../../core/platform/contracts/ux-result/machine-result.schema.json';
+import successFixture from '../../../../../core/platform/contracts/ux-result/fixtures/valid/success.json';
+import failureFixture from '../../../../../core/platform/contracts/ux-result/fixtures/valid/failure.json';
 import { filterTools } from '../mcp/tool-builder.js';
 
 // Mock the command runtime boundary so executeToolCall exercises the real

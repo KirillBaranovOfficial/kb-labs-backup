@@ -48,7 +48,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             root = Path(__file__).resolve().parents[2]
             paths = {
                 ("ux-result", "machine-result.schema.json"):
-                    root / "contracts/ux-result/machine-result.schema.json",
+                    root / "core/platform/contracts/ux-result/machine-result.schema.json",
                 ("error-envelope.schema.json",):
                     root / "core/platform/src/error-envelope/error-envelope.schema.json",
             }
