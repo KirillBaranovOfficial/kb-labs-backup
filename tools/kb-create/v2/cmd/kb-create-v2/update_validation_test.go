@@ -6,11 +6,39 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/versionroot"
 )
+
+func TestMarketplaceLockReadFailureIsNotReportedAsComponentIncompatibility(t *testing.T) {
+	root := t.TempDir()
+	kbDir := filepath.Join(root, ".kb")
+	if err := os.MkdirAll(kbDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(kbDir, "marketplace.lock"), []byte("not-json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{PlatformRoot: root}}
+	_, failure := planUpdateWithMarketplaceLock(root, plan, catalog.Catalog{}, "kb-create update")
+	if failure == nil {
+		t.Fatal("invalid marketplace lock unexpectedly accepted")
+	}
+	if failure.Code != contracts.CodeOperationFailed {
+		t.Fatalf("marketplace lock failure code = %q, want %q", failure.Code, contracts.CodeOperationFailed)
+	}
+	if _, err := diag.ToEnvelope(failure); err != nil {
+		t.Fatalf("marketplace lock failure violated its diagnostic contract: %v", err)
+	}
+	if got, want := diag.ExitCode(failure).Code(), 1; got != want {
+		t.Fatalf("process exit code = %d, want %d", got, want)
+	}
+}
 
 // case: S-023.6
 func TestEqualVersionUpdateReturnsBeforeSnapshotWritesOrLifecycle(t *testing.T) {
