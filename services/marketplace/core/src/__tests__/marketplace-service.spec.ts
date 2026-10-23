@@ -12,7 +12,7 @@ import * as crypto from 'node:crypto';
 import type { PackageSource, MarketplaceSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
 import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
 import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
-import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
+import { readMarketplaceLock, DiagnosticCollector, createMarketplaceEntry } from '@kb-labs/core-discovery';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
 import { MarketplaceService, mergeScopedEntries, type MarketplaceServiceOptions } from '../marketplace-service.js';
 
@@ -199,7 +199,7 @@ describe('MarketplaceService', () => {
     it('resolves canonical plugin identities through the Registry before npm', async () => {
       const projectRoot = path.join(tmpDir, 'project');
       await fs.mkdir(projectRoot, { recursive: true });
-      const { dir, integrity } = await createPluginDir(tmpDir, 'commit-plugin', '@kb-labs/commit');
+      const { dir, integrity } = await createPluginDir(projectRoot, 'commit-plugin', '@kb-labs/commit');
       const npmSource: PackageSource = {
         async resolve() { throw new Error('npm must not resolve a Registry identity'); },
         async install() { throw new Error('npm must not install a Registry identity'); },
@@ -311,11 +311,11 @@ describe('MarketplaceService', () => {
     // case: S-220.6
     it('refuses a republished installed version whose integrity changed', async () => {
       const packageId = '@kb-labs/pinned-plugin';
-      const { dir, integrity } = await createPluginDir(tmpDir, 'pinned-plugin', packageId, '1.0.0');
+      const projectRoot = path.join(tmpDir, 'project');
+      const { dir, integrity } = await createPluginDir(projectRoot, 'pinned-plugin', packageId, '1.0.0');
       const info = { dir, version: '1.0.0', integrity };
       const source = createMockSource(new Map([[packageId, info]]));
       const install = vi.spyOn(source, 'install');
-      const projectRoot = path.join(tmpDir, 'project');
       await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
       await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
       const service = makeMarketplaceService({ platformRoot: tmpDir, source });
@@ -343,10 +343,10 @@ describe('MarketplaceService', () => {
     // case: S-220.9
     it('updates the pin when registry latest is higher than the installed version', async () => {
       const packageId = '@kb-labs/update-plugin';
-      const { dir, integrity } = await createPluginDir(tmpDir, 'update-plugin', packageId, '1.4.0');
+      const projectRoot = path.join(tmpDir, 'project');
+      const { dir, integrity } = await createPluginDir(projectRoot, 'update-plugin', packageId, '1.4.0');
       const info = { dir, version: '1.4.0', integrity };
       const source = createMockSource(new Map([[packageId, info]]));
-      const projectRoot = path.join(tmpDir, 'project');
       await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
       await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
       const service = makeMarketplaceService({ platformRoot: tmpDir, source });
@@ -362,11 +362,11 @@ describe('MarketplaceService', () => {
 
     async function expectUpdateVersionError(installedVersion: string, requestedVersion: string): Promise<void> {
       const packageId = '@kb-labs/update-plugin';
-      const { dir, integrity } = await createPluginDir(tmpDir, 'update-plugin', packageId, installedVersion);
+      const projectRoot = path.join(tmpDir, `project-${requestedVersion}`);
+      const { dir, integrity } = await createPluginDir(projectRoot, 'update-plugin', packageId, installedVersion);
       const info = { dir, version: installedVersion, integrity };
       const source = createMockSource(new Map([[packageId, info]]));
       const install = vi.spyOn(source, 'install');
-      const projectRoot = path.join(tmpDir, 'project');
       await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
       await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
       const service = makeMarketplaceService({ platformRoot: tmpDir, source });
@@ -1250,16 +1250,18 @@ describe('MarketplaceService', () => {
 
 function makeEntry(id: string, version: string): MarketplaceEntryWithId {
   return {
+    ...createMarketplaceEntry({
+      version,
+      resolvedPath: `./node_modules/${id}`,
+      source: 'marketplace',
+      package: id,
+      primaryKind: 'plugin',
+      provides: ['plugin'],
+      integrity: 'sha256-test',
+      marketplaceSource: 'registry',
+      signatureStatus: 'verified',
+    }),
     id,
-    version,
-    resolvedPath: `./node_modules/${id}`,
-    source: 'marketplace',
-    package: id,
-    primaryKind: 'plugin',
-    provides: ['plugin'],
-    integrity: 'sha256-test',
-    marketplaceSource: 'registry',
-    signatureStatus: 'verified',
   };
 }
 
