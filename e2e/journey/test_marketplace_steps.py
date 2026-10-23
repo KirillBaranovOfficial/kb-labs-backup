@@ -641,8 +641,10 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:2] == ["marketplace", "install"]:
                     if args[2].count("@") > 1:
                         package_id, version = args[2].rsplit("@", 1)
+                        version_is_pinned = True
                     else:
                         package_id, version = args[2], registry_version
+                        version_is_pinned = False
                     entity = _release_entity(package_id)
                     if entity is None:
                         error = {
@@ -656,7 +658,8 @@ class MarketplaceStepTests(unittest.TestCase):
                             f"{error['message']} [{error['code']}]\nHint: {error['hint']}\n", "")
                     plugin_id = entity["id"]
                     package_name = entity["package"]
-                    version = published_versions.get(package_name, version)
+                    if not version_is_pinned:
+                        version = published_versions.get(package_name, version)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
                     lock_root = active_platform if platform else cwd_path
                     value = lock(lock_root, platform=platform)
@@ -866,9 +869,11 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(actual, expected, [(step.name, step.status, step.message) for step in journey.steps])
             self.assertEqual(commit_case_hook_calls, [True])
             self.assertFalse(any("hub" in call for call in calls))
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit", "--json"), calls)
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit",
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1",
                            "--scope", "platform", "--json"), calls)
+            self.assertIn(("npm", "view", "@kb-labs/review-entry", "version", "--json",
+                           "--registry=http://registry.test"), calls)
             self.assertIn(("kb", "marketplace", "uninstall", "@kb-labs/commit",
                            "--scope", "platform", "--json"), calls)
             self.assertEqual([call[0] for call in http_calls], [
