@@ -326,18 +326,18 @@ func TestPortInUse(t *testing.T) {
 		if wire.Code != "KB_INSTALL_PORT_IN_USE" || wire.Details["port"] != fmt.Sprint(f.port) {
 			t.Fatalf("actual kb-create wire diagnostic = %+v, want details.port=%d", wire, f.port)
 		}
-		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply")) ||
+		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply", "--platform-root", f.runner.PlatformRoot)) ||
 			!strings.Contains(typed.Hint, typed.Meta["pid"].(string)) || !strings.Contains(typed.Hint, typed.Meta["command"].(string)) {
 			t.Fatalf("port hint omits the owning process or attempted command: %#v", err)
 		}
-		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply", "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
+		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply", "--platform-root", f.runner.PlatformRoot, "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
 			t.Fatalf("port hint omits explicit Gateway recovery: %#v", err)
 		}
 	}
 	planFailure := CheckPorts(plan, "plan")
 	var planDiagnostic *diag.Diag
 	if !errors.As(planFailure, &planDiagnostic) || planDiagnostic.Code != "KB_INSTALL_PORT_IN_USE" ||
-		!strings.Contains(planDiagnostic.Hint, contracts.ShellCommand("kb-create", "plan", "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
+		!strings.Contains(planDiagnostic.Hint, contracts.ShellCommand("kb-create", "plan", "--platform-root", f.runner.PlatformRoot, "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
 		t.Fatalf("plan port diagnostic does not suggest a Gateway address: %#v", planFailure)
 	}
 	_, err = startProcessForTest(t, f.runner, context.Background())
@@ -1019,8 +1019,16 @@ func TestNewRunnerRejectsAnInstallationWithoutAValidHost(t *testing.T) {
 			root := t.TempDir()
 			writeReceipt(t, root, spec)
 			_, err := NewRunner(root)
-			if code := launcherCode(t, err); code != "KB_HOST_SPEC_INVALID" {
+			if code := launcherCode(t, err); code != contracts.CodeHostSpecInvalid {
 				t.Fatalf("code %s", code)
+			}
+			var failure *diag.Diag
+			if !errors.As(err, &failure) {
+				t.Fatalf("invalid host error is not structured: %v", err)
+			}
+			wire, marshalErr := diag.ToEnvelope(failure)
+			if marshalErr != nil || wire.Code != contracts.CodeHostSpecInvalid {
+				t.Fatalf("invalid host diagnostic cannot be serialized: envelope=%+v error=%v", wire, marshalErr)
 			}
 		})
 	}
