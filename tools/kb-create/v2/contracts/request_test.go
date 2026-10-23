@@ -57,6 +57,19 @@ func TestInstallRequestNormalizeDoesNotRequireSelectedProjectToExist(t *testing.
 	}
 }
 
+func TestInstallRequestNormalizeAcceptsNpmOnlyMarketplaceMirror(t *testing.T) {
+	request, err := (InstallRequest{
+		PlatformRoot:       "/tmp/platform",
+		MarketplaceSources: &MarketplaceSources{NpmURL: "http://verdaccio:4873"},
+	}).Normalize()
+	if err != nil {
+		t.Fatalf("Normalize() rejected an npm-only Marketplace mirror: %v", err)
+	}
+	if request.MarketplaceSources == nil || request.MarketplaceSources.NpmURL != "http://verdaccio:4873" {
+		t.Fatalf("MarketplaceSources = %#v, want npm mirror retained", request.MarketplaceSources)
+	}
+}
+
 // case: S-187.7
 func TestValidateProjectSelectionRejectsMissingProjectBeforePlatformMutation(t *testing.T) {
 	platformRoot := filepath.Join(t.TempDir(), "platform")

@@ -80,3 +80,32 @@ func TestMarketplaceSourceStatusReadsGoRenderedSourceShape(t *testing.T) {
 		}
 	}
 }
+
+// case: S-268.12
+func TestMarketplaceNpmOnlySourceStatusReadsGoRenderedMirror(t *testing.T) {
+	root := t.TempDir()
+	plan := contracts.ResolvedInstallPlan{
+		Schema:       contracts.ResolvedPlanSchema,
+		Request:      contracts.InstallRequest{MarketplaceSources: &contracts.MarketplaceSources{NpmURL: "http://verdaccio:4873"}},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.120.1", Services: []contracts.Service{{ID: "gateway"}}},
+	}
+	output, err := render.Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, ".kb", render.ConfigFilename)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, output.Config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sources, err := marketplaceSourceStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 || sources[0]["kind"] != "npm" || sources[0]["url"] != "http://verdaccio:4873" {
+		t.Fatalf("Marketplace source status = %#v, want the rendered npm mirror", sources)
+	}
+}

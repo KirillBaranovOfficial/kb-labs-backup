@@ -6,7 +6,7 @@ import { noopTraceContext, noopUI } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { ADAPTER_DEFAULTS } from '@kb-labs/core-platform';
 import { createProjectRegistry, resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
-import { writeMarketplaceLock } from '@kb-labs/core-discovery';
+import { writeMarketplaceLock, createInstallOwnedRelativePath } from '@kb-labs/core-discovery';
 import { adapterBind } from '../../commands/system/adapter/bind.js';
 import { adapterList } from '../../commands/system/adapter/list.js';
 import { adapterUnbind } from '../../commands/system/adapter/unbind.js';
@@ -26,6 +26,10 @@ vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => {
 let sandbox: string;
 let platformRoot: string;
 let projectRoot: string;
+
+function installPath(value: string) {
+  return createInstallOwnedRelativePath(value, platformRoot);
+}
 
 function context(cwd = projectRoot) {
   const outputs: unknown[] = [];
@@ -273,7 +277,7 @@ describe('kb adapter list', () => {
       plugins: {},
       adapters: {
         'fs-storage': {
-          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-fs',
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: installPath('node_modules/@kb-labs/adapters-fs'),
           enabled: true, source: 'platform',
         },
       },
@@ -309,7 +313,7 @@ describe('kb adapter list', () => {
       plugins: {},
       adapters: {
         openai: {
-          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-openai',
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: installPath('node_modules/@kb-labs/adapters-openai'),
           enabled: true, source: 'platform',
         },
       },
@@ -342,7 +346,7 @@ describe('platform adapter commands from unregistered directories', () => {
       schema: 'kb.marketplace/3', plugins: {},
       adapters: {
         '@kb-labs/adapters-fs': {
-          version: '2.120.1', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-fs',
+          version: '2.120.1', integrity: 'sha256-fixture', resolvedPath: installPath('node_modules/@kb-labs/adapters-fs'),
           enabled: true, source: 'platform',
         },
       },
@@ -381,7 +385,7 @@ describe('kb adapter bind', () => {
       plugins: {},
       adapters: {
         '@kb-labs/adapters-memory-cache': {
-          version: '1.2.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-memory-cache',
+          version: '1.2.0', integrity: 'sha256-fixture', resolvedPath: installPath('node_modules/@kb-labs/adapters-memory-cache'),
           enabled: true, source: 'platform',
         },
       },
@@ -408,7 +412,7 @@ describe('kb adapter bind', () => {
       schema: 'kb.marketplace/3', plugins: {},
       adapters: {
         '@kb-labs/adapters-analytics-file': {
-          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-analytics-file',
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: installPath('node_modules/@kb-labs/adapters-analytics-file'),
           enabled: true, source: 'platform',
         },
       },
@@ -443,7 +447,7 @@ describe('kb adapter bind', () => {
       plugins: {},
       adapters: {
         '@kb-labs/adapters-qdrant': {
-          version: '1.2.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-qdrant',
+          version: '1.2.0', integrity: 'sha256-fixture', resolvedPath: installPath('node_modules/@kb-labs/adapters-qdrant'),
           enabled: true, source: 'platform',
         },
       },
@@ -466,7 +470,7 @@ describe('kb adapter bind', () => {
       schema: 'kb.marketplace/3', plugins: {},
       adapters: {
         '@kb-labs/adapters-vibeproxy': {
-          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-vibeproxy',
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: installPath('node_modules/@kb-labs/adapters-vibeproxy'),
           enabled: true, source: 'platform',
         },
       },
@@ -491,7 +495,7 @@ describe('kb adapter bind', () => {
       schema: 'kb.marketplace/3', plugins: {},
       adapters: {
         '@kb-labs/adapters-storage-fixture': {
-          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-storage-fixture',
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: installPath('node_modules/@kb-labs/adapters-storage-fixture'),
           enabled: true, source: 'platform',
         },
       },
@@ -563,7 +567,7 @@ describe('kb adapter bind', () => {
       plugins: {},
       adapters: {
         '@kb-labs/adapters-memory-cache': {
-          version: '1.2.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-memory-cache',
+          version: '1.2.0', integrity: 'sha256-fixture', resolvedPath: installPath('node_modules/@kb-labs/adapters-memory-cache'),
           enabled: true, source: 'platform',
         },
       },

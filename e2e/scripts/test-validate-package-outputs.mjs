@@ -293,3 +293,12 @@ test('devkit pack-extra build task emits the package-declared adapter manifest',
   assert.equal(output.id, 'e2e-llm-deterministic');
   assert.equal(output.implements, 'ILLM');
 });
+
+test('every packed journey fixture is classified by the product plugin or adapter loader', async () => {
+  const extras = JSON.parse(readFileSync(new URL('./pack-extras.json', import.meta.url), 'utf8'));
+  for (const { directory } of extras) {
+    const result = await inspectPackedFixture(new URL(`../../${directory}/`, import.meta.url).pathname.replace(/\/$/, ''));
+    assert.ok(['plugin', 'adapter'].includes(result.kind), `${directory}: ${result.kind} ${result.failures.join('; ')}`);
+    assert.deepEqual(result.failures, [], directory);
+  }
+});

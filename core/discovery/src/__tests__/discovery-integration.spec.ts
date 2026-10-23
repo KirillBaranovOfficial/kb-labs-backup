@@ -148,6 +148,25 @@ describe('Discovery Integration: install → discover → available', () => {
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'LOCK_SCHEMA_INVALID' }));
   });
 
+  // case: S-268.10
+  it('discovers a local link at its recorded absolute path outside the scope root', async () => {
+    const projectRoot = path.join(tmpDir, 'projects', 'app');
+    const linked = await installPlugin({ name: 'developer-plugin', id: '@vendor/developer-plugin', version: '1.0.0' });
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(projectRoot, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@vendor/developer-plugin': { link: linked.dir, enabled: true, source: 'local' },
+      },
+    }));
+
+    const result = await new DiscoveryManager({ root: projectRoot, scope: 'project', workspace: false }).discover();
+
+    expect(result.plugins.map(plugin => plugin.id)).toContain('@vendor/developer-plugin');
+    expect(result.manifests.has('@vendor/developer-plugin')).toBe(true);
+    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'LOCK_SCHEMA_INVALID' }));
+  });
+
   // case: S-203.25
   it('fails closed for marketplace plugins when policy config is broken and retains local sources', async () => {
     const marketplace = await installPlugin({ name: 'marketplace', id: '@vendor/marketplace', version: '1.0.0' });

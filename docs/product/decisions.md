@@ -16,6 +16,10 @@ diagnostic names that root and PID after process identity verification. A
 stopped root retains its allocation, and stale or malformed root indexes remain
 diagnosed by the index owner. Cases: PC-001.10, PC-001.12, PC-001.16, S-025.8.
 
+### Marketplace npm endpoints come from platform source configuration
+
+The npm source URL is explicit in the installed platform configuration: Release 1 declares npmjs, and `kb-create --marketplace-npm-url` replaces it for a mirror. Marketplace resolution does not inherit npmrc or `NPM_CONFIG_REGISTRY`; those settings affect package-manager operations but must not silently change the source used to resolve Marketplace identities. This keeps the URL visible in status/doctor and stable across updates. Cases: S-268.6, S-268.12.
+
 ## 2026-10-22
 
 ### Release 1 is local-only
