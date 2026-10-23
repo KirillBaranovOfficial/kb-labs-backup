@@ -6,7 +6,6 @@ export default defineConfig({
   tsconfig: 'tsconfig.build.json',
   entry: [
     'src/index.ts',
-    'src/manifest.ts',
     'src/commands/scaffold.ts',
     'src/commands/doctor.ts',
   ],

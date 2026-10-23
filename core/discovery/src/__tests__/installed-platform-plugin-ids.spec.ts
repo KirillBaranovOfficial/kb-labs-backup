@@ -18,8 +18,8 @@ describe('installed platform plugin identities', () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-discovery-installed-plugin-ids-'));
     const platformRoot = path.join(tempRoot, 'platform');
     const projectRoot = path.join(tempRoot, 'project');
-    const sourceRoot = path.join(workspaceRoot, 'plugins/scaffold/entry');
-    const installedPluginRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'scaffold');
+    const sourceRoot = path.join(workspaceRoot, 'plugins/commit/entry');
+    const installedPluginRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'commit-entry');
     await Promise.all([
       fs.mkdir(path.join(platformRoot, '.kb'), { recursive: true }),
       fs.mkdir(projectRoot, { recursive: true }),
@@ -28,7 +28,7 @@ describe('installed platform plugin identities', () => {
     await fs.cp(sourceRoot, installedPluginRoot, { recursive: true });
 
     const pluginPackages = [
-      { id: '@kb-labs/scaffold', package: '@kb-labs/scaffold', root: installedPluginRoot },
+      { id: '@kb-labs/commit', package: '@kb-labs/commit-entry', root: installedPluginRoot },
     ];
     const plugins = Object.fromEntries(pluginPackages.map(({ id, package: packageName, root }) => [id, {
       version: '2.120.1',

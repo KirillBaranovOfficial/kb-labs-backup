@@ -7,7 +7,7 @@ vi.mock('@kb-labs/scaffold-core', () => ({
 }));
 
 import { scanRoot } from '@kb-labs/scaffold-core';
-import doctorCommand from '../../commands/doctor.js';
+import { scaffoldDoctor } from '../../commands/doctor.js';
 
 const mockedScanRoot = vi.mocked(scanRoot);
 
@@ -24,9 +24,9 @@ describe('scaffold:doctor', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const result = await doctorCommand.execute(ctx, {});
+    const exitCode = await scaffoldDoctor.run(ctx, [], {});
 
-    expect(result).toMatchObject({ packagesScanned: 3, findings: [] });
+    expect(exitCode).toBe(0);
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('3');
   });
@@ -42,9 +42,10 @@ describe('scaffold:doctor', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const result = await doctorCommand.execute(ctx, { json: true });
+    const exitCode = await scaffoldDoctor.run(ctx, [], { json: true });
 
-    expect(result).toMatchObject({ packagesScanned: 2, findings });
+    expect(exitCode).toBe(0);
+    expect(captured.json).toEqual([{ ok: true, data: { root: expect.any(String), packagesScanned: 2, findings } }]);
   });
 
   // case: S-203.1
@@ -56,18 +57,21 @@ describe('scaffold:doctor', () => {
       packagesScanned: 1,
     });
 
-    const jsonResult = await doctorCommand.execute(createMockContext({ ui: createCapturedUI().ui }), { json: true });
-    const result = await doctorCommand.execute(createMockContext({ ui: createCapturedUI().ui }), {});
+    const jsonUI = createCapturedUI();
+    const jsonExitCode = await scaffoldDoctor.run(createMockContext({ ui: jsonUI.ui }), [], { json: true });
+    const humanUI = createCapturedUI();
+    const exitCode = await scaffoldDoctor.run(createMockContext({ ui: humanUI.ui }), [], {});
 
-    if (!('ok' in result) || result.ok) { throw new Error('expected scaffold doctor findings to fail'); }
-    expect(jsonResult).toEqual(result);
-    expect(result.error.message).toContain('1 error(s) found');
-    expect(result.error.hint).toContain('error.diagnostics');
-    expect(result.error.diagnostics).toEqual([{
-      code: 'KB_SCAFFOLD_DOCTOR_FINDING',
-      severity: 'error',
-      message: 'bad-pkg: missing manifest',
-    }]);
+    expect(jsonExitCode).not.toBe(0);
+    expect(exitCode).not.toBe(0);
+    expect(jsonUI.captured.json[0]).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        diagnostics: [{ code: 'KB_SCAFFOLD_DOCTOR_FINDING', message: 'bad-pkg: missing manifest' }],
+      },
+    });
+    expect(humanUI.captured.errors.join('\n')).toContain('1 error(s) found');
   });
 
   it('SD-04: --path is forwarded to scanRoot', async () => {
@@ -78,7 +82,7 @@ describe('scaffold:doctor', () => {
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await doctorCommand.execute(ctx, { path: '/custom/path' });
+    await scaffoldDoctor.run(ctx, [], { path: '/custom/path' });
 
     expect(mockedScanRoot).toHaveBeenCalledWith(
       expect.stringContaining('/custom/path'),
@@ -86,16 +90,15 @@ describe('scaffold:doctor', () => {
     );
   });
 
-  it('SD-05: scanRoot throws — exitCode 1, error captured', async () => {
+  it('SD-05: scanRoot throws — command boundary reports a sanitized error', async () => {
     mockedScanRoot.mockRejectedValue(new Error('ENOENT: no such file or directory'));
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const result = await doctorCommand.execute(ctx, {});
+    const exitCode = await scaffoldDoctor.run(ctx, [], { json: true });
 
-    if (!('ok' in result) || result.ok) { throw new Error('expected scan failure to fail scaffold doctor'); }
-    expect(result.error.message).toBe('An unexpected error occurred.');
-    expect(result.error.message).not.toContain('ENOENT');
-    expect(result.error.hint).toBeTruthy();
+    expect(exitCode).not.toBe(0);
+    expect(captured.json[0]).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED' } });
+    expect(JSON.stringify(captured.json)).not.toContain('ENOENT');
   });
 });

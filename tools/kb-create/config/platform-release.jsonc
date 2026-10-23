@@ -76,6 +76,7 @@
               "platformRequires": ["llm"],
               "platformMembers": [
                 "@kb-labs/cli-bin",
+                "@kb-labs/scaffold",
                 "@kb-labs/core-workspace",
                 "@kb-labs/host-agent-app",
                 "@kb-labs/workflow-entry"

@@ -114,6 +114,7 @@ workspace:
         - "core/*"
         - "sdk/*"
         - "cli/*"
+        - "cli/*/*"
         - "shared/*"
         - "plugins/*/*"
         - "services/*/*"

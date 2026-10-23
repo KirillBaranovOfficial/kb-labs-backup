@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
+import { createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
 
 // Mock scaffold-core before importing the command
 vi.mock('@kb-labs/scaffold-core', () => ({
@@ -30,7 +30,7 @@ import {
 } from '@kb-labs/scaffold-core';
 import type { BuildResult, TargetState, ResolveResult } from '@kb-labs/scaffold-core';
 import type { EntityDefinition } from '@kb-labs/scaffold-contracts';
-import scaffoldCommand from '../../commands/scaffold.js';
+import { scaffoldRun } from '../../commands/scaffold.js';
 
 const mockedListEntities = vi.mocked(listEntities);
 const mockedLoadEntity = vi.mocked(loadEntity);
@@ -82,89 +82,80 @@ beforeEach(() => {
 });
 
 describe('scaffold:run', () => {
-  it('SS-01: missing entity name — exitCode 1, write or info called', async () => {
+  it('SS-01: missing entity name — exits with an error and does not write files', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
     // No argv[0] provided
-    const result = await scaffoldCommand.execute(
-      ctx,
-      mockCLIInput({ flags: {} }),
-    );
+    const exitCode = await scaffoldRun.run(ctx, [], { json: true });
 
-    if (!('ok' in result) || result.ok) { throw new Error('expected missing scaffold entity to fail'); }
-    expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
-    expect(result.error.hint).toContain('kb scaffold run --help');
-  });
-
-  it('SS-02: --dry-run — writeFiles is not called, exitCode 0', async () => {
-    const { ui } = createCapturedUI();
-    const ctx = createMockContext({ ui });
-
-    const result = await scaffoldCommand.execute(
-      ctx,
-      mockCLIInput({ flags: { 'dry-run': true }, argv: ['plugin', 'my-plugin'] }),
-    );
-
-    expect(result).toMatchObject({ outRoot: MOCK_BUILD_RESULT.outRoot, files: MOCK_BUILD_RESULT.files.length });
+    expect(exitCode).not.toBe(0);
+    expect(captured.json[0]).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
     expect(mockedWriteFiles).not.toHaveBeenCalled();
   });
 
-  it('SS-03: loadEntity throws — command propagates the error', async () => {
-    // loadEntity is not wrapped in try/catch in scaffold.ts — the error propagates
-    mockedLoadEntity.mockRejectedValue(new Error('Entity file not found'));
-
-    const { ui } = createCapturedUI();
+  it('SS-02: --dry-run — writeFiles is not called, exitCode 0', async () => {
+    const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    await expect(
-      scaffoldCommand.execute(
-        ctx,
-        mockCLIInput({ flags: {}, argv: ['plugin', 'my-plugin'] }),
-      ),
-    ).rejects.toThrow('Entity file not found');
+    const exitCode = await scaffoldRun.run(ctx, ['plugin', 'my-plugin'], { 'dry-run': true, json: true });
+
+    expect(exitCode).toBe(0);
+    expect(captured.json[0]).toMatchObject({
+      ok: true,
+      data: { outRoot: MOCK_BUILD_RESULT.outRoot, files: MOCK_BUILD_RESULT.files.length },
+    });
+    expect(mockedWriteFiles).not.toHaveBeenCalled();
+  });
+
+  it('SS-03: loadEntity throws — command boundary reports a sanitized error', async () => {
+    mockedLoadEntity.mockRejectedValue(new Error('Entity file not found'));
+
+    const { ui, captured } = createCapturedUI();
+    const ctx = createMockContext({ ui });
+
+    const exitCode = await scaffoldRun.run(ctx, ['plugin', 'my-plugin'], { json: true });
+
+    expect(exitCode).not.toBe(0);
+    expect(captured.json[0]).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED' } });
+    expect(JSON.stringify(captured.json)).not.toContain('Entity file not found');
   });
 
   it('SS-04: successful scaffold — exitCode 0, success message shown', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await scaffoldCommand.execute(
-      ctx,
-      mockCLIInput({ flags: {}, argv: ['plugin', 'my-plugin'] }),
-    );
+    const exitCode = await scaffoldRun.run(ctx, ['plugin', 'my-plugin'], {});
 
-    expect(result).toMatchObject({ outRoot: MOCK_BUILD_RESULT.outRoot, files: MOCK_BUILD_RESULT.files.length });
+    expect(exitCode).toBe(0);
     expect(captured.success.length).toBeGreaterThan(0);
-    expect(mockedWriteFiles).toHaveBeenCalled();
+    expect(mockedWriteFiles).toHaveBeenCalledWith(expect.objectContaining({
+      outRoot: MOCK_BUILD_RESULT.outRoot,
+      files: MOCK_BUILD_RESULT.files,
+    }));
   });
 
   it('prints an explicit marketplace plugins add step after generating files', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await scaffoldCommand.execute(
-      ctx,
-      mockCLIInput({ flags: {}, argv: ['plugin', 'my-plugin'] }),
-    );
+    const exitCode = await scaffoldRun.run(ctx, ['plugin', 'my-plugin'], {});
 
-    expect(result).toMatchObject({ outRoot: MOCK_BUILD_RESULT.outRoot, files: MOCK_BUILD_RESULT.files.length });
+    expect(exitCode).toBe(0);
     expect(fetch).not.toHaveBeenCalled();
     expect(JSON.stringify(captured.success)).toContain('kb marketplace plugins add --link');
   });
 
   it('SS-05: --dry-run returns the plain scaffold result', async () => {
-    const { ui } = createCapturedUI();
+    const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await scaffoldCommand.execute(
-      ctx,
-      mockCLIInput({ flags: { 'dry-run': true }, argv: ['plugin', 'my-plugin'] }),
-    );
+    const exitCode = await scaffoldRun.run(ctx, ['plugin', 'my-plugin'], { 'dry-run': true, json: true });
 
-    expect(result).toMatchObject({
-      files: MOCK_BUILD_RESULT.files.length,
-      outRoot: MOCK_BUILD_RESULT.outRoot,
+    expect(exitCode).toBe(0);
+    expect(captured.json[0]).toMatchObject({
+      ok: true,
+      data: { files: MOCK_BUILD_RESULT.files.length, outRoot: MOCK_BUILD_RESULT.outRoot },
     });
   });
 });

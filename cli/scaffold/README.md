@@ -23,7 +23,6 @@ runnable with a working `hello` command and inline examples.
 - Block-based composition — pick only what you need
 - Supports `in-workspace` mode (workspace:* deps) and `standalone` mode (own pnpm-workspace.yaml)
 - Dry-run mode — preview the file tree before writing
-- Auto-links generated plugin into the current workspace after scaffolding
 - Doctor command — scans existing plugins for common structural issues
 - Eta template engine with full variable interpolation
 
@@ -31,15 +30,13 @@ runnable with a working `hello` command and inline examples.
 
 ## Requirements
 
-**KB Labs platform** `>= 0.1.0`
+**KB Labs platform** with the built-in `scaffold` command group.
 
 ---
 
-## Installation
+## Availability
 
-```bash
-pnpm kb marketplace install @kb-labs/scaffold-entry
-```
+Scaffold is built into the KB Labs CLI. No plugin installation is required.
 
 ---
 
@@ -102,13 +99,10 @@ kb scaffold doctor --json                # JSON output
 
 ---
 
-## Permissions
+## File access
 
-| Category | Scope | Reason |
-|----------|-------|--------|
-| Filesystem (rw) | `.kb/plugins/**`, `.kb/marketplace.lock`, `plugins/**`, `adapters/**` | Write generated files |
-| Shell | `kb` | Auto-link plugin after scaffolding |
-| Quotas | 2 min timeout, 256 MB RAM | File generation |
+The command writes the generated entity files to the selected output directory.
+Use `--dry-run` to inspect the file tree before writing.
 
 ---
 

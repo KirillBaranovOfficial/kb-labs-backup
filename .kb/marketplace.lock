@@ -61,11 +61,6 @@
       "enabled": true,
       "source": "local"
     },
-    "@kb-labs/scaffold": {
-      "link": "./plugins/scaffold/entry",
-      "enabled": true,
-      "source": "local"
-    },
     "@kb-labs/site-tools": {
       "link": "./plugins/site-tools/entry",
       "enabled": true,

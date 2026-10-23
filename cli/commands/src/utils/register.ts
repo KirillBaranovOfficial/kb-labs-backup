@@ -14,6 +14,7 @@ import {
   adapterGroup,
   workspaceGroup,
   marketplaceGroup,
+  scaffoldGroup,
 } from "../commands/system/groups";
 import { workflowGroup } from "../commands/system/workflow";
 import { hello } from "../commands/system/hello";
@@ -149,6 +150,7 @@ export function registerBuiltinSystemCommands(): void {
   registry.registerGroup(adapterGroup);
   registry.registerGroup(workspaceGroup);
   registry.registerGroup(marketplaceGroup);
+  registry.registerGroup(scaffoldGroup);
   registry.registerGroup(workflowGroup);
   // The documented `kb hello` route is also available at the root. Keeping it
   // registered statically lets bootstrap read its declared scope before init.

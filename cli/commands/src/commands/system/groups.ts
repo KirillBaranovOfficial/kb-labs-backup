@@ -20,6 +20,7 @@ import { mcpConfig } from './mcp';
 import { adapterBind, adapterList, adapterUnbind } from './adapter';
 import { workspaceAgentGroup } from './workspace-agent';
 import { marketplaceGroup } from './marketplace';
+import { scaffoldGroup } from '@kb-labs/scaffold';
 
 /**
  * Info Commands Group
@@ -135,3 +136,4 @@ export const adapterGroup = defineSystemCommandGroup('adapter', 'Adapter install
 /** Workspace Agent registration and connection commands. */
 export const workspaceGroup = workspaceAgentGroup;
 export { marketplaceGroup };
+export { scaffoldGroup };

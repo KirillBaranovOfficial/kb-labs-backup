@@ -6,6 +6,9 @@
     "directory": "e2e/journey/fixtures/analytics-emitter"
   },
   {
+    "directory": "e2e/journey/fixtures/plugin-error"
+  },
+  {
     "directory": "e2e/journey/fixtures/npm-only"
   },
   {

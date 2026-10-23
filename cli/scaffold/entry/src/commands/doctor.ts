@@ -1,23 +1,25 @@
 import { resolve } from 'node:path';
-import { defineCommand, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineSystemCommand, type SystemCommandContext } from '@kb-labs/shared-command-kit';
+import { handleError, type CommandResult } from '@kb-labs/sdk';
 import { scanRoot, type Finding } from '@kb-labs/scaffold-core';
-
-interface DoctorFlags {
-  path?: string;
-  json?: boolean;
-}
 
 type DoctorResult = { root: string; packagesScanned: number; findings: Finding[] };
 
-export default defineCommand({
-  id: 'scaffold:doctor',
+export const scaffoldDoctor = defineSystemCommand<{
+  path: { type: 'string'; description?: string };
+  json: { type: 'boolean'; description?: string };
+}, CommandResult<DoctorResult>>({
+  name: 'doctor',
+  scope: 'project',
+  jsonTest: { safeArgs: ['--path', '.kb/plugins'] },
   description: 'Scan user-authored plugins for common issues',
-
-  handler: {
-    async execute(
-      ctx: PluginCommandContextV3,
-      input: DoctorFlags,
-    ): Promise<CommandResult<DoctorResult>> {
+  category: 'scaffold',
+  flags: {
+    path: { type: 'string', description: 'Path to scan (default: .kb/plugins)' },
+    json: { type: 'boolean', description: 'Emit JSON instead of text' },
+  },
+  examples: ['kb scaffold doctor', 'kb scaffold doctor --path ./plugins', 'kb scaffold doctor --json'],
+  async handler(ctx: SystemCommandContext, _argv, input): Promise<CommandResult<DoctorResult>> {
       const root = resolve(input.path ?? '.kb/plugins');
       const workspaceRoot = ctx.cwd ?? process.cwd();
       let scan: Awaited<ReturnType<typeof scanRoot>>;
@@ -85,6 +87,5 @@ export default defineCommand({
             },
           }
         : result;
-    },
   },
 });

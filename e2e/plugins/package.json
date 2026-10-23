@@ -12,7 +12,6 @@
     "@kb-labs/gateway-app": "workspace:*",
     "@kb-labs/commit-entry": "workspace:*",
     "@kb-labs/review-entry": "workspace:*",
-    "@kb-labs/scaffold-core": "workspace:*",
     "@playwright/test": "^1.52.0",
     "typescript": "^5.4.0"
   }
