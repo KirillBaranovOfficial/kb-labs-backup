@@ -34,6 +34,49 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    def test_commit_default_and_registry_lane_step_graphs_are_disjoint(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/marketplace_steps.py"
+        declarations = _case_declarations(source, root)
+
+        def coverage_for(case_id: str, step_ids: set[str], release: bool) -> dict:
+            steps = []
+            for step_id in sorted(step_ids):
+                lines = [line for line, declaration in declarations.items()
+                         if step_id in declaration.get("cases", ())]
+                self.assertTrue(lines, f"{step_id} has no journey declaration in {source}")
+                steps.append({"stepId": step_id, "claims": [{
+                    "kind": "journey", "source": source, "line": lines[0],
+                }]})
+            return {"mode": "local", "cases": [{
+                "id": case_id, "status": "active", "release": release, "steps": steps,
+            }]}
+
+        default = selection_from_coverage(
+            [coverage_for("S-047", {"S-047.1"}, release=True)], "S-047.1")
+        registry_steps = {f"S-268.{number}" for number in range(1, 9)}
+        registry = selection_from_coverage(
+            [coverage_for("S-268", registry_steps, release=False)], ",".join(sorted(registry_steps)))
+
+        self.assertEqual(default["steps"], ["S-047.1"])
+        self.assertNotIn("marketplace-registry", default["composeProfiles"])
+        self.assertEqual(set(registry["steps"]), registry_steps)
+        self.assertEqual(registry["runners"], ["service-marketplace-registry:local"])
+        self.assertEqual(registry["composeProfiles"], ["marketplace-registry"])
+
+        from service_runner import service_selection_groups
+        default_groups = service_selection_groups(runner_selector="service-local:explore")
+        registry_groups = service_selection_groups(runner_selector="service-marketplace-registry:local")
+        self.assertIn("S-047.1", default_groups["marketplace-lifecycle"]["cases"])
+        self.assertNotIn("publish and install Commit through Registry",
+                         default_groups["marketplace-lifecycle"]["steps"])
+        self.assertNotIn("verify Commit Registry signature and provenance",
+                         default_groups["marketplace-lifecycle"]["steps"])
+        self.assertIn("publish and install Commit through Registry",
+                      registry_groups["marketplace-registry"]["steps"])
+        self.assertIn("verify Commit Registry signature and provenance",
+                      registry_groups["marketplace-registry"]["steps"])
+
     def test_hermetic_fixture_stages_declared_lock_at_its_shared_root(self):
         repository = Path(__file__).resolve().parents[2]
         lock_path = Path(layout_value("versionStatePaths.kb_marketplace_lock"))
@@ -102,6 +145,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 "runners": ["service-local:explore", "service-secured:explore"],
                 "prerequisiteSteps": [], "prerequisiteFlows": [],
                 "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
+                "composeProfiles": [],
                 "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
             })
 
@@ -154,6 +198,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             "runners": ["service-local:explore", "service-secured:explore"],
             "prerequisiteSteps": [], "prerequisiteFlows": [],
             "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
+            "composeProfiles": [],
             "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
         })
 
