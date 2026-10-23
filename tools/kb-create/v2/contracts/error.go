@@ -62,6 +62,7 @@ const (
 	CodeArtifactMismatch          = "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH"
 	CodeServiceGraphMismatch      = "KB_INSTALL_SERVICE_GRAPH_MISMATCH"
 	CodeApplyFailed               = "KB_INSTALL_APPLY_FAILED"
+	CodeMarketplaceInstallFailed  = "KB_MARKETPLACE_INSTALL_FAILED"
 	CodeOperationFailed           = "KB_INSTALL_OPERATION_FAILED"
 	CodeRecoveryFailed            = "KB_INSTALL_RECOVERY_FAILED"
 	CodeReceiptUnavailable        = "KB_INSTALL_RECEIPT_UNAVAILABLE"
@@ -136,6 +137,22 @@ func NewUpdateIncompatible(details UpdateIncompatibleDetails) *diag.Diag {
 func HostSpecDiagnostic(message, hint, reason string, cause error) *diag.Diag {
 	failure := NewDiag(CodeHostSpecInvalid, message, hint, cause)
 	failure.Meta = map[string]any{"reason": reason}
+	return failure
+}
+
+// MarketplaceInstallDiagnostic uses the shared error catalogue for the
+// identity, attempted source, scope and exact Marketplace retry command.
+func MarketplaceInstallDiagnostic(identity, source string, cause error) *diag.Diag {
+	failure, err := diag.FromCatalog(CodeMarketplaceInstallFailed, map[string]string{
+		"package": identity, "scope": "platform", "sourceName": source,
+	}, diag.WithMeta(map[string]any{"source": source}))
+	if err != nil {
+		panic(err)
+	}
+	if cause != nil {
+		failure.Reason = cause.Error()
+	}
+	failure.Meta = map[string]any{"package": identity, "scope": "platform", "source": source}
 	return failure
 }
 

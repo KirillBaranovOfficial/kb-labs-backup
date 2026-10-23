@@ -1499,8 +1499,10 @@
       "severity": "error",
       "retryable": true,
       "processExitClass": "operation-failure",
-      "message": "Marketplace could not install the requested package.",
-      "hint": "Inspect the correlated Marketplace log, correct the package-manager cause, then run `kb marketplace install {package} --scope {scope}`."
+      "message": "Marketplace could not install {package} through {sourceName}.",
+      "hint": "Inspect the correlated Marketplace log, correct the package-manager cause, then run `kb marketplace install {package} --scope {scope}`.",
+      "runtimeTemplateParameters": { "sourceName": "optional" },
+      "structuredDetailFields": ["source"]
     },
     {
       "code": "KB_MARKETPLACE_AUTH_FAILED",
@@ -1511,8 +1513,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Marketplace could not authenticate with the configured source.",
-      "hint": "Check the configured source credential, then run `kb marketplace install {package} --scope {scope}`.",
-      "structuredDetailFields": ["package", "scope"]
+      "hint": "Check the configured source credential, then run `kb marketplace install {package} --scope {scope}`."
     },
     {
       "code": "KB_MARKETPLACE_IDENTITY_RESERVED",
@@ -1523,8 +1524,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The Registry reserves this identity and does not publish a package for it.",
-      "hint": "Publish the reserved identity in the Registry, then run `kb marketplace install {package} --scope {scope}`.",
-      "structuredDetailFields": ["package", "scope"]
+      "hint": "Publish the reserved identity in the Registry, then run `kb marketplace install {package} --scope {scope}`."
     },
     {
       "code": "KB_MARKETPLACE_INTEGRITY_MISMATCH",
@@ -1535,11 +1535,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The requested package version does not match its immutable Marketplace integrity pin.",
-      "hint": "Do not use this version. Verify the source publication, then run `kb marketplace install {package} --scope {scope}` after correcting it.",
-      "structuredDetailFields": [
-        "package",
-        "scope"
-      ]
+      "hint": "Do not use this version. Verify the source publication, then run `kb marketplace install {package} --scope {scope}` after correcting it."
     },
     {
       "code": "KB_MARKETPLACE_PACKAGE_INVALID",
@@ -1594,8 +1590,7 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Marketplace could not resolve the requested package.",
-      "hint": "Check the configured source URL, then run `kb marketplace install {package} --scope {scope}`.",
-      "structuredDetailFields": ["package", "scope"]
+      "hint": "Check the configured source URL, then run `kb marketplace install {package} --scope {scope}`."
     },
     {
       "code": "KB_MARKETPLACE_PROVENANCE_REQUIRED",
@@ -1606,8 +1601,7 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "The Marketplace lock entry does not record its source provenance.",
-      "hint": "Reinstall the package to record provenance: `kb marketplace install {package} --scope {scope}`.",
-      "structuredDetailFields": ["package", "scope"]
+      "hint": "Reinstall the package to record provenance: `kb marketplace install {package} --scope {scope}`."
     },
     {
       "code": "KB_MARKETPLACE_SIGNATURE_INVALID",
@@ -1618,8 +1612,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The Marketplace Registry signature could not be verified.",
-      "hint": "Check the configured Registry signing key and publication, then run `kb marketplace install {package} --scope {scope}`.",
-      "structuredDetailFields": ["package", "scope"]
+      "hint": "Check the configured Registry signing key and publication, then run `kb marketplace install {package} --scope {scope}`."
     },
     {
       "code": "KB_MARKETPLACE_TRANSPORT_FAILED",
@@ -1630,8 +1623,7 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Marketplace could not reach the configured source.",
-      "hint": "Check the configured source URL and network access, then run `kb marketplace install {package} --scope {scope}`.",
-      "structuredDetailFields": ["package", "scope"]
+      "hint": "Check the configured source URL and network access, then run `kb marketplace install {package} --scope {scope}`."
     },
     {
       "code": "KB_MARKETPLACE_VERSION_IMMUTABLE",

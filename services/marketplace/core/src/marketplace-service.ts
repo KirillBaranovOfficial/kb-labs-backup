@@ -36,6 +36,15 @@ import {
   DiscoveryManager,
 } from '@kb-labs/core-discovery';
 import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
+
+function scenarioInstallFailure(identity: string, scope: ScopeContext['scope'], source: string, cause?: unknown): ErrorEnvelopeError {
+  const causeText = cause instanceof Error ? cause.message : cause === undefined ? undefined : String(cause);
+  return new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_INSTALL_FAILED', {
+    details: { package: identity, scope, source },
+    templateValues: { sourceName: source },
+    ...(causeText ? { cause: causeText } : {}),
+  }));
+}
 import type {
   MarketplaceSource,
   PackageSource,
@@ -203,10 +212,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     for (const spec of specs) {
       let source: MarketplaceSource | undefined;
       let resolved: Awaited<ReturnType<MarketplaceSource['resolve']>> | undefined;
+      const sourcesTried: string[] = [];
       for (const configuredSource of this.sources) {
         const candidateSource = opts?.shareToken && configuredSource.withShareToken
           ? configuredSource.withShareToken(opts.shareToken)
           : configuredSource;
+        sourcesTried.push(candidateSource.kind);
         const result = await candidateSource.resolveIdentity(spec);
         if (result.status === 'not-found-owned') {
           throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_IDENTITY_RESERVED', { details: { package: spec, scope: ctx.scope } }));
@@ -217,7 +228,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         break;
       }
       if (!source || !resolved) {
-        throw new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_FOUND', { details: { plugin: spec } }));
+        throw scenarioInstallFailure(spec, ctx.scope, sourcesTried.join(', '));
       }
       if (!resolved.primaryKind) {
         throw new PackageClassificationError(
@@ -342,7 +353,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           }
           if (rollbackErrors.length > 0) {
             throw new MarketplaceInstallRollbackError(
-              result.id, ctx.scope, scopeRoot, error,
+              result.id, ctx.scope, source.kind, scopeRoot, error,
               new AggregateError(rollbackErrors, 'Marketplace install rollback failed'),
             );
           }
@@ -1000,7 +1011,7 @@ export class MarketplaceInstallRollbackError extends Error {
   readonly code = 'KB_MARKETPLACE_INSTALL_FAILED';
   readonly hint: string;
 
-  constructor(readonly packageId: string, readonly scope: MarketplaceScope, scopeRoot: string, cause: unknown, rollbackCause: unknown) {
+  constructor(readonly packageId: string, readonly scope: MarketplaceScope, readonly source: string, scopeRoot: string, cause: unknown, rollbackCause: unknown) {
     super(`Marketplace could not restore the platform after installing ${packageId}.`, {
       cause: new AggregateError([cause, rollbackCause], 'Marketplace install rollback failed'),
     });

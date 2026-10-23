@@ -19,6 +19,7 @@ import (
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/preflight"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/scenario"
@@ -116,6 +117,7 @@ type commandDependencies struct {
 	InstallInput     io.Reader
 	InstallOutput    io.Writer
 	ProjectRegistrar func(string, string) (projectRegistrationResult, error)
+	Marketplace      marketplace.InstallClient
 	Command          *cobra.Command
 	Executable       string
 }

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	marketplaceidentity "github.com/kb-labs/create/v2/marketplace/identity"
 )
 
 const RequestSchema = "kb.create/v2"
@@ -63,6 +65,16 @@ type MarketplaceSources struct {
 	NpmURL              string `json:"npmUrl,omitempty"`
 }
 
+// MarketplaceInstallRecord is the source and version Marketplace resolved for
+// a scenario identity after the platform host became ready.
+type MarketplaceInstallRecord struct {
+	ID              string `json:"id"`
+	Version         string `json:"version"`
+	PrimaryKind     string `json:"primaryKind"`
+	Source          string `json:"source"`
+	SignatureStatus string `json:"signatureStatus"`
+}
+
 // InstallRequest is deliberately transport-neutral. Wizard answers, CI flags,
 // agent protocol messages and scenario files all normalize to this type before
 // resolution. Values only carry non-secret input; secret input is referenced by
@@ -75,6 +87,7 @@ type InstallRequest struct {
 	GatewayURL          string              `json:"gatewayUrl,omitempty"`
 	MarketplaceSources  *MarketplaceSources `json:"marketplaceSources,omitempty"`
 	Plugins             []ComponentRequest  `json:"plugins,omitempty"`
+	MarketplacePlugins  []string            `json:"marketplacePlugins,omitempty"`
 	Adapters            []ComponentRequest  `json:"adapters,omitempty"`
 	ProviderPreferences map[string]string   `json:"providerPreferences,omitempty"`
 	Values              map[string]string   `json:"values,omitempty"`
@@ -235,6 +248,11 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		return InstallRequest{}, err
 	}
 	r.Plugins = plugins
+	for _, identity := range r.MarketplacePlugins {
+		if err := marketplaceidentity.Validate(identity); err != nil {
+			return InstallRequest{}, invalidRequestField("marketplacePlugins", "scenario contains an invalid Marketplace identity", "Correct the scenario plugin identity and rerun `kb-create plan`.", err)
+		}
+	}
 	r.Adapters = adapters
 	r.SecretInputs = uniqueSorted(r.SecretInputs)
 	for _, key := range r.SecretInputs {

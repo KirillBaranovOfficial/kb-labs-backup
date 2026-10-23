@@ -31,7 +31,7 @@ type Artifact struct {
 	// Registry names the discovery kind ("plugin" or "adapter") of an artifact
 	// that is installed under another Kind, e.g. a platform member that is also
 	// a catalog plugin/adapter. Empty for artifacts that are not registry entities.
-	Registry   string              `json:"registry,omitempty"`
+	Registry   string             `json:"registry,omitempty"`
 	Provenance ArtifactProvenance `json:"provenance"`
 }
 
@@ -183,17 +183,18 @@ type Verification struct {
 // InstallReceipt is written only after the renderer and verifier succeed.
 // It is the authoritative input for update, doctor and rollback.
 type InstallReceipt struct {
-	Schema               string              `json:"schema"`
-	ID                   string              `json:"id"`
-	InstallationID       string              `json:"installationId"`
-	ProjectSelectedPath  string              `json:"projectSelectedPath,omitempty"`
-	ProjectID            string              `json:"projectId,omitempty"`
-	ProjectCanonicalPath string              `json:"projectCanonicalPath,omitempty"`
-	CreatedAt            time.Time           `json:"createdAt"`
-	CorrelationID        string              `json:"correlationId"`
-	Plan                 ResolvedInstallPlan `json:"plan"`
-	Verification         Verification        `json:"verification"`
-	SnapshotID           string              `json:"snapshotId,omitempty"`
+	Schema               string                     `json:"schema"`
+	ID                   string                     `json:"id"`
+	InstallationID       string                     `json:"installationId"`
+	ProjectSelectedPath  string                     `json:"projectSelectedPath,omitempty"`
+	ProjectID            string                     `json:"projectId,omitempty"`
+	ProjectCanonicalPath string                     `json:"projectCanonicalPath,omitempty"`
+	CreatedAt            time.Time                  `json:"createdAt"`
+	CorrelationID        string                     `json:"correlationId"`
+	Plan                 ResolvedInstallPlan        `json:"plan"`
+	Verification         Verification               `json:"verification"`
+	MarketplaceInstalls  []MarketplaceInstallRecord `json:"marketplaceInstalls,omitempty"`
+	SnapshotID           string                     `json:"snapshotId,omitempty"`
 }
 
 type Snapshot struct {

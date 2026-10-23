@@ -21,6 +21,7 @@ import (
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/logs"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/preflight"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/resolve"
@@ -365,6 +366,15 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	} else {
 		applied.Plan.Request.PlatformRoot = platformRoot
 	}
+	if identities := applied.Plan.Request.MarketplacePlugins; len(identities) > 0 {
+		installer := deps.Marketplace
+		if installer == nil {
+			installer = marketplace.GatewayInstallClient{}
+		}
+		if marketplaceFailure := installMarketplaceScenarioPlugins(applyCtx, platformRoot, &applied, installer); marketplaceFailure != nil {
+			return applyCommandResult{}, marketplaceFailure
+		}
+	}
 	if planned.Host != nil {
 		roots := make([]gateway.Root, 0, 2)
 		if owner, ok := shim.Owner(input.Executable); ok && !shim.Correct(input.Executable, platformRoot) {
@@ -432,6 +442,37 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		Profile: applied.Plan.ServiceGraph.Profile, Services: applied.Plan.ServiceGraph.Services,
 		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, ProjectRegistrationNotice: registrationNotice,
 		disclosureStoreRoot: store.PlatformRoot}, nil
+}
+
+func installMarketplaceScenarioPlugins(ctx context.Context, platformRoot string, applied *contracts.InstallReceipt, installer marketplace.InstallClient) *diag.Diag {
+	identities := applied.Plan.Request.MarketplacePlugins
+	if len(identities) == 0 {
+		return nil
+	}
+	if applied.Verification.HostHealthURL == "" {
+		return contracts.NewDiag(contracts.CodeScenarioInvalid,
+			"the scenario requests Marketplace plugins but the selected platform has no recorded host Gateway",
+			"select a platform release with the Marketplace service, then rerun `kb-create install`", nil)
+	}
+	origin, err := gateway.OriginFromHealthURL(applied.Verification.HostHealthURL)
+	if err != nil {
+		return contracts.HostSpecDiagnostic("the applied Gateway address could not be used for Marketplace installation", "run `kb-create doctor --json` to inspect the installed host", err.Error(), err)
+	}
+	installs, err := installer.Install(ctx, origin, identities)
+	if err != nil {
+		var failure *marketplace.InstallFailure
+		if errors.As(err, &failure) {
+			return contracts.MarketplaceInstallDiagnostic(failure.Identity, failure.Source, failure.Cause)
+		}
+		return contracts.MarketplaceInstallDiagnostic(strings.Join(identities, ", "), "Marketplace response", err)
+	}
+	applied.MarketplaceInstalls = installs
+	if err := receipt.Write(platformRoot, *applied); err != nil {
+		return contracts.NewDiag(contracts.CodeReceiptUnavailable,
+			"Marketplace installed the scenario plugins, but their source and version could not be recorded in the receipt.",
+			"run `kb-create doctor --json` to inspect the installed receipt", err)
+	}
+	return nil
 }
 
 func storePendingSecrets(store secrets.Store, pending map[string]secrets.PendingSecret) error {

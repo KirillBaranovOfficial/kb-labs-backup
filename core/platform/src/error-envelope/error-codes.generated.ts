@@ -389,7 +389,7 @@ export interface CatalogTemplateParameters {
   "KB_INSTALL_WIZARD_INPUT_INVALID": Record<never, never>;
   "KB_MARKETPLACE_AUTH_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_IDENTITY_RESERVED": { "package": string; "scope": string };
-  "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string };
+  "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string; "sourceName": string };
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": { "package": string; "scope": string };
   "KB_MARKETPLACE_PACKAGE_INVALID": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": { "package": string; "scope": string };
@@ -655,7 +655,7 @@ export interface CatalogDetailsFor {
   "KB_INSTALL_WIZARD_INPUT_INVALID": Record<string, never>;
   "KB_MARKETPLACE_AUTH_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_IDENTITY_RESERVED": { "package": string; "scope": string };
-  "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string };
+  "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string; "source"?: string };
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": { "package": string; "scope": string };
   "KB_MARKETPLACE_PACKAGE_INVALID": Record<string, never>;
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": { "package": string; "scope": string };
@@ -1187,7 +1187,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
   "KB_MARKETPLACE_AUTH_FAILED": [],
   "KB_MARKETPLACE_IDENTITY_RESERVED": [],
-  "KB_MARKETPLACE_INSTALL_FAILED": [],
+  "KB_MARKETPLACE_INSTALL_FAILED": ["package"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
@@ -1719,7 +1719,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
   "KB_MARKETPLACE_AUTH_FAILED": ["package","scope"],
   "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
-  "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope"],
+  "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope","sourceName"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": ["package","scope"],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": ["package","scope"],
@@ -1985,7 +1985,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
   "KB_MARKETPLACE_AUTH_FAILED": [],
   "KB_MARKETPLACE_IDENTITY_RESERVED": [],
-  "KB_MARKETPLACE_INSTALL_FAILED": [],
+  "KB_MARKETPLACE_INSTALL_FAILED": ["package","sourceName"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
@@ -2515,18 +2515,18 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
   "KB_INSTALL_UNSUPPORTED_PLATFORM": [],
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
-  "KB_MARKETPLACE_AUTH_FAILED": ["package","scope"],
-  "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
-  "KB_MARKETPLACE_INSTALL_FAILED": [],
-  "KB_MARKETPLACE_INTEGRITY_MISMATCH": ["package","scope"],
+  "KB_MARKETPLACE_AUTH_FAILED": [],
+  "KB_MARKETPLACE_IDENTITY_RESERVED": [],
+  "KB_MARKETPLACE_INSTALL_FAILED": ["source"],
+  "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
-  "KB_MARKETPLACE_PROVENANCE_REQUIRED": ["package","scope"],
+  "KB_MARKETPLACE_PROVENANCE_REQUIRED": [],
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
-  "KB_MARKETPLACE_RESOLUTION_FAILED": ["package","scope"],
-  "KB_MARKETPLACE_SIGNATURE_INVALID": ["package","scope"],
-  "KB_MARKETPLACE_TRANSPORT_FAILED": ["package","scope"],
+  "KB_MARKETPLACE_RESOLUTION_FAILED": [],
+  "KB_MARKETPLACE_SIGNATURE_INVALID": [],
+  "KB_MARKETPLACE_TRANSPORT_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["requestedVersion"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["requestedVersion"],
   "KB_NODE_VERSION_UNSUPPORTED": [],
@@ -2783,7 +2783,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_INSTALL_WIZARD_INPUT_INVALID": Record<never, never>;
   "KB_MARKETPLACE_AUTH_FAILED": Record<never, never>;
   "KB_MARKETPLACE_IDENTITY_RESERVED": Record<never, never>;
-  "KB_MARKETPLACE_INSTALL_FAILED": Record<never, never>;
+  "KB_MARKETPLACE_INSTALL_FAILED": { "package": string };
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_INVALID": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": Record<never, never>;
@@ -3315,7 +3315,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_INSTALL_WIZARD_INPUT_INVALID": Record<never, never>;
   "KB_MARKETPLACE_AUTH_FAILED": Record<never, never>;
   "KB_MARKETPLACE_IDENTITY_RESERVED": Record<never, never>;
-  "KB_MARKETPLACE_INSTALL_FAILED": Record<never, never>;
+  "KB_MARKETPLACE_INSTALL_FAILED": { "sourceName"?: string };
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_INVALID": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": Record<never, never>;
