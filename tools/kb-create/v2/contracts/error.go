@@ -140,19 +140,20 @@ func HostSpecDiagnostic(message, hint, reason string, cause error) *diag.Diag {
 	return failure
 }
 
-// MarketplaceInstallDiagnostic uses the shared error catalogue for the
-// identity, attempted source, scope and exact Marketplace retry command.
-func MarketplaceInstallDiagnostic(identity, source string, cause error) *diag.Diag {
+// MarketplaceInstallDiagnostic is the single scenario boundary that wraps a
+// Marketplace failure while preserving its original code, message and cause.
+func MarketplaceInstallDiagnostic(spec, source string, cause error) *diag.Diag {
+	options := []diag.Opt{diag.WithMeta(map[string]any{"source": source})}
+	if cause != nil {
+		options = append(options, diag.WithCauseAndReason(cause.Error()))
+	}
 	failure, err := diag.FromCatalog(CodeMarketplaceInstallFailed, map[string]string{
-		"package": identity, "scope": "platform", "sourceName": source,
-	}, diag.WithMeta(map[string]any{"source": source}))
+		"package": spec, "scope": "platform", "sourceName": source,
+	}, options...)
 	if err != nil {
 		panic(err)
 	}
-	if cause != nil {
-		failure.Reason = cause.Error()
-	}
-	failure.Meta = map[string]any{"package": identity, "scope": "platform", "source": source}
+	failure.Meta = map[string]any{"package": spec, "scope": "platform", "source": source}
 	return failure
 }
 

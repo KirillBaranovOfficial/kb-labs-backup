@@ -86,7 +86,13 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
         logger.forOperation('marketplace.api.request', { requestId: correlationId }).error(
           'Marketplace API request failed',
           err,
-          { correlationId, requestId: correlationId, errorCode: mapped.envelope.code, statusCode: mapped.statusCode },
+          {
+            correlationId,
+            requestId: correlationId,
+            errorCode: mapped.envelope.code,
+            statusCode: mapped.statusCode,
+            cause: mapped.envelope.cause,
+          },
         );
         return reply.code(mapped.statusCode).send({ ok: false, error: mapped.envelope });
       });
@@ -219,6 +225,9 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
     statusCode,
     envelope: createValidatedErrorEnvelope(code, {
       correlationId, details, message, hint,
+      ...(code === 'KB_MARKETPLACE_INSTALL_FAILED' && err instanceof PackageInstallError
+        ? { cause: err.message }
+        : {}),
       ...(code === 'KB_MARKETPLACE_INSTALL_FAILED' && details?.source ? { templateValues: { sourceName: details.source } } : {}),
     }),
   };

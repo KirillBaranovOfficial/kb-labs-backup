@@ -66,7 +66,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
   // -------------------------------------------------------------------------
 
   it('discovers plugins from platform lock when only platformRoot has a lock', async () => {
-    const pluginDir = path.join(platformDir, 'node_modules', '@kb-labs', 'commit-entry');
+    const pluginDir = path.join(platformDir, 'node_modules', '@kb-labs', 'commit');
     await makePlugin(pluginDir, '@kb-labs/commit');
 
     const platformLock = createEmptyLock();
@@ -96,7 +96,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
 
   it('discovers plugins from project lock when project has entries not in platform lock', async () => {
     // Platform: only commit
-    const platformPluginDir = path.join(platformDir, 'node_modules', '@kb-labs', 'commit-entry');
+    const platformPluginDir = path.join(platformDir, 'node_modules', '@kb-labs', 'commit');
     await makePlugin(platformPluginDir, '@kb-labs/commit');
     const platformLock = createEmptyLock();
     platformLock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
@@ -136,7 +136,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
 
   it('project entry wins over platform entry for the same package id', async () => {
     // Platform: commit at ./node_modules/@kb-labs/commit (older version)
-    const platformCommitDir = path.join(platformDir, 'node_modules', '@kb-labs', 'commit-entry');
+    const platformCommitDir = path.join(platformDir, 'node_modules', '@kb-labs', 'commit');
     await makePlugin(platformCommitDir, '@kb-labs/commit', '0.1.0');
     const platformLock = createEmptyLock();
     platformLock.plugins['@kb-labs/commit'] = createMarketplaceEntry({

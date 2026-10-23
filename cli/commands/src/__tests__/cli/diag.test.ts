@@ -330,8 +330,8 @@ describe('diag --command', () => {
     const { discoverManifestsDetailed } = await import('../../registry/discover.js');
     await setDiscoveryResult([{
         packageName: '@kb-labs/commit',
-        manifestPath: '/project/.kb/plugins/commit-entry/dist/manifest.json',
-        pkgRoot: '/project/.kb/plugins/commit-entry',
+        manifestPath: '/project/.kb/plugins/commit/dist/manifest.json',
+        pkgRoot: '/project/.kb/plugins/commit',
         source: 'linked',
         scope: 'project',
         manifests: [{ _synthetic: false, group: 'commit', segments: ['commit', 'open'], id: 'open', describe: 'Open a change', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],

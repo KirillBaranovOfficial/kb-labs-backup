@@ -10,7 +10,7 @@ import { NpmPackageSource, PackageInstallError, RegistryPackageSource } from '@k
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from '../server.js';
 
-function makeMarketplaceService(options: { platformRoot: string; logger: ILogger; source: PackageSource }): MarketplaceService {
+function makeMarketplaceService(options: { platformRoot: string; logger: ILogger; source: PackageSource; notFound?: boolean }): MarketplaceService {
   const { withShareToken: _withShareToken, ...base } = options.source;
   const source: MarketplaceSource = {
     ...base,
@@ -21,6 +21,7 @@ function makeMarketplaceService(options: { platformRoot: string; logger: ILogger
     rollbackInstall: (packageId, root) => options.source.rollbackInstall(packageId, root),
     remove: (packageId, root) => options.source.remove(packageId, root),
     async resolveIdentity(identity) {
+      if (options.notFound) { return { status: 'not-found-unowned' }; }
       return { status: 'found', package: await options.source.resolve(identity) };
     },
   };
@@ -89,6 +90,40 @@ describe('Marketplace API error boundary', () => {
       server.close(() => resolve());
     })));
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  });
+
+  // case: S-051.2
+  it('keeps Marketplace plugin-not-found and logs source outcomes', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-not-found-'));
+    roots.push(root);
+    const { logger, errors } = makeContextLogger();
+    const service = makeMarketplaceService({
+      platformRoot: root,
+      logger,
+      source: createFailingSource(new Error('source must not install'), true),
+      notFound: true,
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      payload: { specs: ['journey-not-published'], scope: 'platform' },
+    });
+    const result = response.json();
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_PLUGIN_NOT_FOUND',
+        cause: 'npm: not-found-unowned',
+      },
+    });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.fields).toMatchObject({
+      errorCode: 'KB_PLUGIN_NOT_FOUND',
+      cause: 'npm: not-found-unowned',
+    });
   });
 
   // case: S-054.14
@@ -188,7 +223,7 @@ describe('Marketplace API error boundary', () => {
   });
 
   // case: S-220.1
-  it('returns a catalogued install failure and logs the package-manager cause', async () => {
+    it('returns a catalogued install failure with the secret-free package-manager cause and logs it', async () => {
     const { logger, errors } = makeContextLogger();
     const packageManagerError = new PackageInstallError(
       'INSTALL_FAILED',
@@ -221,10 +256,14 @@ describe('Marketplace API error boundary', () => {
         hint: expect.stringContaining('kb marketplace install @kb-labs/test-adapter@1.0.0 --scope platform'),
       },
     });
-    expect(response.body).not.toContain('ERR_PNPM_NO_MATURE_MATCHING_VERSION');
+    expect(result.error?.cause).toContain('ERR_PNPM_NO_MATURE_MATCHING_VERSION');
     expect(errors).toHaveLength(1);
     expect(errors[0]?.error?.message).toContain('ERR_PNPM_NO_MATURE_MATCHING_VERSION');
-    expect(errors[0]?.fields).toMatchObject({ requestId: correlationId, errorCode: 'KB_MARKETPLACE_INSTALL_FAILED' });
+    expect(errors[0]?.fields).toMatchObject({
+      requestId: correlationId,
+      errorCode: 'KB_MARKETPLACE_INSTALL_FAILED',
+      cause: expect.stringContaining('ERR_PNPM_NO_MATURE_MATCHING_VERSION'),
+    });
   });
 
   // case: S-220.1

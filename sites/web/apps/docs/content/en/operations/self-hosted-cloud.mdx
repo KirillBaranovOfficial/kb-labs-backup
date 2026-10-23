@@ -229,11 +229,11 @@ service that loads the plugin — not globally.
 
 | Plugin | Extra adapters needed |
 |---|---|
-| `mind-entry` (RAG, vector search) | `vectorStore: @kb-labs/adapters-qdrant@{ver}` + `embeddings: @kb-labs/adapters-openai/embeddings@{ver}` |
-| `agents-entry` | none (uses `llm` from base adapters) |
-| `commit-entry` | none |
-| `review-entry` | none |
-| `inbox-entry` | `notifier: @kb-labs/adapters-telegram@{ver}` (optional) |
+| `mind` (RAG, vector search) | `vectorStore: @kb-labs/adapters-qdrant@{ver}` + `embeddings: @kb-labs/adapters-openai/embeddings@{ver}` |
+| `agents` | none (uses `llm` from base adapters) |
+| `commit` | none |
+| `review` | none |
+| `inbox` | `notifier: @kb-labs/adapters-telegram@{ver}` (optional) |
 
 Example — enabling the mind plugin with Qdrant:
 

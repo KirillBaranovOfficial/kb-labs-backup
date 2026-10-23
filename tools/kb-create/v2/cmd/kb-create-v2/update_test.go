@@ -1646,7 +1646,7 @@ console.log(JSON.stringify({ id: installed.id, version: installed.version }));
 func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T) {
 	root := t.TempDir()
 	const adapterID = "@kb-labs/adapters-vibeproxy"
-	const pluginID = "commit-entry"
+	const pluginID = "@kb-labs/commit"
 	for _, packageName := range []string{adapterID, "@kb-labs/commit"} {
 		packageJSON := filepath.Join(root, "node_modules", filepath.FromSlash(packageName), "package.json")
 		if err := os.MkdirAll(filepath.Dir(packageJSON), 0o750); err != nil {

@@ -366,7 +366,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	} else {
 		applied.Plan.Request.PlatformRoot = platformRoot
 	}
-	if identities := applied.Plan.Request.MarketplacePlugins; len(identities) > 0 {
+	if specs := applied.Plan.Request.MarketplaceInstallSpecs; len(specs) > 0 {
 		installer := deps.Marketplace
 		if installer == nil {
 			installer = marketplace.GatewayInstallClient{}
@@ -445,8 +445,8 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 }
 
 func installMarketplaceScenarioPlugins(ctx context.Context, platformRoot string, applied *contracts.InstallReceipt, installer marketplace.InstallClient) *diag.Diag {
-	identities := applied.Plan.Request.MarketplacePlugins
-	if len(identities) == 0 {
+	specs := applied.Plan.Request.MarketplaceInstallSpecs
+	if len(specs) == 0 {
 		return nil
 	}
 	if applied.Verification.HostHealthURL == "" {
@@ -458,13 +458,13 @@ func installMarketplaceScenarioPlugins(ctx context.Context, platformRoot string,
 	if err != nil {
 		return contracts.HostSpecDiagnostic("the applied Gateway address could not be used for Marketplace installation", "run `kb-create doctor --json` to inspect the installed host", err.Error(), err)
 	}
-	installs, err := installer.Install(ctx, origin, identities)
+	installs, err := installer.Install(ctx, origin, specs)
 	if err != nil {
 		var failure *marketplace.InstallFailure
 		if errors.As(err, &failure) {
-			return contracts.MarketplaceInstallDiagnostic(failure.Identity, failure.Source, failure.Cause)
+			return contracts.MarketplaceInstallDiagnostic(failure.Spec, failure.Source, failure)
 		}
-		return contracts.MarketplaceInstallDiagnostic(strings.Join(identities, ", "), "Marketplace response", err)
+		return contracts.MarketplaceInstallDiagnostic(strings.Join(specs, ", "), "Marketplace response", err)
 	}
 	applied.MarketplaceInstalls = installs
 	if err := receipt.Write(platformRoot, *applied); err != nil {

@@ -1,16 +1,16 @@
-package identity
+package install_spec
 
 import "testing"
 
-func TestValidateMarketplaceIdentity(t *testing.T) {
+func TestValidateMarketplaceInstallSpec(t *testing.T) {
 	for _, value := range []string{"@kb-labs/commit", "journey-npm-only-fixture", "author/plugin"} {
 		if err := Validate(value); err != nil {
-			t.Errorf("Validate(%q) = %v", value, err)
+			t.Errorf("Validate Marketplace install spec %q = %v", value, err)
 		}
 	}
 	for _, value := range []string{"", "@kb-labs/commit/entry", "@/commit", "@kb-labs/", "../commit", "@KB-Labs/commit", "@kb labs/commit"} {
 		if err := Validate(value); err == nil {
-			t.Errorf("Validate(%q) accepted malformed Marketplace identity", value)
+			t.Errorf("Validate(%q) accepted malformed Marketplace install spec", value)
 		}
 	}
 }

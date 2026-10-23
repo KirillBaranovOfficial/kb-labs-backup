@@ -17,7 +17,7 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
-	marketplaceidentity "github.com/kb-labs/create/v2/marketplace/identity"
+	marketplaceinstallspec "github.com/kb-labs/create/v2/marketplace/install_spec"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -198,9 +198,9 @@ func Validate(value Scenario) error {
 		return fmt.Errorf("scenario requires schema %q and ID", Schema)
 	}
 	seen := map[string]bool{}
-	for _, identity := range value.Plugins {
-		if err := marketplaceidentity.Validate(identity); err != nil {
-			return fmt.Errorf("scenario plugin %q is not a Marketplace identity: %w", identity, err)
+	for _, spec := range value.Plugins {
+		if err := marketplaceinstallspec.Validate(spec); err != nil {
+			return fmt.Errorf("scenario Marketplace install spec %q is invalid: %w", spec, err)
 		}
 	}
 	for _, field := range allFields(value) {
@@ -466,7 +466,7 @@ func Compile(value Scenario, state State, base contracts.InstallRequest) (contra
 	}
 	base.Schema = contracts.RequestSchema
 	base.ScenarioID = value.ID
-	base.MarketplacePlugins = append(base.MarketplacePlugins, value.Plugins...)
+	base.MarketplaceInstallSpecs = append(base.MarketplaceInstallSpecs, value.Plugins...)
 	base.Adapters = append(base.Adapters, components(value.Adapters)...)
 	if base.Values == nil {
 		base.Values = map[string]string{}

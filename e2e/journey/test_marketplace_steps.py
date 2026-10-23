@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               configured_marketplace_source_kinds,
                                commit_publish_command,
                                _publish_fixture_command,
                                _assert_catalogued_marketplace_failure,
@@ -42,6 +43,34 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_not_found_source_expectations_come_from_kb_create_status(self):
+        self.assertEqual(configured_marketplace_source_kinds({"marketplaceSources": [
+            {"kind": "registry", "url": "https://registry.example"}, {"kind": "npm"},
+        ]}), ("registry", "npm"))
+        with self.assertRaisesRegex(RuntimeError, "did not report"):
+            configured_marketplace_source_kinds({})
+
+    def test_plugin_not_found_claim_requires_per_source_results(self):
+        missing_results = subprocess.CompletedProcess(
+            ["kb", "marketplace", "install", "journey-not-published", "--json"], 1,
+            json.dumps({"ok": False, "error": {
+                "code": "KB_PLUGIN_NOT_FOUND", "message": "missing", "hint": "retry",
+                "cause": "registry: not-found-unowned",
+            }}), "")
+        with self.assertRaisesRegex(AssertionError, "each configured source"):
+            validate_shared_failure(
+                missing_results, json_mode=True, code="KB_PLUGIN_NOT_FOUND", message="missing", hint="retry",
+                marketplace_source_kinds=("registry", "npm"))
+        complete_results = subprocess.CompletedProcess(
+            ["kb", "marketplace", "install", "journey-not-published", "--json"], 1,
+            json.dumps({"ok": False, "error": {
+                "code": "KB_PLUGIN_NOT_FOUND", "message": "missing", "hint": "retry",
+                "cause": "registry: not-found-unowned; npm: not-found-unowned",
+            }}), "")
+        validate_shared_failure(
+            complete_results, json_mode=True, code="KB_PLUGIN_NOT_FOUND", message="missing", hint="retry",
+            marketplace_source_kinds=("registry", "npm"))
+
     def test_commit_update_fixture_publishes_next_major_from_registry_candidate(self):
         published: list[dict] = []
 
@@ -52,13 +81,13 @@ class MarketplaceStepTests(unittest.TestCase):
                 (package / "package.json").write_text(json.dumps(
                     {"name": "@kb-labs/commit", "version": "2.120.1"}))
                 destination = command[command.index("--pack-destination") + 1]
-                subprocess.run(["tar", "-czf", str(Path(destination) / "kb-labs-commit-entry-2.120.1.tgz"),
+                subprocess.run(["tar", "-czf", str(Path(destination) / "kb-labs-commit-2.120.1.tgz"),
                                 "-C", str(package.parent), "package"], check=True)
                 return subprocess.CompletedProcess(command, 0, "", "")
             if command[:3] == ["npm", "pack", "--ignore-scripts"]:
                 manifest = json.loads((Path(cwd) / "package.json").read_text())
                 destination = Path(command[command.index("--pack-destination") + 1])
-                (destination / f"kb-labs-commit-entry-{manifest['version']}.tgz").write_text(manifest["version"])
+                (destination / f"kb-labs-commit-{manifest['version']}.tgz").write_text(manifest["version"])
                 return subprocess.CompletedProcess(command, 0, "", "")
             if command[0] == "tar":
                 return subprocess.run(command, capture_output=True, text=True)
@@ -76,7 +105,7 @@ class MarketplaceStepTests(unittest.TestCase):
         self.assertEqual(version, "3.0.0")
         self.assertEqual(len(published), 1)
         self.assertEqual(published[0]["registry"], "http://registry.test")
-        self.assertEqual(published[0]["files"], ["kb-labs-commit-entry-3.0.0.tgz"])
+        self.assertEqual(published[0]["files"], ["kb-labs-commit-3.0.0.tgz"])
         self.assertNotEqual(published[0]["home"], "/journey-home")
 
     def test_shared_commit_fixture_uses_release_one_npm_source_without_registry_lane(self):
@@ -597,7 +626,8 @@ class MarketplaceStepTests(unittest.TestCase):
                 calls.append(tuple(command))
                 cwd_path = Path(cwd)
                 if command[0] == "kb-create":
-                    host_running = command[1] == "start"
+                    if command[1] in ("start", "stop"):
+                        host_running = command[1] == "start"
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if command[0] == "npm":
                     package_id = command[2]
@@ -687,6 +717,7 @@ class MarketplaceStepTests(unittest.TestCase):
                             "code": "KB_PLUGIN_NOT_FOUND",
                             "message": catalogued_error_message("KB_PLUGIN_NOT_FOUND").format(plugin=package_id),
                             "hint": catalogued_error_hint("KB_PLUGIN_NOT_FOUND", plugin=package_id),
+                            "cause": "registry: not-found-unowned; npm: not-found-unowned",
                         }
                         if "--json" in args:
                             return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")

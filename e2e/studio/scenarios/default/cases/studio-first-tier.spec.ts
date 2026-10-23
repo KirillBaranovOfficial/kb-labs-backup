@@ -269,8 +269,8 @@ test('install Commit, inspect real changes, generate a plan, and uninstall it @S
   expect(commitVersion, 'marketplace lock must contain the installed Commit version').toBeTruthy()
   const extensionEntry = join(
     process.env.KB_HOME ?? join(process.env.HOME ?? '', '.kb'),
-    'store', 'entries', `@kb-labs+commit-entry@${commitVersion!}`,
-    'node_modules', '@kb-labs', 'commit-entry', 'dist', 'index.js',
+    'store', 'entries', `@kb-labs+commit@${commitVersion!}`,
+    'node_modules', '@kb-labs', 'commit', 'dist', 'index.js',
   )
   expect(commitPin?.resolvedPath).toBe(`store:${encodeURIComponent('@kb-labs/commit')}@${encodeURIComponent(commitVersion!)}`)
   expect(existsSync(extensionEntry), `installed Commit entry should exist at ${extensionEntry}`).toBe(true)
