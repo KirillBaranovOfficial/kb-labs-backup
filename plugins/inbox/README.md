@@ -75,7 +75,7 @@ The wildcard `INBOX_ACCOUNT_*` is declared in the manifest — adding a new acco
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/inbox-entry
+pnpm kb marketplace install @kb-labs/inbox
 ```
 
 ---

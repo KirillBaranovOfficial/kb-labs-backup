@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/viewer-entry",
+  "name": "@kb-labs/viewer",
   "description": "KB Labs Viewer plugin REST routes and Studio page.",
   "version": "0.1.0",
   "type": "module",

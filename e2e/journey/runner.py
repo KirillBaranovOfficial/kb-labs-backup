@@ -122,7 +122,7 @@ RUNNER_SCENARIOS = {
     "commit": {
         "installer": "commit",
         "secured_installer": "custom",
-        "secured_marketplace_packages": ("@kb-labs/commit-entry",),
+        "secured_marketplace_packages": ("@kb-labs/commit",),
         "command_help_paths": (("commit", "commit", "--help"),),
     },
     "explore": {

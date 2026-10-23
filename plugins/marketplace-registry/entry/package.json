@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/marketplace-registry-entry",
+  "name": "@kb-labs/marketplace-registry",
   "description": "CLI commands for publishing and managing plugins in KB Labs Registry",
   "version": "2.120.1",
   "type": "module",

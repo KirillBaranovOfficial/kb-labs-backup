@@ -1276,7 +1276,7 @@
   - should create index on finalize
   - should cleanup old traces
 
-### `@kb-labs/agent-entry`
+### `@kb-labs/agents`
 
 #### CLI handler tests
 
@@ -2889,7 +2889,7 @@
   - presents the backend-normalized unexpected failure without logging or reclassifying it
   - passes a typed plugin product error through unchanged
 
-### `@kb-labs/clickup-entry`
+### `@kb-labs/clickup`
 
 #### CLI handler tests
 
@@ -3161,7 +3161,7 @@
   - stores runtime plans in the project state directory, not .kb/commit
   - does not load a stale plan from the legacy project-local path
 
-### `@kb-labs/commit-entry`
+### `@kb-labs/commit`
 
 #### E2E / journey tests
 
@@ -6455,7 +6455,7 @@
   - calls spawnSync with packageName as a discrete argv element
   - treats malicious packageName as a single argv element, not a shell command
 
-### `@kb-labs/devlink-entry`
+### `@kb-labs/devlink`
 
 #### CLI handler tests
 
@@ -9238,7 +9238,7 @@
   - returns null before connected
   - returns hostId after onConnected callback
 
-### `@kb-labs/github-entry`
+### `@kb-labs/github`
 
 #### Unit tests
 
@@ -9559,7 +9559,7 @@
 - **createProjectServiceTransport**
   - resolves a project service through the runtime lease and keeps guard paths internal
 
-### `@kb-labs/infra-worker-core`
+### `@kb-labs/infra-worker`
 
 #### E2E / journey tests
 
@@ -9936,7 +9936,7 @@
   - RS-71: public packages appear in index, private do not
   - RS-72: featured packages appear first
 
-### `@kb-labs/marketplace-registry-entry`
+### `@kb-labs/marketplace-registry`
 
 #### CLI handler tests
 
@@ -10333,7 +10333,7 @@
   - sync update replaces a document’s chunks (no duplication)
   - sync list reflects synced documents
 
-### `@kb-labs/mind-entry`
+### `@kb-labs/mind`
 
 #### CLI handler tests
 
@@ -12062,7 +12062,7 @@
   - respects window parameter
   - calculates velocity as average delta per changelog entry
 
-### `@kb-labs/qa-entry`
+### `@kb-labs/qa`
 
 #### CLI handler tests
 
@@ -12144,7 +12144,7 @@
   - CS-05: falls back to FALLBACK_BYTES_PER_LINE when sample reads all fail
   - CS-06: sizeFormatted is human-readable string
 
-### `@kb-labs/quality-entry`
+### `@kb-labs/quality`
 
 #### CLI handler tests
 
@@ -12207,7 +12207,7 @@
   - uses the nearest reachable tag matching the active flow
   - honors an explicit boundary over automatic tag discovery
 
-### `@kb-labs/release-manager-cli`
+### `@kb-labs/release`
 
 #### CLI handler tests
 
@@ -13079,7 +13079,7 @@
   - computes widgetBundleDir from pluginRoot
   - combines multiple V2 manifests
 
-### `@kb-labs/review-entry`
+### `@kb-labs/review`
 
 #### CLI handler tests
 
@@ -14219,7 +14219,7 @@
   - falls back to the raw input when nothing in the dictionary matches
   - falls back to the raw input when the dictionary is empty
 
-### `@kb-labs/steward-entry`
+### `@kb-labs/steward`
 
 #### CLI handler tests
 
@@ -14634,7 +14634,7 @@
   - rejects managed source storage redirected outside the project
   - resolves imported sources only from the project managed directory
 
-### `@kb-labs/viewer-entry`
+### `@kb-labs/viewer`
 
 #### Unit tests
 

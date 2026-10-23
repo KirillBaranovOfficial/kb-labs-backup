@@ -20,4 +20,4 @@ internals, no runtime logic.
 ## Layer
 
 Layer 1 (contracts). Depended on by `@kb-labs/mind-core` and
-`@kb-labs/mind-entry`; depends on nothing internal.
+`@kb-labs/mind`; depends on nothing internal.

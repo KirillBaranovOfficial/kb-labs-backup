@@ -47,7 +47,7 @@ Get your API key at **ClickUp → Settings → Apps**.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/clickup-entry
+pnpm kb marketplace install @kb-labs/clickup
 ```
 
 ---

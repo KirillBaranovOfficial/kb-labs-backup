@@ -121,9 +121,9 @@ def prepare_studio_fixtures(service_env: dict[str, str], *, project_b_id: str,
 
     env = dict(os.environ)
     env.update(service_env)
-    _install("@kb-labs/commit-entry", cwd=project_b, env=env, runner=runner)
+    _install("@kb-labs/commit", cwd=project_b, env=env, runner=runner)
     _ensure_only_plugins((), cwd=project_a, env=env, runner=runner)
-    _ensure_only_plugins(("@kb-labs/commit-entry",), cwd=project_b, env=env, runner=runner)
+    _ensure_only_plugins(("@kb-labs/commit",), cwd=project_b, env=env, runner=runner)
     workflow_dir = project_a / ".kb" / "workflows"
     workflow_dir.mkdir(parents=True, exist_ok=True)
     (workflow_dir / "greet.yml").write_text(GREET_WORKFLOW, encoding="utf-8")

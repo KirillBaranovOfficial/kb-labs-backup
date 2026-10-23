@@ -214,7 +214,7 @@ const adapters = [];
 // these exact same IDs rather than re-deriving them from packageName via
 // idFor()/-entry stripping — a plugin's own kb.plugin/3 manifest is the
 // source of truth for its ID (see pluginIdFor's doc comment), and package
-// names don't reliably follow that id (e.g. @kb-labs/release-manager-cli's
+// names don't reliably follow that id (e.g. @kb-labs/release's
 // manifest declares id "@kb-labs/release"). Re-deriving IDs independently
 // for members caused the release index to write "release-manager-cli" as
 // that member's id while the package's own kb-create.manifest.json (written

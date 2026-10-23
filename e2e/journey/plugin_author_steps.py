@@ -143,9 +143,9 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         plugins = lock.get("plugins") if isinstance(lock, dict) else None
         commit = plugins.get("@kb-labs/commit") if isinstance(plugins, dict) else None
         if (not isinstance(commit, dict) or commit.get("enabled", True) is not True
-                or commit.get("package") != "@kb-labs/commit-entry"):
-            raise RuntimeError("Commit case flow requires @kb-labs/commit (package @kb-labs/commit-entry) enabled by the Marketplace flow")
-        package = "@kb-labs/review-entry"
+                or commit.get("package") != "@kb-labs/commit"):
+            raise RuntimeError("Commit case flow requires @kb-labs/commit (package @kb-labs/commit) enabled by the Marketplace flow")
+        package = "@kb-labs/review"
         result = cli(["marketplace", "install", package, "--json"])
         if result.returncode != 0:
             raise RuntimeError(f"marketplace could not install {package}: {(result.stdout + result.stderr)[-800:]}")
@@ -406,7 +406,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
                  s030_history, cases=["S-030.4"])
 
     def cleanup_review_plugin() -> None:
-        command = ["marketplace", "uninstall", "@kb-labs/review-entry", "--json"]
+        command = ["marketplace", "uninstall", "@kb-labs/review", "--json"]
         result = cli(command)
         if result.returncode != 0:
             raise RuntimeError("could not remove the temporary Review plugin fixture")

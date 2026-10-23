@@ -50,7 +50,7 @@ Plugin = `contracts/` + `core/` + `entry/`. Generate each separately:
 ```bash
 kb-devkit generate plugin-contracts --dest plugins/my-plugin/contracts --name @kb-labs/my-plugin-contracts
 kb-devkit generate plugin-core      --dest plugins/my-plugin/core      --name @kb-labs/my-plugin-core
-kb-devkit generate plugin-entry     --dest plugins/my-plugin/entry     --name @kb-labs/my-plugin-entry
+kb-devkit generate plugin-entry     --dest plugins/my-plugin/entry     --name @kb-labs/my-plugin
 ```
 
 Or if `plugin` template generates the full tree at once:

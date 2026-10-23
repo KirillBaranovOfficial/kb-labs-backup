@@ -4,7 +4,7 @@
  *
  * The URL surface is intentionally action-oriented ("POST /packages/link")
  * rather than resource-style ("POST /packages/:id/link"). Plugin IDs carry
- * `@` and `/` (`@kb-labs/demo-entry`), which round-trip badly through proxies
+ * `@` and `/` (`@kb-labs/demo`), which round-trip badly through proxies
  * and API gateways as URL-encoded path segments. Every action takes its
  * target id from the request body instead, eliminating an entire class of
  * routing failures.

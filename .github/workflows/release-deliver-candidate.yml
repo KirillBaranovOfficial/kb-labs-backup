@@ -135,7 +135,7 @@ jobs:
         # Delivery only invokes the CLI and release plugin. Building the full
         # workspace here needlessly serializes hundreds of unrelated packages
         # and can exhaust the runner before immutable artifacts are delivered.
-        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release-manager-cli --no-cache
+        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release --no-cache
 
       - name: Deliver exact npm tarballs
         env:

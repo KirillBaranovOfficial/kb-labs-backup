@@ -157,7 +157,7 @@ def run_platform_update_variant_steps(
         nonlocal before_services
         _install_vibeproxy_adapter(kb_binary, run, project_a)
         for project in (project_a, project_b):
-            installed = cli(kb_command([ "marketplace", "install", "@kb-labs/commit-entry", "--json"], executable=kb_binary), project)
+            installed = cli(kb_command([ "marketplace", "install", "@kb-labs/commit", "--json"], executable=kb_binary), project)
             _payload(installed, f"install preservation plugin in {project}")
             setting = [{"id": f"update-{project.name}", "label": f"{project.name} update scope", "path": "."}]
             configured = cli(kb_command([ "config", "set", "plugins.commit.scope.scopes",

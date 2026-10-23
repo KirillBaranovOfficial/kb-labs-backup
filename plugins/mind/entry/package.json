@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/mind-entry",
+  "name": "@kb-labs/mind",
   "description": "Manifest, CLI commands and REST handlers for KB Labs Mind (RAG) plugin.",
   "version": "2.120.1",
   "type": "module",

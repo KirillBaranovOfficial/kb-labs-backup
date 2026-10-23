@@ -82,7 +82,7 @@ jobs:
         # below. Building the whole workspace here duplicates that work and
         # enters the generic rspack/DTS path that release builds deliberately
         # avoid. Bootstrap only the platform CLI and release command surface.
-        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release-manager-cli --no-cache
+        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release --no-cache
 
       - name: Hydrate release plan paths for candidate workspace
         # Plans are per-run state and are not part of the immutable source

@@ -11,12 +11,12 @@ import { readPlatformReleaseConfig, releaseArtifactPackageNames } from '../../to
 
 test('rejects a packed manifest that diverges from the source package manifest', () => {
   const source = {
-    name: '@kb-labs/qa-entry',
+    name: '@kb-labs/qa',
     version: '2.120.1',
     dependencies: { '@kb-labs/sdk': 'workspace:*' },
   };
   const packed = {
-    name: '@kb-labs/qa-entry',
+    name: '@kb-labs/qa',
     version: '2.120.1',
     dependencies: { '@kb-labs/sdk': '2.120.1' },
   };
@@ -24,8 +24,8 @@ test('rejects a packed manifest that diverges from the source package manifest',
     sourcePackedPackage: packed,
     sourceManifest: { commands: [{ flags: ['run-id', 'exclude-job'] }] },
     packedManifest: { commands: [{ flags: ['runId', 'excludeJob'] }] },
-    workspacePackageNames: new Set(['@kb-labs/qa-entry', '@kb-labs/sdk']),
-    candidateNames: new Set(['@kb-labs/qa-entry', '@kb-labs/sdk']),
+    workspacePackageNames: new Set(['@kb-labs/qa', '@kb-labs/sdk']),
+    candidateNames: new Set(['@kb-labs/qa', '@kb-labs/sdk']),
   });
 
   assert.deepEqual(errors, [
@@ -35,20 +35,20 @@ test('rejects a packed manifest that diverges from the source package manifest',
 
 test('rejects a packed dependency closure pinned to a different workspace version', () => {
   const source = {
-    name: '@kb-labs/mind-entry',
+    name: '@kb-labs/mind',
     version: '2.120.1',
     dependencies: { '@kb-labs/sdk': 'workspace:*' },
   };
   const packed = {
-    name: '@kb-labs/mind-entry',
+    name: '@kb-labs/mind',
     version: '2.120.1',
     dependencies: { '@kb-labs/sdk': '2.117.0' },
   };
 
   assert.deepEqual(validatePackedSource(source, packed, {
     sourcePackedPackage: { ...packed, dependencies: { '@kb-labs/sdk': '2.120.1' } },
-    workspacePackageNames: new Set(['@kb-labs/mind-entry', '@kb-labs/sdk']),
-    candidateNames: new Set(['@kb-labs/mind-entry', '@kb-labs/sdk']),
+    workspacePackageNames: new Set(['@kb-labs/mind', '@kb-labs/sdk']),
+    candidateNames: new Set(['@kb-labs/mind', '@kb-labs/sdk']),
   }), [
     'package.json differs from the package freshly packed from workspace source',
   ]);
@@ -56,22 +56,22 @@ test('rejects a packed dependency closure pinned to a different workspace versio
 
 test('rejects a candidate missing an internal package required by a packed dependency', () => {
   const packageSource = {
-    name: '@kb-labs/mind-entry',
+    name: '@kb-labs/mind',
     version: '2.120.1',
     dependencies: { '@kb-labs/sdk': 'workspace:*' },
   };
   assert.deepEqual(validatePackedSource(packageSource, {
-    name: '@kb-labs/mind-entry',
+    name: '@kb-labs/mind',
     version: '2.120.1',
     dependencies: { '@kb-labs/sdk': '2.120.1' },
   }, {
     sourcePackedPackage: {
-      name: '@kb-labs/mind-entry',
+      name: '@kb-labs/mind',
       version: '2.120.1',
       dependencies: { '@kb-labs/sdk': '2.120.1' },
     },
-    workspacePackageNames: new Set(['@kb-labs/mind-entry', '@kb-labs/sdk']),
-    candidateNames: new Set(['@kb-labs/mind-entry']),
+    workspacePackageNames: new Set(['@kb-labs/mind', '@kb-labs/sdk']),
+    candidateNames: new Set(['@kb-labs/mind']),
   }), [
     'dependencies.@kb-labs/sdk is required from the workspace but missing from the candidate package set',
   ]);

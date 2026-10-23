@@ -19,7 +19,6 @@ templates/nginx/
 # policy recommendations out of the SAST signal until the lockfile can be
 # regenerated as a dedicated dependency-policy change.
 pnpm-workspace.yaml
-plugins/clickup/pnpm-workspace.yaml
 infra/devkit/fixtures/monorepo/pnpm-workspace.yaml
 
 # Reviewed, intentional findings that the generic rules cannot distinguish

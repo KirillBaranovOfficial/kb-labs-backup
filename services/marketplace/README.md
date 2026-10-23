@@ -7,11 +7,11 @@ Marketplace manages plugin and adapter packages for an installed KB Labs platfor
 Run from the project root. Schema v3 of `.kb/marketplace.lock` records each plugin's exact version, tarball integrity, source kind, and enabled state. It contains no machine-specific path or install timestamp; runtime resolution uses the machine's shared extension store. Install does not update project `package.json`, the package-manager lockfile, or `node_modules`. Run `kb marketplace sync` to regenerate the lock in schema v3.
 
 ```bash
-kb marketplace install @kb-labs/commit-entry@1.2.3
+kb marketplace install @kb-labs/commit@1.2.3
 kb marketplace plugins list
-kb marketplace plugins disable @kb-labs/commit-entry
-kb marketplace plugins enable @kb-labs/commit-entry
-kb marketplace uninstall @kb-labs/commit-entry
+kb marketplace plugins disable @kb-labs/commit
+kb marketplace plugins enable @kb-labs/commit
+kb marketplace uninstall @kb-labs/commit
 ```
 
 For a local plugin, build it and pass an explicit relative link path:

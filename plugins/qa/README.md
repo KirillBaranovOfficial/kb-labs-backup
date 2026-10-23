@@ -47,7 +47,7 @@ tracking over time.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/qa-entry
+pnpm kb marketplace install @kb-labs/qa
 ```
 
 ---

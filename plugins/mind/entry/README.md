@@ -1,4 +1,4 @@
-# @kb-labs/mind-entry
+# @kb-labs/mind
 
 Plugin entry point for KB Labs **Mind** (RAG) — the manifest that wires the
 engine (`@kb-labs/mind-core`) to the platform: CLI commands, REST routes, and
@@ -25,5 +25,5 @@ Mounted under `MIND_BASE_PATH` (`/api/v1/plugins/mind`): `POST /index`,
 
 ## Tests
 
-- Unit/integration — `pnpm --filter @kb-labs/mind-entry test`
-- CLI handler (CLI↔REST parity) — `pnpm --filter @kb-labs/mind-entry test:cli`
+- Unit/integration — `pnpm --filter @kb-labs/mind test`
+- CLI handler (CLI↔REST parity) — `pnpm --filter @kb-labs/mind test:cli`

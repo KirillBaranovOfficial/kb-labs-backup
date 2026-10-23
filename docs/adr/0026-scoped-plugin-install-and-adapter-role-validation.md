@@ -68,7 +68,7 @@ was asked for, validates every ID against the manifest catalog
 (`tools/kb-create/internal/manifest/manifest.json`) **before** any network
 action, and reuses the existing non-interactive defaulting path
 (`wizard.Run(Yes: true)`) rather than re-implementing it. `release` is now a
-registered catalog entry (`@kb-labs/release-manager-cli`).
+registered catalog entry (`@kb-labs/release`).
 
 ### Install-time flow (as shipped)
 

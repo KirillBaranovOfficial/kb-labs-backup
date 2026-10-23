@@ -30,13 +30,13 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
     def check(command_env: dict[str, str]) -> str | None:
         failure = unavailable(
             project_a, ["review", "run", "--mode=heuristic", "--json"],
-            "@kb-labs/review-entry", "S-197.5", command_env,
+            "@kb-labs/review", "S-197.5", command_env,
         )
         if failure:
             return failure
         return unavailable(
             project_b, ["commit", "commit", "--dry-run", "--json"],
-            "@kb-labs/commit-entry", "S-197.5", command_env,
+            "@kb-labs/commit", "S-197.5", command_env,
         )
 
     def check_in_isolated_platform() -> str | None:

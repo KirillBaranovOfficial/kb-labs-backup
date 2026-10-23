@@ -206,10 +206,10 @@ services:
     version: "2.94.0"
     adapters: *adapters
     plugins:
-      "@kb-labs/commit-entry":  "2.94.0"
-      "@kb-labs/review-entry":  "2.94.0"
-      "@kb-labs/mind-entry":    "2.94.0"
-      "@kb-labs/agents-entry":  "2.94.0"
+      "@kb-labs/commit":  "2.94.0"
+      "@kb-labs/review":  "2.94.0"
+      "@kb-labs/mind":    "2.94.0"
+      "@kb-labs/agents":  "2.94.0"
     targets:
       hosts: [vm-1]
       strategy: all
@@ -255,7 +255,7 @@ services:
       vectorStore:     "@kb-labs/adapters-qdrant@2.94.0"
       embeddings:      "@kb-labs/adapters-openai/embeddings@2.94.0"
     plugins:
-      "@kb-labs/mind-entry": "2.94.0"
+      "@kb-labs/mind": "2.94.0"
 ```
 
 Qdrant also needs to be running. Add it to your `infrastructure` block:

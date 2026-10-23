@@ -48,7 +48,7 @@ editing, and post-mortem debugging from a trace file.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/agent-entry
+pnpm kb marketplace install @kb-labs/agents
 ```
 
 ---

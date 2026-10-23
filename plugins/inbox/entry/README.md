@@ -1,4 +1,4 @@
-# @kb-labs/inbox-entry
+# @kb-labs/inbox
 
 > Part of [KB Labs](https://github.com/kb-labs-team/kb-labs) ecosystem.
 

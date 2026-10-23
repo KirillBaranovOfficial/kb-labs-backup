@@ -44,7 +44,7 @@ backups before applying, and lets you undo or restore to a specific snapshot.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/devlink-entry
+pnpm kb marketplace install @kb-labs/devlink
 ```
 
 ---

@@ -14,7 +14,7 @@ Marketplace Registry is the publisher-facing counterpart to the Marketplace
 service. While Marketplace handles install/update for consumers, Registry gives
 plugin authors the tools to publish new versions, share private plugins, yank
 broken releases, and manage deprecation. The publishing commands are provided
-by the installable `@kb-labs/marketplace-registry-entry` plugin; they talk over
+by the installable `@kb-labs/marketplace-registry` plugin; they talk over
 HTTP to the separately deployed Registry service (`:5071`).
 
 ---
@@ -53,7 +53,7 @@ and refreshes it through the shared Gateway client.
 The Registry daemon is an optional, separately deployed platform service for
 self-hosted publishing. Deploy it with the platform service deployment flow
 when publishing is needed. Plugin authors install the optional
-`@kb-labs/marketplace-registry-entry` plugin from the Marketplace to get the
+`@kb-labs/marketplace-registry` plugin from the Marketplace to get the
 `kb hub` commands; the plugin connects to the configured Registry URL over
 HTTP.
 
