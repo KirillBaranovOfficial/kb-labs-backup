@@ -1674,10 +1674,6 @@ func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T
 	source.Adapters = append(source.Adapters, catalog.Adapter{Component: catalog.Component{
 		ID: adapterID, Version: "1.0.0", Package: adapterID, Tarball: "https://example.test/vibeproxy.tgz", SHA256: "vibeproxy",
 	}})
-	source.Plugins = append(source.Plugins, catalog.Component{
-		ID: pluginID, Version: "1.0.0", Package: "@kb-labs/commit-entry",
-		Tarball: "https://example.test/commit-entry.tgz", SHA256: "commit-entry",
-	})
 	source, err := testfixtures.SealCatalog(source)
 	if err != nil {
 		t.Fatalf("seal update release index: %v", err)
@@ -1706,8 +1702,8 @@ func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T
 			foundPlugin = true
 		}
 	}
-	if !foundAdapter || !foundPlugin {
-		t.Fatalf("updated plan artifacts omitted installed adapter %s: %+v", adapterID, updated.Artifacts)
+	if !foundAdapter || foundPlugin {
+		t.Fatalf("updated plan must retain the installed adapter and keep Marketplace plugins outside the release index: adapter=%t plugin=%t artifacts=%+v", foundAdapter, foundPlugin, updated.Artifacts)
 	}
 
 	withoutAdapter := source

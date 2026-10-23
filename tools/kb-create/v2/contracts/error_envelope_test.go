@@ -123,6 +123,16 @@ func TestNewProjectRegistrationFailureBuildsCauseFromLocalContext(t *testing.T) 
 	}
 }
 
+func TestMarketplaceInstallDiagnosticNamesIdentitySourceAndCataloguedRetry(t *testing.T) {
+	failure := MarketplaceInstallDiagnostic("@kb-labs/commit", "registry", nil)
+	if failure.Code != CodeMarketplaceInstallFailed || failure.Message != "Marketplace could not install @kb-labs/commit through registry." {
+		t.Fatalf("Marketplace diagnostic = %#v", failure)
+	}
+	if !strings.Contains(failure.Hint, "kb marketplace install @kb-labs/commit") || !strings.Contains(failure.Hint, "--scope platform") {
+		t.Fatalf("Marketplace retry hint omitted the identity or platform scope: %q", failure.Hint)
+	}
+}
+
 func TestEmittedCodesAreKnown(t *testing.T) {
 	root := ".."
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {

@@ -227,7 +227,7 @@ class GatewayStepTests(unittest.TestCase):
                     output = json.dumps({
                         "ok": True,
                         "data": {
-                            "file": str(self.platform / "state/kb.config.jsonc"),
+                            "file": str((self.platform / "state/kb.config.jsonc").resolve()),
                             "nextCommand": f"kb-create restart --platform-root {json.dumps(platform_root)}",
                         },
                     })

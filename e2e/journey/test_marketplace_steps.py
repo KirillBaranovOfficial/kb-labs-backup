@@ -639,7 +639,8 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:1] == ["version"]:
                     stdout = json.dumps({"version": "1.0.0"})
                 elif args[:2] == ["marketplace", "install"]:
-                    if args[2].count("@") > 1:
+                    exact_version = args[2].count("@") > 1
+                    if exact_version:
                         package_id, version = args[2].rsplit("@", 1)
                     else:
                         package_id, version = args[2], registry_version
@@ -656,7 +657,8 @@ class MarketplaceStepTests(unittest.TestCase):
                             f"{error['message']} [{error['code']}]\nHint: {error['hint']}\n", "")
                     plugin_id = entity["id"]
                     package_name = entity["package"]
-                    version = published_versions.get(package_name, version)
+                    if not exact_version:
+                        version = published_versions.get(package_name, version)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
                     lock_root = active_platform if platform else cwd_path
                     value = lock(lock_root, platform=platform)
@@ -866,8 +868,9 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(actual, expected, [(step.name, step.status, step.message) for step in journey.steps])
             self.assertEqual(commit_case_hook_calls, [True])
             self.assertFalse(any("hub" in call for call in calls))
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit", "--json"), calls)
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit",
+            pinned_commit = f"@kb-labs/commit-entry@{fixture_entry['version']}"
+            self.assertIn(("kb", "marketplace", "install", pinned_commit, "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", pinned_commit,
                            "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "marketplace", "uninstall", "@kb-labs/commit",
                            "--scope", "platform", "--json"), calls)

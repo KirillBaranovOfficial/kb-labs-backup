@@ -18,6 +18,7 @@ import (
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -149,6 +150,7 @@ type operationTestSetup struct {
 	InstallInput                                                                      io.Reader
 	InstallOutput                                                                     io.Writer
 	RuntimeDeps                                                                       *runtime.Dependencies
+	Marketplace                                                                       marketplace.InstallClient
 	NodePreflight                                                                     func() error
 	ProjectRegistrar                                                                  func(string) (projectRegistrationResult, error)
 }
@@ -168,7 +170,8 @@ func executeForTest(t *testing.T, setup operationTestSetup) (any, *diag.Diag, in
 	reader := newCommandFlagReader(cmd, values)
 	setTestFlagValues(t, setup, reader)
 	deps := commandDependencies{Runtime: setup.RuntimeDeps, NodeCheck: setup.NodePreflight,
-		InstallInput: setup.InstallInput, InstallOutput: setup.InstallOutput, Command: cmd, Executable: setup.Executable}
+		InstallInput: setup.InstallInput, InstallOutput: setup.InstallOutput, Marketplace: setup.Marketplace,
+		Command: cmd, Executable: setup.Executable}
 	if deps.Runtime == nil {
 		deps.Runtime = &runtime.Dependencies{}
 	}

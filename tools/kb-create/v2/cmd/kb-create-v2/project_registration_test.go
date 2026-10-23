@@ -580,6 +580,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	humanCommand := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
 		deps := productionCommandDependencies(cmd)
 		deps.NodeCheck = func() error { return nil }
+		deps.Marketplace = recordingMarketplaceInstaller{}
 		deps.Executable = launcher
 		answers := []string{"", "", "secured", "admin@example.test", "workspace", humanJWTSecret, humanJWTSecret, ""}
 		deps.InstallInput = strings.NewReader(strings.Join(answers, "\n"))

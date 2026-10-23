@@ -171,6 +171,31 @@ describe('MarketplaceService', () => {
   // ── install ──────────────────────────────────────────────────────────
 
   describe('install', () => {
+    it('reports the attempted sources when no Marketplace source resolves the identity', async () => {
+      const registry: MarketplaceSource = {
+        kind: 'registry',
+        async resolveIdentity() { return { status: 'not-found-unowned' }; },
+        async resolve() { throw new Error('unreachable'); },
+        async install() { throw new Error('unreachable'); },
+        async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+      };
+      const npm: MarketplaceSource = {
+        kind: 'npm',
+        async resolveIdentity() { return { status: 'not-found-unowned' }; },
+        async resolve() { throw new Error('unreachable'); },
+        async install() { throw new Error('unreachable'); },
+        async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, sources: [registry, npm] });
+
+      await expect(service.install({ scope: 'platform' }, ['@kb-labs/commit']))
+        .rejects.toMatchObject({ envelope: {
+          code: 'KB_MARKETPLACE_INSTALL_FAILED',
+          message: 'Marketplace could not install @kb-labs/commit through registry, npm.',
+          details: { package: '@kb-labs/commit', scope: 'platform', source: 'registry, npm' },
+        } });
+    });
+
     it('does not resolve a Registry-owned identity from npm', async () => {
       const projectRoot = path.join(tmpDir, 'owned-identity-project');
       await fs.mkdir(projectRoot, { recursive: true });
