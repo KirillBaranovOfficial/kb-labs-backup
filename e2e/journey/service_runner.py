@@ -183,6 +183,9 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
                 return f"kb project add returned no project ID for {project.name}"
             ids.append(identifier)
             cleanup.callback(remove_project, project, identifier)
+            commit_install = install_project_commit_plugin(str(project), cli, os.environ)
+            if commit_install.returncode != 0:
+                return f"could not install Commit in {project.name}: {(commit_install.stderr or commit_install.stdout).strip()}"
 
         scopes = '[{"id":"journey-shared","label":"Shared","path":"."}]'
         manifest_default = run_cli(projects[0], "config", "get", "plugins.commit.llm.maxTokens", "--json")
@@ -1191,6 +1194,14 @@ def _prepare_mcp_projects(project_id: str, project_root: str, registry: str, env
             "projectBRoot": project_b_root,
         }), encoding="utf-8")
     return project_b_id, project_b_root
+
+
+def install_project_commit_plugin(project_root: str, executable: str, env: dict[str, str], runner=run_command):
+    """Install Commit into a settings project before reading its manifest defaults."""
+    command = kb_command(["marketplace", "install", "@kb-labs/commit", "--scope", "project", "--json"],
+                         executable=executable)
+    return run_with_runner(runner, command, cwd=str(Path(project_root).resolve()), env=env,
+                           capture_output=True, text=True, timeout=300)
 
 
 def install_project_agents_plugin(project_root: str, registry: str, env: dict[str, str], runner=run_command) -> None:

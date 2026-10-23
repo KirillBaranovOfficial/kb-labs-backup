@@ -127,6 +127,30 @@ describe('Sandbox Runner', () => {
       expect(result.executionMeta.duration).toBeGreaterThanOrEqual(0);
     });
 
+    it('loads the named export declared by a handler reference', async () => {
+      const handlerPath = join(testDir, 'named-handler.js');
+      writeFileSync(handlerPath, `
+        export const createSessionHandler = {
+          async execute() { return { session: { id: 'session-1' } }; }
+        };
+      `);
+
+      const result = await runInProcess({
+        descriptor: {
+          hostType: 'rest', pluginId: '@kb-labs/agents', pluginVersion: '1.0.0',
+          requestId: 'named-handler', handlerId: 'agents:sessions:create', permissions: {},
+          hostContext: { host: 'rest', method: 'POST', path: '/sessions', query: {}, headers: {}, requestId: 'named-handler', traceId: 'named-handler' },
+        },
+        platform: mockPlatform,
+        ui: mockUI,
+        handlerPath: `${handlerPath}#createSessionHandler`,
+        input: {},
+        cwd: testDir,
+      });
+
+      expect(result.data).toEqual({ session: { id: 'session-1' } });
+    });
+
     it('keeps plain data without interpreting success-looking fields', async () => {
       const handlerPath = join(testDir, 'command-result-handler.js');
       const handlerCode = `

@@ -9,7 +9,8 @@ describe('system command scope declarations', () => {
     const commands = registry.listSystemCommands();
 
     expect(commands.length).toBeGreaterThan(0);
-    expect(commands.every((command) => command.scope === 'platform' || command.scope === 'project')).toBe(true);
+    expect(commands.every((command) => typeof command.scope === 'function'
+      || command.scope === 'platform' || command.scope === 'project')).toBe(true);
 
     expect(registry.resolve(['hello'])).toMatchObject({ type: 'system-cmd', cmd: { scope: 'platform' } });
     expect(registry.resolve(['logs', 'query'])).toMatchObject({ type: 'system-cmd', cmd: { scope: 'platform' } });

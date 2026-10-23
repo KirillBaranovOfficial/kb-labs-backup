@@ -109,25 +109,21 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 }
 
 // applyHostSection writes the host's own settings (services/host/app,
-// settings.ts): the installer, not the user, decides them. The host's policy
-// overrides gateway access with host.auth, so the section must agree with the
-// selected access mode: "local" is a no-login loopback install (auth off);
-// anything else, including no answer, is the gateway's secured default (auth
-// on). An explicit host.auth from a manifest default is left alone.
+// settings.ts): the installer derives auth from the selected gateway access
+// mode. host.auth is a host-facing projection of that one decision, so a
+// manifest default cannot override it.
 func applyHostSection(config map[string]any) {
 	section, _ := config["host"].(map[string]any)
 	if section == nil {
 		section = map[string]any{}
 	}
-	if _, explicit := section["auth"]; !explicit {
-		auth := "on"
-		if gateway, ok := config["gateway"].(map[string]any); ok {
-			if access, ok := gateway["access"].(map[string]any); ok && access["mode"] == "local" {
-				auth = "off"
-			}
+	auth := "on"
+	if gateway, ok := config["gateway"].(map[string]any); ok {
+		if access, ok := gateway["access"].(map[string]any); ok && access["mode"] == "local" {
+			auth = "off"
 		}
-		section["auth"] = auth
 	}
+	section["auth"] = auth
 	config["host"] = section
 }
 

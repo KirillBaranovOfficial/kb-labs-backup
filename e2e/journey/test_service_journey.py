@@ -604,6 +604,8 @@ if args[:2] == ["project", "add"]:
     succeed({"project": {"id": cwd.name}})
 if args[:2] == ["project", "remove"]:
     succeed({})
+if args[:2] == ["marketplace", "install"]:
+    succeed({"package": "@kb-labs/commit", "scope": "project"})
 if args[:2] == ["config", "set"]:
     if ".kb" not in state:
         (cwd / ".kb").mkdir()

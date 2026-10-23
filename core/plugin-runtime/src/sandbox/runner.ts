@@ -148,8 +148,9 @@ export async function runInProcess<T = unknown>(
     }
 
     // Import and execute handler
-    const handlerModule = await import(handlerPath);
-    const handler = handlerModule.default ?? handlerModule;
+    const [modulePath = handlerPath, exportName] = handlerPath.split('#', 2);
+    const handlerModule = await import(modulePath);
+    const handler = exportName ? handlerModule[exportName] : handlerModule.default ?? handlerModule;
 
     if (typeof handler.execute !== 'function') {
       throw new PluginError(

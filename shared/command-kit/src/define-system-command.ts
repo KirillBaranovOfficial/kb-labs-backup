@@ -42,7 +42,7 @@ export type SystemCommandContext = PluginContextV3 & {
 
 export interface Command {
   name: string;
-  scope: 'platform' | 'project';
+  scope: CommandScope;
   /** Public access is explicit; system commands otherwise require a user session. */
   authProtection?: 'public' | 'session';
   /** Registry test fixture for the command's safe JSON success path. */
@@ -55,6 +55,9 @@ export interface Command {
   examples?: string[];
   run: (ctx: SystemCommandContext, argv: string[], flags: Record<string, unknown>) => Promise<number>;
 }
+
+export type CommandScope = 'platform' | 'project' |
+  ((argv: readonly string[], flags: Readonly<Record<string, unknown>>) => 'platform' | 'project');
 
 export type SystemCommandJsonTest =
   | { safeArgs: readonly string[] }
@@ -164,7 +167,7 @@ export interface SystemCommandConfig<
   /** Command name (required for system commands) */
   name: string;
   /** Startup scope required before command execution. */
-  scope: 'platform' | 'project';
+  scope: CommandScope;
   /** Public access is explicit; system commands otherwise require a user session. */
   authProtection?: 'public' | 'session';
   /** Registry test fixture or explicit reason this command has no safe valid path. */
