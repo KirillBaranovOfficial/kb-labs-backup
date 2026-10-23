@@ -201,10 +201,10 @@
       "@kb-labs/mind-adapters/*": [
         "../kb-labs-mind/packages/mind-adapters/src/*"
       ],
-      "@kb-labs/mind-entry": [
+      "@kb-labs/mind": [
         "../kb-labs-mind/packages/mind-cli/src/index.ts"
       ],
-      "@kb-labs/mind-entry/*": [
+      "@kb-labs/mind/*": [
         "../kb-labs-mind/packages/mind-cli/src/*"
       ],
       "@kb-labs/mind-core": [
@@ -303,10 +303,10 @@
       "@kb-labs/release-manager-checks/*": [
         "../kb-labs-release-manager/packages/release-checks/src/*"
       ],
-      "@kb-labs/release-manager-cli": [
+      "@kb-labs/release": [
         "../kb-labs-release-manager/packages/release-cli/src/index.ts"
       ],
-      "@kb-labs/release-manager-cli/*": [
+      "@kb-labs/release/*": [
         "../kb-labs-release-manager/packages/release-cli/src/*"
       ],
       "@kb-labs/release-manager-core": [

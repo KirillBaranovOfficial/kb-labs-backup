@@ -47,7 +47,7 @@ cached and served via REST API to the Studio UI.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/quality-entry
+pnpm kb marketplace install @kb-labs/quality
 ```
 
 ---

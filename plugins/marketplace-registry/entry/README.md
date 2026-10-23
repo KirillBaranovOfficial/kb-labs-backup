@@ -1,4 +1,4 @@
-# @kb-labs/marketplace-registry-entry
+# @kb-labs/marketplace-registry
 
 > Part of [KB Labs](https://github.com/kb-labs-team/kb-labs) ecosystem.
 

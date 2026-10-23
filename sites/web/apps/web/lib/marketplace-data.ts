@@ -83,14 +83,12 @@ function packageSlug(name: string): string {
 
 function summaryToItem(s: RegistrySummary, detail?: RegistryEntryDetail): MarketplaceItem {
   const rawName = s.name.split('/').pop() ?? s.name;
-  // Strip "-entry" suffix for display: "clickup-entry" → "clickup"
-  const displayName = rawName.replace(/-entry$/, '');
   // Use handle as author fallback when author field is absent
   const author = authorString(s.author) !== 'Unknown' ? authorString(s.author) : s.handle;
   const meta = detail?.meta;
   return {
     slug: packageSlug(s.name),
-    name: displayName,
+    name: rawName,
     type: kindToPluginType(s.primaryKind),
     version: s.version,
     author,

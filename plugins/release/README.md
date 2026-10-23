@@ -57,7 +57,7 @@ CI or debugging.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/release-entry
+pnpm kb marketplace install @kb-labs/release
 ```
 
 ---

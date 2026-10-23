@@ -28,7 +28,7 @@ The same step list must also run against a deployed stand via `--gateway-url` (T
 |---|---|---|
 | S-266.1 | Start the Compose project with fresh data and deployment secrets. | Every enabled service becomes healthy behind the Gateway; each service address resolves through the declared service transport/config. |
 | S-266.2 | Run `kb --help`, then `kb auth login --gateway-url <gateway-url> --email <admin-email>` and authenticate as the seeded administrator. | Help exits 0; login exits 0 and stores the authenticated session for that Gateway URL. |
-| S-266.3 | Run `kb marketplace plugins list`, install `@kb-labs/commit-entry` with `kb marketplace install @kb-labs/commit-entry`, verify it with `kb marketplace plugins list`, then run `kb marketplace uninstall @kb-labs/commit-entry`. | Each operation succeeds through the Gateway; the Commit plugin appears after install and is absent after uninstall. |
+| S-266.3 | Run `kb marketplace plugins list`, install `@kb-labs/commit` with `kb marketplace install @kb-labs/commit`, verify it with `kb marketplace plugins list`, then run `kb marketplace uninstall @kb-labs/commit`. | Each operation succeeds through the Gateway; the Commit plugin appears after install and is absent after uninstall. |
 | S-266.4 | Run `kb workflow runs list --json`. | The command exits 0 and returns the workflow run list through the Gateway. |
 | S-266.5 | Open the Studio URL served by the stack and sign in as the seeded administrator. | Studio loads behind authentication and shows the authenticated administrator session. |
 | S-266.6 | Send an unauthenticated `GET <gateway-url>/auth/me` request. | The response has HTTP 401 and an ADR-0049 error envelope with code `KB_AUTH_REQUIRED`. |

@@ -195,43 +195,43 @@
   "plugins": [
     {
       "id": "@kb-labs/mind",
-      "pkg": "@kb-labs/mind-entry",
+      "pkg": "@kb-labs/mind",
       "description": "AI code search (RAG)",
       "default": false
     },
     {
       "id": "@kb-labs/agents",
-      "pkg": "@kb-labs/agent-entry",
+      "pkg": "@kb-labs/agents",
       "description": "Autonomous agents",
       "default": false
     },
     {
       "id": "@kb-labs/review",
-      "pkg": "@kb-labs/review-entry",
+      "pkg": "@kb-labs/review",
       "description": "AI code review",
       "default": false
     },
     {
       "id": "@kb-labs/commit",
-      "pkg": "@kb-labs/commit-entry",
+      "pkg": "@kb-labs/commit",
       "description": "AI commit generation",
       "default": false
     },
     {
       "id": "@kb-labs/release",
-      "pkg": "@kb-labs/release-manager-cli",
+      "pkg": "@kb-labs/release",
       "description": "Release manager \u2014 plan, publish, workflow templates",
       "default": false
     },
     {
       "id": "@kb-labs/quality",
-      "pkg": "@kb-labs/quality-entry",
+      "pkg": "@kb-labs/quality",
       "description": "Code quality, architecture analysis",
       "default": false
     },
     {
       "id": "@kb-labs/steward",
-      "pkg": "@kb-labs/steward-entry",
+      "pkg": "@kb-labs/steward",
       "description": "Project memory and daily review",
       "default": false
     },

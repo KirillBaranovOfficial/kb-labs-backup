@@ -9,6 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import type { PackageSource, MarketplaceSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
 import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
 import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
@@ -22,6 +23,7 @@ import { MarketplaceService, mergeScopedEntries, type MarketplaceServiceOptions 
 
 const marketplaceServiceTestKeys = crypto.generateKeyPairSync('ed25519');
 const marketplaceServiceTestPublicKey = marketplaceServiceTestKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+const marketplaceServiceTestWorkspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
 
 type TestServiceOptions = Omit<MarketplaceServiceOptions, 'logger' | 'sources'> & {
   sources?: MarketplaceSource[];
@@ -106,7 +108,7 @@ async function createAdapterDir(tmpDir: string, name: string, id: string): Promi
  * Create a package directory that is NOT a KB Labs entity — just a plain
  * npm package with package.json and no kb.plugin.json / manifest.
  * Mirrors what happens when `install mind` fetches the unrelated npm `mind`
- * library instead of @kb-labs/mind-entry (B-021).
+ * library instead of @kb-labs/mind (B-021).
  */
 async function createNonKbPackageDir(
   tmpDir: string,
@@ -171,6 +173,53 @@ describe('MarketplaceService', () => {
   // ── install ──────────────────────────────────────────────────────────
 
   describe('install', () => {
+    // case: S-268.14
+    it('installs the npm artifact under the same identity recorded in the Marketplace lock', async () => {
+      const sourceDir = path.join(marketplaceServiceTestWorkspaceRoot, 'plugins/commit/entry');
+      const packageJson = JSON.parse(await fs.readFile(path.join(sourceDir, 'package.json'), 'utf8')) as { name: string; version: string };
+      const dir = path.join(tmpDir, 'node_modules', '@kb-labs', 'commit');
+      await fs.mkdir(path.dirname(dir), { recursive: true });
+      await fs.symlink(sourceDir, dir, 'dir');
+      const integrity = computeIntegrity(JSON.stringify(packageJson));
+      const source = createMockSource(new Map([
+        ['@kb-labs/commit', { dir, version: packageJson.version, integrity }],
+      ]));
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+
+      const result = await service.install({ scope: 'platform' }, ['@kb-labs/commit']);
+
+      expect(result.installed).toMatchObject([{ id: '@kb-labs/commit', source: 'npm' }]);
+      expect(packageJson.name).toBe('@kb-labs/commit');
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.plugins['@kb-labs/commit']).toMatchObject({
+        package: '@kb-labs/commit',
+        marketplaceSource: 'npm',
+      });
+      const status = await service.list({ scope: 'platform' });
+      expect(status).toMatchObject([{ id: '@kb-labs/commit', package: '@kb-labs/commit' }]);
+    });
+
+    // case: S-268.14
+    it('rejects a package whose manifest identity differs from the requested Marketplace identity', async () => {
+      const { dir, integrity } = await createPluginDir(tmpDir, 'commit', '@kb-labs/commit');
+      await fs.writeFile(path.join(dir, 'kb.plugin.json'), JSON.stringify({
+        schema: 'kb.plugin/3',
+        id: '@kb-labs/other',
+        version: '1.0.0',
+        cli: { commands: [{ id: 'hello', path: 'hello', describe: 'hi', handler: './h.js' }] },
+      }));
+      const source = createMockSource(new Map([
+        ['@kb-labs/commit', { dir, version: '1.0.0', integrity }],
+      ]));
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      const { InvalidEntityError } = await import('../marketplace-service.js');
+
+      await expect(service.install({ scope: 'platform' }, ['@kb-labs/commit']))
+        .rejects.toBeInstanceOf(InvalidEntityError);
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.plugins['@kb-labs/commit']).toBeUndefined();
+    });
+
     it('reports the attempted sources when no Marketplace source resolves the identity', async () => {
       const registry: MarketplaceSource = {
         kind: 'registry',
@@ -252,7 +301,7 @@ describe('MarketplaceService', () => {
       });
       const source: PackageSource = {
         async resolve(): Promise<ResolvedPackage> {
-          return { id: '@kb-labs/unknown-entry', version: '1.0.0', integrity: '', source: 'marketplace' };
+          return { id: '@kb-labs/unknown', version: '1.0.0', integrity: '', source: 'marketplace' };
         },
         install,
         async remove() {},
@@ -262,7 +311,7 @@ describe('MarketplaceService', () => {
       const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const { PackageClassificationError } = await import('../marketplace-service.js');
 
-      await expect(service.install({ scope: 'platform' }, ['@kb-labs/unknown-entry']))
+      await expect(service.install({ scope: 'platform' }, ['@kb-labs/unknown']))
         .rejects.toBeInstanceOf(PackageClassificationError);
       expect(install).not.toHaveBeenCalled();
     });
@@ -731,7 +780,7 @@ describe('MarketplaceService', () => {
       await fs.writeFile(
         path.join(dir, 'package.json'),
         JSON.stringify({
-          name: '@kb-labs/local-plugin-entry',
+          name: '@kb-labs/local-plugin',
           version: '0.1.0',
           kb: { adapter: { manifest: './dist/manifest.js' } },
         }),
@@ -756,7 +805,6 @@ describe('MarketplaceService', () => {
       expect(result.primaryKind).toBe('plugin');
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
       expect(lock!.plugins['@kb-labs/local-plugin']).toBeDefined();
-      expect(lock!.plugins['@kb-labs/local-plugin-entry']).toBeUndefined();
     });
 
     it('rejects path outside workspace root (path traversal)', async () => {

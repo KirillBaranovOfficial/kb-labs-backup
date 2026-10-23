@@ -138,7 +138,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-entry": {
+      "@kb-labs/agents": {
         "ok": false,
         "issues": [
           {
@@ -303,7 +303,7 @@
           }
         ]
       },
-      "@kb-labs/clickup-entry": {
+      "@kb-labs/clickup": {
         "ok": false,
         "issues": [
           {
@@ -363,7 +363,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/commit-entry": {
+      "@kb-labs/commit": {
         "ok": false,
         "issues": [
           {
@@ -456,7 +456,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/devlink-entry": {
+      "@kb-labs/devlink": {
         "ok": false,
         "issues": [
           {
@@ -582,7 +582,7 @@
           }
         ]
       },
-      "@kb-labs/github-entry": {
+      "@kb-labs/github": {
         "ok": false,
         "issues": [
           {
@@ -658,10 +658,6 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/host-agent-entry": {
-        "ok": true,
-        "issues": null
-      },
       "@kb-labs/host-agent-fs": {
         "ok": true,
         "issues": null
@@ -682,7 +678,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/infra-worker-core": {
+      "@kb-labs/infra-worker": {
         "ok": true,
         "issues": null
       },
@@ -703,10 +699,6 @@
         "issues": null
       },
       "@kb-labs/marketplace-core": {
-        "ok": true,
-        "issues": null
-      },
-      "@kb-labs/marketplace-entry": {
         "ok": true,
         "issues": null
       },
@@ -757,7 +749,7 @@
           }
         ]
       },
-      "@kb-labs/marketplace-registry-entry": {
+      "@kb-labs/marketplace-registry": {
         "ok": false,
         "issues": [
           {
@@ -790,7 +782,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/mind-entry": {
+      "@kb-labs/mind": {
         "ok": false,
         "issues": [
           {
@@ -872,7 +864,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/qa-entry": {
+      "@kb-labs/qa": {
         "ok": false,
         "issues": [
           {
@@ -893,7 +885,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/quality-entry": {
+      "@kb-labs/quality": {
         "ok": false,
         "issues": [
           {
@@ -914,7 +906,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/release-manager-cli": {
+      "@kb-labs/release": {
         "ok": false,
         "issues": [
           {
@@ -963,7 +955,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/review-entry": {
+      "@kb-labs/review": {
         "ok": true,
         "issues": null
       },
@@ -1367,7 +1359,7 @@
         ]
       },
       {
-        "package": "@kb-labs/marketplace-registry-entry",
+        "package": "@kb-labs/marketplace-registry",
         "ok": false,
         "issues": [
           {
@@ -1446,7 +1438,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/github-entry",
+        "package": "@kb-labs/github",
         "ok": false,
         "issues": [
           {
@@ -1587,7 +1579,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/commit-entry",
+        "package": "@kb-labs/commit",
         "ok": false,
         "issues": [
           {
@@ -1620,7 +1612,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/infra-worker-core",
+        "package": "@kb-labs/infra-worker",
         "ok": true,
         "issues": null
       },
@@ -1705,11 +1697,6 @@
       },
       {
         "package": "@kb-labs/cli-commands",
-        "ok": true,
-        "issues": null
-      },
-      {
-        "package": "@kb-labs/marketplace-entry",
         "ok": true,
         "issues": null
       },
@@ -1858,7 +1845,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/clickup-entry",
+        "package": "@kb-labs/clickup",
         "ok": false,
         "issues": [
           {
@@ -1909,11 +1896,6 @@
             "capability": "scaffoldable"
           }
         ]
-      },
-      {
-        "package": "@kb-labs/host-agent-entry",
-        "ok": true,
-        "issues": null
       },
       {
         "package": "@kb-labs/sdk",
@@ -2061,7 +2043,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/devlink-entry",
+        "package": "@kb-labs/devlink",
         "ok": false,
         "issues": [
           {
@@ -2311,7 +2293,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/qa-entry",
+        "package": "@kb-labs/qa",
         "ok": false,
         "issues": [
           {
@@ -2330,7 +2312,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/release-manager-cli",
+        "package": "@kb-labs/release",
         "ok": false,
         "issues": [
           {
@@ -2383,7 +2365,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-entry",
+        "package": "@kb-labs/agents",
         "ok": false,
         "issues": [
           {
@@ -2407,7 +2389,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/quality-entry",
+        "package": "@kb-labs/quality",
         "ok": false,
         "issues": [
           {
@@ -2421,7 +2403,7 @@
         ]
       },
       {
-        "package": "@kb-labs/mind-entry",
+        "package": "@kb-labs/mind",
         "ok": false,
         "issues": [
           {
@@ -2435,7 +2417,7 @@
         ]
       },
       {
-        "package": "@kb-labs/review-entry",
+        "package": "@kb-labs/review",
         "ok": true,
         "issues": null
       },
@@ -2480,8 +2462,8 @@
       "scaffoldable": 16
     },
     "summary": {
-      "total": 178,
-      "passed": 154,
+      "total": 176,
+      "passed": 152,
       "failed": 24,
       "errors": 51,
       "warnings": 0

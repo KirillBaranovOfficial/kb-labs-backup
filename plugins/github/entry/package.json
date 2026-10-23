@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/github-entry",
+  "name": "@kb-labs/github",
   "version": "2.120.1",
   "type": "module",
   "description": "Manifest and workflow handlers for the GitHub plugin",

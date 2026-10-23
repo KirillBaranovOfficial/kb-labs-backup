@@ -16,19 +16,19 @@
 
 | Namespace | Package | Status |
 |---|---|---|
-| `agent` | agent-entry | ✅ |
-| `clickup` | clickup-entry | ✅ subcommands need refactoring |
-| `commit` | commit-entry | ✅ accepted exception: verb-first |
-| `devlink` | devlink-entry | ⚠️ opaque name |
-| `workspace` | host-agent-entry | ✅ |
+| `agent` | agents | ✅ |
+| `clickup` | clickup | ✅ subcommands need refactoring |
+| `commit` | commit | ✅ accepted exception: verb-first |
+| `devlink` | devlink | ⚠️ opaque name |
+| `workspace` | host-agents | ✅ |
 | `impact` | impact-core | ⚠️ abstract name |
-| `infra-worker` | infra-worker-core | ❌ kebab at top level + internal concept leaked |
-| `mind` | mind-entry | ⚠️ internal term + kebab subcommands |
+| `infra-worker` | infra-worker | ❌ kebab at top level + internal concept leaked |
+| `mind` | mind | ⚠️ internal term + kebab subcommands |
 | `policy` | policy-core | ✅ |
-| `qa` | qa-entry | ✅ devkit metrics domain |
-| `quality` | quality-entry | ⚠️ kebab subcommands |
-| `release` | release-manager-cli | ✅ accepted exception: verb-first |
-| `review` | review-entry | ✅ accepted exception: verb-first |
+| `qa` | qa | ✅ devkit metrics domain |
+| `quality` | quality | ⚠️ kebab subcommands |
+| `release` | release | ✅ accepted exception: verb-first |
+| `review` | review | ✅ accepted exception: verb-first |
 | `scaffold` | scaffold | ✅ accepted exception: verb-first |
 | `workflow` | workflow-entry | ✅ subcommands need refactoring |
 
@@ -36,7 +36,7 @@
 
 Consumer management is the built-in platform command group `kb marketplace`;
 its handlers live in `cli/commands`. The separate publisher CLI remains the
-`hub` plugin (`@kb-labs/marketplace-registry-entry`), and its backend is an
+`hub` plugin (`@kb-labs/marketplace-registry`), and its backend is an
 optional self-hosted service.
 
 ---

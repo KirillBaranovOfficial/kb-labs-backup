@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/commit-entry",
+  "name": "@kb-labs/commit",
   "authorHandle": "kirill",
   "authorNamespaceId": "ns_cc0987a194957218b55d5d082c8b735f",
   "visibility": "public",
@@ -17,7 +17,7 @@
   "badges": [],
   "tags": [],
   "meta": {
-    "name": "@kb-labs/commit-entry",
+    "name": "@kb-labs/commit",
     "version": "2.94.0",
     "description": "CLI commands and manifest for KB Labs Commit plugin - AI-powered commit generation."
   },

@@ -47,10 +47,10 @@ describe('plugin executor adapter errors', () => {
     const manifestCmd = {
       pkgRoot: '/platform/plugins/commit',
       manifest: {
-        id: '@kb-labs/commit-entry',
+        id: '@kb-labs/commit',
         segments: ['commit', 'status'],
         v3Manifest: {
-        id: '@kb-labs/commit-entry',
+        id: '@kb-labs/commit',
         version: '1.0.0',
         permissions: { env: { read: ['KB_GATEWAY_URL'] } },
         cli: { commands: [{ path: 'commit status', handler: 'dist/index.js#status' }] },
@@ -97,10 +97,10 @@ describe('plugin executor adapter errors', () => {
     const manifestCmd = {
       pkgRoot: '/platform/plugins/commit',
       manifest: {
-        id: '@kb-labs/commit-entry',
+        id: '@kb-labs/commit',
         segments: ['commit', 'status'],
         v3Manifest: {
-        id: '@kb-labs/commit-entry',
+        id: '@kb-labs/commit',
         version: '1.0.0',
         permissions: { env: { read: ['KB_GATEWAY_URL'] } },
         cli: { commands: [{ path: 'commit status', handler: 'dist/index.js#status' }] },

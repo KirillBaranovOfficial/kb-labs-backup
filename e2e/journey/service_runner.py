@@ -1164,7 +1164,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     project_b_id, project_b_root = _find_project_registration(payload)
     if not project_b_id or not project_b_root:
         raise RuntimeError("registering MCP isolation project B returned no project ID and canonical path")
-    review_package = "@kb-labs/review-entry"
+    review_package = "@kb-labs/review"
     review_version = _registry_version(review_package, registry, project_b, env, runner)
     review_install = kb_command([ "marketplace", "install", f"{review_package}@{review_version}", "--json"])
     review_installed = runner(review_install, cwd=str(project_b), env=env, capture_output=True,
@@ -1206,7 +1206,7 @@ def install_project_commit_plugin(project_root: str, executable: str, env: dict[
 
 def install_project_agents_plugin(project_root: str, registry: str, env: dict[str, str], runner=run_command) -> None:
     """Install the real Agents fixture before exercising its project REST routes."""
-    package = "@kb-labs/agent-entry"
+    package = "@kb-labs/agents"
     command_runner = runner
 
     def run(command, **kwargs):
@@ -1274,7 +1274,7 @@ def main() -> int:
             except (OSError, json.JSONDecodeError) as error:
                 return f"project plugin lock is missing or unreadable: {error}"
             entry = lock.get("plugins", {}).get("@kb-labs/commit")
-            return None if isinstance(entry, dict) and entry.get("package") == "@kb-labs/commit-entry" and entry.get("version") else "Commit fixture is absent from the project marketplace lock"
+            return None if isinstance(entry, dict) and entry.get("package") == "@kb-labs/commit" and entry.get("version") else "Commit fixture is absent from the project marketplace lock"
         graph.probe_state("marketplace-available", "marketplace-fixture-producer", "Commit project fixture",
                           marketplace_probe)
 

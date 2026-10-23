@@ -876,6 +876,11 @@ custom_checks:
     on: [check]
     scope: workspace
 
+  - name: plugin-package-identity
+    run: node scripts/checks/check-plugin-package-identity.mjs
+    on: [check]
+    scope: workspace
+
   - name: ci-clean-machine-lanes
     run: node scripts/ci/ci-clean-machine-lanes-check.mjs
     on: [check]

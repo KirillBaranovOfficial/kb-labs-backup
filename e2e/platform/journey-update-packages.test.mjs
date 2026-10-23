@@ -59,7 +59,7 @@ test('candidate version changes when packed package content changes', () => {
     const changed = join(root, 'changed');
     seedReleasePackages(root, first, registryManifest);
     seedReleasePackages(root, changed, registryManifest);
-    const changedTarball = join(changed, packageFilename('@kb-labs/commit-entry', '3.0.0'));
+    const changedTarball = join(changed, packageFilename('@kb-labs/commit', '3.0.0'));
     const unpack = join(root, 'unpack');
     mkdirSync(unpack);
     execFileSync('tar', ['-xzf', changedTarball, '-C', unpack]);
@@ -84,7 +84,7 @@ test('candidate version is idempotent when unchanged dist bytes are repacked wit
     const repacked = join(root, 'repacked');
     seedReleasePackages(root, first, registryManifest);
     seedReleasePackages(root, repacked, registryManifest);
-    const filename = packageFilename('@kb-labs/commit-entry', '3.0.0');
+    const filename = packageFilename('@kb-labs/commit', '3.0.0');
     const archive = join(repacked, filename);
     const unpack = join(root, 'unpack');
     mkdirSync(unpack);
@@ -228,7 +228,7 @@ test('release package set follows the manifest when a plugin is removed or added
   const root = mkdtempSync(join(tmpdir(), 'journey-update-manifest-mutation-'));
   try {
     const withoutCommit = structuredClone(registryManifest);
-    withoutCommit.plugins = withoutCommit.plugins.filter(plugin => plugin.pkg !== '@kb-labs/commit-entry');
+    withoutCommit.plugins = withoutCommit.plugins.filter(plugin => plugin.pkg !== '@kb-labs/commit');
     const droppedPackages = join(root, 'dropped-packages');
     const droppedUpdate = join(root, 'dropped-update');
     const withoutNames = seedReleasePackages(root, droppedPackages, withoutCommit);
@@ -239,8 +239,8 @@ test('release package set follows the manifest when a plugin is removed or added
       platformMembers,
     });
     const droppedNames = JSON.parse(readFileSync(join(droppedUpdate, 'manifest.json'), 'utf8')).map(item => item.name);
-    assert.equal(withoutNames.includes('@kb-labs/commit-entry'), false);
-    assert.equal(droppedNames.includes('@kb-labs/commit-entry'), false);
+    assert.equal(withoutNames.includes('@kb-labs/commit'), false);
+    assert.equal(droppedNames.includes('@kb-labs/commit'), false);
     assert.ok(droppedNames.every(name => withoutNames.includes(name)));
 
     const withNewPlugin = structuredClone(withoutCommit);
@@ -257,7 +257,7 @@ test('release package set follows the manifest when a plugin is removed or added
     const addedEntries = JSON.parse(readFileSync(join(addedUpdate, 'manifest.json'), 'utf8'));
     assert.equal(withNames.includes('@kb-labs/new-first-party'), true);
     assert.equal(addedEntries.find(item => item.name === '@kb-labs/new-first-party')?.version, '3.0.2');
-    assert.equal(addedEntries.some(item => item.name === '@kb-labs/commit-entry'), false);
+    assert.equal(addedEntries.some(item => item.name === '@kb-labs/commit'), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

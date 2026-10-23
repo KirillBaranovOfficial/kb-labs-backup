@@ -22,7 +22,7 @@ class StudioFixtureStepTests(unittest.TestCase):
             project_a.mkdir()
             project_b.mkdir()
             commands: list[list[str]] = []
-            attached = {project_a: ["@kb-labs/qa-entry"], project_b: []}
+            attached = {project_a: ["@kb-labs/qa"], project_b: []}
 
             def runner(command, **_kwargs):
                 commands.append(command)
@@ -62,8 +62,8 @@ class StudioFixtureStepTests(unittest.TestCase):
             installs = [command for command in commands if command[1:3] == ["marketplace", "install"]]
             self.assertEqual(len(installs), 1)
             self.assertFalse(any("@kb-labs/workflow-entry" in command for command in commands))
-            self.assertTrue(any("@kb-labs/commit-entry" in command for command in installs))
-            self.assertIn(["kb", "marketplace", "uninstall", "@kb-labs/qa-entry", "--json"], commands)
+            self.assertTrue(any("@kb-labs/commit" in command for command in installs))
+            self.assertIn(["kb", "marketplace", "uninstall", "@kb-labs/qa", "--json"], commands)
 
     def test_cli_fixture_failure_does_not_export_values(self):
         with tempfile.TemporaryDirectory() as directory:

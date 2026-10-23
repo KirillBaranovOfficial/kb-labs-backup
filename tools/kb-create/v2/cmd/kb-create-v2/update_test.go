@@ -1647,7 +1647,7 @@ func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T
 	root := t.TempDir()
 	const adapterID = "@kb-labs/adapters-vibeproxy"
 	const pluginID = "commit-entry"
-	for _, packageName := range []string{adapterID, "@kb-labs/commit-entry"} {
+	for _, packageName := range []string{adapterID, "@kb-labs/commit"} {
 		packageJSON := filepath.Join(root, "node_modules", filepath.FromSlash(packageName), "package.json")
 		if err := os.MkdirAll(filepath.Dir(packageJSON), 0o750); err != nil {
 			t.Fatal(err)
@@ -1662,7 +1662,7 @@ func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T
 	}
 	if err := marketplace.WriteLock(root, root, []contracts.Artifact{
 		{ID: adapterID, Kind: "adapter", Package: adapterID, Version: "1.0.0"},
-		{ID: pluginID, Kind: "plugin", Package: "@kb-labs/commit-entry", Version: "1.0.0"},
+		{ID: pluginID, Kind: "plugin", Package: "@kb-labs/commit", Version: "1.0.0"},
 	}, time.Now()); err != nil {
 		t.Fatalf("write active marketplace lock: %v", err)
 	}

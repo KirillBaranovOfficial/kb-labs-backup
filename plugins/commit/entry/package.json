@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/commit-entry",
+  "name": "@kb-labs/commit",
   "description": "CLI commands and manifest for KB Labs Commit plugin - AI-powered commit generation.",
   "version": "2.120.1",
   "type": "module",

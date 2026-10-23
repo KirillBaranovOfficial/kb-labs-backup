@@ -24,18 +24,18 @@
 
 | Namespace         | Package                           | Subcommands (flat list)                                                                                        | Domain |
 |-------------------|-----------------------------------|----------------------------------------------------------------------------------------------------------------|--------|
-| `agent`           | @kb-labs/agent-entry              | run · history · diff · rollback · trace:stats/filter/iteration/context/diagnose · quality:report              | AI agents |
-| `clickup`         | @kb-labs/clickup-entry            | workspace · task:search/get/create/update/delete/comment-list/comment-add · space:create/update/delete · folder:create/update/delete · list:create/update/delete/tasks/statuses | External integration |
-| `commit`          | @kb-labs/commit-entry             | generate · apply · push · open · reset                                                                         | AI-powered commits |
-| `devlink`         | @kb-labs/devlink-entry            | switch · status · plan · freeze · undo · backups                                                               | Cross-repo dep linking |
+| `agent`           | @kb-labs/agents              | run · history · diff · rollback · trace:stats/filter/iteration/context/diagnose · quality:report              | AI agents |
+| `clickup`         | @kb-labs/clickup            | workspace · task:search/get/create/update/delete/comment-list/comment-add · space:create/update/delete · folder:create/update/delete · list:create/update/delete/tasks/statuses | External integration |
+| `commit`          | @kb-labs/commit             | generate · apply · push · open · reset                                                                         | AI-powered commits |
+| `devlink`         | @kb-labs/devlink            | switch · status · plan · freeze · undo · backups                                                               | Cross-repo dep linking |
 | `workspace`       | built-in workspace command group         | register · status · list                                                                                       | Remote workspace agents |
-| `infra-worker`    | @kb-labs/infra-worker-core        | prepare · capture-snapshot · restore-snapshot                                                                  | Environment provisioning |
-| `hub`             | @kb-labs/marketplace-registry-entry | publish · share · yank · deprecate                                                                             | Plugin publishing (author tools) |
-| `mind`            | @kb-labs/mind-entry               | init · verify · rag-index · rag-query · sync:add/update/delete/list/status                                    | RAG / semantic code search |
-| `qa`              | @kb-labs/qa-entry                 | run · check · stats · gate · history · trends · regressions · baseline:update/status/diff                     | Build/test quality metrics |
-| `quality`         | @kb-labs/quality-entry            | stats · health · snapshot · history · context · gate · check-layers · coupling · build-order · cycles · dead-code · check-types · check-builds · check-tests · fix-deps · visualize | Architecture analysis |
-| `release`         | @kb-labs/release-manager-cli      | plan · run · publish · rollback · report · changelog · verify · checks · build · pack · version · git         | Release pipeline |
-| `review`          | @kb-labs/review-entry             | run                                                                                                            | AI code review |
+| `infra-worker`    | @kb-labs/infra-worker        | prepare · capture-snapshot · restore-snapshot                                                                  | Environment provisioning |
+| `hub`             | @kb-labs/marketplace-registry | publish · share · yank · deprecate                                                                             | Plugin publishing (author tools) |
+| `mind`            | @kb-labs/mind               | init · verify · rag-index · rag-query · sync:add/update/delete/list/status                                    | RAG / semantic code search |
+| `qa`              | @kb-labs/qa                 | run · check · stats · gate · history · trends · regressions · baseline:update/status/diff                     | Build/test quality metrics |
+| `quality`         | @kb-labs/quality            | stats · health · snapshot · history · context · gate · check-layers · coupling · build-order · cycles · dead-code · check-types · check-builds · check-tests · fix-deps · visualize | Architecture analysis |
+| `release`         | @kb-labs/release      | plan · run · publish · rollback · report · changelog · verify · checks · build · pack · version · git         | Release pipeline |
+| `review`          | @kb-labs/review             | run                                                                                                            | AI code review |
 | `scaffold`        | @kb-labs/scaffold                 | run · doctor                                                                                                   | Entity scaffolding |
 | `workflow`        | @kb-labs/workflow-entry           | health · metrics · job status/logs/run · run · runs:list/view/watch/rerun                                      | Workflow engine |
 
@@ -47,7 +47,7 @@
 
 Plugin installation and management are registered by the platform's built-in
 CLI command groups. Publisher commands remain under the `hub` group supplied by
-`@kb-labs/marketplace-registry-entry`.
+`@kb-labs/marketplace-registry`.
 
 The separate command groups serve different audiences:
 - `marketplace install/plugins/*` → **user** managing their plugin environment

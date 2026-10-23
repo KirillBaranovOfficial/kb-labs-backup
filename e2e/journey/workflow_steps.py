@@ -985,12 +985,12 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
     """Run each workflow release case in the registered project."""
 
     def install_plugin_cron_fixture() -> None:
-        _json_cli(["marketplace", "install", "@kb-labs/steward-entry", "--json"], env=env, cwd=project)
+        _json_cli(["marketplace", "install", "@kb-labs/steward", "--json"], env=env, cwd=project)
         restart_host()
         data = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=project)
         crons = _workflow_cron_list_data(data)["crons"]
         if not any(item["source"] == "plugin" for item in crons):
-            raise AssertionError("workflow cron list omitted the cron declared by installed @kb-labs/steward-entry")
+            raise AssertionError("workflow cron list omitted the cron declared by installed @kb-labs/steward")
 
     if journey.mode == "secured":
         run_secured_cli_auth_step(journey, env=env, project=project)

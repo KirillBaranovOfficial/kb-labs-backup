@@ -418,7 +418,7 @@ thread.join()
         runner = importlib.import_module("runner")
         setup = runner.runner_scenario("commit", secured=True)
         self.assertEqual(setup["installer"], "custom")
-        self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit-entry",))
+        self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit",))
         self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
 
     def test_local_commit_scenario_uses_commit_installer_scenario(self):

@@ -519,7 +519,7 @@ describe('installed platform adapter defaults', () => {
         '@kb-labs/commit': {
           version: commitPackage.version,
           integrity: `sha256-${createHash('sha256').update(commitPackageJSON).digest('base64')}`,
-          package: '@kb-labs/commit-entry',
+          package: '@kb-labs/commit',
           resolvedPath: path.relative(platformRoot, installedCommitRoot),
           source: 'platform',
           enabled: true,

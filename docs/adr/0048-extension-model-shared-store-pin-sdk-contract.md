@@ -151,7 +151,7 @@ adapters there.
 
 **F8. Versions.** Packages are versioned independently in one release train
 (`@kb-labs/sdk` 2.117.0, `@kb-labs/plugin-runtime` 2.120.1,
-`@kb-labs/commit-entry` 2.120.1). There is no SDK contract version anywhere: no
+`@kb-labs/commit` 2.120.1). There is no SDK contract version anywhere: no
 `sdkApiVersion`/`engines` in `ManifestV3` (`core/plugin-contracts/src/manifest.ts:677-`),
 and the registry's platform version is a hard-coded `'1.0.0'`
 (`core/registry/src/registry.ts:37`). `sdk/sdk/scripts/check-api-removals.mjs`
@@ -226,7 +226,7 @@ $KB_HOME/store/
 ```json
 {
   "schema": "kb.store-entry/1",
-  "name": "@kb-labs/commit-entry",
+  "name": "@kb-labs/commit",
   "version": "2.120.1",
   "kind": "plugin",
   "integrity": "sha512-<tarball integrity from the registry or release index>",
@@ -283,9 +283,9 @@ absolute paths, sorted keys, so it is stable in git and mergeable.
 {
   "schema": "kb.marketplace/3",
   "plugins": {
-    "@kb-labs/commit-entry": { "version": "2.120.1", "integrity": "sha512-...", "enabled": true },
+    "@kb-labs/commit": { "version": "2.120.1", "integrity": "sha512-...", "enabled": true },
     "acme-deploy":           { "link": "./tools/acme-deploy", "enabled": true },
-    "@kb-labs/mind-entry":   { "platform": true, "enabled": false }
+    "@kb-labs/mind":   { "platform": true, "enabled": false }
   }
 }
 ```
@@ -306,7 +306,7 @@ by the Go launcher) uses the same schema with `resolvedPath` (relative to
 ```json
 {
   "schema": "kb.marketplace/3",
-  "plugins":  { "@kb-labs/commit-entry": { "version": "2.120.1", "resolvedPath": "node_modules/@kb-labs/commit-entry", "enabled": true } },
+  "plugins":  { "@kb-labs/commit": { "version": "2.120.1", "resolvedPath": "node_modules/@kb-labs/commit", "enabled": true } },
   "adapters": { "kblabs-gateway-llm": { "version": "2.120.1", "resolvedPath": "node_modules/@kb-labs/adapters-kblabs-gateway", "enabled": true } }
 }
 ```

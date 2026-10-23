@@ -28,7 +28,7 @@ describe('installed platform plugin identities', () => {
     await fs.cp(sourceRoot, installedPluginRoot, { recursive: true });
 
     const pluginPackages = [
-      { id: '@kb-labs/commit', package: '@kb-labs/commit-entry', root: installedPluginRoot },
+      { id: '@kb-labs/commit', package: '@kb-labs/commit', root: installedPluginRoot },
     ];
     const plugins = Object.fromEntries(pluginPackages.map(({ id, package: packageName, root }) => [id, {
       version: '2.120.1',

@@ -59,9 +59,9 @@ class ProjectIdentityStepsTest(unittest.TestCase):
                 if args[:2] == ["marketplace", "install"]:
                     package = args[2].split("@2.120.1")[0]
                     manifest_id = {
-                        "@kb-labs/qa-entry": "@kb-labs/qa",
-                        "@kb-labs/commit-entry": "@kb-labs/commit",
-                        "@kb-labs/mind-entry": "@kb-labs/mind",
+                        "@kb-labs/qa": "@kb-labs/qa",
+                        "@kb-labs/commit": "@kb-labs/commit",
+                        "@kb-labs/mind": "@kb-labs/mind",
                     }.get(package, package)
                     target = (Path(env["KB_PLATFORM_ROOT"])
                               if "--scope" in args and args[args.index("--scope") + 1] == "platform" else cwd)

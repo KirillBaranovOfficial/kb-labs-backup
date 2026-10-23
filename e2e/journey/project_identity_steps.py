@@ -100,8 +100,8 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                      requires=("step:register isolated project A and B",))
 
         def install_scoped_plugins() -> str | None:
-            for project, package in ((projects[0], "@kb-labs/qa-entry"),
-                                     (projects[1], "@kb-labs/commit-entry")):
+            for project, package in ((projects[0], "@kb-labs/qa"),
+                                     (projects[1], "@kb-labs/commit")):
                 version = _registry_version(package, registry, project, env, command_runner)
                 args = ["marketplace", "install", f"{package}@{version}", "--json"]
                 result = run(project, *args, step_id="S-043.3")
@@ -124,7 +124,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                      cases=["S-043.3"], requires=("step:register isolated project A and B",))
 
         def mind_plugin_scope() -> str | None:
-            package = "@kb-labs/mind-entry"
+            package = "@kb-labs/mind"
             version = _registry_version(package, registry, projects[0], env, command_runner)
             result = run(projects[0], "marketplace", "install", f"{package}@{version}", "--json",
                          step_id="S-199.1")
@@ -212,8 +212,8 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                      cases=["S-196.2"], requires=("step:register isolated project A and B",))
 
         def project_plugin_commands() -> str | None:
-            commands = ((projects[0], ("qa", "cases", "list", "--help"), "@kb-labs/qa-entry"),
-                        (projects[1], ("commit", "open", "--help"), "@kb-labs/commit-entry"))
+            commands = ((projects[0], ("qa", "cases", "list", "--help"), "@kb-labs/qa"),
+                        (projects[1], ("commit", "open", "--help"), "@kb-labs/commit"))
             for project, args, package in commands:
                 result = run(project, *args, step_id="S-043.6")
                 if result.returncode != 0:
@@ -224,11 +224,11 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                      cases=["S-043.6"], requires=("step:register isolated project A and B",))
 
         def platform_plugin_is_available() -> str | None:
-            version = _registry_version("@kb-labs/qa-entry", registry, projects[0], env, command_runner)
-            install = run(projects[0], "marketplace", "install", f"@kb-labs/qa-entry@{version}",
+            version = _registry_version("@kb-labs/qa", registry, projects[0], env, command_runner)
+            install = run(projects[0], "marketplace", "install", f"@kb-labs/qa@{version}",
                           "--scope", "platform", "--json", step_id="S-043.7")
             if install.returncode != 0:
-                return f"Platform-scope install of @kb-labs/qa-entry failed: {(install.stderr or install.stdout).strip()}"
+                return f"Platform-scope install of @kb-labs/qa failed: {(install.stderr or install.stdout).strip()}"
             project_lock_path = projects[0] / ".kb" / "marketplace.lock"
             platform_lock_path = Path(env.get("KB_PLATFORM_ROOT", "")) / ".kb" / "marketplace.lock"
             try:

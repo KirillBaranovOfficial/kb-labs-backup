@@ -288,6 +288,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           'Declare the ID in its KB manifest and retry the install.',
         );
       }
+      if (canonicalId !== resolved.id) {
+        throw new InvalidEntityError(
+          `Package requested as "${resolved.id}" declares manifest identity "${canonicalId}". ` +
+          `Publish the package with matching npm name and manifest ID, then rerun "kb marketplace install ${spec}".`,
+        );
+      }
       const provides = strategy
         ? await strategy.extractProvides(result.packageRoot)
         : [primaryKind];
