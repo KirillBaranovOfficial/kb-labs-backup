@@ -166,7 +166,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                     run_command=install, label="active path fixture")
             config = active_path(platform, "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
             self.assertTrue(config.is_file())
-            self.assertEqual(config, platform / "versions/1.0.0/.kb/kb.config.jsonc")
+            self.assertEqual(config.resolve(), (platform / "versions/1.0.0/.kb/kb.config.jsonc").resolve())
 
     def test_immutable_publish_conflict_assertion_uses_catalogue_and_compares_digests(self):
         package = "@kb-labs/sample"
@@ -1703,7 +1703,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
             source = root / "KB Labs ' primary"
             receipt = source / ".kb/v2/receipt.json"
             receipt.parent.mkdir(parents=True)
-            receipt.write_text(json.dumps({"plan": {"artifacts": [
+            main_gateway_health_url = "http://127.0.0.1:4100/health"
+            receipt.write_text(json.dumps({"verification": {"hostHealthUrl": main_gateway_health_url},
+                                           "plan": {"artifacts": [
                 {"kind": "platform", "id": "platform", "package": "@kb/platform", "version": "1.0.0"},
             ]}}))
             move_test_platform_into_container(source)
@@ -1777,12 +1779,12 @@ class InstallerCaseStepsTest(unittest.TestCase):
                              and "s025-root-isolation" in call[call.index("--platform-root") + 1]]
         self.assertEqual(len(isolated_installs), 2,
                          "S-025.8 must create its own installed fixture when selected independently")
-        start_call = next(call for call in calls if call[1] == "start")
         self.assertTrue(installed_at_cross_root_start)
-        fixture_install = next(call for call in calls if call[1] == "install"
-                               and "s025-root-isolation" in call[call.index("--platform-root") + 1])
+        fixture_install = isolated_installs[1]
         self.assertIn("--gateway-url", fixture_install)
-        self.assertNotEqual(fixture_install[fixture_install.index("--gateway-url") + 1], "http://127.0.0.1:4100")
+        self.assertEqual(fixture_install[fixture_install.index("--gateway-url") + 1],
+                         main_gateway_health_url.removesuffix("/health"),
+                         "S-025.8 must make B claim A's receipt-recorded Gateway URL")
         self.assertEqual(calls[-1][1], "uninstall")
 
     def test_fixture_seeder_uses_product_install_and_requirement_is_an_explicit_fault(self):

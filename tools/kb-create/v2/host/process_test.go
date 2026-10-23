@@ -302,6 +302,29 @@ func TestRunnerDoesNotObserveOrStopAHostForAnotherRoot(t *testing.T) {
 	}
 }
 
+func TestSeparateGatewayResourcesCanRunConcurrently(t *testing.T) {
+	first := newRunner(t, 10, 5)
+	second := newRunner(t, 10, 5)
+	firstInfo, err := startProcessForTest(t, first.runner, context.Background())
+	if err != nil {
+		t.Fatalf("start first root: %v", err)
+	}
+	secondInfo, err := startProcessForTest(t, second.runner, context.Background())
+	if err != nil {
+		t.Fatalf("start second root on its separate Gateway: %v", err)
+	}
+	for _, current := range []struct {
+		name   string
+		runner *ProcessRunner
+		info   Info
+	}{{"first", first.runner, firstInfo}, {"second", second.runner, secondInfo}} {
+		status, err := current.runner.Status(context.Background())
+		if err != nil || status.State != StateRunning || !status.Healthy || status.PID != current.info.PID {
+			t.Fatalf("%s root status = %#v, %v; both roots should remain healthy on their separate Gateway resources", current.name, status, err)
+		}
+	}
+}
+
 func TestPortInUse(t *testing.T) {
 	f := newRunner(t, 10, 5)
 	f.runner.Operation = "apply"
@@ -422,6 +445,62 @@ func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
 		portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", root, nil)
 	if stale.Code != contracts.CodeHostProcessIdentityStale || strings.Contains(stale.Message, "already running") {
 		t.Fatalf("reused PID was identified as the registered installation: %#v", stale)
+	}
+}
+
+func TestGatewayResourceConflictIdentifiesTheVerifiedLiveOwner(t *testing.T) {
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ProcessIdentityEnv, token)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	gatewayURL := "http://127.0.0.1:" + port
+	root := filepath.Join(t.TempDir(), "running root")
+	writeReceipt(t, root, &contracts.HostSpec{Command: fakeHostBinary, HealthURL: gatewayURL + "/health"})
+	expectedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformRoot := filepath.Join(root, "current")
+	t.Setenv(KBHomeEnv, t.TempDir())
+	state, err := StateForRoot(platformRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	processIdentity, err := ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(state.HostPID(), pidRecord{PID: os.Getpid(), ProcessIdentity: processIdentity,
+		InstallationID: installationID, PlatformRoot: platformRoot}); err != nil {
+		t.Fatal(err)
+	}
+	launcherState, err := StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(
+		platformRoot, gatewayURL); err != nil {
+		t.Fatal(err)
+	}
+
+	failure := GatewayResourceConflict(gatewayURL, "apply", filepath.Join(t.TempDir(), "other root"))
+	if failure == nil || failure.Code != contracts.CodeHostAlreadyRunning || failure.Meta["platformRoot"] != expectedRoot ||
+		failure.Meta["pid"] != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("Gateway resource conflict = %#v; want verified running root and PID", failure)
 	}
 }
 

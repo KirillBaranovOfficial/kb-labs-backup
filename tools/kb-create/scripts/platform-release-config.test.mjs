@@ -8,6 +8,7 @@ import registryManifest from '../../../e2e/platform/registry-manifest.json' with
 import {
   configuredAdapterPackages,
   platformPackageRoots,
+  releaseArtifactPackageNames,
   readPlatformReleaseConfig,
   shippedPlatformPackageSet,
 } from './platform-release-config.mjs';
@@ -48,6 +49,14 @@ test('the shipped platform package set contains the runtime dependency closure w
   }));
   const configPath = fileURLToPath(new URL('../config/platform-release.jsonc', import.meta.url));
   const config = readPlatformReleaseConfig(configPath);
+  const releaseArtifactRoots = new Set(releaseArtifactPackageNames(registryManifest, config.platformMembers));
+  const pluginPackages = new Set((registryManifest.plugins ?? []).map(plugin => plugin.pkg));
+  assert.deepEqual([...releaseArtifactRoots].filter(name => pluginPackages.has(name)), [],
+    'platform artifact roots must not declare plugin packages as members');
+  const releaseArtifactClosure = shippedPlatformPackageSet(releaseArtifactRoots, packageManifests);
+  assert.equal(releaseArtifactClosure.has('@kb-labs/agent-contracts'), false,
+    'plugin-only dependencies must not enter the generated platform artifact closure');
+
   const roots = platformPackageRoots({
     servicePackages: registryManifest.services.map(service => service.pkg),
     hostPackage: '@kb-labs/host-app',
@@ -68,7 +77,8 @@ test('the shipped platform package set contains the runtime dependency closure w
       }
     }
   }
-  const pluginPackages = new Set((registryManifest.plugins ?? []).map(plugin => plugin.pkg));
   assert.deepEqual([...shipped].filter(name => pluginPackages.has(name)), [],
     'platform dependency closure must not include registered plugin packages');
+  assert.equal(shipped.has('@kb-labs/agent-contracts'), false,
+    'plugin-only dependencies must not enter the platform release closure');
 });

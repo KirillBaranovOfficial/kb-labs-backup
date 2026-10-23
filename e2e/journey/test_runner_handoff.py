@@ -33,7 +33,7 @@ class ProjectFixtureStateTests(unittest.TestCase):
             result = project_b_fixture_from_state(graph)
         self.assertIsInstance(result, ProjectBRootValid)
         self.assertEqual(result.project_id, value["projectBId"])
-        self.assertEqual(result.root, Path(value["projectBRoot"]))
+        self.assertEqual(result.root.resolve(), Path(value["projectBRoot"]).resolve())
 
     def test_project_b_handoff_rejects_unwritable_root_with_one_structured_diagnostic(self):
         with TemporaryDirectory(prefix="kb-project-b-handoff-") as directory:
