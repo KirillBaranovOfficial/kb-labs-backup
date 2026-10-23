@@ -7,5 +7,11 @@
   },
   {
     "directory": "e2e/journey/fixtures/npm-only"
+  },
+  {
+    "directory": "e2e/journey/fixtures/update-plugin"
+  },
+  {
+    "directory": "e2e/journey/fixtures/update-adapter"
   }
 ]

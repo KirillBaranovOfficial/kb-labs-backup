@@ -134,13 +134,6 @@ func productionCommandDependencies(command *cobra.Command) commandDependencies {
 	}
 }
 
-func updateCompatibilityDiag(failure *diag.Diag) *diag.Diag {
-	if failure.Code == contracts.CodeIncompatibleComponents {
-		failure.Code = contracts.CodeUpdateIncompatible
-	}
-	return failure
-}
-
 func recordedGatewayURL(active contracts.InstallReceipt) string {
 	if active.Plan.Request.GatewayURL != "" {
 		return active.Plan.Request.GatewayURL

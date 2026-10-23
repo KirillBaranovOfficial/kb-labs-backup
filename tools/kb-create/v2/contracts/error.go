@@ -11,7 +11,7 @@ import (
 // Diagnostic converts shared request validation into the platform CLI failure
 // contract, including its input exit code and field metadata.
 func (e *RequestValidationError) Diagnostic() *diag.Diag {
-	failure := NewDiag(e.Code, e.Message, e.Hint, e.Cause)
+	failure := NewDiag(CodeInputRequired, e.Message, e.Hint, e.Cause)
 	failure.Meta = map[string]any{"field": e.Field}
 	return failure
 }
@@ -108,6 +108,26 @@ func NewDiag(code, message, hint string, cause error) *diag.Diag {
 		return diag.Wrap(cause, code, message, opts...)
 	}
 	return diag.New(code, message, opts...)
+}
+
+// UpdateIncompatibleDetails is the complete identity required by the
+// KB_UPDATE_INCOMPATIBLE diagnostic contract.
+type UpdateIncompatibleDetails struct {
+	ID, Kind, RequiredRange, SelectedVersion string
+}
+
+// NewUpdateIncompatible constructs the update-only compatibility diagnostic.
+// Keeping the detail fields together prevents a caller from selecting the
+// catalog code without also supplying its required component identity.
+func NewUpdateIncompatible(details UpdateIncompatibleDetails) *diag.Diag {
+	failure, err := diag.FromCatalog(CodeUpdateIncompatible, map[string]string{
+		"id": details.ID, "kind": details.Kind,
+		"requiredRange": details.RequiredRange, "selectedVersion": details.SelectedVersion,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return failure
 }
 
 func causeRequired(code string) bool {

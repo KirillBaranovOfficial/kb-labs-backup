@@ -92,7 +92,6 @@ type InstallRequest struct {
 // RequestValidationError identifies the request field that needs correction at
 // the shared V2 request boundary.
 type RequestValidationError struct {
-	Code    string
 	Field   string
 	Message string
 	Hint    string
@@ -108,9 +107,9 @@ func (e *RequestValidationError) Error() string {
 
 func (e *RequestValidationError) Unwrap() error { return e.Cause }
 
-func invalidRequestField(code, field, message, action string, cause error) error {
+func invalidRequestField(field, message, action string, cause error) error {
 	return &RequestValidationError{
-		Code: code, Field: field, Message: message,
+		Field: field, Message: message,
 		Hint: action, Cause: cause,
 	}
 }
@@ -120,18 +119,18 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		r.Schema = RequestSchema
 	}
 	if r.Schema != RequestSchema {
-		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "schema",
+		return InstallRequest{}, invalidRequestField("schema",
 			fmt.Sprintf("unsupported request schema %q", r.Schema), "Set schema to `kb.create/v2` in the request JSON, then retry.", nil)
 	}
 	if source := r.MarketplaceSources; source != nil {
 		if source.RegistryURL == "" || source.SigningPublicKeyEnv == "" {
-			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "marketplaceSources",
+			return InstallRequest{}, invalidRequestField("marketplaceSources",
 				"Marketplace Registry URL and signing public-key environment variable are required together",
 				"Set --marketplace-registry-url and --marketplace-registry-public-key-env, then rerun `kb-create plan`.", nil)
 		}
 		for field, name := range map[string]string{"signingPublicKeyEnv": source.SigningPublicKeyEnv, "registryTokenEnv": source.RegistryTokenEnv} {
 			if name != "" && !validEnvironmentVariableName(name) {
-				return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "marketplaceSources."+field,
+				return InstallRequest{}, invalidRequestField("marketplaceSources."+field,
 					"Marketplace credential reference must be an environment variable name",
 					"Set the Marketplace credential flag to an environment variable name such as KB_REGISTRY_KEY, then rerun `kb-create plan`.", nil)
 			}
@@ -142,7 +141,7 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 			}
 			parsed, err := url.Parse(endpoint)
 			if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-				return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "marketplaceSources."+field,
+				return InstallRequest{}, invalidRequestField("marketplaceSources."+field,
 					"Marketplace source URL must be an absolute HTTP(S) URL without embedded credentials",
 					"Set the Marketplace source URL to an absolute HTTP(S) URL, then rerun `kb-create plan`.", err)
 			}
@@ -161,20 +160,20 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		parsed, err := url.Parse(r.GatewayURL)
 		if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Port() == "" ||
 			(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "gatewayUrl",
+			return InstallRequest{}, invalidRequestField("gatewayUrl",
 				"gateway URL must be an http loopback origin with an explicit port",
 				"Set gatewayUrl to an http loopback origin with an explicit port in the request JSON, then retry.", err)
 		}
 		port, err := strconv.Atoi(parsed.Port())
 		if err != nil || port < 1 || port > 65535 {
-			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "gatewayUrl",
+			return InstallRequest{}, invalidRequestField("gatewayUrl",
 				"gateway URL port must be between 1 and 65535",
 				"Set gatewayUrl to an http loopback origin with a port from 1 to 65535, then retry.", err)
 		}
 		hostname := parsed.Hostname()
 		ip := net.ParseIP(hostname)
 		if hostname != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "gatewayUrl",
+			return InstallRequest{}, invalidRequestField("gatewayUrl",
 				"gateway URL must use a loopback host",
 				"Set gatewayUrl to use localhost or a loopback IP address, then retry.", nil)
 		}
@@ -184,7 +183,7 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		r.Policy = PolicyStrict
 	}
 	if r.Policy != PolicyStrict && r.Policy != PolicyCompatible {
-		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "policy",
+		return InstallRequest{}, invalidRequestField("policy",
 			fmt.Sprintf("unsupported compatibility policy %q", r.Policy),
 			"Set policy to `strict` or `compatible` in the request JSON, then retry.", nil)
 	}
@@ -192,26 +191,26 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		r.Source = SourceRegistry
 	}
 	if r.Source != SourceRegistry && r.Source != SourceOffline {
-		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "source",
+		return InstallRequest{}, invalidRequestField("source",
 			fmt.Sprintf("unsupported artifact source %q", r.Source),
 			"Set source to `registry` or `offline` in the request JSON, then retry.", nil)
 	}
 	if r.PlatformRoot == "" {
-		return InstallRequest{}, invalidRequestField(CodeInputRequired, "platformRoot", "platformRoot is required",
+		return InstallRequest{}, invalidRequestField("platformRoot", "platformRoot is required",
 			"Set `platformRoot` to a non-empty directory in the request JSON.", nil)
 	}
 	// Resolve user supplied paths at the request boundary so later execution
 	// never interprets a relative root against a changed working directory.
 	root, err := AbsolutePath(r.PlatformRoot)
 	if err != nil {
-		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "platformRoot", "platform root could not be resolved",
+		return InstallRequest{}, invalidRequestField("platformRoot", "platform root could not be resolved",
 			"Set `platformRoot` to a directory path that can be resolved in the request JSON.", err)
 	}
 	r.PlatformRoot = root
 	if r.ProjectRoot != "" {
 		project, err := AbsolutePath(r.ProjectRoot)
 		if err != nil {
-			return InstallRequest{}, invalidRequestField(CodeInputRequired, "projectRoot", "project directory could not be resolved",
+			return InstallRequest{}, invalidRequestField("projectRoot", "project directory could not be resolved",
 				"Pass a project directory path that can be resolved, then retry.", err)
 		}
 		r.ProjectRoot = project
@@ -253,24 +252,24 @@ func ValidateProjectSelection(value string) (string, error) {
 	}
 	absolute, err := AbsolutePath(value)
 	if err != nil {
-		return "", invalidRequestField(CodeInputRequired, "projectRoot", "project directory could not be resolved",
+		return "", invalidRequestField("projectRoot", "project directory could not be resolved",
 			"Pass an existing project directory, then retry.", err)
 	}
 	info, err := os.Stat(absolute)
 	if err != nil {
 		if os.IsNotExist(err) {
 			if _, linkErr := os.Lstat(absolute); os.IsNotExist(linkErr) {
-				return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project directory must exist",
+				return "", invalidRequestField("projectRoot", "the selected project directory must exist",
 					fmt.Sprintf("Create it with `%s` or pass an existing project directory, then retry.", ShellCommand("mkdir", "-p", value)), err)
 			}
-			return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project path does not resolve to an existing directory",
+			return "", invalidRequestField("projectRoot", "the selected project path does not resolve to an existing directory",
 				"Pass an existing project directory, then retry.", err)
 		}
-		return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project directory could not be checked",
+		return "", invalidRequestField("projectRoot", "the selected project directory could not be checked",
 			"Pass an existing project directory, then retry.", err)
 	}
 	if !info.IsDir() {
-		return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project path is not a directory",
+		return "", invalidRequestField("projectRoot", "the selected project path is not a directory",
 			"Pass an existing project directory, then retry.", nil)
 	}
 	return absolute, nil
@@ -301,12 +300,12 @@ func validateSelector(name string, selector VersionSelector) error {
 		field = name + ".channel"
 	}
 	if selector.Version != "" && selector.Channel != "" {
-		return invalidRequestField(CodeIncompatibleComponents, name,
+		return invalidRequestField(name,
 			fmt.Sprintf("%s cannot specify both version and channel", name),
 			fmt.Sprintf("Set either `%s.version` or `%s.channel` in the request JSON, then retry.", name, name), nil)
 	}
 	if selector.Channel != "" && selector.Channel != ChannelStable && selector.Channel != ChannelCanary && selector.Channel != ChannelExperimental {
-		return invalidRequestField(CodeIncompatibleComponents, field,
+		return invalidRequestField(field,
 			fmt.Sprintf("unsupported %s channel %q", name, selector.Channel),
 			fmt.Sprintf("Set `%s` to `stable`, `canary`, or `experimental` in the request JSON, then retry.", field), nil)
 	}
@@ -318,12 +317,12 @@ func normalizeComponents(kind string, components []ComponentRequest) ([]Componen
 	result := make([]ComponentRequest, 0, len(components))
 	for _, component := range components {
 		if component.ID == "" {
-			return nil, invalidRequestField(CodeIncompatibleComponents, kind+"s[].id",
+			return nil, invalidRequestField(kind+"s[].id",
 				fmt.Sprintf("%s ID is required", kind),
 				fmt.Sprintf("Set an `id` for every entry in `%ss` in the request JSON, then retry.", kind), nil)
 		}
 		if _, exists := seen[component.ID]; exists {
-			return nil, invalidRequestField(CodeIncompatibleComponents, kind+"s",
+			return nil, invalidRequestField(kind+"s",
 				fmt.Sprintf("duplicate %s %q", kind, component.ID),
 				fmt.Sprintf("Remove the duplicate `%s` entry from `%ss` in the request JSON, then retry.", component.ID, kind), nil)
 		}
