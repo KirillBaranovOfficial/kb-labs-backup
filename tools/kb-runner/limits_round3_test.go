@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,63 +73,23 @@ func TestLimitCaptureRedactsSensitiveStructuredFields(t *testing.T) {
 	}
 }
 
-func TestClaudeLimitsUseOnlyTerminalSource(t *testing.T) {
-	fake := fakeLimitsCLI(t, "claude")
-	adapter := commandAdapter{vendor: "claude", binary: fake}
-	limits, err := adapter.Limits(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hasVendorLimits(limits) || limits[0].Source != "tty" || len(limits[0].Attempts) != 1 || limits[0].Attempts[0].Source != "tty" {
-		t.Fatalf("Claude limits did not use the terminal-only source: %+v", limits)
-	}
-}
-
-func TestGeminiTTYReadinessUsesStableScreenWithoutPromptMarker(t *testing.T) {
-	fake := fakeLimitsCLI(t, "gemini")
-	limits := readTTYLimitsDetailed(context.Background(), "gemini", fake).Limits
-	if len(limits) != 2 || limits[0].Window != "model:gemini 2.5 pro" || limits[0].UsedPercent != 30 || limits[0].Source != "tty" || limits[1].Window != "daily" || limits[1].UsedPercent != 75 {
-		t.Fatalf("Gemini stable-screen probe did not read quota: %+v", limits)
-	}
-}
-
-func TestTTYUnrecognizedRenderedScreenIsUnavailableWithScreenReason(t *testing.T) {
-	fake := fakeLimitsCLIWithScreen(t, "gemini", "Quota display has changed\nNo usage windows are listed")
-	limits := readTTYLimitsDetailed(context.Background(), "gemini", fake).Limits
-	if len(limits) != 1 || limits[0].Confidence != "unavailable" || !strings.Contains(limits[0].Error, "Quota display has changed") {
-		t.Fatalf("unrecognized TTY screen reason=%+v", limits)
-	}
-}
-
-func TestTTYNonzeroCLIExitIsUnavailable(t *testing.T) {
-	fake := fakeLimitsCLIWithScreenExit(t, "gemini", "5-hour usage 40%\nreset in 2h 10m", 7)
-	limits := readTTYLimitsDetailed(context.Background(), "gemini", fake).Limits
-	if len(limits) != 1 || limits[0].Confidence != "unavailable" || !strings.Contains(limits[0].Error, "exit gemini limits command") {
-		t.Fatalf("nonzero CLI exit was accepted: %+v", limits)
-	}
-}
-
-func TestLimitsCaptureCLIRecordsEveryVendorSource(t *testing.T) {
+func TestLimitsCaptureKeepsCodexStructuredSourceAndRecordedClaude(t *testing.T) {
 	codex := filepath.Join(t.TempDir(), "codex-app-server")
 	codexScript := "#!/bin/sh\nwhile IFS= read -r line; do case \"$line\" in *'\"id\":1'*) printf '%s\\n' '{\"id\":1,\"result\":{}}';; *'\"id\":2'*) printf '%s\\n' '{\"id\":2,\"result\":" + realCodexRateLimitsFixture + "}'; exit 0;; esac; done\n"
 	if err := os.WriteFile(codex, []byte(codexScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	claude := fakeLimitsCLI(t, "claude")
-	gemini := fakeLimitsCLI(t, "gemini")
 	captureDir, state := t.TempDir(), t.TempDir()
+	store := newClaudeReadingStore(state, time.Now, time.Local)
+	if err := store.Record(47, "1h 43m", 56, "Tue 00:00"); err != nil {
+		t.Fatal(err)
+	}
 	var stdout, stderr strings.Builder
 	factory := func(vendor string) (limitsProvider, error) {
-		switch vendor {
-		case "codex":
-			return commandAdapter{vendor: vendor, binary: codex}, nil
-		case "claude":
-			return commandAdapter{vendor: vendor, binary: claude}, nil
-		case "gemini":
-			return commandAdapter{vendor: vendor, binary: gemini}, nil
-		default:
-			return nil, fmt.Errorf("unexpected vendor %q", vendor)
+		if vendor != "codex" {
+			return nil, fmt.Errorf("unexpected automatic provider %q", vendor)
 		}
+		return commandAdapter{vendor: vendor, binary: codex}, nil
 	}
 	code, err := limitsCommandWithProviderFactory(runnerRoot{invocation: "kb-runner"}, []string{"--state", state, "--capture", captureDir, "--json"}, &stdout, &stderr, factory)
 	if err != nil || code != 0 {
@@ -144,67 +103,15 @@ func TestLimitsCaptureCLIRecordsEveryVendorSource(t *testing.T) {
 	for _, limit := range limits {
 		byVendor[limit.Vendor] = append(byVendor[limit.Vendor], limit)
 	}
-	if len(byVendor["codex"]) != 2 || byVendor["codex"][0].Source != "app-server" || len(byVendor["claude"]) == 0 || byVendor["claude"][0].Source != "tty" || len(byVendor["gemini"]) == 0 || byVendor["gemini"][0].Source != "tty" {
-		t.Fatalf("captured CLI sources=%+v", byVendor)
+	if len(byVendor["codex"]) != 2 || byVendor["codex"][0].Source != "app-server" || len(byVendor["claude"]) != 2 || byVendor["claude"][0].Source != "recorded" || len(byVendor["gemini"]) != 0 {
+		t.Fatalf("limits vendors or sources=%+v", byVendor)
 	}
-	for _, pair := range [][2]string{{"codex", "app-server"}, {"claude", "tty"}, {"gemini", "tty"}} {
-		path := limitCapturePath(captureDir, pair[0], pair[1])
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("missing %s/%s capture: %v", pair[0], pair[1], err)
-		}
-		if strings.Contains(string(data), "private-account") || strings.Contains(string(data), "accountId") {
-			t.Fatalf("capture %s/%s leaked account data", pair[0], pair[1])
-		}
-		if pair[1] == "tty" {
-			var capture limitCaptureFile
-			if err := json.Unmarshal(data, &capture); err != nil {
-				t.Fatalf("decode %s/%s capture: %v", pair[0], pair[1], err)
-			}
-			if capture.TTYScreen == "" || strings.Contains(capture.TTYScreen, "\x1b") || !strings.Contains(capture.TTYScreen, "47% used") && !strings.Contains(capture.TTYScreen, "15/50 requests used") {
-				t.Fatalf("%s/%s capture did not retain the rendered terminal screen: %q", pair[0], pair[1], capture.TTYScreen)
-			}
-		}
+	path := limitCapturePath(captureDir, "codex", "app-server")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("missing Codex app-server capture: %v", err)
 	}
-}
-
-func fakeLimitsCLI(t *testing.T, vendor string) string {
-	switch vendor {
-	case "claude":
-		return fakeLimitsCLIWithScreen(t, vendor, claudeUsageRedrawFixture)
-	case "gemini":
-		return fakeLimitsCLIWithScreen(t, vendor, geminiStatsRedrawFixture)
-	default:
-		return fakeLimitsCLIWithScreen(t, vendor, "\033[32m5-hour usage 40%\033[0m\nreset in 2h 10m")
+	if strings.Contains(string(data), "private-account") || strings.Contains(string(data), "accountId") {
+		t.Fatalf("Codex capture leaked account data: %s", data)
 	}
-}
-
-func fakeLimitsCLIWithScreen(t *testing.T, vendor, screen string) string {
-	return fakeLimitsCLIWithScreenExit(t, vendor, screen, 0)
-}
-
-func fakeLimitsCLIWithScreenExit(t *testing.T, vendor, screen string, exitCode int) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), vendor+"-interactive")
-	quotedScreen := "'" + strings.ReplaceAll(screen, "'", "'\\''") + "'"
-	helpLine := "/usage - display usage"
-	if vendor == "gemini" {
-		helpLine = "/stats - show usage and quota"
-	}
-	quotedHelp := "'" + strings.ReplaceAll(helpLine, "'", "'\\''") + "'"
-	script := `#!/bin/sh
-printf 'Initial rendered screen without an explicit prompt marker\n'
-while IFS= read -r command; do
-  case "$command" in
-    /help) printf '%s\n' ` + quotedHelp + ` ;;
-    /usage|/stats) printf '%s\n' ` + quotedScreen + ` ;;
-    *) printf 'Unknown command: %s\n' "$command" ;;
-  esac
-done
-exit ` + strconv.Itoa(exitCode) + `
-`
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }

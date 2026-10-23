@@ -22,7 +22,7 @@ func TestProviderTestsUseOnlyTemporaryHomeAndExplicitExecutables(t *testing.T) {
 	if home == "" || !strings.HasPrefix(home, filepath.Clean(os.TempDir())+string(os.PathSeparator)) {
 		t.Fatalf("test HOME is not isolated: %q", home)
 	}
-	for _, name := range []string{"CODEX_BIN", "CLAUDE_BIN", "GEMINI_BIN"} {
+	for _, name := range []string{"CODEX_BIN", "CLAUDE_BIN"} {
 		path := os.Getenv(name)
 		if path == "" || !strings.HasPrefix(path, home+string(os.PathSeparator)) {
 			t.Fatalf("%s is not an explicit fake under temporary HOME: %q", name, path)

@@ -54,7 +54,7 @@ func TestMain(m *testing.M) {
 	setTestEnv("HOME", home)
 	setTestEnv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	setTestEnv("XDG_STATE_HOME", filepath.Join(home, ".state"))
-	for vendor, envName := range map[string]string{"codex": "CODEX_BIN", "claude": "CLAUDE_BIN", "gemini": "GEMINI_BIN"} {
+	for vendor, envName := range map[string]string{"codex": "CODEX_BIN", "claude": "CLAUDE_BIN"} {
 		fake := filepath.Join(home, "bin", vendor)
 		if err := os.MkdirAll(filepath.Dir(fake), 0o700); err != nil {
 			fmt.Fprintln(os.Stderr, err)
