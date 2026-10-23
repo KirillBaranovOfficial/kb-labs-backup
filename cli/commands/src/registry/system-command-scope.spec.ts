@@ -23,6 +23,12 @@ describe('system command scope declarations', () => {
     expect(registry.resolve(['docs', 'generate-cli-reference'])).toMatchObject({
       type: 'system-cmd', cmd: { scope: 'project' },
     });
+    expect(registry.resolve(['scaffold', 'run'])).toMatchObject({
+      type: 'system-cmd', cmd: { scope: 'project' },
+    });
+    expect(registry.resolve(['scaffold', 'doctor'])).toMatchObject({
+      type: 'system-cmd', cmd: { scope: 'project' },
+    });
     for (const name of ['get', 'set', 'show']) {
       expect(registry.resolve(['config', name])).toMatchObject({
         type: 'system-cmd', cmd: { scope: 'project' },

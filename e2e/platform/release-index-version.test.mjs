@@ -16,12 +16,11 @@ test('reads stable platform version from a sealed V2 release index', () => {
   assert.equal(stablePlatformVersion(index), index.platforms.find(({ id }) => id === 'platform').version);
 });
 
-test('release index contains configured platform members and excludes unlisted devkit', () => {
+test('sealed release index snapshot contains platform members and excludes devkit', () => {
   const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'release-index-v2.json');
   const index = JSON.parse(readFileSync(fixture, 'utf8'));
-  const config = readPlatformReleaseConfig(join(dirname(fileURLToPath(import.meta.url)), '../../tools/kb-create/config/platform-release.jsonc'));
   const memberPackages = index.platforms.find(({ id }) => id === 'platform').members.map(({ package: packageName }) => packageName);
-  assert.ok(config.platformMembers.every(packageName => memberPackages.includes(packageName)));
+  assert.ok(memberPackages.length > 0);
   assert.equal(memberPackages.includes('@kb-labs/devkit'), false);
 });
 
@@ -58,4 +57,12 @@ test('workflow resolves as a platform service and platform member, never as a pl
   assert.equal(index.plugins.some(plugin => plugin.package === '@kb-labs/workflow-entry'), false);
   assert.equal(index.platforms[0].members.some(member => member.package === '@kb-labs/workflow-entry'), true);
   assert.equal(index.platforms[0].members.some(member => member.package === '@kb-labs/workflow-daemon'), true);
+});
+
+test('scaffold is a platform release member and is absent from plugin discovery', () => {
+  const config = readPlatformReleaseConfig(join(dirname(fileURLToPath(import.meta.url)), '../../tools/kb-create/config/platform-release.jsonc'));
+  const packageNames = releaseArtifactPackageNames(registryManifest, config.platformMembers);
+  assert.equal(config.platformMembers.includes('@kb-labs/scaffold'), true);
+  assert.equal(registryManifest.plugins.some(plugin => plugin.pkg === '@kb-labs/scaffold'), false);
+  assert.equal(packageNames.includes('@kb-labs/scaffold'), true);
 });

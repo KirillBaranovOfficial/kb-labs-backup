@@ -44,6 +44,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-contracts', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/scaffold', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })),
@@ -60,7 +61,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
-  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/release-manager-cli', '--release-notes', 'Candidate release notes from the journey fixture.', '--output', output], { stdio: 'pipe' });
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/scaffold,@kb-labs/release-manager-cli', '--release-notes', 'Candidate release notes from the journey fixture.', '--output', output], { stdio: 'pipe' });
   const index = JSON.parse(readFileSync(output, 'utf8'));
   assert.equal(index.schema, 'kb.create.release-index/v2');
   assert.equal(index.compatibility.schema, 'kb.release-compatibility/2');
@@ -98,7 +99,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     { id: 'platform.adapterOptions', path: '/platform/adapterOptions', default: '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}' },
     { id: 'marketplace.sources', path: '/marketplace/sources', default: '[{"kind":"npm","url":"https://registry.npmjs.org"}]' },
   ]);
-  assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/host-app', '@kb-labs/core-contracts', '@kb-labs/release-manager-cli', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
+  assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/host-app', '@kb-labs/core-contracts', '@kb-labs/scaffold', '@kb-labs/release-manager-cli', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
   // Regression coverage for the members[]-id divergence bug: this array used
   // to re-derive each member's catalog id from its package name (falling
   // back to idFor() whenever the package wasn't a staged service or adapter),
@@ -108,6 +109,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   // manifest file, so installed.Load()'s id equality check failed at publish
   // time with a misleading "does not match resolved artifact" error.
   assert.equal(index.platforms[0].members.find(m => m.package === '@kb-labs/release-manager-cli')?.id, '@kb-labs/release');
+  assert.equal(index.plugins.some(plugin => plugin.package === '@kb-labs/scaffold'), false);
   assert.ok(index.platforms[0].members.every(member => member.sizeBytes > 0), 'members must carry their sealed tarball sizes');
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.provides, ['logger']);
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.defaultFor, ['logger']);

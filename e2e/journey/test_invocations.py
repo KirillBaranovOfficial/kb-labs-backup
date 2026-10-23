@@ -140,8 +140,23 @@ class PtyInvocationTest(unittest.TestCase):
             "code": "KB_RUNTIME_UNEXPECTED", "correlationId": correlation_id,
         }})
 
-        self.assertEqual(invocations.parse_unexpected_correlation_id(machine_output), (True, correlation_id))
-        self.assertEqual(invocations.parse_unexpected_correlation_id("", human_output), (True, correlation_id))
+        self.assertEqual(invocations.parse_error_correlation_id(machine_output, expected_code="KB_RUNTIME_UNEXPECTED"), (True, correlation_id))
+        self.assertEqual(invocations.parse_error_correlation_id("", human_output, expected_code="KB_RUNTIME_UNEXPECTED"), (True, correlation_id))
+
+    def test_correlated_plugin_failure_parser_reads_catalogued_json_and_human_output(self):
+        correlation_id = "plugin-text-correlation-1"
+        catalog_path = Path(__file__).resolve().parents[2] / "core/platform/src/error-envelope/errors.catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        failure = next(item for item in catalog["codes"] if item["code"] == "KB_PLUGIN_COMMAND_FAILED")
+        hint = failure["hint"].replace("{correlationId}", correlation_id)
+        human_output = f"{failure['message'].replace('{command}', 'journey-error throw').replace('{plugin}', '@kb-labs/e2e-plugin-error').replace('{failureReason}', 'failed unexpectedly')} [KB_PLUGIN_COMMAND_FAILED]\nHint: {hint}"
+        machine_output = json.dumps({"ok": False, "error": {
+            "code": "KB_PLUGIN_COMMAND_FAILED", "correlationId": correlation_id,
+        }})
+
+        self.assertEqual(invocations.parse_error_correlation_id(machine_output, expected_code="KB_PLUGIN_COMMAND_FAILED"), (True, correlation_id))
+        self.assertEqual(invocations.parse_error_correlation_id("", human_output, expected_code="KB_PLUGIN_COMMAND_FAILED"), (True, correlation_id))
+        self.assertEqual(invocations.parse_error_correlation_id(machine_output, expected_code="KB_RUNTIME_UNEXPECTED"), (False, None))
 
     def test_unexpected_error_queries_the_cli_when_invoked_by_name_on_path(self):
         with tempfile.TemporaryDirectory(prefix="journey-kb-by-name-") as temp:
