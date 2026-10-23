@@ -237,7 +237,7 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	if restored, readErr := receipt.Read(platformRoot); readErr == nil && restored.Plan.Host != nil {
 		origin, originErr := gateway.OriginFromHealthURL(restored.Verification.HostHealthURL)
 		if originErr != nil {
-			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the restored Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "rollback", "--platform-root", root, "--snapshot", target, "--yes")+"`", originErr)
+			return recoveryCommandResult{}, contracts.HostSpecDiagnostic("the restored Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "rollback", "--platform-root", root, "--snapshot", target, "--yes")+"`", originErr.Error(), originErr)
 		}
 		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: platformRoot}).Register(platformRoot, origin); err != nil {
 			return recoveryCommandResult{}, asDiag(err)

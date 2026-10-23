@@ -110,6 +110,14 @@ func NewDiag(code, message, hint string, cause error) *diag.Diag {
 	return diag.New(code, message, opts...)
 }
 
+// HostSpecDiagnostic supplies the required reason template value for the
+// catalogued host-specification error at every producer boundary.
+func HostSpecDiagnostic(message, hint, reason string, cause error) *diag.Diag {
+	failure := NewDiag(CodeHostSpecInvalid, message, hint, cause)
+	failure.Meta = map[string]any{"reason": reason}
+	return failure
+}
+
 func causeRequired(code string) bool {
 	switch code {
 	case CodeProjectRegistrationFailed, CodeReleaseIndexInvalid, CodeReleaseIndexUnreadable, CodeReleaseIndexSealFailed:

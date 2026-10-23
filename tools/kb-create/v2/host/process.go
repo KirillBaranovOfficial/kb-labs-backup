@@ -757,7 +757,7 @@ func appendLauncherFailure(state State, failure *diag.Diag) error {
 
 type portOwner struct{ PID, Command string }
 
-func portInUseError(port, address, purpose string, owner portOwner, operation string, cause error) *diag.Diag {
+func portInUseError(port, address, purpose string, owner portOwner, operation, platformRoot string, cause error) *diag.Diag {
 	if operation == "" {
 		operation = "start"
 	}
@@ -765,9 +765,13 @@ func portInUseError(port, address, purpose string, owner portOwner, operation st
 	if purpose != "" {
 		message = "Port " + port + " required by " + purpose + " is already in use."
 	}
-	hint := "Stop the process using port " + port + ", then rerun `" + contracts.ShellCommand("kb-create", operation) + "`."
+	command := []string{"kb-create", operation}
+	if platformRoot != "" {
+		command = append(command, "--platform-root", platformRoot)
+	}
+	hint := "Stop the process using port " + port + ", then rerun `" + contracts.ShellCommand(command...) + "`."
 	if owner.PID != "" && owner.Command != "" {
-		hint = "Stop process " + owner.PID + " (" + owner.Command + ") using port " + port + ", then rerun `" + contracts.ShellCommand("kb-create", operation) + "`."
+		hint = "Stop process " + owner.PID + " (" + owner.Command + ") using port " + port + ", then rerun `" + contracts.ShellCommand(command...) + "`."
 	}
 	meta := map[string]string{"port": port, "pid": owner.PID, "command": owner.Command, "operation": operation}
 	if address != "" {
@@ -795,7 +799,7 @@ func portConflictError(port, address, purpose string, owner portOwner, operation
 			}
 		}
 	}
-	return portInUseError(port, address, purpose, owner, operation, cause)
+	return portInUseError(port, address, purpose, owner, operation, platformRoot, cause)
 }
 
 func registeredGatewayRoot(port string, pid int, platformRoot string) (string, string, error) {
@@ -956,7 +960,7 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 		if operation == "plan" || operation == "apply" {
 			if plan.Host != nil {
 				if gatewayURL, suggestionErr := nextGatewayURL(plan.Host.HealthURL); suggestionErr == nil {
-					failure.Hint += " Use `" + contracts.ShellCommand("kb-create", operation, "--gateway-url", gatewayURL) + "`."
+					failure.Hint += " Use `" + contracts.ShellCommand("kb-create", operation, "--platform-root", plan.Request.PlatformRoot, "--gateway-url", gatewayURL) + "`."
 				}
 			}
 		}

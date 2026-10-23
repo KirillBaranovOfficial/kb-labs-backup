@@ -658,6 +658,15 @@ def _diagnostic(result: CompletedProcess, label: str) -> tuple[dict, dict]:
     return envelope, error
 
 
+def _commands_in_hint(hint: str) -> list[list[str]]:
+    """Read the shell commands the diagnostic offers as executable argv."""
+    commands = [shlex.split(command) for command in re.findall(r"`([^`]+)`", hint)]
+    retry = hint.partition("then retry:")[2].strip()
+    if retry:
+        commands.append(shlex.split(retry))
+    return commands
+
+
 def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
                            platform_root: Path, run_command: CommandRunner) -> Journey:
     """Prove apply reports a foreign owner for the Gateway port it resolved."""
@@ -689,10 +698,15 @@ def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
                 or error.get("code") != "KB_INSTALL_PORT_IN_USE"
                 or not isinstance(details, dict)
                 or details.get("port") != str(port) or not details.get("pid") or not details.get("command")
-                or "kb-create apply" not in error.get("hint", "")
                 or str(details["pid"]) not in error.get("hint", "")
                 or str(details["command"]) not in error.get("hint", "")):
             raise RuntimeError(f"port conflict omitted its catalogued code, owner, or apply hint: {error}")
+        retry = next((argv for argv in _commands_in_hint(error.get("hint", ""))
+                      if argv[:2] == ["kb-create", "apply"] and "--gateway-url" in argv), None)
+        if (retry is None or "--platform-root" not in retry
+                or retry[retry.index("--platform-root") + 1] != str(conflict_root)
+                or retry[retry.index("--gateway-url") + 1] == conflict_gateway_url):
+            raise RuntimeError(f"port conflict did not offer a shell-safe apply retry for this root and another Gateway URL: {error}")
 
     journey.step("report the owning process when apply cannot claim a required port", "platform.install",
                  port_conflict_ux, cases=["PC-001.9"])
@@ -1054,7 +1068,7 @@ def run_secondary_root_gateway_isolation_step(*, mode: str, launcher: str, prima
         primary_installation = json.loads(primary_receipt.read_text()).get("installationId")
         secondary_data = json.loads(secondary_receipt.read_text())
         secondary_installation = secondary_data.get("installationId")
-        gateway_url = secondary_data.get("verification", {}).get("hostHealthUrl", "")
+        gateway_url = secondary_data.get("plan", {}).get("request", {}).get("gatewayUrl", "")
         primary_gateway = json.loads(primary_receipt.read_text()).get("verification", {}).get("hostHealthUrl", "")
         primary_port, secondary_port = urlsplit(primary_gateway).port, urlsplit(gateway_url).port
         if not primary_port or not secondary_port or secondary_port == primary_port:
@@ -1356,7 +1370,13 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                     or after != before):
                 raise RuntimeError("an existing recorded or omitted selection triggered project registration")
         finally:
-            cleanup_installer_fixture_root(root, launcher, run_command)
+            action_error = sys.exc_info()[1]
+            try:
+                cleanup_installer_fixture_root(root, launcher, run_command)
+            except Exception as cleanup_error:
+                if action_error is not None:
+                    raise RuntimeError(f"{action_error}; fixture cleanup failed: {cleanup_error}") from action_error
+                raise
 
     def install_secured_project_without_session() -> None:
         root = platform_root.parent / "s187-secured"
@@ -1600,11 +1620,11 @@ def run_invalid_request_step(*, mode: str, launcher: str, stable_index: Path,
             envelope, error = _diagnostic(result, "invalid install request")
             after = _snapshot_installation_owned_tree(platform_root)
             hint = error.get("hint", "")
-            retry = (f"kb-create apply --index '{stable_index}' --input '{request_file}' --json")
+            retry = ["kb-create", "apply", "--index", str(stable_index), "--input", str(request_file), "--json"]
             if (result.returncode == 0 or envelope.get("ok") is not False
                     or error.get("code") != "KB_INSTALL_INPUT_REQUIRED"
                     or "platformRoot" not in hint or str(request_file) not in hint
-                    or retry not in hint
+                    or retry not in _commands_in_hint(hint)
                     or before != after):
                 raise RuntimeError(f"invalid request omitted field repair guidance or exact retry command, or changed installed state: {error}")
         finally:
@@ -2543,34 +2563,46 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
     def repair_fixture_without_stopping_main() -> None:
         requirement = {"id": "fixture.default", "path": "/fixture/default", "required": True,
                        "default": "\"manifest-safe-value\"", "hint": "safe default"}
-        try:
-            isolated_gateway = unused_loopback_gateway_url()
-            receipt_path = _seed_installed_fixture(root, launcher=launcher, index=stable_index,
-                                                   run_command=run_command, label="isolated-root doctor fixture",
-                                                   gateway_url=isolated_gateway)
-            _add_installed_manifest_requirement(root, requirement)
-            stop_installer_fixture_host(root, launcher, run_command)
-            result = run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"])
-            payload = _data(result, "isolated-root doctor repair")
-            if payload.get("hostRestarted") is not False:
-                raise RuntimeError("doctor --fix treated another platform root's host as the fixture host")
-            fixture_status = _data(run_command([launcher, "status", "--platform-root", str(root), "--json"]),
-                                   "isolated platform status")
-            if fixture_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "stopped":
-                raise RuntimeError("status for platform B did not report its stopped host")
-            main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
-                                "main platform status after isolated-root repair")
-            if main_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "running":
-                raise RuntimeError("repairing an isolated root stopped or replaced the main platform host")
-            for spelling in (platform_root, platform_root / layout_value('currentLink'), (platform_root / layout_value('currentLink')).resolve()):
-                spelling_status = _data(run_command([launcher, "status", "--platform-root", str(spelling), "--json"]),
-                                        f"main platform status through {spelling}")
-                if (spelling_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "running"
-                        or spelling_status.get("installation", {}).get("receiptId") != main_receipt_id):
-                    raise RuntimeError(f"status through {spelling} did not identify platform A's original running host")
-        except BaseException:
-            cleanup_installer_fixture_root(root, launcher, run_command)
-            raise
+        lifecycle = InstallerHostLifecycle(launcher, run_command)
+        with lifecycle.preserve([platform_root]) as initial:
+            if not initial[platform_root]:
+                lifecycle.set_running(platform_root, True)
+            action_error: Exception | None = None
+            try:
+                isolated_gateway = unused_loopback_gateway_url()
+                _seed_installed_fixture(root, launcher=launcher, index=stable_index,
+                                         run_command=run_command, label="isolated-root doctor fixture",
+                                         gateway_url=isolated_gateway)
+                _add_installed_manifest_requirement(root, requirement)
+                stop_installer_fixture_host(root, launcher, run_command)
+                result = run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"])
+                payload = _data(result, "isolated-root doctor repair")
+                if payload.get("hostRestarted") is not False:
+                    raise RuntimeError("doctor --fix treated another platform root's host as the fixture host")
+                fixture_status = _data(run_command([launcher, "status", "--platform-root", str(root), "--json"]),
+                                       "isolated platform status")
+                if fixture_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "stopped":
+                    raise RuntimeError("status for platform B did not report its stopped host")
+                main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
+                                    "main platform status after isolated-root repair")
+                if main_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "running":
+                    raise RuntimeError("repairing an isolated root stopped or replaced the main platform host")
+                for spelling in (platform_root, platform_root / layout_value('currentLink'), (platform_root / layout_value('currentLink')).resolve()):
+                    spelling_status = _data(run_command([launcher, "status", "--platform-root", str(spelling), "--json"]),
+                                            f"main platform status through {spelling}")
+                    if (spelling_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "running"
+                            or spelling_status.get("installation", {}).get("receiptId") != main_receipt_id):
+                        raise RuntimeError(f"status through {spelling} did not identify platform A's original running host")
+            except Exception as error:
+                action_error = error
+            try:
+                cleanup_installer_fixture_root(root, launcher, run_command)
+            except Exception as cleanup_error:
+                if action_error is not None:
+                    raise RuntimeError(f"{action_error}; fixture cleanup failed: {cleanup_error}") from action_error
+                raise
+            if action_error is not None:
+                raise action_error
 
     journey.step("repair an isolated root without stopping the running platform", "platform.install",
                  repair_fixture_without_stopping_main, cases=["S-025.7"])
@@ -2583,7 +2615,9 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
                                     gateway_url=unused_loopback_gateway_url())
             stop_installer_fixture_host(root, launcher, run_command)
             lifecycle = InstallerHostLifecycle(launcher, run_command)
-            with lifecycle.preserve([platform_root]):
+            with lifecycle.preserve([platform_root]) as initial:
+                if not initial[platform_root]:
+                    lifecycle.set_running(platform_root, True)
                 result = run_command([launcher, "start", "--platform-root", str(root), "--json"])
                 envelope, error = _diagnostic(result, "cross-root host start")
                 details = error.get("meta", error.get("details", {}))
@@ -2604,7 +2638,13 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
                 if main_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "stopped":
                     raise RuntimeError("executing the printed stop command did not stop platform A")
         finally:
-            cleanup_installer_fixture_root(root, launcher, run_command)
+            action_error = sys.exc_info()[1]
+            try:
+                cleanup_installer_fixture_root(root, launcher, run_command)
+            except Exception as cleanup_error:
+                if action_error is not None:
+                    raise RuntimeError(f"{action_error}; fixture cleanup failed: {cleanup_error}") from action_error
+                raise
 
     journey.step("refuse to start a second platform while the user's host is running", "platform.install",
                  refuse_start_for_other_root, cases=["S-025.8"])

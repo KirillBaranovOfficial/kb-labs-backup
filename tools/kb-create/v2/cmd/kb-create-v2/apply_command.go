@@ -326,7 +326,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			return applyCommandResult{}, unsupportedPlatformLayout(root, activeErr)
 		}
 		store = secrets.Store{PlatformRoot: activeRoot}
-		applied.Plan.Request.PlatformRoot = platformRoot
+		applied.Plan.Request.PlatformRoot = installRoot
 		if err := receipt.Write(platformRoot, applied); err != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the activated installation receipt could not be finalized", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` and resolve the reported layout issue", err)
 		}
@@ -368,7 +368,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 		origin, originErr := gateway.OriginFromHealthURL(applied.Verification.HostHealthURL)
 		if originErr != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the applied Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", root)+"` after checking the receipt", originErr)
+			return applyCommandResult{}, contracts.HostSpecDiagnostic("the applied Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", root)+"` after checking the receipt", originErr.Error(), originErr)
 		}
 		roots = append(roots, gateway.Root{PlatformRoot: platformRoot, URL: origin})
 		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}).RegisterMany(roots); err != nil {

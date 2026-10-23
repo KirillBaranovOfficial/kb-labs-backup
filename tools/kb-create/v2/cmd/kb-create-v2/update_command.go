@@ -407,7 +407,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	if updated.Plan.Host != nil {
 		origin, originErr := gateway.OriginFromHealthURL(updated.Verification.HostHealthURL)
 		if originErr != nil {
-			return updateCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the updated Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"` after checking the receipt", originErr)
+			return updateCommandResult{}, contracts.HostSpecDiagnostic("the updated Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"` after checking the receipt", originErr.Error(), originErr)
 		}
 		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: installRoot}).Register(root, origin); err != nil {
 			return updateCommandResult{}, asDiag(err)
