@@ -213,7 +213,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 			}
 			var stdout, stderr bytes.Buffer
 			if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr).Code(); code != 0 {
-				t.Fatalf("%s command failed with exit %d", test.name, code)
+				t.Fatalf("%s command failed with exit %d: stdout=%q stderr=%q", test.name, code, stdout.String(), stderr.String())
 			}
 			for _, output := range []string{stdout.String(), stderr.String()} {
 				if strings.Contains(output, password) || strings.Contains(output, environment) {

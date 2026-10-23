@@ -88,6 +88,31 @@ describe('StateStore', () => {
     expect(loaded!.jobs[0]!.steps).toHaveLength(2);
   });
 
+  it('lists active runs and jobs from persisted records only', async () => {
+    await store.saveRun(makeRun());
+    await store.saveRun(makeRun({
+      id: 'run-active',
+      status: 'running',
+      jobs: [{
+        id: 'run-active:build', jobName: 'build', status: 'running', runId: 'run-active',
+        runsOn: 'local', queuedAt: '2026-01-01T00:00:00.000Z', attempt: 0, steps: [],
+      } as JobRun],
+    }));
+    await store.saveRun(makeRun({
+      id: 'run-finished',
+      status: 'success',
+      jobs: [{
+        id: 'run-finished:build', jobName: 'build', status: 'success', runId: 'run-finished',
+        runsOn: 'local', queuedAt: '2026-01-01T00:00:00.000Z', attempt: 0, steps: [],
+      } as JobRun],
+    }));
+
+    await expect(store.listActiveWork()).resolves.toEqual({
+      runs: ['run-1', 'run-active'],
+      jobs: ['run-1:build', 'run-active:build'],
+    });
+  });
+
   it('restores run history from storage after the process cache is replaced', async () => {
     const storage = new InMemoryStorage();
     const firstProcess = new StateStore(cache, storage, mockLogger());
