@@ -11,6 +11,7 @@ import (
 )
 
 const ProcessIdentityEnv = "KB_CREATE_PROCESS_IDENTITY"
+const HostControlCredentialEnv = "KBLABS_HOST_CONTROL_TOKEN"
 
 // ProcessIdentityStatus records whether a live PID's per-launch token was verified.
 type ProcessIdentityStatus uint8
@@ -50,9 +51,10 @@ func ProcessEnvironmentWithIdentity(env []string, token string) []string {
 
 func ProcessEnvironmentWithoutIdentity(env []string) []string {
 	result := make([]string, 0, len(env))
-	prefix := ProcessIdentityEnv + "="
+	identityPrefix := ProcessIdentityEnv + "="
+	controlPrefix := HostControlCredentialEnv + "="
 	for _, entry := range env {
-		if !strings.HasPrefix(entry, prefix) {
+		if !strings.HasPrefix(entry, identityPrefix) && !strings.HasPrefix(entry, controlPrefix) {
 			result = append(result, entry)
 		}
 	}

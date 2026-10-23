@@ -18,18 +18,20 @@ import (
 )
 
 type entry struct {
-	Code                      string            `json:"code"`
-	HTTPStatus                int               `json:"httpStatus"`
-	Area                      string            `json:"area"`
-	Stage                     string            `json:"stage"`
-	Severity                  string            `json:"severity"`
-	Retryable                 bool              `json:"retryable"`
-	ProcessExitClass          string            `json:"processExitClass"`
-	Message                   string            `json:"message"`
-	Hint                      string            `json:"hint"`
-	HintWithoutCorrelationID  string            `json:"hintWithoutCorrelationId"`
-	RuntimeTemplateParameters map[string]string `json:"runtimeTemplateParameters"`
-	StructuredDetailFields    []string          `json:"structuredDetailFields"`
+	Code                           string                     `json:"code"`
+	HTTPStatus                     int                        `json:"httpStatus"`
+	Area                           string                     `json:"area"`
+	Stage                          string                     `json:"stage"`
+	Severity                       string                     `json:"severity"`
+	Retryable                      bool                       `json:"retryable"`
+	ProcessExitClass               string                     `json:"processExitClass"`
+	Message                        string                     `json:"message"`
+	Hint                           string                     `json:"hint"`
+	HintWithoutCorrelationID       string                     `json:"hintWithoutCorrelationId"`
+	RuntimeTemplateParameters      map[string]string          `json:"runtimeTemplateParameters"`
+	StructuredDetailFields         []string                   `json:"structuredDetailFields"`
+	RequiredStructuredDetailFields []string                   `json:"requiredStructuredDetailFields"`
+	StructuredDetailSchemas        map[string]json.RawMessage `json:"structuredDetailSchemas"`
 }
 
 func main() {
@@ -61,13 +63,13 @@ func run() diag.ExitStatus {
 	}
 	sort.Slice(catalog.Codes, func(i, j int) bool { return catalog.Codes[i].Code < catalog.Codes[j].Code })
 	var source bytes.Buffer
-	_, _ = source.WriteString("// Code generated from core/platform/src/error-envelope/errors.catalog.json; DO NOT EDIT.\n\npackage diag\n\nvar catalogEntries = map[string]CatalogEntry{\n")
+	_, _ = source.WriteString("// Code generated from core/platform/src/error-envelope/errors.catalog.json; DO NOT EDIT.\n\npackage diag\n\nimport \"encoding/json\"\n\nvar catalogEntries = map[string]CatalogEntry{\n")
 	for _, item := range catalog.Codes {
 		hintWithoutCorrelationID := ""
 		if item.HintWithoutCorrelationID != "" {
 			hintWithoutCorrelationID = fmt.Sprintf(", HintWithoutCorrelationID: %q", item.HintWithoutCorrelationID)
 		}
-		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringMapLiteral(item.RuntimeTemplateParameters))
+		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RequiredStructuredDetailFields: %s, StructuredDetailSchemas: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringSliceLiteral(item.RequiredStructuredDetailFields), rawJSONMapLiteral(item.StructuredDetailSchemas), stringMapLiteral(item.RuntimeTemplateParameters))
 	}
 	_, _ = source.WriteString("}\n")
 	formatted, err := format.Source(source.Bytes())
@@ -135,6 +137,22 @@ func stringMapLiteral(values map[string]string) string {
 	return "map[string]string{" + strings.Join(parts, ", ") + "}"
 }
 
+func rawJSONMapLiteral(values map[string]json.RawMessage) string {
+	if len(values) == 0 {
+		return "nil"
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for index, key := range keys {
+		parts[index] = fmt.Sprintf("%q: json.RawMessage(%q)", key, string(values[key]))
+	}
+	return "map[string]json.RawMessage{" + strings.Join(parts, ", ") + "}"
+}
+
 func validate(entries []entry) error {
 
 	for _, item := range entries {
@@ -161,9 +179,6 @@ func validate(entries []entry) error {
 		for _, name := range item.StructuredDetailFields {
 			if strings.TrimSpace(name) == "" {
 				return fmt.Errorf("catalog entry %s declares an empty structured detail field", item.Code)
-			}
-			if _, exists := used[name]; exists {
-				return fmt.Errorf("catalog entry %s declares template parameter %s as a structured detail field", item.Code, name)
 			}
 			if _, exists := structured[name]; exists {
 				return fmt.Errorf("catalog entry %s declares duplicate structured detail field %s", item.Code, name)

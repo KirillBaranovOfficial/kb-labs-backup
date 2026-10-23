@@ -114,6 +114,8 @@ export interface GatewayEmbedOptions {
    * (so they need no auth of their own).
    */
   hostRoutes?: HostRoutes;
+  /** Private loopback control endpoint reported only through readiness. */
+  readinessControlAddress?: string;
 }
 
 /** Select the config root using the same scope contract for preflight and startup. */
@@ -518,6 +520,7 @@ export async function startGateway(
     { installationId: installationId ?? installedIdentity?.id },
     options.projectServices,
     options.projectServiceTransport,
+    options.readinessControlAddress,
   );
 
   // 11. Listen

@@ -84,7 +84,7 @@ export interface ErrorEnvelope {
   /** Finds the record in the logs. */
   correlationId?: string;
   /** Structured, secret-free values. */
-  details?: Record<string, string>;
+  details?: Record<string, unknown>;
   /** Structured findings produced by gate commands. */
   diagnostics?: PlatformDiagnostic[];
 }
@@ -114,7 +114,7 @@ export const ErrorEnvelopeJsonSchema = {
     actions: { type: 'array', items: { type: 'object', properties: { id: { type: 'string', minLength: 1 }, label: { type: 'string', minLength: 1 }, command: { type: 'string' } }, required: ['id', 'label'], additionalProperties: false } },
     docs: { type: 'string' },
     correlationId: { type: 'string' },
-    details: { type: 'object', additionalProperties: { type: 'string' } },
+    details: { type: 'object', additionalProperties: true },
     diagnostics: {
       type: 'array',
       items: {
@@ -163,6 +163,8 @@ export interface ErrorCatalogEntry {
   hintWithoutCorrelationId?: string;
   runtimeTemplateParameters?: Record<string, 'required' | 'optional'>;
   structuredDetailFields?: string[];
+  requiredStructuredDetailFields?: string[];
+  structuredDetailSchemas?: Record<string, { type: string; [key: string]: unknown }>;
   deprecated?: boolean;
 }
 

@@ -46,13 +46,13 @@ func DecodeResultWithContext(content []byte, out any, context RemoteFailureConte
 	}
 	if !envelope.OK {
 		var failure struct {
-			Code          string            `json:"code"`
-			Area          string            `json:"area"`
-			Stage         string            `json:"stage"`
-			Severity      string            `json:"severity"`
-			Retryable     bool              `json:"retryable"`
-			CorrelationID string            `json:"correlationId"`
-			Details       map[string]string `json:"details"`
+			Code          string         `json:"code"`
+			Area          string         `json:"area"`
+			Stage         string         `json:"stage"`
+			Severity      string         `json:"severity"`
+			Retryable     bool           `json:"retryable"`
+			CorrelationID string         `json:"correlationId"`
+			Details       map[string]any `json:"details"`
 		}
 		if err := json.Unmarshal(envelope.Error, &failure); err != nil {
 			return nil, fmt.Errorf("invalid UX failure envelope: %w", err)
@@ -71,7 +71,16 @@ func DecodeResultWithContext(content []byte, out any, context RemoteFailureConte
 		if !ok || failure.Area != entry.Area || failure.Stage != entry.Stage || failure.Severity != entry.Severity || failure.Retryable != entry.Retryable {
 			return gatewayProtocolFailure(meta, failure.Code), nil
 		}
-		local, err := diag.FromCatalog(entry.Code, failure.Details, diag.WithMeta(meta))
+		templateValues := make(map[string]string, len(failure.Details))
+		structuredDetails := make(map[string]any)
+		for key, value := range failure.Details {
+			if text, ok := value.(string); ok {
+				templateValues[key] = text
+			} else {
+				structuredDetails[key] = value
+			}
+		}
+		local, err := diag.FromCatalog(entry.Code, templateValues, diag.WithMeta(structuredDetails), diag.WithMeta(meta))
 		if err != nil {
 			var violation *diag.Diag
 			if errors.As(err, &violation) {
@@ -196,9 +205,9 @@ func ValidateMachineResult(content []byte) error {
 		}
 	}
 	if raw, exists := failure["details"]; exists {
-		var details map[string]string
+		var details map[string]any
 		if err := json.Unmarshal(raw, &details); err != nil || details == nil {
-			return fmt.Errorf("failure error details must be an object of strings")
+			return fmt.Errorf("failure error details must be an object")
 		}
 	}
 	return nil

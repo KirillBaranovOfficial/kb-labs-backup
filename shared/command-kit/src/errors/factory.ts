@@ -35,7 +35,7 @@ export interface ErrorDefinition {
   /** Actionable next step required by ADR-0049 for product error codes. */
   hint: string;
   /** Optional additional details */
-  details?: Record<string, unknown>;
+  details?: Record<string, string>;
 }
 
 /**
@@ -47,7 +47,7 @@ export type ErrorDefinitions = Record<string, ErrorDefinition>;
  * Type for error constructor created by defineError
  */
 type ErrorConstructor<TArgs extends unknown[] = unknown[]> = {
-  new (details?: Record<string, unknown>): ProductPluginError;
+  new (details?: Record<string, string>): ProductPluginError;
   new (...args: TArgs): ProductPluginError;
 };
 
@@ -110,11 +110,11 @@ export function defineError<TDefs extends ErrorDefinitions>(
         const envelope = createProductErrorEnvelope({
           code: errorCode,
           message,
-          details: details as Record<string, string> | undefined,
+          details,
           hint: def.hint,
           retryable: def.code >= 500,
         });
-        super(message, envelope.code, def.code, envelope.details, envelope.hint);
+        super(message, envelope.code, def.code, details, envelope.hint);
         this.name = `${prefix}Error`;
       }
     }
@@ -141,9 +141,9 @@ export function defineError<TDefs extends ErrorDefinitions>(
 function buildMessageAndDetails(
   def: ErrorDefinition,
   args: unknown[]
-): { message: string; details?: Record<string, unknown> } {
+): { message: string; details?: Record<string, string> } {
   let message: string;
-  let details: Record<string, unknown> | undefined;
+  let details: Record<string, string> | undefined;
 
   if (typeof def.message === 'function') {
     // Template message - args are template params
@@ -156,7 +156,7 @@ function buildMessageAndDetails(
       // Last arg is details, rest are template params
       const templateArgs = args.slice(0, -1);
       message = def.message(...templateArgs);
-      details = { ...def.details, ...(lastArg as { details?: Record<string, unknown> }).details };
+      details = { ...def.details, ...(lastArg as { details?: Record<string, string> }).details };
     } else {
       // All args are template params
       message = def.message(...args);
@@ -168,7 +168,7 @@ function buildMessageAndDetails(
 
     // First arg can be details object
     if (args.length > 0 && typeof args[0] === 'object' && args[0] !== null) {
-      details = { ...def.details, ...(args[0] as { details?: Record<string, unknown> }).details };
+      details = { ...def.details, ...(args[0] as { details?: Record<string, string> }).details };
     } else {
       details = def.details;
     }

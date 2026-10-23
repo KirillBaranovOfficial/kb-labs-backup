@@ -177,7 +177,9 @@ type ProcessRunner struct {
 	identityReader func(int) (string, error)
 	// SecretEnv supplies the host's stored values and any environment entries
 	// that must be suppressed on every Start.
-	SecretEnv func() (secrets.Environment, error)
+	SecretEnv         func() (secrets.Environment, error)
+	ControlCredential string
+	ControlAddress    string
 
 	mu              sync.Mutex
 	pid             int
@@ -298,6 +300,9 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		return Info{}, r.startFailed(err, nil)
 	}
 	cmd.Env = ProcessEnvironmentWithIdentity(env, processIdentity)
+	if r.ControlCredential != "" {
+		cmd.Env = append(cmd.Env, HostControlCredentialEnv+"="+r.ControlCredential)
+	}
 	r.stderr = &tailBuffer{limit: startupStderrLimit}
 	cmd.Stdout, cmd.Stderr = logFile, io.MultiWriter(logFile, r.stderr)
 	configureHostProcess(cmd)
@@ -420,7 +425,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 			return Info{}, err
 		}
 	}
-	return Info{Runner: r.Name(), PID: record.PID, HealthURL: r.Spec.HealthURL}, nil
+	return Info{Runner: r.Name(), PID: record.PID, HealthURL: r.Spec.HealthURL, ControlAddress: r.ControlAddress}, nil
 }
 
 // RunTool runs the platform's recovery tool to completion, in the host's
@@ -633,6 +638,55 @@ type readinessProbe struct {
 	Healthy bool
 }
 
+func validControlAddress(address string) bool {
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Scheme != "http" || parsed.Port() == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	ip := net.ParseIP(parsed.Hostname())
+	return ip != nil && ip.IsLoopback()
+}
+
+func (r *ProcessRunner) QueryActiveWork(ctx context.Context) ([]ActiveWorkItem, error) {
+	if r.ControlAddress == "" || r.ControlCredential == "" {
+		return nil, HostUnreachable(r.ControlAddress, errors.New("host control endpoint is unavailable"))
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.ControlAddress+"/v1/active-work", nil)
+	if err != nil {
+		return nil, HostUnreachable(r.ControlAddress, err)
+	}
+	request.Header.Set("Authorization", "Bearer "+r.ControlCredential)
+	response, err := r.client().Do(request)
+	if err != nil {
+		return nil, HostUnreachable(r.ControlAddress, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, HostUnreachable(r.ControlAddress, fmt.Errorf("active-work endpoint returned HTTP %d", response.StatusCode))
+	}
+	var items []ActiveWorkItem
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&items); err != nil || items == nil {
+		if err == nil {
+			err = errors.New("active-work endpoint returned a non-array response")
+		}
+		return nil, HostUnreachable(r.ControlAddress, err)
+	}
+	for _, item := range items {
+		if item.ID == "" || item.OwningService == "" || !validActiveWorkKind(item.Kind) {
+			return nil, HostUnreachable(r.ControlAddress, errors.New("active-work endpoint returned an incomplete item"))
+		}
+	}
+	return items, nil
+}
+
+func HostUnreachable(address string, cause error) error {
+	diagnostic, err := diag.FromCatalog("KB_HOST_UNREACHABLE", map[string]string{"address": address}, diag.WithCauseAndReason(cause.Error()))
+	if err != nil {
+		return err
+	}
+	return diagnostic
+}
+
 func (r *ProcessRunner) probe(ctx context.Context) readinessProbe {
 	return r.probeURL(ctx, r.Spec.HealthURL)
 }
@@ -652,6 +706,15 @@ func (r *ProcessRunner) probeURL(ctx context.Context, healthURL string) readines
 	defer response.Body.Close()
 	result.Status = response.StatusCode
 	result.Healthy = response.StatusCode >= 200 && response.StatusCode < 300
+	if result.Healthy && r.ControlCredential != "" {
+		address := response.Header.Get("x-kb-host-active-work-address")
+		if !validControlAddress(address) {
+			result.Healthy = false
+			result.Error = "host readiness did not report a valid loopback control address"
+		} else {
+			r.ControlAddress = address
+		}
+	}
 	return result
 }
 
