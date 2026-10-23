@@ -287,7 +287,9 @@ describe('Workflow API Contract Integration', () => {
       hostService.cancelRun.mockRejectedValueOnce(new Error('Cannot cancel run in status: success'));
       const res = await app.inject({ method: 'POST', url: '/api/v1/runs/r1/cancel' });
       expect(res.statusCode).toBe(409);
-      expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT' } });
+      const body = res.json();
+      expect(body).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT' } });
+      expect(body.error.message.toLowerCase()).toContain('finished');
     });
 
     it('old /workflows/runs/:runId/cancel path returns 404', async () => {

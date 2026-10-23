@@ -625,7 +625,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
 
     commit_package = "@kb-labs/commit"
     commit_install_package = "@kb-labs/commit"
-    unrelated_package = "@kb-labs/qa-entry"
+    unrelated_package = "@kb-labs/review-entry"
     authenticate_secured_marketplace(journey, project, base_env, runner)
 
     def assert_shared_errors() -> None:
@@ -655,8 +655,14 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     # S-047 requires a second project plugin to survive target uninstall.
     install_unrelated = ["marketplace", "install", unrelated_package, "--json"]
     sealed_platform_before_unrelated = _platform_snapshot(platform_root)
-    _output(cli(install_unrelated), install_unrelated)
-    unrelated_entry = json.loads((project / ".kb" / "marketplace.lock").read_text()).get("plugins", {}).get(unrelated_package)
+    unrelated_install = _json(cli(install_unrelated), install_unrelated)
+    unrelated_installed = unrelated_install.get("installed")
+    if not isinstance(unrelated_installed, list) or len(unrelated_installed) != 1:
+        raise RuntimeError("Registry-installed unrelated fixture did not return one installed plugin identity")
+    unrelated_plugin_id = unrelated_installed[0].get("id")
+    if not isinstance(unrelated_plugin_id, str) or not unrelated_plugin_id:
+        raise RuntimeError("Registry-installed unrelated fixture did not return its canonical plugin ID")
+    unrelated_entry = json.loads((project / ".kb" / "marketplace.lock").read_text()).get("plugins", {}).get(unrelated_plugin_id)
     unrelated_version = unrelated_entry.get("version") if isinstance(unrelated_entry, dict) else None
     if not isinstance(unrelated_version, str) or not unrelated_version:
         raise RuntimeError("Registry-installed unrelated fixture did not produce a versioned lock entry")
@@ -677,7 +683,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if (project_result.get("scope") != "project" or not isinstance(project_installed, list)
                 or not any(isinstance(item, dict) and item.get("id") == commit_package
                            and item.get("version") == commit_version for item in project_installed)):
-            raise RuntimeError("project marketplace install did not return the selected plugin version as JSON")
+            raise RuntimeError(f"project marketplace install did not return the selected plugin version as JSON: {project_result!r}; expected {commit_package}@{commit_version}")
         platform_result = _json(cli(install_commit_platform), install_commit_platform)
         platform_installed = platform_result.get("installed")
         if (platform_result.get("scope") != "platform" or not isinstance(platform_installed, list)
@@ -1067,7 +1073,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         entries = _entries(payload)
         if any(item.get("id") == commit_package for item in entries):
             raise RuntimeError(f"uninstalled target {commit_package} remains in the project plugin list")
-        unrelated = next((item for item in entries if item.get("id") == unrelated_package), None)
+        unrelated = next((item for item in entries if item.get("id") == unrelated_plugin_id), None)
         if not unrelated or unrelated.get("version") != unrelated_version or unrelated.get("enabled") is not True:
             raise RuntimeError(f"unrelated project plugin did not remain installed and enabled: {unrelated!r}")
     journey.step("list confirms target absent and unrelated plugin remains", "marketplace", assert_unrelated_remains,
@@ -1081,15 +1087,13 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         with invocation_context(step_id="S-047.3"):
             unavailable = cli(command)
         failure = decode_ux_error_result(read_ux_cli_result(unavailable))
-        if (unavailable.returncode != 2 or failure.get("code") != "KB_RUNTIME_INPUT_INVALID"
+        if (unavailable.returncode != 2 or failure.get("code") != "KB_RUNTIME_UNKNOWN_COMMAND"
                 or "commit open" not in failure.get("message", "")):
             raise RuntimeError(f"removed command did not return its typed unknown-command error: {failure!r}")
-        qa_list = ["qa", "cases", "list", "--json"]
-        payload = _json(cli(qa_list), qa_list)
-        if (payload.get("schema") != "kb.qa-case-list/v1"
-                or not isinstance(payload.get("cases"), list)
-                or not isinstance(payload.get("diagnostics"), list)):
-            raise RuntimeError(f"unrelated `kb qa cases list --json` command returned an invalid case-list result: {payload!r}")
+        command = ["review", "--help"]
+        result = cli(command)
+        if result.returncode != 0:
+            raise RuntimeError("unrelated Review plugin command did not run successfully")
     journey.step("verify lock removal and invoke unrelated project plugin", "marketplace", assert_lock_and_unrelated_plugin,
              cases=["S-047.3"], requires=("step:uninstall target project plugin",))
 

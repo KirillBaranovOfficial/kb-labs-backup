@@ -157,7 +157,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
         return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${runId} was not found.`, undefined, { runId });
       }
       if (message.startsWith('Cannot cancel run')) {
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT', message);
+        return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT');
       }
       logger.error('[workflows-api] Error cancelling run', error instanceof Error ? error : undefined);
       return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED', message);

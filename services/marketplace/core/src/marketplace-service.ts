@@ -491,12 +491,16 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
 
       const ids = packageIds ?? Object.keys(lock.plugins);
+      const warnings = packageIds
+        ?.filter(id => !(id in lock.plugins))
+        .map(id => `Plugin ${id} is not installed in the ${ctx.scope} scope and cannot be updated.`) ?? [];
       const specs = ids.filter(id => id in lock.plugins).map(id => {
         const entry = lock.plugins[id]!;
         return entry.package!;
       });
 
-      return this.installInScope(ctx, scopeRoot, specs, undefined, true);
+      const result = await this.installInScope(ctx, scopeRoot, specs, undefined, true);
+      return { ...result, warnings: [...warnings, ...result.warnings] };
     });
   }
 

@@ -151,16 +151,17 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError(f"marketplace could not install {package}: {(result.stdout + result.stderr)[-800:]}")
 
     def ensure_git_fixture() -> None:
-        marker = project / ".git"
-        is_new_repo = not marker.exists()
-        if is_new_repo:
+        head = run_with_runner(run_command, ["git", "rev-parse", "--verify", "HEAD"],
+                               cwd=project, env=env, timeout=60)
+        needs_initial_commit = head.returncode != 0
+        if needs_initial_commit:
             _git(["init"], project=project, env=env)
             seed = project / ".kb" / "journey-commit-cases" / "seed.txt"
             seed.parent.mkdir(parents=True, exist_ok=True)
             seed.write_text("commit fixture seed\n", encoding="utf-8")
         _git(["config", "user.name", "Journey Fixture"], project=project, env=env)
         _git(["config", "user.email", "journey@example.test"], project=project, env=env)
-        if is_new_repo:
+        if needs_initial_commit:
             _git(["add", ".kb"], project=project, env=env)
             _git(["commit", "-m", "chore: initialize journey fixture"], project=project, env=env)
 

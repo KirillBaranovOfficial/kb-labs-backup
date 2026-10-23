@@ -2902,7 +2902,7 @@
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "The workflow run cannot be cancelled in its current state.",
+      "message": "The workflow run is already finished and cannot be cancelled.",
       "hint": "Run \"kb workflow runs view <run-id>\" to inspect its current state."
     },
     {
