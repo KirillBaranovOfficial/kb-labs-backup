@@ -4,7 +4,7 @@ title: Marketplace — resolve identities through ordered trusted sources
 persona: solo-developer
 area: marketplace
 priority: P0
-status: planned
+status: active
 release: false
 modes: [local, secured]
 surfaces: [cli]

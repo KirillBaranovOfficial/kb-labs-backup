@@ -35,7 +35,7 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
 """)
         compose.chmod(0o755)
         env = isolated_environment(Path(temp) / "home", bin_dir,
-                                   required_tools=("bash", "git", "dirname", "id", "node", "mktemp", "rm"),
+                                   required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "rm"),
                                    overrides={"COMPOSE_ARGS_OUT": str(compose_args)})
         return env, compose_args
 
@@ -46,7 +46,7 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             compose_tools = tuple(tool for tool in ("docker", "docker-compose") if shutil.which(tool))
             self.assertTrue(compose_tools, "journey Compose tests require Docker Compose v2 or docker-compose on PATH")
             env = isolated_environment(Path(temp) / "home", bin_dir,
-                                       required_tools=("bash", "git", "dirname", "id", "node", "mktemp", "rm", *compose_tools),
+                                       required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "rm", *compose_tools),
                                        overrides={
                                            "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
                                            "KB_JOURNEY_GIT_REVISION": "test-revision",
@@ -90,7 +90,7 @@ if (!configResult.ok || !lockResult.valid) {
             if hosted:
                 env["CI"] = "true"
                 env["GITHUB_ACTIONS"] = "true"
-            env["COMPOSE_PROFILES"] = "marketplace-registry"
+            env["KB_JOURNEY_ONLY"] = "service-marketplace-registry:local"
             result = subprocess.run(
                 ["bash", str(RUNNER), "--render-compose-config"],
                 cwd=ROOT, env=env, capture_output=True, text=True, check=False,
@@ -142,7 +142,7 @@ if (!configResult.ok || !lockResult.valid) {
                                ("--down", ["down", "--volumes", "--remove-orphans"])):
             with tempfile.TemporaryDirectory(prefix="journey-compose-registry-owner-") as temp:
                 env, compose_args = self._fake_compose_environment(temp)
-                env["COMPOSE_PROFILES"] = "marketplace-registry"
+                env["KB_JOURNEY_ONLY"] = "service-marketplace-registry:local"
                 result = subprocess.run(
                     ["bash", str(RUNNER), action], cwd=ROOT, env=env,
                     capture_output=True, text=True, check=False,
@@ -156,6 +156,7 @@ if (!configResult.ok || !lockResult.valid) {
     def test_default_compose_owner_uses_only_default_files(self):
         with tempfile.TemporaryDirectory(prefix="journey-compose-default-owner-") as temp:
             env, compose_args = self._fake_compose_environment(temp)
+            env["COMPOSE_PROFILES"] = "marketplace-registry"
             result = subprocess.run(
                 ["bash", str(RUNNER), "--render-compose-config"], cwd=ROOT, env=env,
                 capture_output=True, text=True, check=False,

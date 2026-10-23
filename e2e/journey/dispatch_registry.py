@@ -18,6 +18,10 @@ class Runner:
     service_profile: str = ""
     journey_sources: tuple[str, ...] = ("e2e/journey/runner.py",)
     claim_family: str = ""
+    lane: str = ""
+
+
+MARKETPLACE_REGISTRY_LANE = "marketplace-registry"
 
 
 RUNNERS = {
@@ -37,6 +41,12 @@ RUNNERS = {
     "service-secured:explore": Runner(
         "service-secured:explore", "human", "explore", "secured", "secured", "nightly",
         ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), claim_family="service"),
+    "service-marketplace-registry:local": Runner(
+        "service-marketplace-registry:local", "agent", "explore", "default", "local", "nightly",
+        ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), lane=MARKETPLACE_REGISTRY_LANE),
+    "service-marketplace-registry:secured": Runner(
+        "service-marketplace-registry:secured", "human", "explore", "secured", "secured", "nightly",
+        ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), lane=MARKETPLACE_REGISTRY_LANE),
 }
 RUNNER_GROUPS = {
     "service-modes": ("agent:commit", "service-secured:explore"),
@@ -63,6 +73,22 @@ def selector_supports_claim_sources(selector: str, selected_runners: list[str]) 
     return bool(required) and required.issubset(set(selected_runners))
 
 
+def lanes_for_runners(selectors: list[str] | tuple[str, ...] | set[str]) -> list[str]:
+    """Resolve composition lanes from the selected runner declarations."""
+    unknown = set(selectors) - RUNNERS.keys() - RUNNER_GROUPS.keys()
+    if unknown:
+        raise ValueError(f"unknown journey runner selector(s): {', '.join(sorted(unknown))}")
+    expanded = {runner for selector in selectors for runner in RUNNER_GROUPS.get(selector, (selector,))}
+    return sorted({RUNNERS[runner].lane for runner in expanded if RUNNERS[runner].lane})
+
+
+def lane_for_runner(selector: str) -> str:
+    runner = RUNNERS.get(selector)
+    if runner is None:
+        raise ValueError(f"unknown journey runner selector: {selector}")
+    return runner.lane
+
+
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--runner":
         runner = RUNNERS.get(sys.argv[2])
@@ -84,7 +110,10 @@ def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--supports":
         selection = json.load(sys.stdin)
         return 0 if selector_supports_claim_sources(sys.argv[2], selection.get("runners", [])) else 2
-    raise ValueError("usage: dispatch_registry.py --runner <selector> | --dispatch <selector> | --supports <selector>")
+    if len(sys.argv) == 3 and sys.argv[1] == "--lanes":
+        print_report_text(json.dumps(lanes_for_runners(sys.argv[2].split(","))), flush=True)
+        return 0
+    raise ValueError("usage: dispatch_registry.py --runner <selector> | --dispatch <selector> | --supports <selector> | --lanes <selectors>")
 
 
 if __name__ == "__main__":

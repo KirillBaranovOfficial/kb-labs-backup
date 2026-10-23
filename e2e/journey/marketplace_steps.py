@@ -129,12 +129,15 @@ def validate_unmounted_commit_response(status: int, payload: object) -> None:
         raise RuntimeError(f"unmounted Commit route returned an unexpected gateway failure: HTTP {status} {payload!r}")
 
 
-def _commit_project_fixture_entry(lock: object, version: str) -> dict | None:
+def _commit_project_fixture_entry(lock: object, version: str, *, marketplace_source: str = "npm",
+                                  signature_status: str = "unsigned") -> dict | None:
     plugins = lock.get("plugins") if isinstance(lock, dict) else None
     entry = plugins.get("@kb-labs/commit") if isinstance(plugins, dict) else None
     if (isinstance(lock, dict) and lock.get("schema") == "kb.marketplace/3"
             and isinstance(entry, dict) and entry.get("version") == version
             and entry.get("package") == "@kb-labs/commit-entry" and entry.get("integrity")
+            and entry.get("marketplaceSource") == marketplace_source
+            and entry.get("signatureStatus") == signature_status
             and entry.get("source") == "marketplace" and entry.get("enabled") is True):
         return entry
     return None
@@ -336,11 +339,41 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
 def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, registry: str,
                                    env: dict[str, str] | None = None,
                                    runner: CommandRunner = run_command) -> dict | None:
-    """Install the exact Commit pin consumed by downstream project fixtures."""
+    """Install the shared Commit pin from the Release 1 default npm source."""
     project = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
     export_project_identity_to_child_environment(base_env, project_root=str(project))
+    captured: dict[str, dict] = {}
 
+    def install_fixture() -> None:
+        wait_for_marketplace_ready(project, base_env, runner)
+        version = _registry_version("@kb-labs/commit-entry", registry, project, base_env, runner)
+        command = ["marketplace", "install", f"@kb-labs/commit-entry@{version}", "--json"]
+        result = _json(_run(kb_command(command), cwd=project, env=base_env, runner=runner), command)
+        installed = result.get("installed")
+        if (result.get("scope") != "project" or not isinstance(installed, list)
+                or not any(isinstance(item, dict) and item.get("id") == "@kb-labs/commit"
+                           and item.get("version") == version and item.get("source") == "npm"
+                           and item.get("signatureStatus") == "unsigned" for item in installed)):
+            raise RuntimeError("project fixture install did not report the selected Commit npm version")
+        lock = json.loads((project / ".kb" / "marketplace.lock").read_text())
+        entry = _commit_project_fixture_entry(lock, version)
+        if entry is None:
+            raise RuntimeError("project fixture install did not establish its npm-provenance Commit lock entry")
+        captured["entry"] = dict(entry)
+
+    journey.step("produce Commit project fixture", "marketplace-fixtures", install_fixture,
+                 role="lifecycle")
+    return captured.get("entry")
+
+
+def prepare_registry_commit_project_fixture(journey: Journey, project_root: str | Path, registry: str,
+                                            env: dict[str, str] | None = None,
+                                            runner: CommandRunner = run_command) -> dict | None:
+    """Publish and install Commit for the Registry runner's isolated project."""
+    project = Path(project_root).resolve()
+    base_env = dict(os.environ if env is None else env)
+    export_project_identity_to_child_environment(base_env, project_root=str(project))
     captured: dict[str, dict] = {}
 
     def install_fixture() -> None:
@@ -354,25 +387,26 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
         for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa/entry"):
             publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
                                 _publish_fixture_command(workspace, fixture_path))
-            if not isinstance(publication.get("version"), str) or not publication["version"]:
+            if not isinstance(publication.get("version"), str) or not publication.get("version"):
                 raise RuntimeError(f"kb hub publish did not return a version for {fixture_path}")
         command = ["marketplace", "install", "@kb-labs/commit", "--json"]
         result = _json(_run(kb_command(command), cwd=project, env=base_env, runner=runner), command)
         installed = result.get("installed")
         if (result.get("scope") != "project" or not isinstance(installed, list)
                 or not any(isinstance(item, dict) and item.get("id") == "@kb-labs/commit"
-                           and item.get("version") == version
-                           and item.get("source") == "registry"
+                           and item.get("version") == version and item.get("source") == "registry"
                            and item.get("signatureStatus") == "verified" for item in installed)):
-            raise RuntimeError("project fixture install did not return the selected Commit version")
+            raise RuntimeError("Registry fixture install did not return the selected Commit version")
         lock = json.loads((project / ".kb" / "marketplace.lock").read_text())
-        entry = _commit_project_fixture_entry(lock, version)
+        entry = _commit_project_fixture_entry(lock, version, marketplace_source="registry",
+                                              signature_status="verified")
         if entry is None:
-            raise RuntimeError("project fixture install did not establish the exact Commit marketplace lock entry")
+            raise RuntimeError("Registry fixture install did not record the verified Commit lock entry")
         captured["entry"] = dict(entry)
 
     journey.step("publish and install Commit through Registry", "marketplace-fixtures", install_fixture,
-                 role="lifecycle")
+                 role="lifecycle", runners=("service-marketplace-registry:local",
+                                            "service-marketplace-registry:secured"))
 
     def assert_registry_provenance() -> None:
         entry = captured.get("entry")
@@ -382,7 +416,8 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
 
     journey.step("verify Commit Registry signature and provenance", "marketplace-fixtures",
                  assert_registry_provenance, cases=["S-268.1"],
-                 requires=("step:publish and install Commit through Registry",))
+                 requires=("step:publish and install Commit through Registry",),
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
     return captured.get("entry")
 
 
@@ -446,7 +481,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     journey.step("fallback to configured npm only for an unowned identity", "marketplace",
                  assert_npm_fallback, cases=["S-268.2"],
-                 requires=("step:publish and install Commit through Registry",))
+                 requires=("step:publish and install Commit through Registry",),
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
     def assert_no_fallback_for_source_failures() -> None:
         original_lock = lock_path.read_bytes()
@@ -463,7 +499,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     journey.step("source auth and transport errors never fall through to npm", "marketplace",
                  assert_no_fallback_for_source_failures, cases=["S-268.3"],
-                 requires=("step:fallback to configured npm only for an unowned identity",))
+                 requires=("step:fallback to configured npm only for an unowned identity",),
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
     def assert_signature_and_integrity_fail_closed() -> None:
         original_lock = lock_path.read_bytes()
@@ -479,7 +516,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     journey.step("signature and integrity failures never fall through or commit a lock", "marketplace",
                  assert_signature_and_integrity_fail_closed, cases=["S-268.4"],
-                 requires=("step:source auth and transport errors never fall through to npm",))
+                 requires=("step:source auth and transport errors never fall through to npm",),
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
     def assert_registry_reserved_identity() -> None:
         _assert_catalogued_marketplace_failure(project, env, runner,
@@ -487,7 +525,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     journey.step("Registry-owned namespace identities never resolve from npm", "marketplace",
                  assert_registry_reserved_identity, cases=["S-268.5"],
-                 requires=("step:signature and integrity failures never fall through or commit a lock",))
+                 requires=("step:signature and integrity failures never fall through or commit a lock",),
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
     def assert_update_persists_and_reports_sources() -> None:
         platform_root = Path(env["KB_JOURNEY_PLATFORM_ROOT"]).resolve()
@@ -521,7 +560,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     journey.step("update preserves Marketplace sources and status and doctor redact credentials", "marketplace",
                  assert_update_persists_and_reports_sources, cases=["S-268.6"],
-                 requires=("step:Registry-owned namespace identities never resolve from npm",))
+                 requires=("step:Registry-owned namespace identities never resolve from npm",),
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
     def assert_tampered_mirror_refused() -> None:
         original_lock = lock_path.read_bytes()
@@ -536,7 +576,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     journey.step("tampered Registry mirror fails with the catalogue integrity error", "marketplace",
                  assert_tampered_mirror_refused, cases=["S-268.7"],
-                 requires=("step:update preserves Marketplace sources and status and doctor redact credentials",))
+                 requires=("step:update preserves Marketplace sources and status and doctor redact credentials",),
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
     def assert_missing_provenance_refusal() -> None:
         original = lock_path.read_bytes()
@@ -563,7 +604,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     journey.step("doctor refuses a Marketplace lock without recorded provenance", "marketplace",
                  assert_missing_provenance_refusal, cases=["S-268.8"],
-                 requires=("step:tampered Registry mirror fails with the catalogue integrity error",))
+                 requires=("step:tampered Registry mirror fails with the catalogue integrity error",),
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
 
 def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path, registry: str,
