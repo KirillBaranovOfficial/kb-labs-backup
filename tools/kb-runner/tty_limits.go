@@ -10,26 +10,17 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 	"unsafe"
 
-	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/sys/unix"
 )
 
 const ttyProbeTimeout = 12 * time.Second
 const ttyStableScreenQuiet = 700 * time.Millisecond
-
-var (
-	ttyPercentPattern = regexp.MustCompile(`(?i)([0-9]{1,3}(?:\.[0-9]+)?)\s*%`)
-	ttyResetPattern   = regexp.MustCompile(`(?i)reset(?:s|ting)?\s+(?:in\s+)?([0-9]+\s*(?:h|hours?|m|minutes?|s|seconds?)(?:\s+[0-9]+\s*(?:h|hours?|m|minutes?|s|seconds?))*)`)
-	ttyNumberUnit     = regexp.MustCompile(`(?i)([0-9]+)\s*(h|hours?|m|minutes?|s|seconds?)`)
-)
 
 type ttyProbeResult struct {
 	Limits []VendorLimit
@@ -45,7 +36,7 @@ func readTTYLimitsDetailed(parent context.Context, vendor, binary string) ttyPro
 	if probe.Err != nil {
 		return ttyProbeResult{Limits: unavailableLimits(vendor, "tty", probe.Err), Screen: probe.Screen, Steps: probe.Steps, Err: probe.Err}
 	}
-	limits := parseTTYLimits(vendor, probe.Screen, time.Now)
+	limits := parseQuotaScreen(vendor, probe.Screen, time.Now)
 	if len(limits) == 0 {
 		err := errors.New("unrecognized vendor quota screen layout")
 		if strings.TrimSpace(probe.Screen) != "" {
@@ -97,6 +88,10 @@ func probeTTY(ctx context.Context, vendor, binary string) (result ttyProbeResult
 		}
 	}()
 	cmd = exec.CommandContext(ctx, binary)
+	cmd.Env, err = vendorChildEnvironment(vendor)
+	if err != nil {
+		return ttyProbeResult{Err: fmt.Errorf("build %s terminal environment: %w", vendor, err)}
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	if err := cmd.Start(); err != nil {
@@ -110,15 +105,25 @@ func probeTTY(ctx context.Context, vendor, binary string) (result ttyProbeResult
 	slaveOpen = false
 	chunks := make(chan []byte, 8)
 	readDone := make(chan error, 1)
+	responder := &terminalQueryResponder{}
 	go func() {
 		buffer := make([]byte, 4096)
 		for {
 			n, readErr := master.Read(buffer)
 			if n > 0 {
-				select {
-				case chunks <- append([]byte(nil), buffer[:n]...):
-				case <-ctx.Done():
-					return
+				visible, replies := responder.Feed(buffer[:n])
+				for _, reply := range replies {
+					if _, writeErr := master.Write(reply); writeErr != nil {
+						readDone <- fmt.Errorf("answer terminal query: %w", writeErr)
+						return
+					}
+				}
+				if len(visible) > 0 {
+					select {
+					case chunks <- visible:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 			if readErr != nil {
@@ -127,7 +132,7 @@ func probeTTY(ctx context.Context, vendor, binary string) (result ttyProbeResult
 			}
 		}
 	}()
-	var output bytes.Buffer
+	var output terminalScreen
 	steps := make([]LimitStepTiming, 0, 4)
 	measure := func(name string, fn func() error) error {
 		started := time.Now()
@@ -136,51 +141,50 @@ func probeTTY(ctx context.Context, vendor, binary string) (result ttyProbeResult
 		return err
 	}
 	if err := measure("ready", func() error { return readUntilStableScreen(ctx, chunks, readDone, &output) }); err != nil {
-		return ttyProbeResult{Screen: renderedTTYScreen(output.String()), Steps: steps, Err: fmt.Errorf("wait for stable %s screen: %w", vendor, err)}
+		return ttyProbeResult{Screen: output.String(), Steps: steps, Err: fmt.Errorf("wait for stable %s screen: %w", vendor, err)}
 	}
-	helpStart := output.Len()
 	if _, err := master.Write([]byte("/help\r")); err != nil {
-		return ttyProbeResult{Screen: renderedTTYScreen(output.String()), Steps: steps, Err: fmt.Errorf("request %s in-session help: %w", vendor, err)}
+		return ttyProbeResult{Screen: output.String(), Steps: steps, Err: fmt.Errorf("request %s in-session help: %w", vendor, err)}
 	}
 	if err := measure("help", func() error { return readUntilStableScreen(ctx, chunks, readDone, &output) }); err != nil {
-		return ttyProbeResult{Screen: renderedTTYScreen(output.String()[helpStart:]), Steps: steps, Err: fmt.Errorf("read %s in-session help: %w", vendor, err)}
+		return ttyProbeResult{Screen: output.String(), Steps: steps, Err: fmt.Errorf("read %s in-session help: %w", vendor, err)}
 	}
-	help := ansi.Strip(output.String()[helpStart:])
+	help := output.String()
 	command, err := discoverLimitCommand(help)
 	if err != nil {
-		return ttyProbeResult{Screen: renderedTTYScreen(help), Steps: steps, Err: fmt.Errorf("discover %s usage command from in-session help: %w", vendor, err)}
+		return ttyProbeResult{Screen: help, Steps: steps, Err: fmt.Errorf("discover %s usage command from in-session help: %w", vendor, err)}
 	}
-	statsStart := output.Len()
 	if _, err := master.Write([]byte(command + "\r")); err != nil {
-		return ttyProbeResult{Screen: renderedTTYScreen(output.String()[statsStart:]), Steps: steps, Err: fmt.Errorf("request %s limits: %w", vendor, err)}
+		return ttyProbeResult{Screen: output.String(), Steps: steps, Err: fmt.Errorf("request %s limits: %w", vendor, err)}
 	}
 	if err := measure("usage", func() error { return readUntilStableScreen(ctx, chunks, readDone, &output) }); err != nil {
-		return ttyProbeResult{Screen: renderedTTYScreen(output.String()[statsStart:]), Steps: steps, Err: fmt.Errorf("read %s quota screen: %w", vendor, err)}
+		return ttyProbeResult{Screen: output.String(), Steps: steps, Err: fmt.Errorf("read %s quota screen: %w", vendor, err)}
 	}
 	if _, err := master.Write([]byte{4}); err != nil {
-		return ttyProbeResult{Screen: renderedTTYScreen(output.String()[statsStart:]), Steps: steps, Err: fmt.Errorf("exit %s limits probe: %w", vendor, err)}
+		return ttyProbeResult{Screen: output.String(), Steps: steps, Err: fmt.Errorf("exit %s limits probe: %w", vendor, err)}
 	}
 	exitStart := time.Now()
 	select {
 	case waitErr := <-wait:
 		waited = true
 		if waitErr != nil {
-			return ttyProbeResult{Screen: renderedTTYScreen(output.String()[statsStart:]), Steps: steps, Err: fmt.Errorf("exit %s limits command: %w", vendor, waitErr)}
+			return ttyProbeResult{Screen: output.String(), Steps: steps, Err: fmt.Errorf("exit %s limits command: %w", vendor, waitErr)}
 		}
 	case <-ctx.Done():
 		steps = append(steps, LimitStepTiming{Step: "exit", DurationMS: time.Since(exitStart).Milliseconds()})
-		return ttyProbeResult{Screen: renderedTTYScreen(output.String()[statsStart:]), Steps: steps, Err: fmt.Errorf("stop %s limits probe: %w", vendor, ctx.Err())}
+		return ttyProbeResult{Screen: output.String(), Steps: steps, Err: fmt.Errorf("stop %s limits probe: %w", vendor, ctx.Err())}
 	case <-time.After(time.Second):
 		steps = append(steps, LimitStepTiming{Step: "exit", DurationMS: time.Since(exitStart).Milliseconds()})
-		return ttyProbeResult{Screen: renderedTTYScreen(output.String()[statsStart:]), Steps: steps, Err: fmt.Errorf("%s limits command did not exit after Ctrl-D", vendor)}
+		return ttyProbeResult{Screen: output.String(), Steps: steps, Err: fmt.Errorf("%s limits command did not exit after Ctrl-D", vendor)}
 	}
 	steps = append(steps, LimitStepTiming{Step: "exit", DurationMS: time.Since(exitStart).Milliseconds()})
-	return ttyProbeResult{Screen: renderedTTYScreen(output.String()[statsStart:]), Steps: steps}
+	return ttyProbeResult{Screen: output.String(), Steps: steps}
 }
 
-func readUntilStableScreen(ctx context.Context, chunks <-chan []byte, readDone <-chan error, output *bytes.Buffer) error {
+func readUntilStableScreen(ctx context.Context, chunks <-chan []byte, readDone <-chan error, output *terminalScreen) error {
 	var stable *time.Timer
 	var stableC <-chan time.Time
+	sawOutput := false
 	defer func() {
 		if stable != nil {
 			stable.Stop()
@@ -194,6 +198,7 @@ func readUntilStableScreen(ctx context.Context, chunks <-chan []byte, readDone <
 			if len(chunk) == 0 {
 				continue
 			}
+			sawOutput = true
 			_, _ = output.Write(chunk)
 			if stable == nil {
 				stable = time.NewTimer(ttyStableScreenQuiet)
@@ -208,7 +213,7 @@ func readUntilStableScreen(ctx context.Context, chunks <-chan []byte, readDone <
 			}
 			stableC = stable.C
 		case <-stableC:
-			if strings.TrimSpace(renderedTTYScreen(output.String())) != "" {
+			if sawOutput {
 				return nil
 			}
 		case err := <-readDone:
@@ -218,13 +223,6 @@ func readUntilStableScreen(ctx context.Context, chunks <-chan []byte, readDone <
 			return err
 		}
 	}
-}
-
-func renderedTTYScreen(raw string) string {
-	text := ansi.Strip(raw)
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-	return redactLimitText(text)
 }
 
 func discoverLimitCommand(help string) (string, error) {
@@ -249,71 +247,6 @@ func discoverLimitCommand(help string) (string, error) {
 		}
 	}
 	return "", errors.New("help listed no usage, quota, limit, or stats command")
-}
-
-func parseTTYLimits(vendor, screen string, now func() time.Time) []VendorLimit {
-	clean := strings.Join(strings.Fields(ansi.Strip(screen)), " ")
-	percentMatches := ttyPercentPattern.FindAllStringSubmatchIndex(clean, -1)
-	if len(percentMatches) == 0 {
-		return nil
-	}
-	reset := parseTTYReset(clean, now())
-	limits := make([]VendorLimit, 0, len(percentMatches))
-	for _, match := range percentMatches {
-		percent, err := strconv.ParseFloat(clean[match[2]:match[3]], 64)
-		if err != nil {
-			return nil
-		}
-		prefix := strings.ToLower(clean[max(0, match[0]-64):match[0]])
-		window := ""
-		switch {
-		case strings.Contains(prefix, "week"), strings.Contains(prefix, "7d"):
-			window = "week"
-		case strings.Contains(prefix, "5h"), strings.Contains(prefix, "five-hour"), strings.Contains(prefix, "5-hour"):
-			window = "5h"
-		case strings.Contains(prefix, "day"), strings.Contains(prefix, "daily"):
-			window = "daily"
-		}
-		if window == "" {
-			return nil
-		}
-		limits = append(limits, VendorLimit{Vendor: vendor, Window: window, UsedPercent: percent, ResetsAt: reset, Confidence: "vendor", Source: "tty", FetchedAt: now().UTC()})
-	}
-	return limits
-}
-
-func parseTTYReset(screen string, now time.Time) *time.Time {
-	for _, format := range []string{time.RFC3339, "Jan 2, 2006 3:04 PM MST", "Jan 2 2006 15:04 MST"} {
-		for _, token := range strings.Fields(screen) {
-			if reset, err := time.Parse(format, strings.Trim(token, "(),;")); err == nil {
-				return &reset
-			}
-		}
-	}
-	match := ttyResetPattern.FindStringSubmatch(screen)
-	if len(match) != 2 {
-		return nil
-	}
-	var duration time.Duration
-	for _, unit := range ttyNumberUnit.FindAllStringSubmatch(match[1], -1) {
-		amount, err := strconv.Atoi(unit[1])
-		if err != nil {
-			return nil
-		}
-		switch strings.ToLower(unit[2])[0] {
-		case 'h':
-			duration += time.Duration(amount) * time.Hour
-		case 'm':
-			duration += time.Duration(amount) * time.Minute
-		case 's':
-			duration += time.Duration(amount) * time.Second
-		}
-	}
-	if duration <= 0 {
-		return nil
-	}
-	reset := now.Add(duration).UTC()
-	return &reset
 }
 
 func openPTY() (*os.File, *os.File, error) {
@@ -354,6 +287,9 @@ func openPTY() (*os.File, *os.File, error) {
 	if err != nil {
 		return closeMaster(err)
 	}
-	_ = unix.IoctlSetWinsize(masterFD, unix.TIOCSWINSZ, &unix.Winsize{Row: 40, Col: 120})
+	if err := unix.IoctlSetWinsize(masterFD, unix.TIOCSWINSZ, &unix.Winsize{Row: ttyScreenRows, Col: ttyScreenCols}); err != nil {
+		_ = unix.Close(slaveFD)
+		return closeMaster(err)
+	}
 	return os.NewFile(uintptr(masterFD), "pty-master"), os.NewFile(uintptr(slaveFD), "pty-slave"), nil
 }

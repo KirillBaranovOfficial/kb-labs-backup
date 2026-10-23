@@ -9,11 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -27,6 +25,7 @@ type vendorSpec struct {
 	binaryEnv     string
 	binaryDefault string
 	unavailable   string
+	childEnv      []string
 }
 
 var vendorRegistry = map[string]vendorSpec{
@@ -227,10 +226,9 @@ func parseVendorEvent(vendor string, line []byte) (VendorEvent, error) {
 }
 
 type commandAdapter struct {
-	vendor                   string
-	binary                   string
-	claudeCredentialResolver func(context.Context) (claudeCredential, error)
-	claudeHTTPClient         *http.Client
+	vendor   string
+	binary   string
+	childEnv []string
 }
 
 func newAdapter(vendor string) (AgentAdapter, error) {
@@ -245,7 +243,7 @@ func newAdapter(vendor string) (AgentAdapter, error) {
 	if bin == "" {
 		bin = spec.binaryDefault
 	}
-	return commandAdapter{vendor: vendor, binary: bin, claudeCredentialResolver: readClaudeCredential, claudeHTTPClient: http.DefaultClient}, nil
+	return commandAdapter{vendor: vendor, binary: bin, childEnv: spec.childEnv}, nil
 }
 func newLimitsProvider(vendor string) (limitsProvider, error) {
 	spec, ok := vendorRegistry[vendor]
@@ -256,7 +254,7 @@ func newLimitsProvider(vendor string) (limitsProvider, error) {
 	if bin == "" {
 		bin = spec.binaryDefault
 	}
-	return commandAdapter{vendor: vendor, binary: bin, claudeCredentialResolver: readClaudeCredential, claudeHTTPClient: http.DefaultClient}, nil
+	return commandAdapter{vendor: vendor, binary: bin, childEnv: spec.childEnv}, nil
 }
 func (a commandAdapter) Start(ctx context.Context, r AgentRequest) (*exec.Cmd, error) {
 	var args []string
@@ -280,6 +278,11 @@ func (a commandAdapter) Start(ctx context.Context, r AgentRequest) (*exec.Cmd, e
 	}
 	cmd := exec.CommandContext(ctx, a.binary, args...)
 	cmd.Dir = r.Workdir
+	var err error
+	cmd.Env, err = childEnvironment(a.childEnv)
+	if err != nil {
+		return nil, err
+	}
 	if a.vendor == "codex" {
 		cmd.Stdin = strings.NewReader(r.Prompt)
 	}
@@ -297,11 +300,21 @@ func (a commandAdapter) Resume(ctx context.Context, r AgentRequest) (*exec.Cmd, 
 		args = append(args, "--json", r.SessionID, "-")
 		cmd := exec.CommandContext(ctx, a.binary, args...)
 		cmd.Dir = r.Workdir
+		var err error
+		cmd.Env, err = childEnvironment(a.childEnv)
+		if err != nil {
+			return nil, err
+		}
 		cmd.Stdin = strings.NewReader(r.Prompt)
 		return cmd, nil
 	}
 	cmd := exec.CommandContext(ctx, a.binary, "-p", r.Prompt, "--output-format", "stream-json", "--resume", r.SessionID)
 	cmd.Dir = r.Workdir
+	var err error
+	cmd.Env, err = childEnvironment(a.childEnv)
+	if err != nil {
+		return nil, err
+	}
 	return cmd, nil
 }
 func (a commandAdapter) Interrupt(p *os.Process) error { return p.Signal(os.Interrupt) }
@@ -322,25 +335,10 @@ func (a commandAdapter) Limits(ctx context.Context) ([]VendorLimit, error) {
 			}},
 		)
 	case "claude":
-		resolver := a.claudeCredentialResolver
-		client := a.claudeHTTPClient
-		if client == nil {
-			client = http.DefaultClient
-		}
-		return collectVendorLimits(ctx, a.vendor,
-			limitSource{name: "oauth-usage", read: func(ctx context.Context) limitSourceOutput {
-				if resolver == nil {
-					err := errors.New("Claude credential resolver is not configured")
-					return limitSourceOutput{Limits: unavailableLimits(a.vendor, "oauth-usage", err), Err: err}
-				}
-				limits, response, err := readClaudeLimitsDetailed(ctx, "https://api.anthropic.com/api/oauth/usage", resolver, client)
-				return limitSourceOutput{Limits: limits, Structured: response, Err: err}
-			}},
-			limitSource{name: "tty", read: func(ctx context.Context) limitSourceOutput {
-				probe := readTTYLimitsDetailed(ctx, a.vendor, a.binary)
-				return limitSourceOutput{Limits: probe.Limits, TTYScreen: probe.Screen, Steps: probe.Steps, Err: probe.Err}
-			}},
-		)
+		return collectVendorLimits(ctx, a.vendor, limitSource{name: "tty", read: func(ctx context.Context) limitSourceOutput {
+			probe := readTTYLimitsDetailed(ctx, a.vendor, a.binary)
+			return limitSourceOutput{Limits: probe.Limits, TTYScreen: probe.Screen, Steps: probe.Steps, Err: probe.Err}
+		}})
 	default:
 		return collectVendorLimits(ctx, a.vendor, limitSource{name: "tty", read: func(ctx context.Context) limitSourceOutput {
 			probe := readTTYLimitsDetailed(ctx, a.vendor, a.binary)
@@ -395,6 +393,11 @@ func cachedLimits(path string, ttl time.Duration, p limitsProvider, now func() t
 
 func readCodexLimitsDetailed(ctx context.Context, binary string) ([]VendorLimit, json.RawMessage, error) {
 	cmd := exec.CommandContext(ctx, binary, "app-server")
+	env, err := childEnvironment(vendorRegistry["codex"].childEnv)
+	if err != nil {
+		return unavailableLimits("codex", "app-server", err), nil, err
+	}
+	cmd.Env = env
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return unavailableLimits("codex", "app-server", err), nil, err
@@ -511,183 +514,4 @@ func decodeCodexLimits(data []byte, now func() time.Time) []VendorLimit {
 }
 func unavailableLimits(vendor, source string, err error) []VendorLimit {
 	return []VendorLimit{{Vendor: vendor, Window: "unknown", Confidence: "unavailable", Source: source, Error: err.Error(), FetchedAt: time.Now().UTC()}}
-}
-func readClaudeLimitsDetailed(ctx context.Context, endpoint string, resolver func(context.Context) (claudeCredential, error), client *http.Client) ([]VendorLimit, json.RawMessage, error) {
-	credential, err := resolver(ctx)
-	if err != nil {
-		return unavailableLimits("claude", "oauth-usage", err), nil, err
-	}
-	if credential.Expired(time.Now()) {
-		err := errors.New("token expired (owner session refreshes it)")
-		return unavailableLimits("claude", "oauth-usage", err), nil, err
-	}
-	return fetchClaudeLimitsDetailed(ctx, endpoint, credential, client)
-}
-
-func fetchClaudeLimitsDetailed(ctx context.Context, endpoint string, credential claudeCredential, client *http.Client) ([]VendorLimit, json.RawMessage, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return unavailableLimits("claude", "oauth-usage", err), nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+credential.AccessToken)
-	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
-	resp, err := client.Do(req)
-	req.Header.Del("Authorization")
-	credential.AccessToken = ""
-	if err != nil {
-		return unavailableLimits("claude", "oauth-usage", err), nil, err
-	}
-	bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	closeErr := resp.Body.Close()
-	response := json.RawMessage(bodyBytes)
-	if readErr != nil {
-		err := fmt.Errorf("read usage response: %w", readErr)
-		return unavailableLimits("claude", "oauth-usage", err), response, err
-	}
-	if closeErr != nil {
-		err := fmt.Errorf("close usage response: %w", closeErr)
-		return unavailableLimits("claude", "oauth-usage", err), response, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("usage endpoint returned HTTP %d", resp.StatusCode)
-		return unavailableLimits("claude", "oauth-usage", err), response, err
-	}
-	var body struct {
-		FiveHour struct {
-			Utilization float64 `json:"utilization"`
-			ResetsAt    string  `json:"resets_at"`
-		} `json:"five_hour"`
-		SevenDay struct {
-			Utilization float64 `json:"utilization"`
-			ResetsAt    string  `json:"resets_at"`
-		} `json:"seven_day"`
-	}
-	if err := json.Unmarshal(bodyBytes, &body); err != nil || body.FiveHour.ResetsAt == "" || body.SevenDay.ResetsAt == "" {
-		err := errors.New("unrecognized usage schema")
-		return unavailableLimits("claude", "oauth-usage", err), response, err
-	}
-	five, err := time.Parse(time.RFC3339, body.FiveHour.ResetsAt)
-	if err != nil {
-		err = errors.New("unrecognized 5h reset timestamp")
-		return unavailableLimits("claude", "oauth-usage", err), response, err
-	}
-	week, err := time.Parse(time.RFC3339, body.SevenDay.ResetsAt)
-	if err != nil {
-		err = errors.New("unrecognized weekly reset timestamp")
-		return unavailableLimits("claude", "oauth-usage", err), response, err
-	}
-	now := time.Now().UTC()
-	return []VendorLimit{{Vendor: "claude", Window: "5h", UsedPercent: body.FiveHour.Utilization, ResetsAt: &five, Confidence: "vendor", Source: "oauth-usage", FetchedAt: now}, {Vendor: "claude", Window: "week", UsedPercent: body.SevenDay.Utilization, ResetsAt: &week, Confidence: "vendor", Source: "oauth-usage", FetchedAt: now}}, response, nil
-}
-
-type claudeCredential struct {
-	AccessToken string
-	ExpiresAt   *time.Time
-}
-
-func (c claudeCredential) Expired(now time.Time) bool {
-	return c.ExpiresAt != nil && !c.ExpiresAt.After(now)
-}
-
-type commandOutput func(context.Context, string, ...string) ([]byte, error)
-
-func execCommandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.Output()
-}
-
-func readClaudeCredential(ctx context.Context) (claudeCredential, error) {
-	return claudeCredentialWith(ctx, execCommandOutput, runtime.GOOS, os.Getenv("HOME"), os.Getenv("USER"))
-}
-
-func claudeCredentialWith(ctx context.Context, run commandOutput, goos, home, username string) (claudeCredential, error) {
-	if goos == "darwin" {
-		return claudeKeychainCredential(ctx, run, username)
-	}
-	if goos != "linux" {
-		return claudeCredential{}, fmt.Errorf("Claude OAuth credentials are unavailable on %s", goos)
-	}
-	path := filepath.Join(home, ".claude", ".credentials.json")
-	b, err := os.ReadFile(path)
-	if err == nil {
-		credential, decodeErr := decodeClaudeCredential(b)
-		for i := range b {
-			b[i] = 0
-		}
-		return credential, decodeErr
-	}
-	return claudeCredential{}, fmt.Errorf("Claude OAuth credentials unavailable: %w", err)
-}
-
-func decodeClaudeCredential(data []byte) (claudeCredential, error) {
-	var envelope struct {
-		OAuth struct {
-			AccessToken string          `json:"accessToken"`
-			ExpiresAt   json.RawMessage `json:"expiresAt"`
-		} `json:"claudeAiOauth"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil || envelope.OAuth.AccessToken == "" {
-		return claudeCredential{}, errors.New("Claude credentials have an unsupported schema")
-	}
-	credential := claudeCredential{AccessToken: envelope.OAuth.AccessToken}
-	if len(envelope.OAuth.ExpiresAt) == 0 || string(envelope.OAuth.ExpiresAt) == "null" {
-		return credential, nil
-	}
-	var unixValue int64
-	if json.Unmarshal(envelope.OAuth.ExpiresAt, &unixValue) == nil {
-		if unixValue > 10_000_000_000 {
-			unixValue /= 1000
-		}
-		expiry := time.Unix(unixValue, 0).UTC()
-		credential.ExpiresAt = &expiry
-		return credential, nil
-	}
-	var timestamp string
-	if json.Unmarshal(envelope.OAuth.ExpiresAt, &timestamp) == nil {
-		expiry, err := time.Parse(time.RFC3339, timestamp)
-		if err == nil {
-			credential.ExpiresAt = &expiry
-			return credential, nil
-		}
-	}
-	return claudeCredential{}, errors.New("Claude credential expiry has an unsupported schema")
-}
-
-func claudeKeychainCredential(ctx context.Context, run commandOutput, username string) (claudeCredential, error) {
-	if username == "" {
-		return claudeCredential{}, errors.New("Claude Keychain lookup requires the current account name")
-	}
-	metadata, err := run(ctx, "security", "find-generic-password", "-a", username)
-	if err != nil {
-		return claudeCredential{}, errors.New("Claude Keychain item discovery failed; check that Claude Code is signed in")
-	}
-	service, err := keychainService(metadata)
-	for i := range metadata {
-		metadata[i] = 0
-	}
-	if err != nil {
-		return claudeCredential{}, err
-	}
-	secret, err := run(ctx, "security", "find-generic-password", "-a", username, "-s", service, "-w")
-	if err != nil {
-		return claudeCredential{}, errors.New("Claude Keychain credential read failed; sign in to Claude Code again")
-	}
-	credential, err := decodeClaudeCredential(secret)
-	for i := range secret {
-		secret[i] = 0
-	}
-	return credential, err
-}
-
-func keychainService(metadata []byte) (string, error) {
-	const marker = `"svce"<blob>="`
-	_, rest, ok := strings.Cut(string(metadata), marker)
-	if !ok {
-		return "", errors.New("Claude Keychain item discovery found no generic password service")
-	}
-	service, _, ok := strings.Cut(rest, `"`)
-	if !ok || strings.TrimSpace(service) == "" {
-		return "", errors.New("Claude Keychain item discovery returned an invalid service name")
-	}
-	return service, nil
 }

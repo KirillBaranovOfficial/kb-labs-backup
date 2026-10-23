@@ -110,6 +110,9 @@ type jobStore struct {
 
 func newJobStore(dir string) *jobStore    { return &jobStore{dir: filepath.Join(dir, "jobs")} }
 func (s *jobStore) path(id string) string { return filepath.Join(s.dir, id+".json") }
+func (s *jobStore) terminalPath(id string) string {
+	return filepath.Join(s.dir, id+".terminal.json")
+}
 func (s *jobStore) Create(job Job) (Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -120,6 +123,11 @@ func (s *jobStore) Create(job Job) (Job, error) {
 		return Job{}, err
 	}
 	if _, err := os.Stat(s.path(job.ID)); err == nil {
+		return Job{}, fmt.Errorf("job %q already exists", job.ID)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Job{}, err
+	}
+	if _, err := os.Stat(s.terminalPath(job.ID)); err == nil {
 		return Job{}, fmt.Errorf("job %q already exists", job.ID)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Job{}, err
@@ -140,36 +148,96 @@ func (s *jobStore) Create(job Job) (Job, error) {
 	return job, s.write(job)
 }
 func (s *jobStore) Get(id string) (Job, error) {
-	b, err := os.ReadFile(s.path(id))
+	job, jobErr := readJobFile(s.path(id))
+	terminal, terminalErr := readJobFile(s.terminalPath(id))
+	if jobErr != nil {
+		if terminalErr == nil {
+			if terminal.Final == nil {
+				return Job{}, errors.New("terminal record file does not contain a terminal outcome")
+			}
+			return terminal, nil
+		}
+		if terminalErr != nil && !errors.Is(terminalErr, os.ErrNotExist) {
+			return Job{}, errors.Join(fmt.Errorf("read job record: %w", jobErr), fmt.Errorf("read terminal record: %w", terminalErr))
+		}
+		return Job{}, jobErr
+	}
+	if terminalErr != nil {
+		if errors.Is(terminalErr, os.ErrNotExist) {
+			return job, nil
+		}
+		return Job{}, fmt.Errorf("read terminal record: %w", terminalErr)
+	}
+	if terminal.Final == nil {
+		return Job{}, errors.New("terminal record file does not contain a terminal outcome")
+	}
+	if job.Final != nil {
+		return Job{}, errors.New("job has both a primary and fallback terminal outcome")
+	}
+	job.State = terminal.State
+	job.Phase = terminal.Phase
+	job.Reason = terminal.Reason
+	job.UpdatedAt = terminal.UpdatedAt
+	job.SessionID = terminal.SessionID
+	job.MessagePath = terminal.MessagePath
+	job.Final = terminal.Final
+	return job, nil
+}
+
+func readJobFile(path string) (Job, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return Job{}, err
 	}
-	var j Job
-	if err = json.Unmarshal(b, &j); err != nil {
+	var job Job
+	if err := json.Unmarshal(b, &job); err != nil {
 		return Job{}, err
 	}
-	return j, nil
+	return job, nil
 }
 func (s *jobStore) write(j Job) error {
 	b, err := json.MarshalIndent(j, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err = os.MkdirAll(s.dir, 0700); err != nil {
+	return writeAtomicFile(s.path(j.ID), b)
+}
+func writeAtomicFile(path string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp := s.path(j.ID) + ".tmp"
-	if err = os.WriteFile(tmp, b, 0600); err != nil {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path(j.ID))
+	return os.Rename(tmp, path)
+}
+func (s *jobStore) writeTerminalFallback(id string, terminal JobTerminal) error {
+	if !terminal.State.Terminal() {
+		return fmt.Errorf("state %q is not terminal", terminal.State)
+	}
+	if terminal.FinishedAt.IsZero() {
+		terminal.FinishedAt = time.Now().UTC()
+	}
+	job := Job{ID: id, State: terminal.State, Phase: terminal.Phase, Reason: terminal.Reason, UpdatedAt: terminal.FinishedAt, SessionID: terminal.SessionID, MessagePath: terminal.MessagePath, Final: &terminal}
+	b, err := json.MarshalIndent(job, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeAtomicFile(s.terminalPath(id), b)
 }
 func (s *jobStore) Terminate(id string, terminal JobTerminal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	j, err := s.Get(id)
 	if err != nil {
-		return err
+		if errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if fallbackErr := s.writeTerminalFallback(id, terminal); fallbackErr != nil {
+			return errors.Join(fmt.Errorf("read job before termination: %w", err), fmt.Errorf("persist fallback terminal record: %w", fallbackErr))
+		}
+		return nil
 	}
 	if j.Final != nil {
 		return fmt.Errorf("job %q already has a terminal record", id)
@@ -183,7 +251,12 @@ func (s *jobStore) Terminate(id string, terminal JobTerminal) error {
 	j.Reason = terminal.Reason
 	j.UpdatedAt = terminal.FinishedAt
 	j.Final = &terminal
-	return s.write(j)
+	if err := s.write(j); err != nil {
+		if fallbackErr := s.writeTerminalFallback(id, terminal); fallbackErr != nil {
+			return errors.Join(fmt.Errorf("persist primary terminal record: %w", err), fmt.Errorf("persist fallback terminal record: %w", fallbackErr))
+		}
+	}
+	return nil
 }
 func (s *jobStore) Update(id string, fn func(*Job) error) error {
 	s.mu.Lock()
@@ -209,12 +282,23 @@ func (s *jobStore) List() ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Job, 0, len(entries))
+	ids := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() {
 			continue
 		}
-		j, e := s.Get(strings.TrimSuffix(entry.Name(), ".json"))
+		name := entry.Name()
+		if id, ok := strings.CutSuffix(name, ".terminal.json"); ok {
+			ids[id] = struct{}{}
+			continue
+		}
+		if filepath.Ext(name) == ".json" {
+			ids[strings.TrimSuffix(name, ".json")] = struct{}{}
+		}
+	}
+	out := make([]Job, 0, len(ids))
+	for id := range ids {
+		j, e := s.Get(id)
 		if e != nil {
 			return nil, e
 		}

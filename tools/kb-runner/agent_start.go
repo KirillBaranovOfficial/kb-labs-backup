@@ -97,11 +97,15 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 			return failAgentJob(store, id, PhaseWorktree, ReasonSetup, root, finalPath, fmt.Errorf("locate agent process owner: %w", err))
 		}
 		argsForWorker := append([]string{"__agent_worker", "--job-id", id}, args...)
+		workerEnv, envErr := vendorChildEnvironment(*vendor)
+		if envErr != nil {
+			return failAgentJob(store, id, PhaseWorktree, ReasonSetup, root, finalPath, fmt.Errorf("build agent child environment: %w", envErr))
+		}
 		stdoutPath := filepath.Join(*state, "jobs", id+".stdout.log")
 		stderrPath := filepath.Join(*state, "jobs", id+".stderr.log")
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, Keep: []string{stdoutPath, stderrPath}, Command: append([]string{helper}, argsForWorker...)})
+		run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, Command: append([]string{helper}, argsForWorker...)})
 		if err != nil {
 			return failAgentJob(store, id, PhaseAdmission, ReasonSetup, root, finalPath, fmt.Errorf("agent process admission failed: %w", err))
 		}
@@ -159,6 +163,10 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}
 		cmd := exec.Command("/bin/sh", "-c", phase.command)
 		cmd.Dir = *workdir
+		cmd.Env, err = vendorChildEnvironment(*vendor)
+		if err != nil {
+			return failAgentJob(store, id, phase.phase, ReasonSetup, root, finalPath, fmt.Errorf("build %s child environment: %w", phase.phase, err))
+		}
 		output, e := cmd.CombinedOutput()
 		if logErr := appendJobEvent(logs, map[string]any{"phase": phase.phase, "output": string(output), "time": time.Now().UTC()}); logErr != nil {
 			return failAgentJob(store, id, phase.phase, ReasonSetup, root, finalPath, fmt.Errorf("record phase output: %w", logErr))
