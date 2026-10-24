@@ -717,7 +717,6 @@ func TestPSIncludesEachRunTreeAndElapsed(t *testing.T) {
 		t.Skip("process supervision supports Linux and macOS")
 	}
 	state := t.TempDir()
-	childPIDFile := filepath.Join(state, "child.pid")
 	runner := filepath.Join(state, "kb-runner")
 	build := exec.Command("go", "build", "-o", runner, ".")
 	if output, err := build.CombinedOutput(); err != nil {
@@ -726,46 +725,13 @@ func TestPSIncludesEachRunTreeAndElapsed(t *testing.T) {
 	run, err := proc.Start(context.Background(), proc.Config{
 		HelperPath: runner, StateDir: state, Tag: "ps-check", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "out"), StderrPath: filepath.Join(state, "err"),
-		Command: []string{"/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", childPIDFile},
+		Command: []string{"/bin/sleep", "30"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	childPID := 0
-	childIdentity := ""
 	finished := false
-	stopOwnedChild := func() {
-		if childPID == 0 || childIdentity == "" {
-			return
-		}
-		identity, alive, err := proc.ProcessIdentity(childPID)
-		if err != nil {
-			t.Logf("cannot verify test-owned ps child %d during cleanup: %v", childPID, err)
-			return
-		}
-		if !alive || identity != childIdentity {
-			return
-		}
-		if err := syscall.Kill(childPID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-			t.Logf("stop test-owned ps child %d: %v", childPID, err)
-			return
-		}
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			identity, alive, err = proc.ProcessIdentity(childPID)
-			if err != nil {
-				t.Logf("cannot verify test-owned ps child %d after cleanup: %v", childPID, err)
-				return
-			}
-			if !alive || identity != childIdentity {
-				return
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		t.Logf("test-owned ps child %d remains after bounded cleanup", childPID)
-	}
 	t.Cleanup(func() {
-		stopOwnedChild()
 		if err := run.Kill(); err != nil {
 			t.Logf("stop test-owned ps run %s: %v", run.RunID, err)
 		}
@@ -780,20 +746,9 @@ func TestPSIncludesEachRunTreeAndElapsed(t *testing.T) {
 	var listing []byte
 	for time.Now().Before(deadline) {
 		listing, _ = exec.Command(runner, "ps", "--state", state).CombinedOutput()
-		if childPID == 0 {
-			if data, err := os.ReadFile(childPIDFile); err == nil {
-				if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil {
-					identity, alive, identityErr := proc.ProcessIdentity(pid)
-					if identityErr == nil && alive {
-						childPID, childIdentity = pid, identity
-					}
-				}
-			}
-		}
-		// The command child is observed before it execs sleep; wait until the
-		// tree row shows the exec'd command, not the transient shell.
-		if strings.Contains(string(listing), "ps-check\t") && strings.Contains(string(listing), "RUNNING") &&
-			strings.Contains(string(listing), "sleep") && childPID != 0 {
+		// The run row prints the whole command vector, so only the child row
+		// proves the tree lists the actual leaf command with its elapsed time.
+		if runRowReady(listing) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -828,7 +783,6 @@ func TestPSIncludesEachRunTreeAndElapsed(t *testing.T) {
 	if childCount != treeCount || !childHasSleep || childRow == "" {
 		t.Fatalf("ps child row omitted command or elapsed field: %s", listing)
 	}
-	stopOwnedChild()
 	if err := run.Kill(); err != nil {
 		t.Logf("stop test-owned ps run during fixture cleanup: %v", err)
 	}
@@ -836,6 +790,21 @@ func TestPSIncludesEachRunTreeAndElapsed(t *testing.T) {
 		t.Logf("wait for test-owned ps run during fixture cleanup: %v", err)
 	}
 	finished = true
+}
+
+func runRowReady(listing []byte) bool {
+	runRowRunning := false
+	childRowShowsSleep := false
+	for _, line := range strings.Split(string(listing), "\n") {
+		if strings.HasPrefix(line, "ps-check\t") {
+			fields := strings.Split(line, "\t")
+			runRowRunning = len(fields) >= 3 && fields[2] == "RUNNING"
+		}
+		if strings.HasPrefix(line, "  └─ ") && strings.Contains(line, "sleep") && strings.Contains(line, " elapsed=") {
+			childRowShowsSleep = true
+		}
+	}
+	return runRowRunning && childRowShowsSleep
 }
 
 func TestGateStatusReportsFreeFromRegistry(t *testing.T) {

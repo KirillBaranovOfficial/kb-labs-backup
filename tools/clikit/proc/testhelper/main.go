@@ -123,6 +123,16 @@ func run(args []string) diag.ExitStatus {
 				return fail(err)
 			}
 		}
+	case "hold":
+		if len(args) != 3 {
+			return diag.ProcessExitStatus(2)
+		}
+		if err := writePID(args[1], os.Getpid()); err != nil {
+			return fail(err)
+		}
+		if err := waitForFileWithin(args[2], time.Minute); err != nil {
+			return fail(err)
+		}
 	case "leaf":
 		if len(args) != 2 && len(args) != 3 {
 			return diag.ProcessExitStatus(2)
