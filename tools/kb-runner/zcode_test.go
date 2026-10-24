@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -143,9 +144,9 @@ func TestZcodeSandboxProfileCanonicalizesSymlinkedWriteRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile, err := zcodeSandboxProfile(zcodeSandboxInputs{
-		Worktree:  worktreeLink,
-		JobTemp:   filepath.Join(root, "job", "tmp"),
-		ZcodeData: filepath.Join(root, "home", ".zcode-kb-runner"),
+		Worktree:   worktreeLink,
+		JobTemp:    filepath.Join(root, "job", "tmp"),
+		ZcodeState: []string{filepath.Join(root, "home", ".zcode-kb-runner")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -178,9 +179,9 @@ func TestZcodeSandboxProfileResolvesMissingRootThroughExistingParent(t *testing.
 	}
 	missingRoot := filepath.Join(parentLink, "new-worktree")
 	profile, err := zcodeSandboxProfile(zcodeSandboxInputs{
-		Worktree:  missingRoot,
-		JobTemp:   jobTemp,
-		ZcodeData: zcodeData,
+		Worktree:   missingRoot,
+		JobTemp:    jobTemp,
+		ZcodeState: []string{zcodeData},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +216,7 @@ func TestZcodeSandboxCommandAndProfileEnforceWriteBoundary(t *testing.T) {
 	if err := os.Symlink(worktreeTarget, worktree); err != nil {
 		t.Fatal(err)
 	}
-	profile, err := zcodeSandboxProfile(zcodeSandboxInputs{Worktree: worktree, JobTemp: jobTemp, ZcodeData: zcodeData, NodeCaches: []string{cache}})
+	profile, err := zcodeSandboxProfile(zcodeSandboxInputs{Worktree: worktree, JobTemp: jobTemp, ZcodeState: []string{zcodeData}, NodeCaches: []string{cache}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,9 +292,9 @@ func TestZcodeSandboxProbeReturnsCataloguedRefusalWhenPolicyCannotApply(t *testi
 	} else {
 		root := t.TempDir()
 		profile, profileErr := zcodeSandboxProfile(zcodeSandboxInputs{
-			Worktree:  filepath.Join(root, "worktree"),
-			JobTemp:   filepath.Join(root, "job-temp"),
-			ZcodeData: filepath.Join(root, "zcode-data"),
+			Worktree:   filepath.Join(root, "worktree"),
+			JobTemp:    filepath.Join(root, "job-temp"),
+			ZcodeState: []string{filepath.Join(root, "zcode-data")},
 		})
 		if profileErr != nil {
 			t.Fatal(profileErr)
@@ -401,5 +402,18 @@ func TestZcodeParserResultIsMachineReadable(t *testing.T) {
 	encoded, err := json.Marshal(event)
 	if err != nil || !strings.Contains(string(encoded), `"tokens":13`) {
 		t.Fatalf("event=%s err=%v", encoded, err)
+	}
+}
+
+func TestZcodeStateRootsCoverAccountDataAndCLIStorage(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	roots := zcodeStateRoots(home)
+	for _, want := range []string{zcodeDataBaseDir(home), filepath.Join(home, ".zcode", "cli")} {
+		if !slices.Contains(roots, want) {
+			t.Fatalf("ZCode state roots %v do not include %q", roots, want)
+		}
+	}
+	if slices.Contains(roots, filepath.Join(home, ".zcode")) {
+		t.Fatalf("ZCode state roots %v must not open the desktop app data root", roots)
 	}
 }

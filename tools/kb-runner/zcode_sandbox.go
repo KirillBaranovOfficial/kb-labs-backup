@@ -26,8 +26,19 @@ func (e zcodeSandboxError) Error() string { return e.reason }
 type zcodeSandboxInputs struct {
 	Worktree   string
 	JobTemp    string
-	ZcodeData  string
+	ZcodeState []string
 	NodeCaches []string
+}
+
+// zcodeDataBaseDir is the ZCODE_DATA_BASE_DIR that holds the account login.
+func zcodeDataBaseDir(home string) string { return filepath.Join(home, ".zcode-kb-runner") }
+
+// zcodeStateRoots lists every directory the ZCode CLI writes outside the
+// worktree: the account data base dir, and the CLI storage root, which the CLI
+// derives from the real HOME for its session database, logs and plugin cache.
+// HOME cannot be moved instead, because the CLI keys credential encryption to it.
+func zcodeStateRoots(home string) []string {
+	return []string{zcodeDataBaseDir(home), filepath.Join(home, ".zcode", "cli")}
 }
 
 // canonicalSandboxWriteRoot resolves every existing path component through
@@ -69,7 +80,8 @@ func zcodeSandboxProfile(input zcodeSandboxInputs) (string, error) {
 	if runtime.GOOS != "darwin" {
 		return "", zcodeSandboxError{reason: "ZCode requires the macOS sandbox-exec boundary"}
 	}
-	paths := append([]string{input.Worktree, input.JobTemp, input.ZcodeData}, input.NodeCaches...)
+	paths := append([]string{input.Worktree, input.JobTemp}, input.ZcodeState...)
+	paths = append(paths, input.NodeCaches...)
 	allowed := make([]string, 0, len(paths))
 	seen := make(map[string]struct{}, len(paths))
 	for _, path := range paths {
@@ -144,9 +156,9 @@ func (a commandAdapter) zcodeCommand(ctx context.Context, request AgentRequest, 
 		return nil, fmt.Errorf("create ZCode per-job temp directory: %w", err)
 	}
 	input := zcodeSandboxInputs{
-		Worktree:  request.Workdir,
-		JobTemp:   jobTemp,
-		ZcodeData: filepath.Join(home, ".zcode-kb-runner"),
+		Worktree:   request.Workdir,
+		JobTemp:    jobTemp,
+		ZcodeState: zcodeStateRoots(home),
 		NodeCaches: []string{
 			filepath.Join(home, ".npm"),
 			filepath.Join(home, ".cache", "node"),

@@ -79,7 +79,7 @@ func vendorAgentEnvironment(vendor string, declared []string, state, jobID, secr
 			return nil, errors.New("ZCode agent environment requires the account HOME for its login data")
 		}
 		values := append([]string(nil), declared...)
-		values = append(values, "ZCODE_DATA_BASE_DIR="+filepath.Join(home, ".zcode-kb-runner"))
+		values = append(values, "ZCODE_DATA_BASE_DIR="+zcodeDataBaseDir(home))
 		return childEnvironment(values)
 	}
 	if vendor != "zai" {
