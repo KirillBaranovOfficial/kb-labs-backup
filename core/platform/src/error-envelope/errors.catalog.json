@@ -2763,6 +2763,17 @@
       ]
     },
     {
+      "code": "KB_RUNTIME_REQUEST_CANCELLED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "warning",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "httpStatus": 499,
+      "message": "The client cancelled the request before it completed.",
+      "hint": "Retry the request when you are ready."
+    },
+    {
       "code": "KB_RUNTIME_TIMEOUT",
       "httpStatus": 504,
       "area": "runtime",

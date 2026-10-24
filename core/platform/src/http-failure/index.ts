@@ -24,6 +24,10 @@ interface HttpFailureParts {
 }
 
 function failureParts(payload: unknown, statusCode: number, limitBytes?: number): HttpFailureParts {
+  if (payload instanceof Error && payload.name === 'AbortError') {
+    const error = createErrorEnvelope('KB_RUNTIME_REQUEST_CANCELLED');
+    return { code: error.code, cataloguedPayload: true, error };
+  }
   const nested = payload && typeof payload === 'object' && 'error' in payload ? payload.error : undefined;
   const candidate = hasCode(nested) ? nested : hasCode(payload) ? payload : undefined;
   if (candidate !== undefined) {

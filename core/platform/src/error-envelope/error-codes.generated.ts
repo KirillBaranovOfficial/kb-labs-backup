@@ -221,6 +221,7 @@ export type CatalogErrorCode =
   | "KB_RUNTIME_MCP_UNKNOWN_TOOL"
   | "KB_RUNTIME_PAYLOAD_TOO_LARGE"
   | "KB_RUNTIME_RATE_LIMITED"
+  | "KB_RUNTIME_REQUEST_CANCELLED"
   | "KB_RUNTIME_RESOURCE_NOT_FOUND"
   | "KB_RUNTIME_RUN_DIRTY"
   | "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED"
@@ -488,6 +489,7 @@ export interface CatalogTemplateParameters {
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": { "tool": string };
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": { "limit": string };
   "KB_RUNTIME_RATE_LIMITED": { "retryAfter": string };
+  "KB_RUNTIME_REQUEST_CANCELLED": Record<never, never>;
   "KB_RUNTIME_RESOURCE_NOT_FOUND": Record<never, never>;
   "KB_RUNTIME_RUN_DIRTY": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": { "path": string };
@@ -755,6 +757,7 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": { "tool": string };
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": { "limit": string; "limitBytes"?: string };
   "KB_RUNTIME_RATE_LIMITED": { "retryAfter": string };
+  "KB_RUNTIME_REQUEST_CANCELLED": Record<string, never>;
   "KB_RUNTIME_RESOURCE_NOT_FOUND": { "sessionId"?: string; "plugin"?: string; "route"?: string; "upstreamStatus"?: string };
   "KB_RUNTIME_RUN_DIRTY": Record<string, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": { "path": string; "creationError"?: string; "removalError"?: string };
@@ -1022,6 +1025,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": ["tool"],
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
   "KB_RUNTIME_RATE_LIMITED": ["retryAfter"],
+  "KB_RUNTIME_REQUEST_CANCELLED": [],
   "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
@@ -1289,6 +1293,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": ["tool"],
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
   "KB_RUNTIME_RATE_LIMITED": ["retryAfter"],
+  "KB_RUNTIME_REQUEST_CANCELLED": [],
   "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": [],
@@ -1556,6 +1561,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": [],
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
   "KB_RUNTIME_RATE_LIMITED": [],
+  "KB_RUNTIME_REQUEST_CANCELLED": [],
   "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
@@ -1823,6 +1829,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": ["tool"],
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
   "KB_RUNTIME_RATE_LIMITED": ["retryAfter"],
+  "KB_RUNTIME_REQUEST_CANCELLED": [],
   "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
@@ -2090,6 +2097,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": ["tool"],
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
   "KB_RUNTIME_RATE_LIMITED": ["retryAfter"],
+  "KB_RUNTIME_REQUEST_CANCELLED": [],
   "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": [],
@@ -2357,6 +2365,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": [],
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
   "KB_RUNTIME_RATE_LIMITED": [],
+  "KB_RUNTIME_REQUEST_CANCELLED": [],
   "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
@@ -2624,6 +2633,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": [],
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limitBytes"],
   "KB_RUNTIME_RATE_LIMITED": [],
+  "KB_RUNTIME_REQUEST_CANCELLED": [],
   "KB_RUNTIME_RESOURCE_NOT_FOUND": ["sessionId","plugin","route","upstreamStatus"],
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["creationError","removalError"],
@@ -2891,6 +2901,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": { "tool": string };
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": { "limit": string };
   "KB_RUNTIME_RATE_LIMITED": { "retryAfter": string };
+  "KB_RUNTIME_REQUEST_CANCELLED": Record<never, never>;
   "KB_RUNTIME_RESOURCE_NOT_FOUND": Record<never, never>;
   "KB_RUNTIME_RUN_DIRTY": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": Record<never, never>;
@@ -3158,6 +3169,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": Record<never, never>;
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": { "limit": string };
   "KB_RUNTIME_RATE_LIMITED": Record<never, never>;
+  "KB_RUNTIME_REQUEST_CANCELLED": Record<never, never>;
   "KB_RUNTIME_RESOURCE_NOT_FOUND": Record<never, never>;
   "KB_RUNTIME_RUN_DIRTY": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": { "path": string };
@@ -3425,6 +3437,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": Record<never, never>;
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_RATE_LIMITED": Record<never, never>;
+  "KB_RUNTIME_REQUEST_CANCELLED": Record<never, never>;
   "KB_RUNTIME_RESOURCE_NOT_FOUND": Record<never, never>;
   "KB_RUNTIME_RUN_DIRTY": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": Record<never, never>;

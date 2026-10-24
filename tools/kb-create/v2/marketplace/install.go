@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
 )
@@ -61,7 +60,7 @@ func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin st
 	request.Header.Set("Content-Type", "application/json")
 	httpClient := client.HTTP
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = http.DefaultClient
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
