@@ -257,7 +257,7 @@ for (const pkg of pkgsSorted) {
   }
 }
 
-const output = lines.join('\n');
+const output = lines.join('\n').replace(/[ \t]+$/gm, '');
 
 if (FLAG_CHECK) {
   const existing = existsSync(OUT_PATH) ? readFileSync(OUT_PATH, 'utf-8') : '';

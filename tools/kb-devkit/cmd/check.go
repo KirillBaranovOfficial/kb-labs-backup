@@ -263,16 +263,8 @@ func externalCheckFailureError(failures []externalCheckFailure, results map[stri
 		causes = append(causes, fmt.Sprintf("%s: %s", failure.Check, failure.Cause))
 	}
 	checkNames := sortedKeys(checks)
-	hints := make([]string, 0, len(checkNames))
-	for _, checkName := range checkNames {
-		hints = append(hints, fmt.Sprintf("`kb-devkit check --only %s`", checkName))
-	}
-	message := fmt.Sprintf("Workspace check %s could not complete.", checkNames[0])
-	if len(checkNames) > 1 {
-		message = fmt.Sprintf("Workspace checks %s could not complete.", strings.Join(checkNames, ", "))
-	}
-	return diag.New("KB_DEVKIT_CHECK_EXECUTION_FAILED", message,
-		diag.WithHint(fmt.Sprintf("Rerun each failed check alone: %s. Then correct the execution problems.", strings.Join(hints, "; "))),
+	return diag.New("KB_DEVKIT_CHECK_EXECUTION_FAILED", "",
+		diag.WithMeta(map[string]any{"check": strings.Join(checkNames, ", ")}),
 		diag.WithCause(strings.Join(causes, "; ")), diag.WithData(map[string]any{"checks": failures, "packages": results}))
 }
 

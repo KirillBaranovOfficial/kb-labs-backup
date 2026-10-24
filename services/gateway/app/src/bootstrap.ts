@@ -46,7 +46,6 @@ import {
   OAuthStateStore,
 } from "@kb-labs/gateway-auth";
 import type { IKVStore } from "@kb-labs/core-platform/adapters";
-import { createRegistry } from "@kb-labs/core-registry";
 import { loadGatewayConfig } from "./config.js";
 import { assertDeploymentAuth, resolveAccess, resolveBootstrapTenantId } from "./access.js";
 import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
@@ -400,12 +399,7 @@ export async function startGateway(
   //     Graceful: failure disables webhook routes but does not block gateway startup.
   let webhookManifests: WebhookManifestEntry[] = [];
   try {
-    const pluginRegistry = await createRegistry({
-      root: configRoot,
-      platformRoot: platformRoot !== configRoot ? platformRoot : undefined,
-      cache: { ttlMs: 600_000, adapter: cache },
-    });
-    const snapshot = pluginRegistry.snapshot();
+    const snapshot = runtime.catalog.snapshot();
     webhookManifests = snapshot.manifests
       .filter((entry) => (entry.manifest.webhooks?.handlers?.length ?? 0) > 0)
       .map((entry) => ({

@@ -1,7 +1,7 @@
 /** Show platform adapters and their built-in fallback. */
 
 import { ADAPTER_DEFAULTS, toErrorEnvelope, ErrorEnvelopeError, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { adapterPackageName, adapterPackageRoot, configuredAdapterForSlot, discoverAdapters, isWorkspaceDevelopmentMode, loadPlatformConfig, projectEffectiveAdapterImplementation, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
+import { adapterPackageName, adapterPackageRoot, configuredAdapterForSlot, isWorkspaceDevelopmentMode, loadCatalogAdapterEntries, loadPlatformConfig, projectEffectiveAdapterImplementation, resolveDiscoveredAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { isEnvReference } from '@kb-labs/core-config';
 import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
@@ -10,6 +10,7 @@ import { generateExamples } from '../../../utils/generate-examples';
 import { readGatewaySuccessData } from '@kb-labs/sdk/gateway';
 import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
 import { projectNetworkRequirement } from './list-projection.js';
+import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 
 type AdapterRow = {
   slot: string;
@@ -52,19 +53,27 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
   async handler(ctx) {
     let loaded: Awaited<ReturnType<typeof loadPlatformConfig>>;
     try {
-      loaded = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform' });
+      const catalog = requireResolvedCatalog();
+      loaded = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform', catalog });
     } catch (error) {
       const envelope = toErrorEnvelope(error);
       throwSystemCataloguedError(envelope);
     }
     const config = loaded.platformConfig;
-    const resolvedDefaults = await resolveInstalledAdapterDefaults({
+    const configuredPackages = Object.entries(config.adapters ?? {}).flatMap(([slot, value]) =>
+      (Array.isArray(value) ? value : [value]).filter((modulePath): modulePath is string => typeof modulePath === 'string')
+        .map((modulePath) => ({ packageName: modulePath.split('/').slice(0, 2).join('/'), slot })),
+    );
+    const workspaceOptions = isWorkspaceDevelopmentMode(loaded)
+      ? { development: true as const, workspaceRoot: loaded.projectRoot ?? getContextCwd(ctx), configuredPackages }
+      : { development: false as const, configuredPackages };
+    const discovered = await loadCatalogAdapterEntries(loaded.catalog.adapters(), workspaceOptions);
+    const resolvedDefaults = resolveDiscoveredAdapterDefaults({
       adapters: { ...(config.adapters ?? {}) },
       adapterOptions: Object.fromEntries(Object.entries(config.adapterOptions ?? {})),
-    }, loaded.platformRoot, loaded.projectRoot ?? getContextCwd(ctx));
+    }, discovered, loaded.projectRoot ?? getContextCwd(ctx));
     const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
     const effectiveAdapterOptions = resolvedDefaults.adapterOptions as Record<string, unknown>;
-    const discovered = await discoverAdapters(loaded.platformRoot);
     const platformDataRoot = await resolvePlatformDataRoot(loaded.platformRoot, isWorkspaceDevelopmentMode(loaded));
     const startHostCommand = `kb-create start --platform-root ${JSON.stringify(loaded.platformRoot)}`;
     let hostStatuses = new Map<string, HostAdapterStatus>();

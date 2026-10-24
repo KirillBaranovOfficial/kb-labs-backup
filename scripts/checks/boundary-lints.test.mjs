@@ -257,6 +257,7 @@ describe('platform-spawn (0.2b)', () => {
   });
 });
 
+
 // ─── 0.5 command naming ──────────────────────────────────────────────────────
 
 const manifest = (commands) => ({ schema: 'kb.plugin/3', id: '@kb-labs/x', cli: { commands } });

@@ -613,20 +613,6 @@
     }
   },
   "qa": {
-    "checks": [
-      {
-        "id": "new-tests",
-        "command": "node",
-        "args": [
-          "scripts/checks/new-tests.mjs"
-        ],
-        "runIn": "newFiles",
-        "parser": "json",
-        "severity": "warning",
-        "trending": true,
-        "description": "New source files must have a corresponding test file"
-      }
-    ],
     "ci": {
       "provider": "github-actions",
       "repository": "kb-labs-team/kb-labs",

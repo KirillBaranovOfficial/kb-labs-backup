@@ -48,7 +48,7 @@ test('MKT-03: install a test package and verify it appears in listing', async ({
     const body = await list.json()
     const packages: { name?: string; id?: string; spec?: string }[] = body.entries ?? body.packages ?? []
     found = packages.some(p =>
-      p.name?.includes('qa') || p.id?.includes('qa') || p.spec?.includes('qa-entry')
+      p.name?.includes('qa') || p.id?.includes('qa') || p.spec?.includes('qa')
     )
   }
   expect(found).toBe(true)

@@ -16,7 +16,7 @@ import type {
   SystemHealthOptions,
   GitInfo,
   HealthContributor,
-} from '../types.js';
+} from '@kb-labs/plugin-contracts';
 
 export interface HealthDeps {
   getSnapshot: () => RegistrySnapshot;

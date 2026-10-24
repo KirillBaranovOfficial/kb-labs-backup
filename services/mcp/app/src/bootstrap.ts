@@ -19,6 +19,7 @@ export async function setupProjectMcp(ctx: ServiceContext): Promise<() => Promis
     host: ctx.host,
     logger,
     cache: ctx.platform.cache,
+    catalog: ctx.runtime.catalog,
     platform: ctx.platform,
     resolvePlatform: () => ctx.platform,
     projectRoot: requireProjectContext(ctx.projectRoot),
@@ -61,6 +62,7 @@ export async function bootstrap(): Promise<void> {
     },
     async setup({
       platform,
+      runtime,
       logger: serviceLogger,
       port,
       host,
@@ -80,6 +82,7 @@ export async function bootstrap(): Promise<void> {
         host,
         logger,
         cache: platform.cache,
+        catalog: runtime.catalog,
         platform,
         resolvePlatform: () => platform,
         projectRoot: requireProjectContext(projectRoot),

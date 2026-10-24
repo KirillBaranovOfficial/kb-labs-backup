@@ -63,7 +63,7 @@ class GatewayStepTests(unittest.TestCase):
         self.addCleanup(self.platform_temp.cleanup)
 
     def test_http_response_is_normalized_once_with_success_metadata_and_error_payload(self):
-        fixture_root = Path(__file__).resolve().parents[2] / "contracts" / "ux-result" / "fixtures" / "valid"
+        fixture_root = Path(__file__).resolve().parents[2] / "core" / "platform" / "contracts" / "ux-result" / "fixtures" / "valid"
         success_fixture = json.loads((fixture_root / "success.json").read_text(encoding="utf-8"))
         failure_fixture = json.loads((fixture_root / "failure.json").read_text(encoding="utf-8"))
         stream_fixture = "event: error\ndata: " + json.dumps(failure_fixture) + "\n\n"

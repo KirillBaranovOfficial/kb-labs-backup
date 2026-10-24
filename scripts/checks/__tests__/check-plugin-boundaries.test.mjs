@@ -69,6 +69,19 @@ test('plugin runtime rail rejects a platform package dependency and clears it', 
   assert.deepEqual(await collect(f.root, f.packages), []);
 });
 
+test('plugin runtime rail rejects a platform package peer dependency and clears it', async (t) => {
+  const f = await fixture(t);
+  const file = path.join(f.plugin, 'package.json');
+  const original = JSON.parse(await readFile(file, 'utf8'));
+  original.peerDependencies = { '@kb-labs/core-runtime': 'workspace:*' };
+  await writeFile(file, JSON.stringify(original));
+  assert.ok(has(await collect(f.root, f.packages), 'plugin runtime @kb-labs dependencies must use @kb-labs/sdk'));
+
+  original.peerDependencies = { '@kb-labs/sdk': 'workspace:*' };
+  await writeFile(file, JSON.stringify(original));
+  assert.deepEqual(await collect(f.root, f.packages), []);
+});
+
 test('platform graph rail rejects plugin package edges and clears them', async (t) => {
   const f = await fixture(t);
   const file = path.join(f.platform, 'package.json');

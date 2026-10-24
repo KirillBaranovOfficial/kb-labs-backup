@@ -220,6 +220,16 @@ func TestCheckExecutionFailureIsTypedAndActionable(t *testing.T) {
 	if failure.Hint == "" || failure.Cause != "adapter-manifest: external command exited with status 1" {
 		t.Fatalf("failure = %#v, want safe cause and rerun hint", failure)
 	}
+	envelope, err := diag.ToEnvelope(failure)
+	if err != nil {
+		t.Fatalf("ToEnvelope() error = %v, want catalogued check detail", err)
+	}
+	if envelope.Message != "Workspace check adapter-manifest could not complete." {
+		t.Fatalf("envelope message = %q, want the failing check name", envelope.Message)
+	}
+	if envelope.Hint != "Rerun this check alone with `kb-devkit check --only adapter-manifest`, then correct the check's execution problem." {
+		t.Fatalf("envelope hint = %q, want catalogued next command", envelope.Hint)
+	}
 	if len(checkExecutionFailures(map[string]checks.PackageResult{
 		"a": {Issues: []checks.Issue{{Check: "browser-node-builtins", CheckFailure: true, Cause: "exit 1"}}},
 		"b": {Issues: []checks.Issue{{Check: "adapter-manifest", CheckFailure: true, Cause: "exit 2"}}},

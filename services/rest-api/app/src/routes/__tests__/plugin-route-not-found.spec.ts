@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
-import type { IEntityRegistry } from "@kb-labs/core-registry";
+import type { IEntityRegistry } from "@kb-labs/plugin-contracts";
 import { platform } from "@kb-labs/core-runtime";
 import type { RestApiConfig } from "@kb-labs/rest-api-core";
 import { registerPluginRouteNotFoundHandler } from "../plugin-route-not-found.js";

@@ -40,7 +40,7 @@ describe('PnpmInstaller registry tarball integrity', () => {
     expect(installed.integrity).toBe(expectedIntegrity);
     expect(await fs.readFile(path.join(projectDir, 'observed-spec.txt'), 'utf8')).toContain('file:');
     const packageRoot = await fs.realpath(installed.packageRoot);
-    expect(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).toContain('demo-entry');
+    expect(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).toContain('@kb-labs/demo');
   });
 
   it('rejects tarball bytes that do not match the registry integrity', async () => {

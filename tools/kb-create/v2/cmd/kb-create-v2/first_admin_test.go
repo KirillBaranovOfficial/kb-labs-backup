@@ -589,7 +589,7 @@ func TestGatewayBootstrapContractUsesSharedSchemaAndFixture(t *testing.T) {
 	if !reflect.DeepEqual(gatewayBootstrapStatuses[:], want) {
 		t.Fatalf("generated Gateway bootstrap values %v do not match owner schema %v", gatewayBootstrapStatuses, want)
 	}
-	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json"))
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "core", "platform", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +681,7 @@ func TestUnknownGatewayBootstrapFailsWithCataloguedDiagnostic(t *testing.T) {
 
 // case: S-222.1
 func TestMissingGatewayRequiredHealthFieldsAreInternalContractFailures(t *testing.T) {
-	fixturePath := filepath.Join("..", "..", "..", "..", "..", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json")
+	fixturePath := filepath.Join("..", "..", "..", "..", "..", "core", "platform", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json")
 	fixture, err := os.ReadFile(fixturePath)
 	if err != nil {
 		t.Fatal(err)

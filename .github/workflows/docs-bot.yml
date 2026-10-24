@@ -27,39 +27,11 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Run docs-audit
-        working-directory: sites/web/apps/docs
-        env:
-          KB_DEVKIT_MODE: "true"
-          KB_DEVKIT_PACKAGE_NAME: "@kb-labs/docs-site"
-        run: |
-          node scripts/docs-audit.mjs > /tmp/audit.json
-          node -e "
-            const r = JSON.parse(require('fs').readFileSync('/tmp/audit.json'));
-            const errors = r.items.filter(i => i.severity === 'error');
-            const warnings = r.items.filter(i => i.severity === 'warning');
-            if (warnings.length) {
-              console.log('Warnings (' + warnings.length + '):');
-              warnings.forEach(i => console.log('  ⚠ ' + i.target + ' — ' + i.message));
-            }
-            if (errors.length) {
-              console.error('');
-              console.error('Errors (' + errors.length + '):');
-              errors.forEach(i => console.error('  ✗ ' + i.target + ' — ' + i.message));
-              console.error('');
-              console.error('Run locally: node sites/web/apps/docs/scripts/docs-audit.mjs');
-              process.exit(1);
-            }
-            console.log('All doc conventions pass.');
-          "
+      - name: Run docs-audit through kb-devkit
+        run: ./tools/kb-devkit/kb-devkit check --only docs-audit
 
       - name: Check generated docs sources and deprecated CLI examples
-        working-directory: sites/web/apps/docs
-        run: node scripts/docs-source-check.mjs
-
-      - name: Test docs source sync
-        working-directory: sites/web/apps/docs
-        run: node --test scripts/docs-source-sync.test.mjs
+        run: ./tools/kb-devkit/kb-devkit check --only docs-source-check
 
   # ── Staleness check — posts reminder threads, never blocks merge ───────────
   # Inline threads on changed files tell the author which doc pages to verify.

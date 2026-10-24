@@ -42,12 +42,12 @@ func TestMigratedBuiltinsCompileToSharedV2Requests(t *testing.T) {
 				t.Fatalf("request = %#v", request)
 			}
 			if len(scenario.Plugins) > 0 {
-				if len(request.Plugins) != 0 || len(request.MarketplacePlugins) != len(scenario.Plugins) {
+				if len(request.Plugins) != 0 || len(request.MarketplaceInstallSpecs) != len(scenario.Plugins) {
 					t.Fatalf("scenario plugin identities crossed the release-index boundary: request=%#v scenario=%#v", request.Plugins, scenario.Plugins)
 				}
 				for index, identity := range scenario.Plugins {
-					if request.MarketplacePlugins[index] != identity {
-						t.Fatalf("Marketplace plugin identities = %#v, want %#v", request.MarketplacePlugins, scenario.Plugins)
+					if request.MarketplaceInstallSpecs[index] != identity {
+						t.Fatalf("Marketplace plugin identities = %#v, want %#v", request.MarketplaceInstallSpecs, scenario.Plugins)
 					}
 				}
 			}

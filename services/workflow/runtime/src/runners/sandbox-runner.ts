@@ -42,7 +42,7 @@ import type {
 } from '@kb-labs/plugin-execution'
 import type { PermissionSpec } from '@kb-labs/plugin-contracts'
 import { getHandlerPermissions } from '@kb-labs/plugin-contracts'
-import type { IEntityRegistry } from '@kb-labs/core-registry'
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts'
 import type {
   Runner,
   StepExecutionRequest,

@@ -75,7 +75,7 @@ func run() diag.ExitStatus {
 	mux := http.NewServeMux()
 	var ready atomic.Bool
 	var controlServer *http.Server
-	controlCredential := os.Getenv("KBLABS_HOST_CONTROL_TOKEN")
+	controlCredential := os.Getenv(contracts.HostControlCredentialEnv)
 	var controlAddress string
 	if controlCredential != "" {
 		controlListener, controlErr := net.Listen("tcp", "127.0.0.1:0")
@@ -103,7 +103,7 @@ func run() diag.ExitStatus {
 		}
 		ready.Store(true)
 		if controlAddress != "" {
-			w.Header().Set("x-kb-host-active-work-address", controlAddress)
+			w.Header().Set(contracts.HostActiveWorkAddressHeader, controlAddress)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"ok":true,"data":{"upstreams":{},"adapters":{}}}`)
@@ -134,9 +134,9 @@ func run() diag.ExitStatus {
 			return
 		}
 		installed := make([]contracts.MarketplaceInstallRecord, 0, len(request.Specs))
-		for _, identity := range request.Specs {
+		for _, spec := range request.Specs {
 			installed = append(installed, contracts.MarketplaceInstallRecord{
-				ID: identity, Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
+				ID: spec, Spec: spec, Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")

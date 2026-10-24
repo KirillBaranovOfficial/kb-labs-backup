@@ -3,7 +3,7 @@
  * Strategy for adapters — detects AdapterManifest, validates dependencies.
  */
 
-import type { EntityKind } from '@kb-labs/core-discovery';
+import type { EntityKind } from '@kb-labs/plugin-contracts';
 import { adapterManifestProvidesSlot, loadAdapterManifest as loadManifest } from '@kb-labs/core-platform';
 import type { DetailsFor, ILogger } from '@kb-labs/core-platform';
 import type {

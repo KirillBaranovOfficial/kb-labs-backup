@@ -14,8 +14,8 @@ import (
 // that Render emits. The shared JSON Schema remains the canonical contract.
 func TestSharedFixturesAndSchema(t *testing.T) {
 	for _, path := range []string{
-		"../../../contracts/ux-result/fixtures/valid/success.json",
-		"../../../contracts/ux-result/fixtures/valid/failure.json",
+		"../../../core/platform/contracts/ux-result/fixtures/valid/success.json",
+		"../../../core/platform/contracts/ux-result/fixtures/valid/failure.json",
 	} {
 		if err := ValidateFixture(path); err != nil {
 			t.Errorf("fixture %s: %v", path, err)
@@ -24,7 +24,7 @@ func TestSharedFixturesAndSchema(t *testing.T) {
 	var schema struct {
 		OneOf []json.RawMessage `json:"oneOf"`
 	}
-	b, err := os.ReadFile("../../../contracts/ux-result/machine-result.schema.json")
+	b, err := os.ReadFile("../../../core/platform/contracts/ux-result/machine-result.schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}

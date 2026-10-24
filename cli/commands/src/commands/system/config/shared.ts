@@ -6,7 +6,7 @@
  * the single locked, comment-preserving writer for `set`.
  */
 
-import { DiscoveryManager } from '@kb-labs/core-discovery';
+import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 
 import {
   ConfigWriteError,
@@ -56,7 +56,7 @@ export async function resolveConfigRoots(
   if (!project) {
     requireProjectContext(undefined, projectRoot);
   }
-  const loaded = await loadPlatformConfig({ moduleUrl, startDir: cwd, loadEnvFile: false });
+  const loaded = await loadPlatformConfig({ moduleUrl, startDir: cwd, loadEnvFile: false, catalog: requireResolvedCatalog() });
   return {
     platformRoot: loaded.platformRoot,
     projectRoot: project.path,
@@ -84,10 +84,8 @@ export async function pluginSettingsSchemaFor(
   roots: ConfigRoots,
   configSection: string,
 ): Promise<{ schema: unknown; packageRoot: string } | undefined> {
-  const discovered = await new DiscoveryManager({
-    root: roots.configRoot,
-    platformRoot: roots.platformRoot,
-  }).discover();
+  const catalog = requireResolvedCatalog();
+  const discovered = catalog.discovery();
   const manifest = [...discovered.manifests.values()].find((candidate) => candidate.configSection === configSection);
   if (!manifest?.settings) return undefined;
   const plugin = discovered.plugins.find(({ id }) => id === manifest.id);

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ICache, ILogger } from '@kb-labs/core-platform';
 import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
-import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
 import type { Permits } from '../mcp/authz.js';
@@ -11,9 +11,9 @@ import type { AuthContext } from '@kb-labs/gateway-contracts';
 import type { McpTool } from '../mcp/tool-builder.js';
 import { callOutput } from '../mcp/output-capture.js';
 import { uiOutputContractCases, renderUIOutputText } from '@kb-labs/plugin-contracts';
-import resultSchema from '../../../../../contracts/ux-result/machine-result.schema.json';
-import successFixture from '../../../../../contracts/ux-result/fixtures/valid/success.json';
-import failureFixture from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
+import resultSchema from '../../../../../core/platform/contracts/ux-result/machine-result.schema.json';
+import successFixture from '../../../../../core/platform/contracts/ux-result/fixtures/valid/success.json';
+import failureFixture from '../../../../../core/platform/contracts/ux-result/fixtures/valid/failure.json';
 import { filterTools } from '../mcp/tool-builder.js';
 
 // Mock the command runtime boundary so executeToolCall exercises the real

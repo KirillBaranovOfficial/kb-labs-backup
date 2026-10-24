@@ -51,11 +51,11 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 "peerDependenciesMeta": {"@kb-labs/shared-testing": {"optional": True}},
             }))
             (sdk / "dist" / "index.js").write_text('import "@kb-labs/sdk-runtime-dependency";\n')
-            plugin = root / "node_modules" / "@kb-labs" / "e2e-plugin-entry"
+            plugin = root / "node_modules" / "@kb-labs" / "e2e-plugin"
             (plugin / "dist" / "commands").mkdir(parents=True)
             (plugin / "dist" / "setup").mkdir(parents=True)
             (plugin / "package.json").write_text(json.dumps({
-                "name": "@kb-labs/e2e-plugin-entry",
+                "name": "@kb-labs/e2e-plugin",
                 "type": "module",
                 "exports": {
                     ".": {"import": "./dist/index.js"},
@@ -82,14 +82,14 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             resolver_parent.mkdir(parents=True)
             (platform_runtime / "package.json").write_text(json.dumps({
                 "name": "@kb-labs/core-runtime",
-                "dependencies": {"@kb-labs/core-discovery": "2.0.0"},
+                "dependencies": {"@kb-labs/core-platform": "2.0.0"},
             }))
-            workspace_discovery = Path(__file__).resolve().parents[2] / "core" / "discovery"
-            (resolver_parent / "core-discovery").symlink_to(workspace_discovery, target_is_directory=True)
+            workspace_platform = Path(__file__).resolve().parents[2] / "core" / "platform"
+            (resolver_parent / "core-platform").symlink_to(workspace_platform, target_is_directory=True)
             receipt = root / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text(json.dumps({"plan": {"artifacts": [
-                {"kind": "plugin", "package": "@kb-labs/e2e-plugin-entry"},
+                {"kind": "plugin", "package": "@kb-labs/e2e-plugin"},
             ]}}))
 
             result = check_installed_runtime_imports(root)
@@ -97,7 +97,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("@kb-labs/shared-command-kit", result.stdout + result.stderr)
             self.assertIn("@kb-labs/sdk", result.stdout + result.stderr)
-            self.assertIn("@kb-labs/e2e-plugin-entry", result.stdout + result.stderr)
+            self.assertIn("@kb-labs/e2e-plugin", result.stdout + result.stderr)
             self.assertIn("dist/commands/handler.js", result.stdout + result.stderr)
             self.assertIn("dist/setup/handler.js", result.stdout + result.stderr)
             self.assertIn("@kb-labs/runtime-wildcard-dependency", result.stdout + result.stderr)
@@ -108,7 +108,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             plugin_manifest.unlink()
             result = check_installed_runtime_imports(root)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("bundled plugin @kb-labs/e2e-plugin-entry is missing dist/manifest.json", result.stderr)
+            self.assertIn("bundled plugin @kb-labs/e2e-plugin is missing dist/manifest.json", result.stderr)
             plugin_manifest.write_text(json.dumps({"schema": "kb.plugin/3"}))
 
             for name, package_root in (

@@ -246,7 +246,8 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
 
 
 def validate_shared_failure(result: CompletedProcess[str], *, json_mode: bool,
-                            code: str, message: str, hint: str) -> None:
+                            code: str, message: str, hint: str,
+                            marketplace_source_kinds: tuple[str, ...] = ()) -> None:
     """Validate the common human or machine failure contract used by S-051."""
     if result.returncode == 0:
         raise AssertionError("failing command unexpectedly exited successfully")
@@ -255,12 +256,31 @@ def validate_shared_failure(result: CompletedProcess[str], *, json_mode: bool,
         error = decode_ux_error_result(payload)
         if not isinstance(error, dict) or (error.get("code"), error.get("message"), error.get("hint")) != (code, message, hint):
             raise AssertionError(f"JSON failure does not match {code}")
+        if code == "KB_PLUGIN_NOT_FOUND":
+            cause = error.get("cause")
+            if not isinstance(cause, str) or not marketplace_source_kinds:
+                raise AssertionError("Marketplace not-found omitted configured source results")
+            results = [tuple(part.strip().split(": ", maxsplit=1)) for part in cause.split("; ")]
+            if (len(results) != len(marketplace_source_kinds)
+                    or any(len(result) != 2 or result[0] != kind or not result[1].startswith("not-found-")
+                           for result, kind in zip(results, marketplace_source_kinds))):
+                raise AssertionError("Marketplace not-found did not report each configured source result")
         return
     output = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
     if f"{message} [{code}]" not in output or "Hint:" not in output or hint not in output:
         raise AssertionError(f"human failure does not match {code}")
     if "Traceback" in output or output.lstrip().startswith("{"):
         raise AssertionError("human failure exposed a stack trace or raw JSON")
+
+
+def configured_marketplace_source_kinds(status: dict) -> tuple[str, ...]:
+    sources = status.get("marketplaceSources")
+    if not isinstance(sources, list):
+        raise RuntimeError("kb-create status did not report the configured Marketplace sources")
+    source_kinds = tuple(source.get("kind") for source in sources if isinstance(source, dict))
+    if len(source_kinds) != len(sources) or not all(isinstance(kind, str) and kind for kind in source_kinds):
+        raise RuntimeError("kb-create status returned an invalid configured Marketplace source list")
+    return source_kinds
 
 
 def _platform_snapshot(platform_root: Path) -> tuple[str, tuple[tuple[str, str], ...]]:
@@ -681,6 +701,11 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     authenticate_secured_marketplace(journey, project, base_env, runner)
 
     def assert_shared_errors() -> None:
+        platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
+        status_command = [base_env.get("KB_JOURNEY_KB_CREATE_PATH", "kb-create"),
+                          "status", "--json", "--platform-root", str(platform_root)]
+        status = _json(run_with_runner(runner, status_command, cwd=project, env=base_env, timeout=120), status_command)
+        source_kinds = configured_marketplace_source_kinds(status)
         failures = (
             (["marketplace", "install", "journey-not-published"], "KB_PLUGIN_NOT_FOUND", "plugin", "journey-not-published"),
             (["adapter", "bind", "storage", "@kb-labs/adapters-not-installed"], "KB_ADAPTER_NOT_INSTALLED", "package", "@kb-labs/adapters-not-installed"),
@@ -692,7 +717,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                 with_flags = [*command, *( ["--json"] if json_mode else [])]
                 with invocation_context(step_id="S-051.2" if code == "KB_PLUGIN_NOT_FOUND" else "S-051.3"):
                     result = _run(kb_command([ *with_flags]), cwd=project, env=base_env, runner=runner)
-                validate_shared_failure(result, json_mode=json_mode, code=code, message=message, hint=hint)
+                validate_shared_failure(result, json_mode=json_mode, code=code, message=message, hint=hint,
+                                         marketplace_source_kinds=source_kinds if code == "KB_PLUGIN_NOT_FOUND" else ())
     journey.step("marketplace and adapter failures use the shared envelope", "marketplace",
                  assert_shared_errors, cases=["S-051.2", "S-051.3", "S-051.4"])
     with invocation_context(step_id="S-010.1"):

@@ -99,7 +99,7 @@ def _valid_error_result(body: object) -> str | None:
     if not isinstance(result, dict) or result.get("isError") is not True:
         return "MCP invalid-argument call did not return isError: true"
     if not _matches_machine_result(envelope):
-        return "MCP structuredContent does not match contracts/ux-result/machine-result.schema.json"
+        return "MCP structuredContent does not match core/platform/contracts/ux-result/machine-result.schema.json"
     error = envelope["error"]
     if not isinstance(error.get("hint"), str) or not error["hint"].strip():
         return "MCP error envelope omitted its hint"

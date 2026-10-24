@@ -739,22 +739,6 @@ tasks:
         - "build"
       cache: false
 
-  # Workspace policy regressions, run from the script package that owns the gate.
-  # Run: kb-devkit run test:node-policy --packages @kb-labs/devkit
-  test:node-policy:
-    - categories: [ts-lib]
-      command: node --test ../../scripts/checks/check-node-engine-policy.test.mjs ../../e2e/delivery/scripts/delivery-invoker.test.mjs
-      inputs:
-        - "package.json"
-        - "../../scripts/checks/**"
-        - "../../e2e/delivery/scripts/**"
-        - "../../e2e/delivery/docker-compose.yml"
-        - "../../e2e/delivery/Dockerfile.target"
-        - "../../core/plugin-runtime/src/platform-resolve/node-engine.mjs"
-        - "../../package.json"
-      outputs: []
-      cache: false
-
   e2e:
     # Both the infrastructure matrix (e2e-suite) and the per-plugin matrix
     # (plugin-e2e-suite) run the same `pnpm run e2e`. `--affected` then scopes
@@ -788,12 +772,64 @@ tasks:
 # ──────────────────────────────────────────────────────────────────────────────
 # CUSTOM CHECKS
 # ──────────────────────────────────────────────────────────────────────────────
-# Each entry runs for all packages that match its `categories` filter (or all
-# packages if omitted). The script runs with cwd = package directory and
-# receives the package JSON on stdin. It must exit 0 and print JSON:
-#   { ok: boolean, items: [{ target, message, fix? }] }
+# Each entry runs for packages matching its `categories` filter, or once at
+# workspace scope. External checks receive the check context on stdin and emit
+# the issue shape defined by tools/kb-devkit/internal/checks/types.go.
 
 custom_checks:
+  - name: new-tests
+    run: node scripts/checks/new-tests.mjs
+    on: [check]
+    scope: workspace
+
+  - name: repository-script-tests
+    run: env -u KB_DEVKIT_MODE node --test "scripts/**/*.test.mjs" "sites/web/apps/docs/scripts/**/*.test.mjs" "e2e/scripts/test-*.mjs" "e2e/delivery/scripts/**/*.test.mjs" 1>&2 && TMPDIR=/tmp env -u KB_DEVKIT_MODE python3 scripts/local-gate.test.py 1>&2
+    on: [check]
+    scope: workspace
+
+  - name: test-catalog
+    run: node scripts/test-catalog.mjs --check 1>&2
+    on: [check]
+    scope: workspace
+
+  - name: plugin-entry-structure
+    run: node infra/devkit/bin/devkit-check-plugins.mjs --ci 1>&2
+    on: [check]
+    scope: workspace
+
+  - name: local-workflow-script-references
+    run: node .kb/workflows/scripts/check-local-script-references.mjs 1>&2
+    on: [check]
+    scope: workspace
+
+  - name: pr-description
+    run: |
+      if [ -z "${GITHUB_EVENT_PATH:-}" ]; then
+        printf '{"issues":[]}\n'
+      else
+        event_kind=$(node -e 'const fs = require("node:fs"); const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(event.pull_request ? "pull_request" : "other")')
+        event_status=$?
+        if [ "$event_status" -ne 0 ]; then
+          printf '{"issues":[{"check":"pr-description","severity":"error","message":"Could not read the GitHub event payload from GITHUB_EVENT_PATH."}]}\n'
+        elif [ "$event_kind" != "pull_request" ]; then
+          printf '{"issues":[]}\n'
+        else
+          node scripts/ci/validate-pr-description.mjs 1>&2
+        fi
+      fi
+    on: [check]
+    scope: workspace
+
+  - name: docs-source-check
+    run: node sites/web/apps/docs/scripts/docs-source-check.mjs 1>&2
+    on: [check]
+    scope: workspace
+
+  - name: catalog-package-roles
+    run: node scripts/checks/check-catalog-package-roles.mjs
+    on: [check]
+    scope: workspace
+
   - name: lifecycle-builds
     run: node scripts/checks/check-lifecycle-builds.mjs
     on: [check]

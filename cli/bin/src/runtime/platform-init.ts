@@ -104,11 +104,14 @@ export async function loadPlatformConfiguration(
   cwd: string,
   moduleUrl?: string,
   projectScope: 'required' | 'platform' = 'platform',
+  options: { persistCatalogSnapshot?: boolean } = {},
 ): Promise<LoadPlatformConfigResult> {
   return readPlatformConfig({
     moduleUrl,
     startDir: cwd,
     projectScope,
+    executionHealth: () => platform.executionBackend.health(),
+    persistCatalogSnapshot: options.persistCatalogSnapshot,
   });
 }
 
@@ -143,6 +146,7 @@ export async function initializePlatform(
         process.env.KB_DEBUG === "true" ? platform.logger : undefined,
       ),
       workspaceDevelopment,
+      catalog: loadResult.catalog,
       ...(workspaceRoot ? { workspaceRoot } : {}),
     },
   );

@@ -78,7 +78,7 @@ export function loadDevservices() {
 /**
  * Parse `ports:` mappings from docker-compose.backend.yml.
  * Returns a map: composeServiceName -> [containerPort, ...]. The port registry
- * owns the service port; the host side may be configured independently.
+ * owns service ports; the host side may be configured independently by deployment.
  */
 export function parseComposePorts(doc) {
   const map = new Map();

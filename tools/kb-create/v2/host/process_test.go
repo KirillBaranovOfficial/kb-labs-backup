@@ -212,6 +212,29 @@ func launcherCode(t *testing.T, err error) string {
 	return typed.Code
 }
 
+// case: PC-001.2
+func TestHostControlReadinessUsesInstalledHostEnvironmentContract(t *testing.T) {
+	if contracts.HostControlCredentialEnv != "KB_HOST_CONTROL_TOKEN" {
+		t.Fatalf("host control credential environment name = %q, installed host reads KB_HOST_CONTROL_TOKEN", contracts.HostControlCredentialEnv)
+	}
+	failedProbe := readinessProbe{URL: "http://127.0.0.1:5250/health", Status: 200, Error: "host readiness did not report a valid loopback control address"}
+	if got, want := probeDescription(failedProbe), "http://127.0.0.1:5250/health returned HTTP 200 but readiness failed: host readiness did not report a valid loopback control address"; got != want {
+		t.Fatalf("readiness failure description = %q, want %q", got, want)
+	}
+	f := newRunner(t, 10, 5)
+	f.runner.ControlCredential = strings.Repeat("c", 32)
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !validControlAddress(f.runner.ControlAddress) {
+		t.Fatalf("host readiness did not publish its loopback control address: %q", f.runner.ControlAddress)
+	}
+	items, err := f.runner.QueryActiveWork(context.Background())
+	if err != nil || len(items) != 0 {
+		t.Fatalf("authenticated active-work request = %v, %v; want empty list", items, err)
+	}
+}
+
 func TestStartStatusStopGraceful(t *testing.T) {
 	f := newRunner(t, 10, 5)
 	ctx := context.Background()

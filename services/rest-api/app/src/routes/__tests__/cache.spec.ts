@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
 import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
-import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/plugin-contracts';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerCacheRoutes } from '../cache';
 import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';

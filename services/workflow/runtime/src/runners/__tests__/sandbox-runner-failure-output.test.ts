@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { IEntityRegistry } from '@kb-labs/core-registry'
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { ExecutionBackend } from '@kb-labs/plugin-execution'
 import { SandboxRunner } from '../sandbox-runner.js'
 import type { StepExecutionRequest } from '../../types.js'

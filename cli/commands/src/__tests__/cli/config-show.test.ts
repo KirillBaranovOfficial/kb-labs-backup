@@ -6,9 +6,14 @@
  * provenance, and redaction logic in `show.ts`.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { openCatalog } from '@kb-labs/core-registry';
+import { setResolvedCatalog } from '../../registry/discovery-state.js';
 
 type LoadPlatformConfigResult = {
   platformConfig: Record<string, unknown>;
@@ -102,14 +107,28 @@ function splitRootResult(overrides: Partial<LoadPlatformConfigResult> = {}): Loa
 }
 
 describe('config show', () => {
-  beforeEach(() => {
+  let testRoot: string;
+  let testCatalog: Awaited<ReturnType<typeof openCatalog>> | undefined;
+
+  beforeEach(async () => {
     vi.clearAllMocks();
+    testRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-config-show-'));
+    testCatalog = await openCatalog({ platformRoot: testRoot, projectRoot: testRoot }, { persistSnapshot: false });
+    setResolvedCatalog(testCatalog);
     sharedConfigMock.resolveConfigRoots.mockResolvedValue({
       platformRoot: '/platform-root',
       projectRoot: '/project-root',
       projectId: 'prj_config_show_test',
       sameLocation: false,
     });
+  });
+
+  afterEach(async () => {
+    setResolvedCatalog(undefined);
+    const openedCatalog = testCatalog;
+    testCatalog = undefined;
+    await openedCatalog?.dispose();
+    await rm(testRoot, { recursive: true, force: true });
   });
 
   it('attributes platform-owned fields to "platform" and project-only fields to "project"', async () => {

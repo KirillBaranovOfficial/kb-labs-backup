@@ -184,3 +184,6 @@ tools/kb-runner/kb-runner
 .journey/
 __pycache__/
 *.pyc
+
+# Root Playwright test output
+/test-results/

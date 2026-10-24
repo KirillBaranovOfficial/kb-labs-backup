@@ -19,7 +19,7 @@
 
 import { WorkflowSpecSchema } from '@kb-labs/workflow-contracts';
 import type { WorkflowSpec } from '@kb-labs/workflow-contracts';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { ManifestScanner, type WorkflowRuntime } from './manifest-scanner';
 import { WorkflowRepository, type WorkflowListOptions } from './workflow-repository';

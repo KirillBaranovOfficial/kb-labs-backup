@@ -19,7 +19,7 @@ import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform/
 import { resolveMarketplaceLockScope } from '@kb-labs/core-discovery';
 import { glob } from 'glob';
 import semver from 'semver';
-import type { EntityKind, MarketplaceLock, MarketplaceLockEntry } from '@kb-labs/core-discovery';
+import type { MarketplaceLock, MarketplaceLockEntry, EntityKind } from '@kb-labs/plugin-contracts';
 import {
   readMarketplaceLock,
   writeMarketplaceLock,
@@ -37,14 +37,6 @@ import {
 } from '@kb-labs/core-discovery';
 import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 
-function scenarioInstallFailure(identity: string, scope: ScopeContext['scope'], source: string, cause?: unknown): ErrorEnvelopeError {
-  const causeText = cause instanceof Error ? cause.message : cause === undefined ? undefined : String(cause);
-  return new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_INSTALL_FAILED', {
-    details: { package: identity, scope, source },
-    templateValues: { sourceName: source },
-    ...(causeText ? { cause: causeText } : {}),
-  }));
-}
 import type {
   MarketplaceSource,
   PackageSource,
@@ -212,23 +204,29 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     for (const spec of specs) {
       let source: MarketplaceSource | undefined;
       let resolved: Awaited<ReturnType<MarketplaceSource['resolve']>> | undefined;
-      const sourcesTried: string[] = [];
+      const sourceResults: string[] = [];
       for (const configuredSource of this.sources) {
         const candidateSource = opts?.shareToken && configuredSource.withShareToken
           ? configuredSource.withShareToken(opts.shareToken)
           : configuredSource;
-        sourcesTried.push(candidateSource.kind);
         const result = await candidateSource.resolveIdentity(spec);
         if (result.status === 'not-found-owned') {
           throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_IDENTITY_RESERVED', { details: { package: spec, scope: ctx.scope } }));
         }
-        if (result.status === 'not-found-unowned') { continue; }
+        if (result.status === 'not-found-unowned') {
+          sourceResults.push(`${candidateSource.kind}: ${result.status}`);
+          continue;
+        }
+        sourceResults.push(`${candidateSource.kind}: found`);
         source = candidateSource;
         resolved = { ...result.package, source: 'marketplace' };
         break;
       }
       if (!source || !resolved) {
-        throw scenarioInstallFailure(spec, ctx.scope, sourcesTried.join(', '));
+        throw new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_FOUND', {
+          details: { plugin: spec },
+          cause: sourceResults.join('; '),
+        }));
       }
       if (!resolved.primaryKind) {
         throw new PackageClassificationError(
@@ -334,6 +332,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
 
       installed.push({
+        spec,
         id: canonicalId,
         version: result.version,
         primaryKind,

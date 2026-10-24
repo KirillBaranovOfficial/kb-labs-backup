@@ -11,7 +11,6 @@
 // Discovery manager
 export { DiscoveryManager, extractEntityKinds } from './discovery-manager.js';
 export type { DiscoveryOptions } from './discovery-manager.js';
-export { resolveCliHandlerPath } from './resolve-cli-handler.js';
 export {
   DISCOVERY_MARKETPLACE_LOCK,
   DISCOVERY_WORKSPACE_FILE,
@@ -61,29 +60,3 @@ export type { WorkspaceCandidate } from './workspace-source.js';
 
 // Diagnostics
 export { DiagnosticCollector } from './diagnostics.js';
-
-// Types
-export type {
-  // Entity model
-  EntityKind,
-  EntitySignature,
-  MarketplaceResolvedIdentity,
-  MarketplaceIdentityResolution,
-  // Marketplace lock
-  MarketplaceLock,
-  MarketplaceEntry,
-  MarketplaceAdapterEntry,
-  MarketplaceLockEntry,
-  UserOwnedLinkPath,
-  InstallOwnedRelativePath,
-  // Discovery result
-  DiscoveredPlugin,
-  DiscoveryResult,
-  DiscoveryFailure,
-  DiscoveryOrigin,
-  DiscoveryScope,
-  // Diagnostics
-  DiagnosticSeverity,
-  DiagnosticEvent,
-  DiagnosticCode,
-} from './types.js';

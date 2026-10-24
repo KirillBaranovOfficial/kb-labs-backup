@@ -16,7 +16,7 @@
  * ```
  */
 
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type {
   WorkflowHandlerDecl,
   JobHandlerDecl,

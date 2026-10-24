@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { computePackageIntegrity, createEmptyLock, createMarketplaceEntry, DiscoveryManager, findWorkspacePackages, writeMarketplaceLock, type MarketplaceAdapterEntry } from '@kb-labs/core-discovery';
+import { computePackageIntegrity, createEmptyLock, createMarketplaceEntry, DiscoveryManager, findWorkspacePackages, writeMarketplaceLock } from '@kb-labs/core-discovery';
+import type { MarketplaceAdapterEntry } from '@kb-labs/plugin-contracts';
 import { ADAPTER_DEFAULTS, loadAdapterManifest } from '@kb-labs/core-platform';
 
 const repositoryRoot = path.resolve(fileURLToPath(import.meta.url), '../../../../..');

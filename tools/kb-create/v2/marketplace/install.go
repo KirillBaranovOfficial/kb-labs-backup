@@ -16,7 +16,7 @@ import (
 const installEndpoint = "/api/v1/marketplace/packages/install"
 
 type InstallClient interface {
-	Install(ctx context.Context, gatewayOrigin string, identities []string) ([]contracts.MarketplaceInstallRecord, error)
+	Install(ctx context.Context, gatewayOrigin string, specs []string) ([]contracts.MarketplaceInstallRecord, error)
 }
 
 type GatewayInstallClient struct {
@@ -24,25 +24,33 @@ type GatewayInstallClient struct {
 }
 
 type InstallFailure struct {
-	Identity string
-	Source   string
-	Cause    error
+	Spec    string
+	Source  string
+	Code    string
+	Message string
+	Cause   error
 }
 
 func (failure *InstallFailure) Error() string {
-	return fmt.Sprintf("Marketplace install for %s failed through %s: %v", failure.Identity, failure.Source, failure.Cause)
+	if failure.Code != "" {
+		if failure.Cause != nil {
+			return fmt.Sprintf("%s: %s; %v", failure.Code, failure.Message, failure.Cause)
+		}
+		return fmt.Sprintf("%s: %s", failure.Code, failure.Message)
+	}
+	return fmt.Sprintf("Marketplace install for %s failed through %s: %v", failure.Spec, failure.Source, failure.Cause)
 }
 
 func (failure *InstallFailure) Unwrap() error { return failure.Cause }
 
-func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin string, identities []string) ([]contracts.MarketplaceInstallRecord, error) {
-	if gatewayOrigin == "" || len(identities) == 0 {
-		return nil, fmt.Errorf("Gateway origin and Marketplace identities are required")
+func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin string, specs []string) ([]contracts.MarketplaceInstallRecord, error) {
+	if gatewayOrigin == "" || len(specs) == 0 {
+		return nil, fmt.Errorf("Gateway origin and Marketplace install specs are required")
 	}
 	body, err := json.Marshal(struct {
 		Specs []string `json:"specs"`
 		Scope string   `json:"scope"`
-	}{Specs: identities, Scope: "platform"})
+	}{Specs: specs, Scope: "platform"})
 	if err != nil {
 		return nil, fmt.Errorf("encode Marketplace install request: %w", err)
 	}
@@ -57,7 +65,7 @@ func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin st
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return nil, &InstallFailure{Identity: strings.Join(identities, ", "), Source: "configured Marketplace sources", Cause: err}
+		return nil, &InstallFailure{Spec: strings.Join(specs, ", "), Source: "configured Marketplace sources", Cause: err}
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(response.Body)
@@ -67,6 +75,7 @@ func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin st
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var failure struct {
 			Error struct {
+				Code    string         `json:"code"`
 				Message string         `json:"message"`
 				Cause   string         `json:"cause"`
 				Details map[string]any `json:"details"`
@@ -76,15 +85,20 @@ func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin st
 		if err := json.Unmarshal(data, &failure); err != nil {
 			return nil, fmt.Errorf("Marketplace install returned HTTP %d with an invalid error envelope", response.StatusCode)
 		}
-		identity := strings.Join(identities, ", ")
-		if len(identities) == 1 {
-			identity = identities[0]
+		spec := strings.Join(specs, ", ")
+		if len(specs) == 1 {
+			spec = specs[0]
 		}
 		source := ""
 		for _, details := range []map[string]any{failure.Error.Details, failure.Error.Meta} {
+			for _, key := range []string{"plugin", "package"} {
+				if value, ok := details[key].(string); ok && value != "" {
+					spec = value
+					break
+				}
+			}
 			if value, ok := details["source"].(string); ok {
 				source = value
-				break
 			}
 		}
 		if source == "" {
@@ -94,10 +108,11 @@ func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin st
 		if message == "" {
 			message = fmt.Sprintf("Marketplace returned HTTP %d", response.StatusCode)
 		}
+		var cause error
 		if failure.Error.Cause != "" {
-			message += ": " + failure.Error.Cause
+			cause = fmt.Errorf("%s", failure.Error.Cause)
 		}
-		return nil, &InstallFailure{Identity: identity, Source: source, Cause: fmt.Errorf("%s", message)}
+		return nil, &InstallFailure{Spec: spec, Source: source, Code: failure.Error.Code, Message: message, Cause: cause}
 	}
 	var result struct {
 		Installed []contracts.MarketplaceInstallRecord `json:"installed"`
@@ -105,8 +120,13 @@ func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin st
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("decode Marketplace install response: %w", err)
 	}
-	if len(result.Installed) != len(identities) {
-		return nil, fmt.Errorf("Marketplace returned %d installed records for %d requested identities", len(result.Installed), len(identities))
+	if len(result.Installed) != len(specs) {
+		return nil, fmt.Errorf("Marketplace returned %d installed records for %d requested specs", len(result.Installed), len(specs))
+	}
+	for index, spec := range specs {
+		if result.Installed[index].Spec != spec {
+			return nil, fmt.Errorf("Marketplace returned install spec %q at position %d, want %q", result.Installed[index].Spec, index, spec)
+		}
 	}
 	return result.Installed, nil
 }

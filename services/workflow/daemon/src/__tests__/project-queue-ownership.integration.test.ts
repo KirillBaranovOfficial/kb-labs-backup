@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import { InMemoryCache, InMemoryEventBus, InMemoryStorage } from '@kb-labs/core-platform/inmemory';
 import { mockLogger } from '@kb-labs/shared-testing';
 import { EnvSecretProvider, WorkflowEngine, type JobQueueEntry } from '@kb-labs/workflow-engine';

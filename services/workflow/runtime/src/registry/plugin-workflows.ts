@@ -6,7 +6,7 @@
 
 import { join, resolve, dirname } from 'node:path'
 import { access } from 'node:fs/promises'
-import type { RegistrySnapshot } from '@kb-labs/core-registry'
+import type { RegistrySnapshot } from '@kb-labs/plugin-contracts'
 import type { ManifestV3 } from '@kb-labs/plugin-contracts'
 import type { ResolvedWorkflow } from './types'
 

@@ -301,7 +301,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}
 	cmd.Env = ProcessEnvironmentWithIdentity(env, processIdentity)
 	if r.ControlCredential != "" {
-		cmd.Env = append(cmd.Env, HostControlCredentialEnv+"="+r.ControlCredential)
+		cmd.Env = append(cmd.Env, contracts.HostControlCredentialEnv+"="+r.ControlCredential)
 	}
 	r.stderr = &tailBuffer{limit: startupStderrLimit}
 	cmd.Stdout, cmd.Stderr = logFile, io.MultiWriter(logFile, r.stderr)
@@ -707,7 +707,7 @@ func (r *ProcessRunner) probeURL(ctx context.Context, healthURL string) readines
 	result.Status = response.StatusCode
 	result.Healthy = response.StatusCode >= 200 && response.StatusCode < 300
 	if result.Healthy && r.ControlCredential != "" {
-		address := response.Header.Get("x-kb-host-active-work-address")
+		address := response.Header.Get(contracts.HostActiveWorkAddressHeader)
 		if !validControlAddress(address) {
 			result.Healthy = false
 			result.Error = "host readiness did not report a valid loopback control address"
@@ -731,6 +731,9 @@ func readinessDetails(probe readinessProbe, waited time.Duration) map[string]str
 
 func probeDescription(probe readinessProbe) string {
 	if probe.Status != 0 {
+		if probe.Error != "" {
+			return fmt.Sprintf("%s returned HTTP %d but readiness failed: %s", probe.URL, probe.Status, probe.Error)
+		}
 		return fmt.Sprintf("%s returned HTTP %d", probe.URL, probe.Status)
 	}
 	if probe.Error != "" {
