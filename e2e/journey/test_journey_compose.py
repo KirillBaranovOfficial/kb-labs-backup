@@ -137,9 +137,33 @@ if (!configResult.ok || !lockResult.valid) {
             )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_internal_network_setting_renders_an_offline_journey_network(self):
+        compose_command = ["docker", "compose"] if shutil.which("docker") and subprocess.run(
+            ["docker", "compose", "version"], capture_output=True, check=False,
+        ).returncode == 0 else ["docker-compose"]
+        with tempfile.TemporaryDirectory(prefix="journey-compose-offline-") as temp:
+            env = isolated_environment(
+                Path(temp) / "home", Path(temp) / "bin", required_tools=tuple(compose_command),
+                overrides={
+                    "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
+                    "KB_JOURNEY_GIT_REVISION": "test-revision",
+                    "KB_JOURNEY_RUNNER_UID": str(os.getuid()),
+                    "KB_JOURNEY_RUNNER_GID": str(os.getgid()),
+                    "KB_JOURNEY_NETWORK_INTERNAL": "true",
+                },
+            )
+            result = subprocess.run(
+                [*compose_command, "-f", "e2e/docker-compose.yml", "-f",
+                 "e2e/journey/docker-compose.yml", "config", "--format", "json"],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rendered = json.loads(result.stdout)
+        self.assertTrue(rendered["networks"]["journey"]["internal"])
+
     def test_registry_lane_adds_producer_overlay_through_compose_owner(self):
         for action, suffix in (("--render-compose-config", ["config", "--format", "json"]),
-                               ("--down", ["down", "--volumes", "--remove-orphans"])):
+                               ("--down", ["down", "--remove-orphans"])):
             with tempfile.TemporaryDirectory(prefix="journey-compose-registry-owner-") as temp:
                 env, compose_args = self._fake_compose_environment(temp)
                 env["KB_JOURNEY_ONLY"] = "service-marketplace-registry:local"
@@ -233,7 +257,7 @@ if (!configResult.ok || !lockResult.valid) {
         self.assertEqual(invocations[0], [
             "-f", "e2e/docker-compose.yml",
             "-f", "e2e/journey/docker-compose.yml",
-            "down", "--volumes", "--remove-orphans",
+            "down", "--remove-orphans",
         ])
 
     def test_missing_compose_binary_fails_with_an_actionable_message(self):

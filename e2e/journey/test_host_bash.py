@@ -26,7 +26,9 @@ class HostBashTests(unittest.TestCase):
             repo = sandbox / "repo"
             journey = repo / "e2e/journey"
             journey.mkdir(parents=True)
-            for name in ("run.sh", "compose-owner.sh", "candidate-services.sh", "runner-toolchain.sh", "teardown-compose.sh", "storage_has_packages.sh",
+            (repo / "e2e/verdaccio").mkdir(parents=True)
+            shutil.copy2(ROOT / "e2e/verdaccio/clear-candidates.sh", repo / "e2e/verdaccio/clear-candidates.sh")
+            for name in ("run.sh", "compose-owner.sh", "candidate-services.sh", "runner-toolchain.sh", "teardown-compose.sh",
                          "container_outcomes.py", "jsonl.py"):
                 shutil.copy2(JOURNEY / name, journey / name)
 
@@ -78,7 +80,7 @@ class HostBashTests(unittest.TestCase):
             self.assertEqual(len(ps_calls), 2, f"expected empty monitor and teardown listings: {docker_calls}")
             default_compose_calls = [call for call in docker_calls if call[:1] == ["compose"] and call[1:2] != ["version"]]
             self.assertTrue(default_compose_calls, f"no default-lane Compose calls were recorded: {docker_calls}")
-            command_names = {"ps", "up", "run", "build", "exec", "stop", "down"}
+            command_names = {"ps", "up", "run", "build", "exec", "stop", "down", "port"}
             selected_files = []
             for call in default_compose_calls:
                 command_index = next(index for index, item in enumerate(call) if item in command_names)
@@ -92,7 +94,7 @@ class HostBashTests(unittest.TestCase):
                             docker_calls.index(["rm", "-f", "publisher-container-id"]),
                             f"publisher logs must be saved before container removal: {docker_calls}")
             self.assertTrue(
-                any("down" in call and "--volumes" in call and "--remove-orphans" in call for call in docker_calls),
+                any("down" in call and "--remove-orphans" in call and "--volumes" not in call for call in docker_calls),
                 f"Compose teardown was not called: {docker_calls}",
             )
 
@@ -105,7 +107,7 @@ class HostBashTests(unittest.TestCase):
             "from jsonl import write_jsonl\n"
             "args = sys.argv[1:]\n"
             "write_jsonl(os.environ['FAKE_DOCKER_CALLS'], [args], append=True)\n"
-            "action = next((item for item in args if item in {'version', 'ps', 'run', 'exec', 'down', 'build', 'up', 'stop', 'rm', 'logs'}), None)\n"
+            "action = next((item for item in args if item in {'version', 'ps', 'run', 'exec', 'down', 'build', 'up', 'stop', 'rm', 'logs', 'port'}), None)\n"
             "if action in {'version', 'ps', 'down', 'build', 'up', 'stop', 'rm'}: raise SystemExit(0)\n"
             "if action == 'run':\n    print('publisher-container-id')\n    raise SystemExit(0)\n"
             "if action == 'exec': raise SystemExit(1)\n"
@@ -114,6 +116,7 @@ class HostBashTests(unittest.TestCase):
             "    print('17')\n"
             "    raise SystemExit(0)\n"
             "if action == 'logs':\n    print('publisher failed: missing package')\n    raise SystemExit(0)\n"
+            "if action == 'port':\n    print('127.0.0.1:49183')\n    raise SystemExit(0)\n"
             "raise SystemExit(f'unmodeled Docker command: {args!r}')\n",
             encoding="utf-8",
         )

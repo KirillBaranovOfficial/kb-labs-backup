@@ -2,7 +2,9 @@
 
 For a retained local install from the current candidate, use
 `bash e2e/journey/prepare-isolated-installed-root.sh` from the repository root.
-It invokes `prepare-candidate.sh`, plans an explicit non-default Gateway URL
+Docker Compose must be available; the script starts the shared journey
+Verdaccio service and keeps its persistent third-party cache volume. It invokes
+`prepare-candidate.sh`, plans an explicit non-default Gateway URL
 and verifies the complete service-port graph before installation. The output
 includes the isolated HOME and the commands to stop and remove the root.
 

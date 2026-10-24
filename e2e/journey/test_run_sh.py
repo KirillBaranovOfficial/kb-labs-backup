@@ -23,7 +23,7 @@ class RunShellOptionTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 f"printf '%s\\n' \"$*\" >> {docker_log}\n"
                 "if [ \"$*\" = 'compose version' ]; then exit 0; fi\n"
-                "case \"$*\" in *' config --format json') printf '{}\\n'; exit 0 ;; *' down --volumes --remove-orphans') exit 0 ;; esac\n"
+                "case \"$*\" in *' config --format json') printf '{}\\n'; exit 0 ;; *' down --remove-orphans') exit 0 ;; esac\n"
                 "exit 97\n",
                 encoding="utf-8",
             )
@@ -53,12 +53,12 @@ class RunShellOptionTests(unittest.TestCase):
             operations = [call for call in calls if call != "compose version"]
             self.assertEqual(len(operations), 4)
             self.assertEqual(["config --format json" if " config --format json" in call else
-                              "down --volumes --remove-orphans" for call in operations],
+                              "down --remove-orphans" for call in operations],
                              ["config --format json", "config --format json",
-                              "down --volumes --remove-orphans", "down --volumes --remove-orphans"])
+                              "down --remove-orphans", "down --remove-orphans"])
             owner_args = [call.split(" ", 1)[1].rsplit(" config --format json", 1)[0]
                           if " config --format json" in call else
-                          call.split(" ", 1)[1].rsplit(" down --volumes --remove-orphans", 1)[0]
+                          call.split(" ", 1)[1].rsplit(" down --remove-orphans", 1)[0]
                           for call in operations]
             self.assertTrue(all(args == owner_args[0] for args in owner_args),
                             f"config and down did not use the same owner arguments: {operations}")

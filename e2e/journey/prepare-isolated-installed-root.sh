@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+source "$ROOT/e2e/journey/compose-owner.sh"
+source "$ROOT/e2e/journey/candidate-services.sh"
+journey_compose_init "$ROOT"
 TMP_BASE="${TMPDIR:-/tmp}"
 RUN_HOME="$(mktemp -d "$TMP_BASE/kb-journey-home.XXXXXX")"
 PLATFORM_ROOT="$(mktemp -d "$TMP_BASE/kb-journey-platform.XXXXXX")"
@@ -15,6 +19,7 @@ chosen_port=""
 BASELINE_4000="$(lsof -nP -iTCP:4000 -sTCP:LISTEN -Fp 2>/dev/null || true)"
 
 cleanup() {
+  local registry_pid="${REGISTRY_PID:-${JOURNEY_CANDIDATE_REGISTRY_PID:-}}"
   if [[ "$INSTALL_ATTEMPTED" == "1" && -x "$KB_CREATE" ]]; then
     local stop_output
     stop_output="$(mktemp "$TMP_BASE/kb-stop.XXXXXX")"
@@ -30,11 +35,15 @@ cleanup() {
     fi
     rm -f "$stop_output"
   fi
-  if [[ -n "$REGISTRY_PID" ]]; then
-    if kill -0 "$REGISTRY_PID" 2>/dev/null; then
-      kill "$REGISTRY_PID"
-      wait "$REGISTRY_PID"
+  if [[ -n "$registry_pid" ]]; then
+    if kill -0 "$registry_pid" 2>/dev/null; then
+      kill "$registry_pid"
+      wait "$registry_pid"
     fi
+  fi
+  if ! journey_stop_registry; then
+    echo "Cleanup could not stop the Compose Verdaccio service. Next: e2e/journey/run.sh --down" >&2
+    KEEP_ROOT=1
   fi
   if [[ -n "$PLAN_FILE" ]]; then rm -f "$PLAN_FILE"; fi
   if [[ -p "$REGISTRY_PIPE" ]]; then rm -f "$REGISTRY_PIPE"; fi
@@ -42,6 +51,7 @@ cleanup() {
     chmod -R u+w "$RUN_HOME" "$PLATFORM_ROOT" 2>/dev/null || true
     rm -rf "$RUN_HOME" "$PLATFORM_ROOT"
   fi
+  journey_compose_cleanup
 }
 trap cleanup EXIT
 
@@ -52,12 +62,18 @@ export GOMODCACHE="$(go env GOMODCACHE)"
 export HOME="$RUN_HOME"
 
 mkfifo "$REGISTRY_PIPE"
-node "$ROOT/e2e/journey/candidate-package-registry.mjs" "$ROOT/e2e/packages" "$ROOT/.journey/release/journey-candidate" >"$REGISTRY_PIPE" &
-REGISTRY_PID=$!
-if ! IFS= read -r REGISTRY_URL <"$REGISTRY_PIPE"; then
-  echo "Candidate package registry exited before reporting its URL." >&2
+journey_start_candidate_registry "$ROOT/e2e/packages" "$ROOT/.journey/release/journey-candidate" "$REGISTRY_PIPE"
+REGISTRY_PID="$JOURNEY_CANDIDATE_REGISTRY_PID"
+for attempt in $(seq 1 60); do
+  if curl --fail --silent "$JOURNEY_REGISTRY_HOST_URL/-/ping" >/dev/null; then break; fi
+  sleep 1
+done
+if ! curl --fail --silent "$JOURNEY_REGISTRY_HOST_URL/-/ping" >/dev/null; then
+  echo "Compose Verdaccio did not become ready within 60 seconds." >&2
+  printf 'Next: %s logs verdaccio\n' "${JOURNEY_COMPOSE[*]}" >&2
   exit 1
 fi
+REGISTRY_URL="$JOURNEY_CANDIDATE_REGISTRY_URL"
 
 KB_JOURNEY_NATIVE_BINARY=1 \
 KB_JOURNEY_REGISTRY_URL="$REGISTRY_URL" \
