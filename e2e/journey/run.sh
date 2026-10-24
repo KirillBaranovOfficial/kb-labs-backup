@@ -100,7 +100,7 @@ if [[ -n "$compose_action" ]]; then
     exit 127
   fi
   if [[ "$compose_action" == "--down" ]]; then
-    if journey_compose down --volumes --remove-orphans; then compose_status=0; else compose_status=$?; fi
+    if journey_compose down --remove-orphans; then compose_status=0; else compose_status=$?; fi
   else
     if journey_compose config --format json; then compose_status=0; else compose_status=$?; fi
   fi
@@ -143,7 +143,7 @@ cleanup() {
       if ! bash e2e/journey/teardown-compose.sh "$status" .journey/reports "$RUN_STARTED_AT" "${COMPOSE[@]}"; then
         status=1
       fi
-    elif ! journey_compose down --volumes --remove-orphans >/dev/null; then
+    elif ! journey_compose down --remove-orphans >/dev/null; then
       echo "Journey Compose cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
       (( status != 0 )) || status=1
     fi

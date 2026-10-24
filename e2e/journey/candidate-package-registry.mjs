@@ -8,7 +8,11 @@ import { basename, join, resolve } from 'node:path';
 
 const packagesDirectory = resolve(process.argv[2] ?? '');
 const candidateDirectory = resolve(process.argv[3] ?? '');
-if (!process.argv[2] || !process.argv[3]) throw new Error('package and candidate directories are required');
+const upstreamRegistry = process.argv[5];
+if (!process.argv[2] || !process.argv[3] || !upstreamRegistry) {
+  console.error('package directory, candidate directory, and cached upstream registry URL are required');
+  process.exit(2);
+}
 let packagesByDigest;
 let packagesByName;
 let packagesByPath;
@@ -97,7 +101,8 @@ const server = createServer(async (request, response) => {
     return typeof artifactUrl === 'string' && new URL(artifactUrl).pathname === requestedPath;
   });
   if (!entry) {
-    const upstream = await fetch(`https://registry.npmjs.org${requestUrl.pathname}${requestUrl.search}`);
+    const upstreamUrl = new URL(requestUrl.pathname + requestUrl.search, upstreamRegistry);
+    const upstream = await fetch(upstreamUrl);
     const headers = {};
     for (const name of ['content-type', 'cache-control', 'etag', 'last-modified']) {
       const value = upstream.headers.get(name);

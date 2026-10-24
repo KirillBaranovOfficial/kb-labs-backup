@@ -103,8 +103,11 @@ services:
     networks: [journey]
 
   verdaccio:
+    ports:
+      - "127.0.0.1::4873"
     networks: [journey]
 
 networks:
   journey:
     name: ${KB_JOURNEY_NETWORK:-kb-installer-journey}
+    internal: ${KB_JOURNEY_NETWORK_INTERNAL:-false}

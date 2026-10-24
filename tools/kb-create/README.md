@@ -123,7 +123,11 @@ without it the commands print short text. All take `--platform-root`.
   `start --foreground` runs only the host in the current process.
 
 To prepare a retained installed root from the current workspace candidate, run
-`bash e2e/journey/prepare-isolated-installed-root.sh` from the repository root.
+`bash e2e/journey/prepare-isolated-installed-root.sh` from the repository root
+with Docker Compose available. Candidate preparation uses the journey's
+`verdaccio` service and persistent third-party package cache; it does not start
+a standalone registry. The script stops the service on exit and retains its
+cache volume.
 The command prepares the candidate, plans against an explicitly selected free
 Gateway URL in the 4500–9900 range, checks every planned service port before
 installing, then runs doctor, a Gateway health request, and `kb-create stop`.
