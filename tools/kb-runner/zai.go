@@ -174,6 +174,7 @@ func parseTokenGrant(value string) (uint64, error) {
 func vendorSpendLimit(vendor, state string, jobs []Job) (VendorLimit, error) {
 	var total uint64
 	var latest *Job
+	unknownAttempts := 0
 	for index := range jobs {
 		job := &jobs[index]
 		if job.Vendor != vendor {
@@ -183,8 +184,13 @@ func vendorSpendLimit(vendor, state string, jobs []Job) (VendorLimit, error) {
 		if latest == nil || job.StartedAt.After(latest.StartedAt) {
 			latest = job
 		}
+		for _, attempt := range job.Attempts {
+			if attempt.Usage == attemptUsageUnknown {
+				unknownAttempts++
+			}
+		}
 	}
-	spend := &VendorSpend{}
+	spend := &VendorSpend{UnknownAttempts: unknownAttempts}
 	if latest != nil {
 		spend.ThisJob = latest.Tokens
 	}
@@ -205,8 +211,18 @@ func vendorSpendLimit(vendor, state string, jobs []Job) (VendorLimit, error) {
 
 func formatVendorSpend(vendor string, spend VendorSpend) string {
 	line := fmt.Sprintf("%s spent %d tokens (this job) / %d total", vendor, spend.ThisJob, spend.Total)
+	if spend.UnknownAttempts > 0 {
+		line += fmt.Sprintf("; usage unknown for %s", attemptCountLabel(spend.UnknownAttempts))
+	}
 	if spend.HasGrant {
 		line += fmt.Sprintf("; remaining %d tokens of %d", spend.Remaining, spend.Grant)
 	}
 	return line
+}
+
+func attemptCountLabel(count int) string {
+	if count == 1 {
+		return "1 attempt"
+	}
+	return fmt.Sprintf("%d attempts", count)
 }

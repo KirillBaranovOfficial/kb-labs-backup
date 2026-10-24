@@ -76,6 +76,15 @@ type JobTerminal struct {
 	SessionID   string    `json:"sessionId,omitempty"`
 	FinishedAt  time.Time `json:"finishedAt"`
 }
+
+// Attempt usage accounting: "recorded" means the attempt's observed token
+// usage was recorded in the job totals; "unknown" means the vendor exposes no
+// usage for how this attempt ended, so the job totals are incomplete.
+const (
+	attemptUsageRecorded = "recorded"
+	attemptUsageUnknown  = "unknown"
+)
+
 type ProviderAttempt struct {
 	Number     int       `json:"number"`
 	StartedAt  time.Time `json:"startedAt"`
@@ -83,6 +92,7 @@ type ProviderAttempt struct {
 	SessionID  string    `json:"sessionId,omitempty"`
 	Reason     JobReason `json:"reason,omitempty"`
 	Outcome    string    `json:"outcome"`
+	Usage      string    `json:"usage"`
 }
 type Job struct {
 	ID           string            `json:"id"`
@@ -387,6 +397,9 @@ type VendorSpend struct {
 	Grant     uint64 `json:"grant,omitempty"`
 	Remaining uint64 `json:"remaining,omitempty"`
 	HasGrant  bool   `json:"hasGrant"`
+	// UnknownAttempts counts attempts whose usage the vendor never exposed;
+	// the totals exclude their spend instead of counting it as zero.
+	UnknownAttempts int `json:"unknownAttempts,omitempty"`
 }
 type AgentStatus struct {
 	Jobs        []Job         `json:"jobs"`

@@ -30,20 +30,35 @@ const (
 
 const defaultAgentVendor = "codex"
 
+// vendorUsageOnFailure states what a vendor's stream exposes about the spend
+// of a turn that never produced a final result.
+type vendorUsageOnFailure uint8
+
+const (
+	// usageUnknownOnFailure: the vendor emits usage only with the final
+	// result, so a failed turn's spend cannot be known.
+	usageUnknownOnFailure vendorUsageOnFailure = iota + 1
+	// usagePartialOnFailure: the vendor streams running usage before the
+	// final result, so the tokens observed before the failure are recorded.
+	usagePartialOnFailure
+)
+
 type vendorSpec struct {
-	agent         bool
-	binaryEnv     string
-	binaryDefault string
-	childEnv      []string
-	limitsMode    vendorLimitsMode
-	parser        func([]byte) (VendorEvent, error)
+	agent          bool
+	binaryEnv      string
+	binaryDefault  string
+	childEnv       []string
+	limitsMode     vendorLimitsMode
+	failures       vendorFailureTable
+	usageOnFailure vendorUsageOnFailure
+	parser         func([]byte) (VendorEvent, error)
 }
 
 var vendorRegistry = map[string]vendorSpec{
-	"codex":  {agent: true, binaryEnv: "CODEX_BIN", binaryDefault: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex", limitsMode: vendorLimitsAppServer, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("codex", line) }},
-	"claude": {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsRecorded, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("claude", line) }},
-	"zai":    {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsLedger, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("claude", line) }},
-	"zcode":  {agent: true, binaryEnv: "ZCODE_BIN", binaryDefault: "~/Desktop/work/zcode/zcode", limitsMode: vendorLimitsLedger, parser: parseZcodeEvent},
+	"codex":  {agent: true, binaryEnv: "CODEX_BIN", binaryDefault: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex", limitsMode: vendorLimitsAppServer, failures: textStreamFailureTable, usageOnFailure: usagePartialOnFailure, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("codex", line) }},
+	"claude": {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsRecorded, failures: textStreamFailureTable, usageOnFailure: usageUnknownOnFailure, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("claude", line) }},
+	"zai":    {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsLedger, failures: textStreamFailureTable, usageOnFailure: usageUnknownOnFailure, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("claude", line) }},
+	"zcode":  {agent: true, binaryEnv: "ZCODE_BIN", binaryDefault: "~/Desktop/work/zcode/zcode", limitsMode: vendorLimitsLedger, failures: zcodeFailureTable, usageOnFailure: usageUnknownOnFailure, parser: parseZcodeEvent},
 }
 
 func vendors() []string {
@@ -74,15 +89,18 @@ const (
 )
 
 type VendorEvent struct {
-	Kind         EventKind `json:"kind"`
-	SessionID    string    `json:"sessionId,omitempty"`
-	Message      string    `json:"message,omitempty"`
-	FinalMessage string    `json:"finalMessage,omitempty"`
-	Tool         string    `json:"tool,omitempty"`
-	Tokens       uint64    `json:"tokens,omitempty"`
-	InputTokens  uint64    `json:"inputTokens,omitempty"`
-	OutputTokens uint64    `json:"outputTokens,omitempty"`
-	RawType      string    `json:"rawType,omitempty"`
+	Kind          EventKind `json:"kind"`
+	SessionID     string    `json:"sessionId,omitempty"`
+	Message       string    `json:"message,omitempty"`
+	FinalMessage  string    `json:"finalMessage,omitempty"`
+	Tool          string    `json:"tool,omitempty"`
+	Tokens        uint64    `json:"tokens,omitempty"`
+	InputTokens   uint64    `json:"inputTokens,omitempty"`
+	OutputTokens  uint64    `json:"outputTokens,omitempty"`
+	RawType       string    `json:"rawType,omitempty"`
+	ProviderCode  string    `json:"providerCode,omitempty"`
+	StatusCode    int       `json:"statusCode,omitempty"`
+	FailureSource string    `json:"failureSource,omitempty"`
 }
 
 type healthTracker struct {
@@ -98,7 +116,7 @@ func newHealthTracker(threshold int) *healthTracker {
 	return &healthTracker{threshold: threshold, failures: map[string]int{}}
 }
 func (h *healthTracker) Observe(vendor string, line []byte) (VendorEvent, error) {
-	_, ok := vendorRegistry[vendor]
+	spec, ok := vendorRegistry[vendor]
 	if !ok {
 		return VendorEvent{}, fmt.Errorf("unsupported vendor %q", vendor)
 	}
@@ -108,9 +126,7 @@ func (h *healthTracker) Observe(vendor string, line []byte) (VendorEvent, error)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	lower := strings.ToLower(e.Message)
-	network := e.Kind == EventVendorError && (strings.Contains(lower, "timed out") || strings.Contains(lower, "connection refused") || strings.Contains(lower, "network is unreachable") || strings.Contains(lower, "dns"))
-	if network {
+	if spec.failures.classify(e).class == failureTransient {
 		h.failures[vendor]++
 		if h.failures[vendor] >= h.threshold {
 			e.Kind = EventProviderUnreachable
