@@ -146,7 +146,7 @@ jobs:
         # pack-static verifies the tarballs `release stage plan` already produced in one
         # process; pack-install does ONE aggregated clean install from the staging registry
         # plus isolated installs only for public standalone/changed packages (see
-        # plugins/release/manager-core/src/pack-verify.ts). Expected 5-10 minutes instead of
+        # plugins/release/src/core/pack-verify.ts). Expected 5-10 minutes instead of
         # ~40-80; the two-hour budget is kept as a ceiling. Debug the old per-package gate with
         # `pnpm kb release checks --flow <flow> --only pack-install-per-package`.
         timeoutMs: 7200000

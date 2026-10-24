@@ -45,7 +45,7 @@ export function storeLockPath(storeRoot: string): string {
 
 /**
  * Entry key: package name with every `/` replaced by `+`, then `@` + the exact
- * version, e.g. `@kb-labs/commit` @ `2.120.1` -> `@kb-labs+commit-entry@2.120.1`.
+ * version, e.g. `@kb-labs/commit` @ `2.120.1` -> `@kb-labs+commit@2.120.1`.
  */
 export function encodeEntryKey(name: string, version: string): string {
   assertSafeSegment(name, 'name');

@@ -70,28 +70,28 @@
       "pkg": "@kb-labs/mind",
       "description": "AI code search (RAG)",
       "default": true,
-      "localPath": "/Users/you/kb-labs-workspace/plugins/mind/entry"
+      "localPath": "/Users/you/kb-labs-workspace/plugins/mind"
     },
     {
       "id": "agents",
       "pkg": "@kb-labs/agents",
       "description": "Autonomous agents",
       "default": true,
-      "localPath": "/Users/you/kb-labs-workspace/plugins/agents/entry"
+      "localPath": "/Users/you/kb-labs-workspace/plugins/agents"
     },
     {
       "id": "ai-review",
       "pkg": "@kb-labs/review",
       "description": "AI code review",
       "default": true,
-      "localPath": "/Users/you/kb-labs-workspace/plugins/review/entry"
+      "localPath": "/Users/you/kb-labs-workspace/plugins/review"
     },
     {
       "id": "commit",
       "pkg": "@kb-labs/commit",
       "description": "AI commit generation",
       "default": true,
-      "localPath": "/Users/you/kb-labs-workspace/plugins/commit/entry"
+      "localPath": "/Users/you/kb-labs-workspace/plugins/commit"
     }
   ],
   "binaries": [

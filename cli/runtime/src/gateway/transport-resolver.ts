@@ -16,7 +16,7 @@
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as net from 'node:net';
-import type { IGatewayClient } from './types.js';
+import type { IGatewayClient } from '@kb-labs/sdk/gateway';
 import { HttpSseGatewayTransport } from './http-sse-transport.js';
 import { HostAgentTransport } from './host-agent-transport.js';
 import { getHostServiceAddress } from '@kb-labs/core-platform';

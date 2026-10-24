@@ -87,11 +87,11 @@
       "@kb-labs/audit-core/*": [
         "../kb-labs-audit/packages/audit-core/src/*"
       ],
-      "@kb-labs/release-manager-changelog": [
-        "../kb-labs-release-manager/packages/changelog/src/index.ts"
+      "@kb-labs/release/changelog": [
+        "../../plugins/release/src/changelog/index.ts"
       ],
-      "@kb-labs/release-manager-changelog/*": [
-        "../kb-labs-release-manager/packages/changelog/src/*"
+      "@kb-labs/release/changelog/*": [
+        "../../plugins/release/src/changelog/*"
       ],
       "@kb-labs/cli-adapters": [
         "../kb-labs-cli/packages/adapters/src/index.ts"
@@ -189,10 +189,10 @@
       "@kb-labs/data-client/*": [
         "../kb-labs-studio/packages/data-client/src/*"
       ],
-      "@kb-labs/devlink-core": [
+      "@kb-labs/devlink/core": [
         "../kb-labs-devlink/packages/core/src/index.ts"
       ],
-      "@kb-labs/devlink-core/*": [
+      "@kb-labs/devlink/core/*": [
         "../kb-labs-devlink/packages/core/src/*"
       ],
       "@kb-labs/mind-adapters": [
@@ -207,10 +207,10 @@
       "@kb-labs/mind/*": [
         "../kb-labs-mind/packages/mind-cli/src/*"
       ],
-      "@kb-labs/mind-core": [
+      "@kb-labs/mind/core": [
         "../kb-labs-mind/packages/mind-core/src/index.ts"
       ],
-      "@kb-labs/mind-core/*": [
+      "@kb-labs/mind/core/*": [
         "../kb-labs-mind/packages/mind-core/src/*"
       ],
       "@kb-labs/mind-gateway": [
@@ -297,23 +297,23 @@
       "@kb-labs/profile-toolkit/*": [
         "../kb-labs-core/packages/profile-toolkit/src/*"
       ],
-      "@kb-labs/release-manager-checks": [
-        "../kb-labs-release-manager/packages/release-checks/src/index.ts"
+      "@kb-labs/release/checks": [
+        "../../plugins/release/src/checks/index.ts"
       ],
-      "@kb-labs/release-manager-checks/*": [
-        "../kb-labs-release-manager/packages/release-checks/src/*"
+      "@kb-labs/release/checks/*": [
+        "../../plugins/release/src/checks/*"
       ],
       "@kb-labs/release": [
-        "../kb-labs-release-manager/packages/release-cli/src/index.ts"
+        "../../plugins/release/src/index.ts"
       ],
       "@kb-labs/release/*": [
-        "../kb-labs-release-manager/packages/release-cli/src/*"
+        "../../plugins/release/src/*"
       ],
-      "@kb-labs/release-manager-core": [
-        "../kb-labs-release-manager/packages/release-core/src/index.ts"
+      "@kb-labs/release/core": [
+        "../../plugins/release/src/core/index.ts"
       ],
-      "@kb-labs/release-manager-core/*": [
-        "../kb-labs-release-manager/packages/release-core/src/*"
+      "@kb-labs/release/core/*": [
+        "../../plugins/release/src/core/*"
       ],
       "@kb-labs/rest-api-app": [
         "../kb-labs-rest-api/apps/rest-api/src/index.ts"
@@ -440,6 +440,12 @@
       ],
       "@kb-labs/workflow-runtime/*": [
         "../../services/workflow/runtime/src/*"
+      ],
+      "@kb-labs/release/contracts": [
+        "../../plugins/release/src/contracts/index.ts"
+      ],
+      "@kb-labs/release/contracts/*": [
+        "../../plugins/release/src/contracts/*"
       ]
     }
   }

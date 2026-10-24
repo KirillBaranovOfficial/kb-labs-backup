@@ -1,5 +1,5 @@
 import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { gatewayApiFetch, GatewayApiError } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch, GatewayApiError } from '@kb-labs/sdk/gateway';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';

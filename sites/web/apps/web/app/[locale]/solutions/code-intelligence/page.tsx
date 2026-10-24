@@ -55,13 +55,13 @@ const FOUND_OUTPUT = `$ kb mind search --text "как работает pipeline 
 {
   "chunks": [
     {
-      "path": "plugins/release/manager-core/src/pipeline.ts",
+      "path": "plugins/release/src/core/pipeline.ts",
       "span": { "startLine": 1, "endLine": 12 },
       "score": 0.94,
       "text": "Flow: plan → snapshot → checks → build → verify..."
     },
     {
-      "path": "plugins/release/manager-cli/src/cli/commands/run.ts",
+      "path": "plugins/release/src/cli/cli/commands/run.ts",
       "span": { "startLine": 180, "endLine": 210 },
       "score": 0.87,
       "text": "const result = await runReleasePipeline({..."

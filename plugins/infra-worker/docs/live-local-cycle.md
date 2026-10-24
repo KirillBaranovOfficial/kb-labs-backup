@@ -24,7 +24,6 @@ pnpm --filter @kb-labs/adapters-environment-docker build
 pnpm --filter @kb-labs/adapters-workspace-localfs build
 pnpm --filter @kb-labs/adapters-snapshot-localfs build
 
-pnpm --filter @kb-labs/infra-worker-contracts build
 pnpm --filter @kb-labs/infra-worker build
 ```
 

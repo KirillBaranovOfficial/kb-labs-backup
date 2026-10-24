@@ -130,11 +130,11 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-contracts": {
+      "@kb-labs/agents/contracts": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-core": {
+      "@kb-labs/agents/core": {
         "ok": true,
         "issues": null
       },
@@ -151,35 +151,35 @@
           }
         ]
       },
-      "@kb-labs/agent-history": {
+      "@kb-labs/agents/history": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-kernel": {
+      "@kb-labs/agents/kernel": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-mcp": {
+      "@kb-labs/agents/mcp": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-runtime": {
+      "@kb-labs/agents/runtime": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-sdk": {
+      "@kb-labs/agents/sdk": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-store": {
+      "@kb-labs/agents/store": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-tools": {
+      "@kb-labs/agents/tools": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/agent-tracing": {
+      "@kb-labs/agents/tracing": {
         "ok": true,
         "issues": null
       },
@@ -199,7 +199,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/clickup-contracts": {
+      "@kb-labs/clickup/contracts": {
         "ok": false,
         "issues": [
           {
@@ -251,7 +251,7 @@
           }
         ]
       },
-      "@kb-labs/clickup-core": {
+      "@kb-labs/clickup/core": {
         "ok": false,
         "issues": [
           {
@@ -355,11 +355,11 @@
           }
         ]
       },
-      "@kb-labs/commit-contracts": {
+      "@kb-labs/commit/contracts": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/commit-core": {
+      "@kb-labs/commit/core": {
         "ok": true,
         "issues": null
       },
@@ -448,11 +448,11 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/devlink-contracts": {
+      "@kb-labs/devlink/contracts": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/devlink-core": {
+      "@kb-labs/devlink/core": {
         "ok": true,
         "issues": null
       },
@@ -530,7 +530,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/github-contracts": {
+      "@kb-labs/github/contracts": {
         "ok": false,
         "issues": [
           {
@@ -674,7 +674,7 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/infra-worker-contracts": {
+      "@kb-labs/infra-worker/contracts": {
         "ok": true,
         "issues": null
       },
@@ -766,11 +766,11 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/mind-contracts": {
+      "@kb-labs/mind/contracts": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/mind-core": {
+      "@kb-labs/mind/core": {
         "ok": true,
         "issues": null
       },
@@ -856,11 +856,11 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/qa-contracts": {
+      "@kb-labs/qa/contracts": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/qa-core": {
+      "@kb-labs/qa/core": {
         "ok": true,
         "issues": null
       },
@@ -877,11 +877,11 @@
           }
         ]
       },
-      "@kb-labs/quality-contracts": {
+      "@kb-labs/quality/contracts": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/quality-core": {
+      "@kb-labs/quality/core": {
         "ok": true,
         "issues": null
       },
@@ -898,11 +898,11 @@
           }
         ]
       },
-      "@kb-labs/release-manager-changelog": {
+      "@kb-labs/release/changelog": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/release-manager-checks": {
+      "@kb-labs/release/checks": {
         "ok": true,
         "issues": null
       },
@@ -919,11 +919,11 @@
           }
         ]
       },
-      "@kb-labs/release-manager-contracts": {
+      "@kb-labs/release/contracts": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/release-manager-core": {
+      "@kb-labs/release/core": {
         "ok": true,
         "issues": null
       },
@@ -947,11 +947,11 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/review-contracts": {
+      "@kb-labs/review/contracts": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/review-core": {
+      "@kb-labs/review/core": {
         "ok": true,
         "issues": null
       },
@@ -959,11 +959,11 @@
         "ok": true,
         "issues": null
       },
-      "@kb-labs/review-heuristic": {
+      "@kb-labs/review/heuristic": {
         "ok": true,
         "issues": null
       },
-      "@kb-labs/review-llm": {
+      "@kb-labs/review/llm": {
         "ok": true,
         "issues": null
       },
@@ -1151,7 +1151,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/infra-worker-contracts",
+        "package": "@kb-labs/infra-worker/contracts",
         "ok": true,
         "issues": null
       },
@@ -1161,7 +1161,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/github-contracts",
+        "package": "@kb-labs/github/contracts",
         "ok": false,
         "issues": [
           {
@@ -1286,7 +1286,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-history",
+        "package": "@kb-labs/agents/history",
         "ok": true,
         "issues": null
       },
@@ -1514,7 +1514,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/release-manager-changelog",
+        "package": "@kb-labs/release/changelog",
         "ok": true,
         "issues": null
       },
@@ -1549,12 +1549,12 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-runtime",
+        "package": "@kb-labs/agents/runtime",
         "ok": true,
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-kernel",
+        "package": "@kb-labs/agents/kernel",
         "ok": true,
         "issues": null
       },
@@ -1574,7 +1574,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/commit-core",
+        "package": "@kb-labs/commit/core",
         "ok": true,
         "issues": null
       },
@@ -1735,12 +1735,12 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/qa-core",
+        "package": "@kb-labs/qa/core",
         "ok": true,
         "issues": null
       },
       {
-        "package": "@kb-labs/release-manager-checks",
+        "package": "@kb-labs/release/checks",
         "ok": true,
         "issues": null
       },
@@ -1785,7 +1785,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-contracts",
+        "package": "@kb-labs/agents/contracts",
         "ok": true,
         "issues": null
       },
@@ -1805,12 +1805,12 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/review-heuristic",
+        "package": "@kb-labs/review/heuristic",
         "ok": true,
         "issues": null
       },
       {
-        "package": "@kb-labs/review-contracts",
+        "package": "@kb-labs/review/contracts",
         "ok": true,
         "issues": null
       },
@@ -1830,7 +1830,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-tools",
+        "package": "@kb-labs/agents/tools",
         "ok": true,
         "issues": null
       },
@@ -1930,12 +1930,12 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/release-manager-core",
+        "package": "@kb-labs/release/core",
         "ok": true,
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-mcp",
+        "package": "@kb-labs/agents/mcp",
         "ok": true,
         "issues": null
       },
@@ -1960,7 +1960,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-tracing",
+        "package": "@kb-labs/agents/tracing",
         "ok": true,
         "issues": null
       },
@@ -1994,7 +1994,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/devlink-contracts",
+        "package": "@kb-labs/devlink/contracts",
         "ok": true,
         "issues": null
       },
@@ -2009,7 +2009,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/qa-contracts",
+        "package": "@kb-labs/qa/contracts",
         "ok": true,
         "issues": null
       },
@@ -2033,7 +2033,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/mind-core",
+        "package": "@kb-labs/mind/core",
         "ok": true,
         "issues": null
       },
@@ -2087,7 +2087,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/clickup-core",
+        "package": "@kb-labs/clickup/core",
         "ok": false,
         "issues": [
           {
@@ -2175,7 +2175,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/clickup-contracts",
+        "package": "@kb-labs/clickup/contracts",
         "ok": false,
         "issues": [
           {
@@ -2228,17 +2228,17 @@
         ]
       },
       {
-        "package": "@kb-labs/commit-contracts",
+        "package": "@kb-labs/commit/contracts",
         "ok": true,
         "issues": null
       },
       {
-        "package": "@kb-labs/devlink-core",
+        "package": "@kb-labs/devlink/core",
         "ok": true,
         "issues": null
       },
       {
-        "package": "@kb-labs/release-manager-contracts",
+        "package": "@kb-labs/release/contracts",
         "ok": true,
         "issues": null
       },
@@ -2248,7 +2248,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-sdk",
+        "package": "@kb-labs/agents/sdk",
         "ok": true,
         "issues": null
       },
@@ -2258,12 +2258,12 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/quality-core",
+        "package": "@kb-labs/quality/core",
         "ok": true,
         "issues": null
       },
       {
-        "package": "@kb-labs/review-core",
+        "package": "@kb-labs/review/core",
         "ok": true,
         "issues": null
       },
@@ -2307,7 +2307,7 @@
         ]
       },
       {
-        "package": "@kb-labs/quality-contracts",
+        "package": "@kb-labs/quality/contracts",
         "ok": true,
         "issues": null
       },
@@ -2340,7 +2340,7 @@
         ]
       },
       {
-        "package": "@kb-labs/agent-core",
+        "package": "@kb-labs/agents/core",
         "ok": true,
         "issues": null
       },
@@ -2422,12 +2422,12 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/review-llm",
+        "package": "@kb-labs/review/llm",
         "ok": true,
         "issues": null
       },
       {
-        "package": "@kb-labs/mind-contracts",
+        "package": "@kb-labs/mind/contracts",
         "ok": true,
         "issues": null
       },
@@ -2437,7 +2437,7 @@
         "issues": null
       },
       {
-        "package": "@kb-labs/agent-store",
+        "package": "@kb-labs/agents/store",
         "ok": true,
         "issues": null
       },

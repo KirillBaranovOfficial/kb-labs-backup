@@ -9,7 +9,7 @@
  * Ctrl+C → client.cancel(executionId) → Gateway aborts execution (CC2).
  */
 
-import type { IGatewayClient, GatewayExecuteRequest } from '@kb-labs/cli-runtime/gateway';
+import type { IGatewayClient, GatewayExecuteRequest } from '@kb-labs/sdk/gateway';
 import { resolveTransport, TerminalEventRenderer } from '@kb-labs/cli-runtime/gateway';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';

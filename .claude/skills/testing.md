@@ -20,7 +20,7 @@ What are you testing?
 │
 ├── CLI command logic (flags, output format, error messages, exit codes)
 │   → Handler test (Vitest + vi.mock + createCapturedUI)
-│   → File: plugins/*/entry/src/__tests__/cli/<command>.cli.test.ts
+│   → File: plugins/*/src/__tests__/cli/<command>.cli.test.ts
 │   → Run:  pnpm --filter <pkg> run test:cli
 │   → No daemon required. Fast (<5s total).
 │

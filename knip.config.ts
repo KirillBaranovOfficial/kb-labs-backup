@@ -19,17 +19,17 @@ const config: KnipConfig = {
     // Web copy files (ru/en) — consumed by next-intl at runtime
     'sites/**/web/{ru,en}/**',
     // Plugin Studio pages/components — loaded via Module Federation, not static import
-    'plugins/*/studio/src/**',
+    'plugins/*/src/studio/**',
     // Plugin rspack entries — built separately by rspack, not imported by TS
-    'plugins/*/entry/src/**',
+    'plugins/*/src/**',
     // Module Federation temp files (generated)
     'studio/**/__mf__temp/**',
     // Scaffold templates — loaded by kb-create at runtime via fs.readFile
     'templates/**',
     // release/manager-changelog builtin templates — loaded dynamically via import(templatePath)
-    'plugins/release/manager-changelog/src/templates/builtin/**',
+    'plugins/release/src/changelog/templates/builtin/**',
     // release/manager-cli studio — loaded via Module Federation (rspack.studio.config.mjs exposes them)
-    'plugins/release/manager-cli/src/studio/**',
+    'plugins/release/src/studio/**',
     // AI review test file (core/types) — not a real test, not imported
     'core/types/src/test-review.ts',
   ],

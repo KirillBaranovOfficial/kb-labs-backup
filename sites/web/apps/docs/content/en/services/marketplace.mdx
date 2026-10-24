@@ -25,10 +25,10 @@ A local plugin can be linked explicitly after building it:
 
 ```bash
 pnpm build
-kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb marketplace plugins add --link .kb/plugins/my-plugin
 ```
 
-Build the generated workspace before linking its entry package. The path is relative to the project root, and the link is recorded in `.kb/marketplace.lock`.
+Build the generated workspace before linking the plugin package. The path is relative to the project root, and the link is recorded in `.kb/marketplace.lock`.
 
 To create that workspace from an existing project, run `kb scaffold run plugin my-plugin`, then follow its printed build and link steps. The first command is available after the link succeeds.
 

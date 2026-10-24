@@ -10,7 +10,7 @@ import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 
 import type { WorkflowRunDetail } from '../http-client.js';
 import { WorkflowDaemonClient } from '../http-client.js';
 import { workflowCommandError } from './errors.js';
-import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch } from '@kb-labs/sdk/gateway';
 
 export interface RunsViewFlags {
   'run-id'?: string;

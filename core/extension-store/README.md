@@ -13,7 +13,7 @@ const { packageRoot, entry } = await store.resolve({
   version: '2.120.1',
   kind: 'plugin',
 });
-// packageRoot: <KB_HOME>/store/entries/@kb-labs+commit-entry@2.120.1/node_modules/@kb-labs/commit
+// packageRoot: <KB_HOME>/store/entries/@kb-labs+commit@2.120.1/node_modules/@kb-labs/commit
 ```
 
 `resolve` installs the version into the store on first use and is safe under concurrent callers

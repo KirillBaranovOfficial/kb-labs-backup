@@ -26,5 +26,5 @@
   },
   "createdAt": "2026-05-16T10:27:05.241Z",
   "updatedAt": "2026-05-16T10:29:29.090Z",
-  "deprecateMessage": "use commit-entry v3 instead"
+  "deprecateMessage": "use @kb-labs/commit v3 instead"
 }

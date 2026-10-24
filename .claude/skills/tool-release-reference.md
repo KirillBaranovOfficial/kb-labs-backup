@@ -127,7 +127,7 @@ Read-only, no side effects. Answers "what is actually stable vs. candidate right
 
 **Already wired into `release-prepare`'s review** — the "Prepare release review" step calls this automatically and injects a "Current release status" section into the review artifact shown at `waiting_approval`, before the package table. A warning there is about the *existing* baseline, not the candidate being reviewed — it means "what you're releasing on top of isn't fully clean," not "this candidate is broken." A status-check failure (network, `gh` not authed) never blocks the review from rendering.
 
-Source: `plugins/release/manager-core/src/status.ts` (`computeFlowReleaseStatus`), `plugins/release/manager-cli/src/cli/commands/status.ts`, wired into `.kb/workflows/scripts/release-review-artifacts.mjs`.
+Source: `plugins/release/src/core/status.ts` (`computeFlowReleaseStatus`), `plugins/release/src/cli/cli/commands/status.ts`, wired into `.kb/workflows/scripts/release-review-artifacts.mjs`.
 
 ## `release:*:prepare` fallback scripts
 
@@ -236,16 +236,16 @@ Go binaries are built and sealed as part of the **`platform`** flow's own candid
 
 | Package | Role |
 |---------|------|
-| `@kb-labs/release-manager-core` | `planRelease()`, `runReleasePipeline()`, `mergeConfigWithFlow()`, versioning strategies, `resolvePublishTag`/`resolvePublishRegistry` (`channel.ts`), `verifyAgainstRegistry` with retry (`verdaccio-verify.ts`), `buildReleaseTag`/`resolveFlowFromTag` (`tag.ts`) |
-| `@kb-labs/release-manager-changelog` | Commit parsing, template rendering (`corporate-ai`) |
+| `@kb-labs/release/core` | `planRelease()`, `runReleasePipeline()`, `mergeConfigWithFlow()`, versioning strategies, `resolvePublishTag`/`resolvePublishRegistry` (`channel.ts`), `verifyAgainstRegistry` with retry (`verdaccio-verify.ts`), `buildReleaseTag`/`resolveFlowFromTag` (`tag.ts`) |
+| `@kb-labs/release/changelog` | Commit parsing, template rendering (`corporate-ai`) |
 | `@kb-labs/release` | CLI commands (`plan`, `run`, `changelog`, `publish`, `promote`, `stage`, `deliver`), REST handlers. `stage`/`deliver` are the CI-thin pack-once/ship pair used by the agent path. `pack` (verification-only, `npm pack` + static checks) is a different, older command — don't confuse it with `stage` |
-| `@kb-labs/release-manager-contracts` | Zod schemas, TypeScript types for REST API (`ReleaseChannelSchema`, etc.) |
+| `@kb-labs/release/contracts` | Zod schemas, TypeScript types for REST API (`ReleaseChannelSchema`, etc.) |
 
 ## Build after changes
 
 ```bash
-pnpm --filter @kb-labs/release-manager-contracts build
-pnpm --filter @kb-labs/release-manager-core build
+pnpm --filter @kb-labs/release/contracts build
+pnpm --filter @kb-labs/release/core build
 pnpm --filter @kb-labs/release build
 ```
 Order matters: contracts → core → cli.

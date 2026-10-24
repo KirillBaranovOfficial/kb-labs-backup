@@ -154,7 +154,7 @@ jobs:
         # path still floors to a patch bump). That's how 2.119.0 became
         # 2.119.1 in candidate run 33981110517. A manager-core code fix
         # cannot help an already-tagged commit either way: "Checkout exact
-        # intent commit" above pins plugins/release/manager-core itself to
+        # intent commit" above pins plugins/release/src/core itself to
         # that commit's own (possibly pre-fix) source, by design — this
         # workflow builds exactly what was tagged, immutably.
         #

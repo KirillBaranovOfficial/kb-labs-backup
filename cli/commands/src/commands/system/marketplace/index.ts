@@ -75,7 +75,7 @@ const marketplacePluginAdd = marketplaceCommand('add', 'Register a local project
   json: jsonFlag,
   'dry-run': { type: 'boolean', description: 'Preview without registering' },
   scope: scopeFlag,
-}, addHandler, ['kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry']);
+}, addHandler, ['kb marketplace plugins add --link .kb/plugins/my-plugin']);
 const marketplacePluginRemove = marketplaceCommand('remove', 'Remove a local project plugin registration', {
   json: jsonFlag,
   'dry-run': { type: 'boolean', description: 'Preview without removing' },
