@@ -247,7 +247,7 @@ func TestZaiKeyFileRefusesMissingEmptyAndOverbroadModes(t *testing.T) {
 
 func TestZaiModelMappingCanBeConfigured(t *testing.T) {
 	t.Setenv("ZAI_OPUS_MODEL", "glm-custom-opus")
-	env, err := vendorAgentEnvironment("zai", nil, t.TempDir(), "job-config", "test-token")
+	env, err := vendorAgentEnvironment("zai", nil, AgentRequest{StateDir: t.TempDir(), JobID: "job-config"}, "test-token")
 	if err != nil {
 		t.Fatal(err)
 	}

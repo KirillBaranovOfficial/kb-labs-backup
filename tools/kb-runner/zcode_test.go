@@ -101,7 +101,7 @@ func TestZcodeChildEnvironmentIsCleanAndUsesAccountDataDirectory(t *testing.T) {
 		t.Setenv(key, value)
 	}
 	state := t.TempDir()
-	env, err := vendorAgentEnvironment("zcode", nil, state, "job-zcode", "")
+	env, err := vendorAgentEnvironment("zcode", nil, AgentRequest{StateDir: state, JobID: "job-zcode"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestZcodeSandboxCommandAndProfileEnforceWriteBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd.Env, err = vendorAgentEnvironment("zcode", nil, t.TempDir(), "job-sandbox", "")
+	cmd.Env, err = vendorAgentEnvironment("zcode", nil, AgentRequest{StateDir: t.TempDir(), JobID: "job-sandbox"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,5 +415,70 @@ func TestZcodeStateRootsCoverAccountDataAndCLIStorage(t *testing.T) {
 	}
 	if slices.Contains(roots, filepath.Join(home, ".zcode")) {
 		t.Fatalf("ZCode state roots %v must not open the desktop app data root", roots)
+	}
+}
+
+func TestZcodeEnvironmentCarriesJobModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ZCODE_MODEL", "parent-model")
+	env, err := vendorAgentEnvironment("zcode", nil, AgentRequest{StateDir: t.TempDir(), JobID: "job-model", Model: "GLM-5.3"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var models []string
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "ZCODE_MODEL="); ok {
+			models = append(models, value)
+		}
+	}
+	if len(models) != 1 || models[0] != "GLM-5.3" {
+		t.Fatalf("ZCODE_MODEL entries = %q, want only the job model", models)
+	}
+}
+
+func TestZcodeSandboxAllowsToolchainDevicesSignalsAndJobTemp(t *testing.T) {
+	sandbox, err := exec.LookPath(zcodeSandboxBinary)
+	if err != nil {
+		t.Skip("sandbox-exec unavailable")
+	}
+	root := t.TempDir()
+	worktree := filepath.Join(root, "worktree")
+	state := filepath.Join(root, "state")
+	request := AgentRequest{StateDir: state, JobID: "job-toolchain", Workdir: worktree}
+	jobTemp := zcodeJobTemp(request)
+	zcodeData := filepath.Join(root, "home", ".zcode-kb-runner")
+	for _, dir := range []string{worktree, jobTemp, zcodeData} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	profile, err := zcodeSandboxProfile(zcodeSandboxInputs{Worktree: worktree, JobTemp: jobTemp, ZcodeState: []string{zcodeData}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each step is what a Go or Node test run does inside the agent sandbox.
+	script := `set -e
+echo discarded > /dev/null
+mktemp "$TMPDIR/agent.XXXXXX" > /dev/null
+/bin/sleep 30 & child=$!
+kill -TERM "$child"
+wait "$child" || true
+printf toolchain-ok`
+	cmd, err := zcodeSandboxCommand(context.Background(), sandbox, profile, "/bin/sh", "-c", script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	cmd.Env, err = vendorAgentEnvironment("zcode", nil, request, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	output, err := cmd.Output()
+	if err != nil || strings.TrimSpace(string(output)) != "toolchain-ok" {
+		t.Fatalf("sandboxed toolchain steps: output=%q err=%v", output, err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("signal to own child was not delivered (took %s)", elapsed)
 	}
 }

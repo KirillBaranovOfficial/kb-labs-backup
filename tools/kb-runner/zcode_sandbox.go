@@ -30,6 +30,12 @@ type zcodeSandboxInputs struct {
 	NodeCaches []string
 }
 
+// zcodeJobTemp is the per-job temp directory: the only temp root the sandbox
+// lets the agent write, so it is also the agent's TMPDIR.
+func zcodeJobTemp(request AgentRequest) string {
+	return filepath.Join(request.StateDir, "jobs", request.JobID, "tmp")
+}
+
 // zcodeDataBaseDir is the ZCODE_DATA_BASE_DIR that holds the account login.
 func zcodeDataBaseDir(home string) string { return filepath.Join(home, ".zcode-kb-runner") }
 
@@ -104,6 +110,11 @@ func zcodeSandboxProfile(input zcodeSandboxInputs) (string, error) {
 	var profile strings.Builder
 	profile.WriteString("(version 1)\n(deny default)\n")
 	profile.WriteString("(allow file-read*)\n(allow process-exec)\n(allow process-fork)\n(allow process-info*)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow network*)\n")
+	// The agent runs builds and tests: they discard output to /dev/null, open
+	// pseudo-terminals, and signal the processes they started. Signals stay inside
+	// this sandbox; device writes cover only the data sinks and the PTY pair.
+	profile.WriteString("(allow signal (target same-sandbox))\n")
+	profile.WriteString("(allow file-write* file-ioctl (literal \"/dev/null\") (literal \"/dev/zero\") (literal \"/dev/dtracehelper\") (literal \"/dev/ptmx\") (regex #\"^/dev/fd/\") (regex #\"^/dev/ttys[0-9]+$\"))\n")
 	for _, path := range allowed {
 		fmt.Fprintf(&profile, "(allow file-write* (subpath %s))\n", strconv.Quote(path))
 	}
@@ -137,9 +148,6 @@ func probeZcodeSandbox(ctx context.Context, sandboxExec, profile string) error {
 }
 
 func (a commandAdapter) zcodeCommand(ctx context.Context, request AgentRequest, args ...string) (*exec.Cmd, error) {
-	if request.Model != "" {
-		return nil, errors.New("the installed ZCode CLI does not accept --model; set the model in its account configuration")
-	}
 	if len(request.WritableDirs) > 0 {
 		return nil, errors.New("ZCode sandbox writes are limited to the agent worktree; remove --add-dir")
 	}
@@ -151,7 +159,7 @@ func (a commandAdapter) zcodeCommand(ctx context.Context, request AgentRequest, 
 	if !ok || home == "" {
 		return nil, errors.New("ZCode sandbox requires the account HOME for its wrapper and login data")
 	}
-	jobTemp := filepath.Join(request.StateDir, "jobs", request.JobID, "tmp")
+	jobTemp := zcodeJobTemp(request)
 	if err := os.MkdirAll(jobTemp, 0o700); err != nil {
 		return nil, fmt.Errorf("create ZCode per-job temp directory: %w", err)
 	}

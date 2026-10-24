@@ -72,14 +72,20 @@ func vendorWorkerEnvironment(vendor string) ([]string, error) {
 	return childEnvironment(declared)
 }
 
-func vendorAgentEnvironment(vendor string, declared []string, state, jobID, secret string) ([]string, error) {
+func vendorAgentEnvironment(vendor string, declared []string, r AgentRequest, secret string) ([]string, error) {
+	state, jobID := r.StateDir, r.JobID
 	if vendor == "zcode" {
 		home, ok := os.LookupEnv("HOME")
 		if !ok || home == "" {
 			return nil, errors.New("ZCode agent environment requires the account HOME for its login data")
 		}
 		values := append([]string(nil), declared...)
-		values = append(values, "ZCODE_DATA_BASE_DIR="+zcodeDataBaseDir(home))
+		values = append(values, "ZCODE_DATA_BASE_DIR="+zcodeDataBaseDir(home), "TMPDIR="+zcodeJobTemp(r))
+		if r.Model != "" {
+			// The ZCode CLI completes this modelId with its highest reasoning level and
+			// fails the run when no configured provider serves it.
+			values = append(values, "ZCODE_MODEL="+r.Model)
+		}
 		return childEnvironment(values)
 	}
 	if vendor != "zai" {

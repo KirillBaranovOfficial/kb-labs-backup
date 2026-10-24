@@ -436,7 +436,7 @@ func (a commandAdapter) Start(ctx context.Context, r AgentRequest) (*exec.Cmd, e
 		cmd = exec.CommandContext(ctx, a.binary, args...)
 	}
 	cmd.Dir = r.Workdir
-	cmd.Env, err = vendorAgentEnvironment(a.vendor, a.childEnv, r.StateDir, r.JobID, a.secret)
+	cmd.Env, err = vendorAgentEnvironment(a.vendor, a.childEnv, r, a.secret)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +458,7 @@ func (a commandAdapter) Resume(ctx context.Context, r AgentRequest) (*exec.Cmd, 
 		cmd := exec.CommandContext(ctx, a.binary, args...)
 		cmd.Dir = r.Workdir
 		var err error
-		cmd.Env, err = vendorAgentEnvironment(a.vendor, a.childEnv, r.StateDir, r.JobID, a.secret)
+		cmd.Env, err = vendorAgentEnvironment(a.vendor, a.childEnv, r, a.secret)
 		if err != nil {
 			return nil, err
 		}
@@ -476,7 +476,7 @@ func (a commandAdapter) Resume(ctx context.Context, r AgentRequest) (*exec.Cmd, 
 		cmd = exec.CommandContext(ctx, a.binary, "-p", r.Prompt, "--output-format", "stream-json", "--resume", r.SessionID)
 	}
 	cmd.Dir = r.Workdir
-	cmd.Env, err = vendorAgentEnvironment(a.vendor, a.childEnv, r.StateDir, r.JobID, a.secret)
+	cmd.Env, err = vendorAgentEnvironment(a.vendor, a.childEnv, r, a.secret)
 	if err != nil {
 		return nil, err
 	}
