@@ -82,7 +82,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 		if err != nil {
 			return err
 		}
-		known, err := readRecordsLocked(cfg.StateDir)
+		known, err := readAllRecordsLocked(cfg.StateDir)
 		if err != nil {
 			return err
 		}
@@ -129,7 +129,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 				if err != nil {
 					return err
 				}
-				others, err := readRecordsLocked(cfg.StateDir)
+				others, err := readLiveRecordsLocked(cfg.StateDir)
 				if err != nil {
 					return err
 				}
@@ -204,7 +204,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 }
 
 func reportIdleQueueLocked(stateDir string, now time.Time) error {
-	records, err := readRecordsLocked(stateDir)
+	records, err := readLiveRecordsLocked(stateDir)
 	if err != nil {
 		return err
 	}
@@ -247,7 +247,7 @@ func reportIdleQueueLocked(stateDir string, now time.Time) error {
 }
 
 func admissionStateLocked(stateDir string, candidate record, source HostResourceSource) (admissionDecision, error) {
-	records, err := readRecordsLocked(stateDir)
+	records, err := readLiveRecordsLocked(stateDir)
 	if err != nil {
 		return admissionDecision{}, err
 	}
@@ -449,34 +449,91 @@ func withStateLock(stateDir string, action func() error) (err error) {
 	return action()
 }
 
-func nextQueueOrderLocked(stateDir string) (uint64, error) {
-	path := filepath.Join(stateDir, "queue-sequence")
-	data, err := os.ReadFile(path)
-	var order uint64
-	if err != nil && !os.IsNotExist(err) {
+// readQueueSequenceLocked returns the current enqueue watermark without
+// consuming it. Every run bumps the sequence exactly once at enqueue, under
+// the state lock, so waiters use it as an O(1) change signal for "a run was
+// enqueued after my last registry consult".
+func readQueueSequenceLocked(stateDir string) (uint64, error) {
+	data, err := os.ReadFile(filepath.Join(stateDir, "queue-sequence"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
 		return 0, err
 	}
-	if len(data) != 0 {
-		order, err = strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("decode queue sequence: %w", err)
-		}
+	if len(data) == 0 {
+		return 0, nil
+	}
+	order, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("decode queue sequence: %w", err)
+	}
+	return order, nil
+}
+
+func nextQueueOrderLocked(stateDir string) (uint64, error) {
+	order, err := readQueueSequenceLocked(stateDir)
+	if err != nil {
+		return 0, err
 	}
 	if order == ^uint64(0) {
 		return 0, errors.New("queue sequence exhausted")
 	}
 	order++
-	if err := os.WriteFile(path, []byte(strconv.FormatUint(order, 10)+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, "queue-sequence"), []byte(strconv.FormatUint(order, 10)+"\n"), 0o600); err != nil {
 		return 0, fmt.Errorf("write queue sequence: %w", err)
 	}
 	return order, nil
 }
 
-func readRecordsLocked(stateDir string) ([]record, error) {
+// readLiveRecordsLocked returns the records of runs that have not reached a
+// terminal status. The live set is the admission working set: every per-tick
+// admission path reads exactly this set, so its cost never grows with
+// finished history.
+func readLiveRecordsLocked(stateDir string) ([]record, error) {
 	paths, err := filepath.Glob(filepath.Join(stateDir, "runs", "*.json"))
 	if err != nil {
 		return nil, err
 	}
+	return readRecordFiles(paths)
+}
+
+// readAllRecordsLocked returns live records plus finished history. Finished
+// records win over a same-ID live file, which only coexists with them inside
+// the retirement window between writeRecordAtomic's write and removal.
+func readAllRecordsLocked(stateDir string) ([]record, error) {
+	paths, err := filepath.Glob(filepath.Join(stateDir, "runs", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	finishedPaths, err := filepath.Glob(filepath.Join(stateDir, "runs", "finished", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	records, err := readRecordFiles(paths)
+	if err != nil {
+		return nil, err
+	}
+	finished, err := readRecordFiles(finishedPaths)
+	if err != nil {
+		return nil, err
+	}
+	byRunID := make(map[string]record, len(records)+len(finished))
+	for _, rec := range records {
+		byRunID[rec.RunID] = rec
+	}
+	for _, rec := range finished {
+		byRunID[rec.RunID] = rec
+	}
+	all := make([]record, 0, len(byRunID))
+	for _, rec := range byRunID {
+		all = append(all, rec)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].QueueOrder < all[j].QueueOrder })
+	return all, nil
+}
+
+func readRecordFiles(paths []string) ([]record, error) {
 	records := make([]record, 0, len(paths))
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
@@ -489,14 +546,28 @@ func readRecordsLocked(stateDir string) ([]record, error) {
 		}
 		records = append(records, rec)
 	}
-	sort.Slice(records, func(i, j int) bool { return records[i].QueueOrder < records[j].QueueOrder })
 	return records, nil
 }
 
+// recordPath is the single owner of record placement: live records live at
+// runs/<runID>.json, terminal records at runs/finished/<runID>.json.
+func recordPath(stateDir, runID string, terminal bool) string {
+	if terminal {
+		return filepath.Join(stateDir, "runs", "finished", runID+".json")
+	}
+	return filepath.Join(stateDir, "runs", runID+".json")
+}
+
 func readRecordLocked(stateDir, runID string) (record, error) {
-	data, err := os.ReadFile(filepath.Join(stateDir, "runs", runID+".json"))
+	data, err := os.ReadFile(recordPath(stateDir, runID, false))
 	if err != nil {
-		return record{}, fmt.Errorf("read queued run %s: %w", runID, err)
+		if !os.IsNotExist(err) {
+			return record{}, fmt.Errorf("read queued run %s: %w", runID, err)
+		}
+		data, err = os.ReadFile(recordPath(stateDir, runID, true))
+		if err != nil {
+			return record{}, fmt.Errorf("read queued run %s: %w", runID, err)
+		}
 	}
 	var rec record
 	if err := json.Unmarshal(data, &rec); err != nil {
@@ -506,9 +577,13 @@ func readRecordLocked(stateDir, runID string) (record, error) {
 }
 
 func writeRecordAtomic(rec record) error {
-	path := filepath.Join(rec.StateDir, "runs", rec.RunID+".json")
+	terminal := rec.Status.Terminal()
+	path := recordPath(rec.StateDir, rec.RunID, terminal)
 	data, err := json.Marshal(rec)
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
@@ -517,6 +592,11 @@ func writeRecordAtomic(rec record) error {
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return errors.Join(err, os.Remove(tmp))
+	}
+	if terminal {
+		if err := os.Remove(recordPath(rec.StateDir, rec.RunID, false)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }
@@ -572,36 +652,67 @@ func readGateLocked(stateDir, name string) (gateRecord, bool, error) {
 }
 
 func pruneStateLocked(stateDir string) error {
-	records, err := readRecordsLocked(stateDir)
+	paths, err := filepath.Glob(filepath.Join(stateDir, "runs", "*.json"))
 	if err != nil {
 		return err
 	}
-	for _, rec := range records {
-		if rec.Status != StatusQueued && rec.Status != StatusBlocked && rec.Status != StatusStarting && rec.Status != StatusRunning && rec.Status != StatusStalled {
-			continue
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read run record %s: %w", path, err)
 		}
-		if rec.Status == StatusRunning || rec.Status == StatusStalled || rec.Status == StatusStarting {
-			if err := markLostLocked(stateDir, rec); err != nil {
-				return fmt.Errorf("prune run %s: %w", rec.RunID, err)
-			}
-			continue
+		var rec record
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return fmt.Errorf("decode run record %s: %w", path, err)
 		}
-		identity, alive, identityErr := inspectIdentity(rec.PID)
-		if identityErr != nil {
-			return fmt.Errorf("inspect keeper %d for run %s: %w", rec.PID, rec.RunID, identityErr)
-		}
-		if alive && identity == rec.StartedAt {
-			continue
-		}
-		if rec.Status == StatusQueued || rec.Status == StatusBlocked {
-			if err := os.Remove(filepath.Join(stateDir, "runs", rec.RunID+".json")); err != nil && !os.IsNotExist(err) {
+		if _, err := os.Stat(recordPath(stateDir, rec.RunID, true)); err == nil {
+			// The finished record is the registry's truth. This live file is a
+			// leftover from a crash between writeRecordAtomic's finished write
+			// and its live removal; removing it — never routing it through a
+			// status transition — keeps the recorded exit intact.
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 			continue
+		} else if !os.IsNotExist(err) {
+			return err
 		}
-
+		if rec.Status.Terminal() {
+			// The live set holds no terminal record: retire this one into the
+			// finished set so per-tick admission and wait paths never rescan
+			// it. Older state directories and interrupted transitions are the
+			// inputs that violate the invariant; renaming preserves the bytes.
+			if err := os.MkdirAll(filepath.Join(stateDir, "runs", "finished"), 0o700); err != nil {
+				return err
+			}
+			if err := os.Rename(path, recordPath(stateDir, rec.RunID, true)); err != nil {
+				return fmt.Errorf("retire finished record %s: %w", rec.RunID, err)
+			}
+			continue
+		}
+		switch rec.Status {
+		case StatusRunning, StatusStalled, StatusStarting:
+			if err := markLostLocked(stateDir, rec); err != nil {
+				return fmt.Errorf("prune run %s: %w", rec.RunID, err)
+			}
+		case StatusQueued, StatusBlocked:
+			identity, alive, identityErr := inspectIdentity(rec.PID)
+			if identityErr != nil {
+				return fmt.Errorf("inspect keeper %d for run %s: %w", rec.PID, rec.RunID, identityErr)
+			}
+			if alive && identity == rec.StartedAt {
+				continue
+			}
+			if err := os.Remove(recordPath(stateDir, rec.RunID, false)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		default:
+			// No writer produces a record without a known status, so a live
+			// file with one is a corrupt registry, not history.
+			return fmt.Errorf("decode run record %s: unknown run status %q", path, rec.Status)
+		}
 	}
-	paths, err := filepath.Glob(filepath.Join(stateDir, "gates", "*.json"))
+	paths, err = filepath.Glob(filepath.Join(stateDir, "gates", "*.json"))
 	if err != nil {
 		return err
 	}
@@ -809,37 +920,120 @@ func WaitLatestTag(ctx context.Context, stateDir, tag string) (RunInfo, error) {
 	return waitRun(ctx, stateDir, tag, true)
 }
 
+// selectWaitMatch applies the tag-matching rules to one record set: exact tag
+// matches must stay unique, latest-tag matches resolve to the newest record.
+func selectWaitMatch(records []record, tag string, latest bool) (*record, error) {
+	var match *record
+	for i := range records {
+		matches := records[i].Tag == tag
+		if latest {
+			matches = records[i].LatestTag == tag
+		}
+		if !matches {
+			continue
+		}
+		if !latest && match != nil {
+			return nil, fmt.Errorf("tag %q identifies more than one run", tag)
+		}
+		if match == nil || records[i].EnqueuedAt.After(match.EnqueuedAt) ||
+			(records[i].EnqueuedAt.Equal(match.EnqueuedAt) && records[i].RunID > match.RunID) {
+			copy := records[i]
+			match = &copy
+		}
+	}
+	return match, nil
+}
+
+// terminalWaitInfo renders a terminal match for the waiter, or reports that
+// the wait continues.
+func terminalWaitInfo(match *record) (RunInfo, bool) {
+	if match == nil || !match.Status.Terminal() {
+		return RunInfo{}, false
+	}
+	switch match.Status {
+	case StatusDead:
+		if match.ExitCode != nil || match.Signal != "" {
+			return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, SlotGroup: match.SlotGroup, ExitCode: match.ExitCode, Signal: match.Signal, DurationMS: match.DurationMS}, true
+		}
+	case StatusLost, StatusDirty:
+		return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, Error: match.Error, DurationMS: match.DurationMS}, true
+	}
+	return RunInfo{}, false
+}
+
+// waitRun polls a tag until its run reaches a terminal state. The full
+// registry is consulted once at the start; every tick afterwards reads only
+// the live set, the matched run's record by ID, and the O(1) enqueue
+// watermark, so the wait never rescans finished history per tick. A watermark
+// change means a run was enqueued after the last consult — it may already
+// have finished and retired between two polls, so that tick resolves the full
+// registry once.
 func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, error) {
 	if ctx == nil {
 		return RunInfo{}, errors.New("proc: wait context is required")
 	}
+	var match *record
+	var consultSeq uint64
+	err := withStateLock(stateDir, func() error {
+		if err := pruneStateLocked(stateDir); err != nil {
+			return err
+		}
+		records, err := readAllRecordsLocked(stateDir)
+		if err != nil {
+			return err
+		}
+		match, err = selectWaitMatch(records, tag, latest)
+		if err != nil {
+			return err
+		}
+		consultSeq, err = readQueueSequenceLocked(stateDir)
+		return err
+	})
+	if err != nil {
+		return RunInfo{}, err
+	}
+	if info, done := terminalWaitInfo(match); done {
+		return info, nil
+	}
+	lastMatchedRunID := ""
+	if match != nil {
+		lastMatchedRunID = match.RunID
+	}
 	ticker := time.NewTicker(admissionPollInterval)
 	defer ticker.Stop()
 	for {
-		var match *record
 		err := withStateLock(stateDir, func() error {
 			if err := pruneStateLocked(stateDir); err != nil {
 				return err
 			}
-			records, err := readRecordsLocked(stateDir)
+			seq, err := readQueueSequenceLocked(stateDir)
 			if err != nil {
 				return err
 			}
-			for i := range records {
-				matches := records[i].Tag == tag
-				if latest {
-					matches = records[i].LatestTag == tag
+			if seq != consultSeq {
+				consultSeq = seq
+				records, err := readAllRecordsLocked(stateDir)
+				if err != nil {
+					return err
 				}
-				if !matches {
-					continue
+				match, err = selectWaitMatch(records, tag, latest)
+				return err
+			}
+			live, err := readLiveRecordsLocked(stateDir)
+			if err != nil {
+				return err
+			}
+			match, err = selectWaitMatch(live, tag, latest)
+			if err != nil {
+				return err
+			}
+			if match == nil && lastMatchedRunID != "" {
+				rec, err := readRecordLocked(stateDir, lastMatchedRunID)
+				if err != nil && !os.IsNotExist(err) {
+					return err
 				}
-				if !latest && match != nil {
-					return fmt.Errorf("tag %q identifies more than one run", tag)
-				}
-				if match == nil || records[i].EnqueuedAt.After(match.EnqueuedAt) ||
-					(records[i].EnqueuedAt.Equal(match.EnqueuedAt) && records[i].RunID > match.RunID) {
-					copy := records[i]
-					match = &copy
+				if err == nil {
+					match = &rec
 				}
 			}
 			return nil
@@ -847,15 +1041,11 @@ func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, e
 		if err != nil {
 			return RunInfo{}, err
 		}
-		if match != nil && match.Status.Terminal() {
-			switch match.Status {
-			case StatusDead:
-				if match.ExitCode != nil || match.Signal != "" {
-					return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, SlotGroup: match.SlotGroup, ExitCode: match.ExitCode, Signal: match.Signal, DurationMS: match.DurationMS}, nil
-				}
-			case StatusLost, StatusDirty:
-				return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, Error: match.Error, DurationMS: match.DurationMS}, nil
-			}
+		if match != nil {
+			lastMatchedRunID = match.RunID
+		}
+		if info, done := terminalWaitInfo(match); done {
+			return info, nil
 		}
 		select {
 		case <-ctx.Done():
