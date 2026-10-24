@@ -24,6 +24,8 @@ import (
 	"github.com/kb-labs/clikit/proc"
 )
 
+var testIsolatedHome string
+
 func TestMain(m *testing.M) {
 	// Every package test and every runner subprocess inherits an isolated home
 	// and explicit fake vendor executables. Provider discovery can never fall
@@ -31,6 +33,13 @@ func TestMain(m *testing.M) {
 	home, err := os.MkdirTemp("", "kb-runner-tests-home-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	testIsolatedHome = filepath.Clean(home)
+	tmp := filepath.Join(home, "tmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		_ = os.RemoveAll(home)
 		os.Exit(2)
 	}
 	// Preserve Go's existing shared caches before changing HOME; otherwise a
@@ -52,9 +61,16 @@ func TestMain(m *testing.M) {
 	setTestEnv("GOMODCACHE", caches[1])
 	setTestEnv("GOCACHE", caches[2])
 	setTestEnv("HOME", home)
+	setTestEnv("TMPDIR", tmp)
 	setTestEnv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	setTestEnv("XDG_STATE_HOME", filepath.Join(home, ".state"))
-	for vendor, envName := range map[string]string{"codex": "CODEX_BIN", "claude": "CLAUDE_BIN"} {
+	seenBinaries := map[string]bool{}
+	for _, vendor := range vendors() {
+		spec := vendorRegistry[vendor]
+		if !spec.agent || seenBinaries[spec.binaryEnv] {
+			continue
+		}
+		seenBinaries[spec.binaryEnv] = true
 		fake := filepath.Join(home, "bin", vendor)
 		if err := os.MkdirAll(filepath.Dir(fake), 0o700); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -64,7 +80,7 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
-		setTestEnv(envName, fake)
+		setTestEnv(spec.binaryEnv, fake)
 	}
 	setTestEnv("PATH", filepath.Join(home, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	code := m.Run()

@@ -19,10 +19,17 @@ import (
 
 func TestProviderTestsUseOnlyTemporaryHomeAndExplicitExecutables(t *testing.T) {
 	home := os.Getenv("HOME")
-	if home == "" || !strings.HasPrefix(home, filepath.Clean(os.TempDir())+string(os.PathSeparator)) {
+	if home == "" || filepath.Clean(home) != testIsolatedHome {
 		t.Fatalf("test HOME is not isolated: %q", home)
 	}
-	for _, name := range []string{"CODEX_BIN", "CLAUDE_BIN"} {
+	seenBinaries := map[string]bool{}
+	for _, vendor := range vendors() {
+		spec := vendorRegistry[vendor]
+		if !spec.agent || seenBinaries[spec.binaryEnv] {
+			continue
+		}
+		seenBinaries[spec.binaryEnv] = true
+		name := spec.binaryEnv
 		path := os.Getenv(name)
 		if path == "" || !strings.HasPrefix(path, home+string(os.PathSeparator)) {
 			t.Fatalf("%s is not an explicit fake under temporary HOME: %q", name, path)

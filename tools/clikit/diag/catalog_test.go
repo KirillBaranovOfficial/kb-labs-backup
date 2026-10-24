@@ -48,7 +48,10 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 		if embedded, ok := LookupCatalog(entry.Code); ok {
 			embedded.TemplateParameters = nil
 			embedded.RequiredTemplateParameters = nil
-			if !reflect.DeepEqual(embedded, CatalogEntry(entry)) {
+			platformEntry := CatalogEntry(entry)
+			platformEntry.TemplateParameters = nil
+			platformEntry.RequiredTemplateParameters = nil
+			if !reflect.DeepEqual(embedded, platformEntry) {
 				t.Errorf("clikit metadata for %s differs from the platform catalog", entry.Code)
 			}
 		} else {
