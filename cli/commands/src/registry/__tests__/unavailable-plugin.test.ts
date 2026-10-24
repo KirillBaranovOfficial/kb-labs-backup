@@ -8,6 +8,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { openCatalog } from '@kb-labs/core-registry';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { DiscoveredPlugin } from '@kb-labs/plugin-contracts';
@@ -190,5 +191,6 @@ describe('failed enabled plugins', () => {
 });
 
 async function copyAnalyticsFixture(fixture: string, pluginDir: string): Promise<void> {
+  execFileSync(process.execPath, [path.join(fixture, 'build.mjs')], { cwd: fixture });
   await fs.cp(fixture, pluginDir, { recursive: true });
 }

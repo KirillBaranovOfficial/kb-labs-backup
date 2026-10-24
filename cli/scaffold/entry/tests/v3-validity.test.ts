@@ -6,7 +6,7 @@ import {
   isManifestV3,
   validateManifest,
   type ManifestV3,
-} from '@kb-labs/plugin-contracts';
+} from '@kb-labs/sdk/contracts';
 import type { RenderContext } from '@kb-labs/scaffold-contracts';
 
 const here = dirname(fileURLToPath(import.meta.url));

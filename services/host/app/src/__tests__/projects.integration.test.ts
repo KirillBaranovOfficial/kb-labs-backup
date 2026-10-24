@@ -80,6 +80,30 @@ async function configureInstalledPlatformDataRoot(platformRoot: string, stateDat
   await symlink(relative(join(platformRoot, ".kb"), stateDataRoot), join(platformRoot, ".kb", "data"), "dir");
 }
 
+async function installWorkspaceAdapters(
+  platformRoot: string,
+  workspaceRoot: string,
+  packageNames: readonly string[],
+): Promise<Record<string, unknown>> {
+  const installedPackageRoot = join(platformRoot, "node_modules", "@kb-labs");
+  await mkdir(installedPackageRoot, { recursive: true });
+  for (const packageName of packageNames) {
+    const adapterName = packageName.replace("@kb-labs/adapters-", "");
+    await symlink(
+      join(workspaceRoot, "adapters", adapterName),
+      join(installedPackageRoot, packageName.slice("@kb-labs/".length)),
+      "dir",
+    );
+  }
+  return Object.fromEntries(packageNames.map(packageName => [packageName, {
+    version: "2.120.1",
+    integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    resolvedPath: relative(platformRoot, join(platformRoot, "node_modules", packageName)),
+    source: "platform",
+    enabled: true,
+  }]));
+}
+
 describe("kb-host project routing", () => {
   let kbHome: string;
   let registry: IProjectRegistry;
@@ -202,6 +226,7 @@ describe("kb-host project routing", () => {
     };
     await writeFile(join(installedPlatformRoot, ".kb", "kb.config.json"), JSON.stringify({
       platform: {
+        deployment: { topology: "local" },
         adapters: installedAdapters,
         adapterOptions: {
           storage: { baseDir: "storage" },
@@ -213,24 +238,7 @@ describe("kb-host project routing", () => {
       },
     }));
     const packages = [...new Set(Object.values(installedAdapters).map((value) => value.split("/").slice(0, 2).join("/")))];
-    for (const packageName of packages) {
-      const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
-      await symlink(
-        packagePath,
-        join(installedPlatformRoot, "node_modules", packageName),
-        "dir",
-      );
-    }
-    const lockedAdapters = Object.fromEntries(packages.map((packageName) => {
-      const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
-      return [packageName, {
-        version: "2.120.1",
-        integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-        resolvedPath: relative(installedPlatformRoot, packagePath),
-        source: "platform",
-        enabled: true,
-      }];
-    }));
+    const lockedAdapters = await installWorkspaceAdapters(installedPlatformRoot, workspaceRoot, packages);
     await writeFile(join(installedPlatformRoot, ".kb", "marketplace.lock"), JSON.stringify({
       schema: "kb.marketplace/3",
       plugins: {},
@@ -403,6 +411,7 @@ describe("kb-host project routing", () => {
       };
       await writeFile(join(installedPlatformRoot, ".kb", "kb.config.json"), JSON.stringify({
         platform: {
+          deployment: { topology: "local" },
           adapters: installedAdapters,
           adapterOptions: {
             storage: { baseDir: "storage" },
@@ -414,16 +423,7 @@ describe("kb-host project routing", () => {
         },
       }));
       const packages = [...new Set(Object.values(installedAdapters).map((value) => value.split("/").slice(0, 2).join("/")))];
-      const lockedAdapters = Object.fromEntries(packages.map((packageName) => {
-        const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
-        return [packageName, {
-          version: "2.120.1",
-          integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-          resolvedPath: relative(installedPlatformRoot, packagePath),
-          source: "platform",
-          enabled: true,
-        }];
-      }));
+      const lockedAdapters = await installWorkspaceAdapters(installedPlatformRoot, workspaceRoot, packages);
       await writeFile(join(installedPlatformRoot, ".kb", "marketplace.lock"), JSON.stringify({
         schema: "kb.marketplace/3", plugins: {}, adapters: lockedAdapters,
       }));

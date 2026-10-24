@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AdapterUnavailableError,
   createProductErrorEnvelope,
   toErrorEnvelope,
   validateErrorEnvelope,
 } from '@kb-labs/core-platform';
+import { toErrorEnvelope as toPluginContractErrorEnvelope } from './index.js';
 import type { PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
 import {
   AbortError,
@@ -73,6 +75,13 @@ describe('core toErrorEnvelope for plugin errors', () => {
 
   it('delegates non-plugin errors to core-platform', () => {
     expect(toErrorEnvelope(new Error('boom')).code).toBe('KB_RUNTIME_UNEXPECTED');
+  });
+
+  it('preserves platform error identity through the plugin-contracts export', () => {
+    expect(toPluginContractErrorEnvelope(new AdapterUnavailableError('llm'))).toMatchObject({
+      code: 'KB_ADAPTER_NOT_CONFIGURED',
+      details: { service: 'llm' },
+    });
   });
 
   it('keeps a validated product plugin code and rejects a missing hint', () => {

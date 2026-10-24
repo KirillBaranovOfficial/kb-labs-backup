@@ -46,7 +46,8 @@ vi.mock('node:child_process', async (importOriginal) => ({
   }),
 }));
 
-vi.mock('node:fs', () => ({
+vi.mock('node:fs', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:fs')>(),
   mkdirSync: vi.fn(),
   mkdtempSync: vi.fn(() => '/tmp/kb-stage-verify'),
   readFileSync: vi.fn(() => Buffer.from('fake-tarball-bytes')),
