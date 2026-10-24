@@ -502,6 +502,40 @@
       ]
     },
     {
+      "code": "KB_RUNNER_ZAI_KEY_FILE_INVALID",
+      "area": "runtime",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 400,
+      "message": "The z.ai key file is missing, empty, unreadable, or accessible by other users.",
+      "hint": "Set KB_RUNNER_ZAI_KEY_FILE to a non-empty owner-only file with mode 0600, then run {binary} agent --help to see the required start flags.",
+      "environmentVariables": {
+        "keyFile": "KB_RUNNER_ZAI_KEY_FILE"
+      },
+      "structuredDetailFields": [
+        "keyFile"
+      ]
+    },
+    {
+      "code": "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE",
+      "area": "runtime",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 400,
+      "message": "The ZCode agent could not be started inside the required macOS sandbox.",
+      "hint": "Restore macOS sandbox-exec; if Command Line Tools are missing, run `xcode-select --install`. Then rerun {binary} agent start with the ZCode vendor.",
+      "templateParameters": [
+        "binary"
+      ],
+      "requiredTemplateParameters": [
+        "binary"
+      ]
+    },
+    {
       "code": "KB_CONFIG_SECRET_PLAINTEXT",
       "httpStatus": 400,
       "area": "config",

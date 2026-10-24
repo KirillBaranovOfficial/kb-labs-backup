@@ -37,6 +37,13 @@ func executeInvocation(invocation string, args []string, stdout, stderr io.Write
 	if len(args) > 0 && args[0] == "__keeper" {
 		return diag.ProcessExitStatus(proc.KeeperMain())
 	}
+	if len(args) > 0 && args[0] == "__agent_worker" {
+		code, err := agentStartCommand(root, args[1:], stdout, stderr)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+		}
+		return diag.ProcessExitStatus(code)
+	}
 	if command.HandleRootHelp(args, root, runnerUsage(), stdout) {
 		return diag.SuccessStatus()
 	}
@@ -107,6 +114,9 @@ var runnerCommands = []runnerCommand{
 	{name: "gc", execute: func(root runnerRoot, args []string, stdout, _ io.Writer) (int, error) {
 		return gcCommand(root, args, stdout)
 	}},
+	{name: "status", execute: statusCommand},
+	{name: "limits", execute: limitsCommand},
+	{name: "agent", execute: agentCommand},
 }
 
 func runnerUsage() string {
@@ -529,6 +539,11 @@ func gateCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int,
 }
 
 func waitCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
+	for _, arg := range args {
+		if arg == "--any" || arg == "--all" {
+			return agentWaitCommand(root, args, stdout, stderr)
+		}
+	}
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tag := fs.String("tag", "", "run tag to await")

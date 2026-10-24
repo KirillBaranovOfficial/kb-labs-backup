@@ -32,6 +32,7 @@ type entry struct {
 	StructuredDetailFields         []string                   `json:"structuredDetailFields"`
 	RequiredStructuredDetailFields []string                   `json:"requiredStructuredDetailFields"`
 	StructuredDetailSchemas        map[string]json.RawMessage `json:"structuredDetailSchemas"`
+	EnvironmentVariables           map[string]string          `json:"environmentVariables"`
 }
 
 func main() {
@@ -69,7 +70,11 @@ func run() diag.ExitStatus {
 		if item.HintWithoutCorrelationID != "" {
 			hintWithoutCorrelationID = fmt.Sprintf(", HintWithoutCorrelationID: %q", item.HintWithoutCorrelationID)
 		}
-		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RequiredStructuredDetailFields: %s, StructuredDetailSchemas: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringSliceLiteral(item.RequiredStructuredDetailFields), rawJSONMapLiteral(item.StructuredDetailSchemas), stringMapLiteral(item.RuntimeTemplateParameters))
+		environmentVariables := ""
+		if len(item.EnvironmentVariables) > 0 {
+			environmentVariables = ", EnvironmentVariables: " + stringMapLiteral(item.EnvironmentVariables)
+		}
+		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RequiredStructuredDetailFields: %s, StructuredDetailSchemas: %s, RuntimeTemplateParameters: %s%s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringSliceLiteral(item.RequiredStructuredDetailFields), rawJSONMapLiteral(item.StructuredDetailSchemas), stringMapLiteral(item.RuntimeTemplateParameters), environmentVariables)
 	}
 	_, _ = source.WriteString("}\n")
 	formatted, err := format.Source(source.Bytes())

@@ -24,6 +24,82 @@ import (
 	"github.com/kb-labs/clikit/proc"
 )
 
+var testIsolatedHome string
+
+func TestMain(m *testing.M) {
+	// Every package test and every runner subprocess inherits an isolated home
+	// and explicit fake vendor executables. Provider discovery can never fall
+	// through to the lead's installed binaries or credentials.
+	home, err := os.MkdirTemp("", "kb-runner-tests-home-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	testIsolatedHome = filepath.Clean(home)
+	tmp := filepath.Join(home, "tmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		_ = os.RemoveAll(home)
+		os.Exit(2)
+	}
+	// Preserve Go's existing shared caches before changing HOME; otherwise a
+	// test that builds the CLI would create a second module cache under the
+	// temporary home and attempt downloads.
+	cacheOutput, err := exec.Command("go", "env", "GOPATH", "GOMODCACHE", "GOCACHE").Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		_ = os.RemoveAll(home)
+		os.Exit(2)
+	}
+	caches := strings.Split(strings.TrimSpace(string(cacheOutput)), "\n")
+	if len(caches) != 3 {
+		fmt.Fprintln(os.Stderr, "go env returned an unexpected cache configuration")
+		_ = os.RemoveAll(home)
+		os.Exit(2)
+	}
+	setTestEnv("GOPATH", caches[0])
+	setTestEnv("GOMODCACHE", caches[1])
+	setTestEnv("GOCACHE", caches[2])
+	setTestEnv("HOME", home)
+	setTestEnv("TMPDIR", tmp)
+	setTestEnv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	setTestEnv("XDG_STATE_HOME", filepath.Join(home, ".state"))
+	seenBinaries := map[string]bool{}
+	for _, vendor := range vendors() {
+		spec := vendorRegistry[vendor]
+		if !spec.agent || seenBinaries[spec.binaryEnv] {
+			continue
+		}
+		seenBinaries[spec.binaryEnv] = true
+		fake := filepath.Join(home, "bin", vendor)
+		if err := os.MkdirAll(filepath.Dir(fake), 0o700); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 97\n"), 0o700); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		setTestEnv(spec.binaryEnv, fake)
+	}
+	setTestEnv("PATH", filepath.Join(home, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	code := m.Run()
+	if err := os.RemoveAll(home); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		if code == 0 {
+			code = 2
+		}
+	}
+	os.Exit(code)
+}
+
+func setTestEnv(key, value string) {
+	if err := os.Setenv(key, value); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+}
+
 // case: S-237.54
 func TestRootHelpSpellingsReturnUsageSuccessfully(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}} {
@@ -92,6 +168,11 @@ func TestNextHintQuotesInvokedExecutablePath(t *testing.T) {
 // case: S-237.54
 func TestEveryNextHintPathNamesRegisteredCommand(t *testing.T) {
 	const invokedRunner = "runner-from-invocation"
+	fakeCodex := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(fakeCodex, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_BIN", fakeCodex)
 	registered := make(map[string]bool, len(runnerCommands))
 	for _, entry := range runnerCommands {
 		if registered[entry.name] {
@@ -112,6 +193,10 @@ func TestEveryNextHintPathNamesRegisteredCommand(t *testing.T) {
 	outputDir := t.TempDir()
 	invocations := make([]invocation, 0, len(runnerCommands)+40)
 	for _, entry := range runnerCommands {
+		if entry.name == "status" || entry.name == "limits" {
+			invocations = append(invocations, invocation{name: entry.name + " help", args: []string{entry.name, "--help"}})
+			continue
+		}
 		invocations = append(invocations, invocation{name: entry.name, args: []string{entry.name}})
 	}
 	invocations = append(invocations,
@@ -159,6 +244,14 @@ func TestEveryNextHintPathNamesRegisteredCommand(t *testing.T) {
 	)
 	for _, test := range invocations {
 		t.Run(test.name, func(t *testing.T) {
+			if strings.HasSuffix(test.name, " help") {
+				var stdout, stderr bytes.Buffer
+				status := executeInvocation(invokedRunner, test.args, &stdout, &stderr)
+				if status.Code() != 0 || !strings.Contains(stdout.String(), "Usage:") || stderr.Len() != 0 {
+					t.Fatalf("help output: exit=%d stdout=%s stderr=%s", status.Code(), stdout.String(), stderr.String())
+				}
+				return
+			}
 			if test.runID != "" {
 				t.Setenv("KBLABS_CLIPROC_RUN", test.runID)
 				t.Setenv("KBLABS_CLIPROC_STATE", test.runState)

@@ -30,6 +30,7 @@ type CatalogEntry struct {
 	RequiredStructuredDetailFields []string                   `json:"requiredStructuredDetailFields,omitempty"`
 	StructuredDetailSchemas        map[string]json.RawMessage `json:"structuredDetailSchemas,omitempty"`
 	RuntimeTemplateParameters      map[string]string          `json:"runtimeTemplateParameters,omitempty"`
+	EnvironmentVariables           map[string]string          `json:"environmentVariables,omitempty"`
 }
 
 // LookupCatalog returns platform metadata for a typed error code.

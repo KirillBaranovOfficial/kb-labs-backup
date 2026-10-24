@@ -65,7 +65,9 @@ type Config struct {
 	Command     []string
 	Dir         string
 	Env         []string
-	Keep        []string
+	// CleanEnv makes Env the complete environment for both the keeper and its command.
+	CleanEnv bool
+	Keep     []string
 }
 
 type Event struct {
@@ -359,7 +361,8 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 		return nil, errors.Join(fmt.Errorf("proc: start canceled: %w", err), readReady.Close(), writeReady.Close())
 	}
 	cmd := exec.Command(cfg.HelperPath, "__keeper")
-	cmd.Env = append(filteredEnv(os.Environ()), stateEnv+"="+base64.RawStdEncoding.EncodeToString(encoded), readyEnv+"=3")
+	keeperEnv := environmentFor(cfg, os.Environ())
+	cmd.Env = append(keeperEnv, stateEnv+"="+base64.RawStdEncoding.EncodeToString(encoded), readyEnv+"=3")
 	cmd.ExtraFiles = []*os.File{writeReady}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -849,6 +852,13 @@ func filteredEnv(env []string) []string {
 		out = append(out, item)
 	}
 	return out
+}
+
+func environmentFor(cfg Config, parent []string) []string {
+	if cfg.CleanEnv {
+		return append([]string(nil), cfg.Env...)
+	}
+	return append(filteredEnv(parent), cfg.Env...)
 }
 
 func decodeReady(r *os.File) (record, error) {
