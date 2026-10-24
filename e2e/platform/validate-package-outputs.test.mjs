@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { buildCommand, failureMessage, inspectPackedFixture, validatePackageContents, validatePackedSource, validateTarballAgainstWorkspace, validateReleaseBuildOutputs, validateWorkspacePackageContents } from './validate-package-outputs.mjs';
-import registryManifest from '../platform/registry-manifest.json' with { type: 'json' };
-import { readPlatformReleaseConfig, releaseArtifactPackageNames } from '../../tools/kb-create/scripts/platform-release-config.mjs';
+import registryManifest from './registry-manifest.json' with { type: 'json' };
+import { readPlatformReleaseConfig, releaseArtifactPackageNames } from 'kb-create/scripts/platform-release-config.mjs';
 
 test('rejects a packed manifest that diverges from the source package manifest', () => {
   const source = {
@@ -288,14 +288,14 @@ test('release build preflight reports a missing dist output and exact package bu
 // case: S-262.1
 test('devkit pack-extra build task emits the package-declared adapter manifest', () => {
   const fixture = new URL('../fixtures/adapters/llm-deterministic/', import.meta.url);
-  execFileSync(process.execPath, [new URL('./build-pack-extra.mjs', import.meta.url).pathname], { cwd: fixture });
+  execFileSync(process.execPath, [new URL('../scripts/build-pack-extra.mjs', import.meta.url).pathname], { cwd: fixture });
   const output = JSON.parse(readFileSync(new URL('../fixtures/adapters/llm-deterministic/dist/manifest.json', import.meta.url), 'utf8'));
   assert.equal(output.id, 'e2e-llm-deterministic');
   assert.equal(output.implements, 'ILLM');
 });
 
 test('every packed journey fixture is classified by the product plugin or adapter loader', async () => {
-  const extras = JSON.parse(readFileSync(new URL('./pack-extras.json', import.meta.url), 'utf8'));
+  const extras = JSON.parse(readFileSync(new URL('../scripts/pack-extras.json', import.meta.url), 'utf8'));
   for (const { directory } of extras) {
     const result = await inspectPackedFixture(new URL(`../../${directory}/`, import.meta.url).pathname.replace(/\/$/, ''));
     assert.ok(['plugin', 'adapter'].includes(result.kind), `${directory}: ${result.kind} ${result.failures.join('; ')}`);

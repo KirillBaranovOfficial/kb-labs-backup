@@ -104,6 +104,11 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		t.Fatal(err)
 	}
 	home, root := t.TempDir(), t.TempDir()
+	t.Cleanup(func() {
+		if err := makeTempTreeWritable(home); err != nil {
+			t.Logf("make isolated HOME removable: %v", err)
+		}
+	})
 	kbHome := filepath.Join(home, ".kb")
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", kbHome)
@@ -985,6 +990,18 @@ func TestSecuredGatewayFixtureReportsMissingBuildArtifact(t *testing.T) {
 	if got := missingSecuredGatewayFixtureModule(moduleFailure + "\n    at file:///fixture.ts"); got != moduleFailure {
 		t.Fatalf("missing module classifier = %q, want %q", got, moduleFailure)
 	}
+}
+
+func makeTempTreeWritable(root string) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.Chmod(path, 0o700)
+		}
+		return nil
+	})
 }
 
 const securedGatewayFixtureBuildCommand = "corepack pnpm -r --filter '@kb-labs/gateway-app...' --filter '@kb-labs/host-app...' --filter '@kb-labs/core-project-registry...' --workspace-concurrency=2 build"

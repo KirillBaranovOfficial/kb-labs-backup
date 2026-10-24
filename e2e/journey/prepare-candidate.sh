@@ -14,7 +14,7 @@ COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 )
 
 node "$ROOT/e2e/scripts/build-pack-extras.mjs" "$ROOT"
-node "$ROOT/e2e/scripts/validate-package-outputs.mjs" --build-outputs "$ROOT"
+node "$ROOT/e2e/platform/validate-package-outputs.mjs" --build-outputs "$ROOT"
 
 bash "$ROOT/e2e/journey/stage-runner-inputs.sh"
 
@@ -27,7 +27,7 @@ if [[ "${KB_JOURNEY_PACKAGES_READY:-0}" != "1" ]]; then
   "$ROOT/e2e/scripts/pack-all.sh" "$PACKAGES"
 fi
 
-node "$ROOT/e2e/scripts/validate-package-outputs.mjs" "$PACKAGES" "$ROOT"
+node "$ROOT/e2e/platform/validate-package-outputs.mjs" "$PACKAGES" "$ROOT"
 
 NATIVE_GOOS=""
 NATIVE_GOARCH=""

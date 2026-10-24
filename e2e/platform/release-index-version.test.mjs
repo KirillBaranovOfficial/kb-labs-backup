@@ -7,7 +7,7 @@ import { stablePlatformVersion } from './release-index-version.mjs';
 import {
   readPlatformReleaseConfig,
   releaseArtifactPackageNames,
-} from '../../tools/kb-create/scripts/platform-release-config.mjs';
+} from 'kb-create/scripts/platform-release-config.mjs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
 
 test('reads stable platform version from a sealed V2 release index', () => {

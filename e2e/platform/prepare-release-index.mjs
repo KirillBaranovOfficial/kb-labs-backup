@@ -10,8 +10,8 @@ import { join, resolve } from 'node:path';
 import { clearGeneratedReleasePackages, readPackedPackageManifests } from './release-index-package-stage.mjs';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
-import { invokePackageProvenanceOwner } from './package-provenance.mjs';
-import { readPlatformReleaseConfig, releaseArtifactPackageNames, shippedPlatformPackageSet } from '../../tools/kb-create/scripts/platform-release-config.mjs';
+import { invokePackageProvenanceOwner } from 'kb-create/scripts/package-provenance.mjs';
+import { readPlatformReleaseConfig, releaseArtifactPackageNames, shippedPlatformPackageSet } from 'kb-create/scripts/platform-release-config.mjs';
 
 const args = process.argv.slice(2);
 const value = name => {

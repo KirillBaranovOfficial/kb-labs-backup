@@ -27,6 +27,12 @@ type PackageResult struct {
 // RunAll runs all rules from the registry against all packages in parallel.
 // Circular detection runs once on the full graph and is merged in.
 func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registry, only []string, progress func(ProgressEvent)) map[string]PackageResult {
+	for _, rule := range registry.All() {
+		if aware, ok := rule.(interface{ SetWorkspace(*workspace.Workspace) }); ok {
+			aware.SetWorkspace(ws)
+		}
+	}
+
 	onlySet := make(map[string]bool, len(only))
 	for _, name := range only {
 		onlySet[name] = true

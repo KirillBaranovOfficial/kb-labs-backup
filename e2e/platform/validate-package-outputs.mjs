@@ -5,8 +5,8 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import registryManifest from '../platform/registry-manifest.json' with { type: 'json' };
-import { readPlatformReleaseConfig, releaseArtifactPackageNames } from '../../tools/kb-create/scripts/platform-release-config.mjs';
+import registryManifest from './registry-manifest.json' with { type: 'json' };
+import { readPlatformReleaseConfig, releaseArtifactPackageNames } from 'kb-create/scripts/platform-release-config.mjs';
 
 function releasePlatformMembers(workspaceRoot) {
   return readPlatformReleaseConfig(join(workspaceRoot, 'tools/kb-create/config/platform-release.jsonc')).platformMembers;
@@ -176,8 +176,8 @@ export async function inspectPackedFixture(sourceDirectory) {
     let discovery;
     let platform;
     try {
-      discovery = await import('../../core/discovery/dist/index.js');
-      platform = await import('../../core/platform/dist/index.js');
+      discovery = await import('@kb-labs/core-discovery');
+      platform = await import('@kb-labs/core-platform');
     } catch (error) {
       return { packageName: basename(packageRoot), kind: 'unknown', failures: [
         `product discovery could not be loaded from the workspace build: ${error.message}; ` +

@@ -11,7 +11,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -104,7 +104,7 @@ test('candidate lock check refuses stale manifests without rewriting the lockfil
   const env = {
     ...process.env,
     HOME: home,
-    COREPACK_HOME: join(home, '.cache/node/corepack'),
+    COREPACK_HOME: process.env.COREPACK_HOME ?? join(homedir(), '.cache/node/corepack'),
     npm_config_ignore_scripts: 'true',
   };
   for (const key of ['KB_PLATFORM_ROOT', 'KB_HOME', 'KB_NET_OFFSET', 'GOFLAGS', 'CI', 'npm_config_frozen_lockfile']) {

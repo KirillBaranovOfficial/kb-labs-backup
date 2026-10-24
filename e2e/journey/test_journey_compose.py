@@ -73,7 +73,7 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
                 ["node", "--input-type=module", "-e", """
 import fs from 'node:fs';
 import { validateProductConfig } from './core/config/dist/index.js';
-import { validateMarketplaceLock } from './core/discovery/dist/index.js';
+import { validateMarketplaceLock } from '@kb-labs/core-discovery';
 const root = process.argv[1];
 const config = JSON.parse(fs.readFileSync(`${root}/.kb/kb.config.jsonc`, 'utf8'));
 const lock = JSON.parse(fs.readFileSync(`${root}/.kb/marketplace.lock`, 'utf8'));

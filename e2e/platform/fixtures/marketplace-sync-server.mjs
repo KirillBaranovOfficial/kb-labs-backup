@@ -1,6 +1,6 @@
-import { createContextLogger } from '../../../core/platform/dist/index.js';
-import { createServer } from '../../../services/marketplace/api/dist/index.js';
-import { MarketplaceService } from '../../../services/marketplace/core/dist/index.js';
+import { createContextLogger } from '@kb-labs/core-platform';
+import { createServer } from '@kb-labs/marketplace-api';
+import { MarketplaceService } from '@kb-labs/marketplace-core';
 
 const root = process.argv[2];
 if (!root) {

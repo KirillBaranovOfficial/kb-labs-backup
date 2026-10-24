@@ -21,6 +21,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/core-config": "workspace:*",
     "@kb-labs/core-extension-store": "workspace:*",
     "@kb-labs/marketplace-api": "workspace:*",

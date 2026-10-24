@@ -34,6 +34,7 @@
     "shiki": "^4.0.2"
   },
   "devDependencies": {
+    "@kb-labs/plugin-runtime": "workspace:*",
     "@kb-labs/web-config": "workspace:*",
     "@types/node": "^24.3.3",
     "@types/react": "^19.0.0",

@@ -17,6 +17,7 @@ type Package struct {
 	Language    string // typescript, go
 	RelPath     string // relative to workspace root
 	BuildTarget bool   // whether the resolved devkit task graph defines a build task
+	PnpmMember  bool   // whether pnpm-workspace.yaml declares this package
 }
 
 // Workspace holds all discovered packages and the root path.

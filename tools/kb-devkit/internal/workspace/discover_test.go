@@ -260,6 +260,12 @@ func TestCategoryPatternsDiscoverNonPnpmPackagesAndResolveBuildTask(t *testing.T
 	if !ok || fixture.Category != "e2e-pack-extra" || !fixture.BuildTarget {
 		t.Fatalf("fixture graph entry = (%+v, %v), want category and resolved build task", fixture, ok)
 	}
+	if fixture.PnpmMember {
+		t.Fatalf("fixture package = %+v, category-discovered fixture must not be a pnpm member", fixture)
+	}
+	if library, ok := ws.PackageByPath(filepath.Join(root, "packages", "library")); !ok || !library.PnpmMember {
+		t.Fatalf("workspace package = (%+v, %v), want pnpm membership", library, ok)
+	}
 	cfg.Tasks["build"] = config.TaskConfig{{Categories: []string{"library"}, Command: "tsup"}}
 	withoutTarget, err := New(root, cfg)
 	if err != nil {

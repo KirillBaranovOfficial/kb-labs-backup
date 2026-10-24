@@ -39,30 +39,6 @@
       "@kb-labs/ai-review-provider-types/*": [
         "../kb-labs-ai-review/packages/providers/types/src/*"
       ],
-      "@kb-labs/analytics-adapters": [
-        "../kb-labs-analytics/packages/analytics-adapters/src/index.ts"
-      ],
-      "@kb-labs/analytics-adapters/*": [
-        "../kb-labs-analytics/packages/analytics-adapters/src/*"
-      ],
-      "@kb-labs/analytics-cli": [
-        "../kb-labs-analytics/packages/analytics-cli/src/index.ts"
-      ],
-      "@kb-labs/analytics-cli/*": [
-        "../kb-labs-analytics/packages/analytics-cli/src/*"
-      ],
-      "@kb-labs/analytics-core": [
-        "../kb-labs-analytics/packages/analytics-core/src/index.ts"
-      ],
-      "@kb-labs/analytics-core/*": [
-        "../kb-labs-analytics/packages/analytics-core/src/*"
-      ],
-      "@kb-labs/analytics-sdk-node": [
-        "../kb-labs-analytics/packages/analytics-sdk-node/src/index.ts"
-      ],
-      "@kb-labs/analytics-sdk-node/*": [
-        "../kb-labs-analytics/packages/analytics-sdk-node/src/*"
-      ],
       "@kb-labs/rest-api-contracts": [
         "../kb-labs-rest-api/packages/api-contracts/src/index.ts"
       ],

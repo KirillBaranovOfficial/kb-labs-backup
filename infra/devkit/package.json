@@ -54,6 +54,7 @@
     "./bin/devkit-paths.mjs": "./bin/devkit-paths.mjs",
     "./bin/devkit-tsup-external.mjs": "./bin/devkit-tsup-external.mjs",
     "./tsup/external.mjs": "./tsup/external.mjs",
+    "./tsup/emit-manifest-json.mjs": "./tsup/emit-manifest-json.mjs",
     "./tsup/external": "./tsup/external.mjs",
     "./tsup/external-sync.mjs": "./tsup/external-sync.mjs",
     "./tsup/external-sync": "./tsup/external-sync.mjs",

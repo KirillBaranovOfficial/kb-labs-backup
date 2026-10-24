@@ -23,6 +23,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@ant-design/charts": "^2.6.6",
     "@ant-design/icons": "^5.4.0",
     "@ant-design/plots": "^2.6.6",

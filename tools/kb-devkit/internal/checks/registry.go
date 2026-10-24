@@ -94,7 +94,7 @@ func (r *Registry) RulesFor(preset config.Preset) []Rule {
 			continue
 		}
 		if preset.Language == "go" {
-			if rule.Name() == "structure" {
+			if rule.Name() == "structure" || rule.Name() == "deps" {
 				result = append(result, rule)
 			}
 			continue

@@ -8,7 +8,6 @@ workspace:
   exclude:
     - plugins/fixtures/*   # test fixtures — not real packages, no build/lint/test tasks
     - templates/*          # scaffold templates — not compiled, only copied to new projects
-    - e2e/shared           # shared fixtures package — no runnable tasks, just TS sources
     - e2e/tests            # legacy monolithic e2e bundle — superseded by per-domain packages
   categories:
     # Plugin E2E suites — the per-plugin test matrix. Each domain's SUBJECT is a
@@ -29,20 +28,40 @@ workspace:
     # Candidate-pack extras are package fixtures, not production libraries.
     # They need valid package identities for packing but do not carry a
     # publishable Node library's scripts, tsconfig, tsup, lint, or source layout.
-    fixture:
+    # The adapter fixture also owns node:test files, so it gets its own
+    # category for the test task; both share the fixture preset and build.
+    fixture-adapter:
       match:
         - "e2e/fixtures/adapters/*"
+      language: javascript
+      preset: candidate-fixture
+
+    fixture:
+      match:
         - "e2e/journey/fixtures/*"
       language: javascript
       preset: candidate-fixture
 
-    # Infrastructure E2E suites — one package per domain, each runs `playwright
-    # test`. Subject is the platform/gateway/services layer, not a single plugin.
-    # Same preset + the same workspace:* --affected tracking.
+    e2e-node-tests:
+      match:
+        - "e2e/shared"
+        - "e2e/delivery"
+      language: javascript
+      preset: e2e-node-tests
+
+    # The platform package owns node:test files as well as the live Playwright
+    # entrypoint, so it has its own category and participates in both tasks.
+    e2e-platform:
+      match:
+        - "e2e/platform"
+      language: javascript
+      preset: e2e-node-tests
+
+    # Infrastructure E2E suites — Playwright tasks run only through `e2e`,
+    # which requires the platform services to be running.
     e2e-suite:
       match:
         - "e2e/services"
-        - "e2e/platform"
         - "e2e/gateway"
         - "e2e/marketplace-registry"
         - "e2e/studio"
@@ -123,6 +142,13 @@ workspace:
       language: typescript
       preset: site
 
+    site-pkg:
+      match:
+        - "sites/*/apps/*"
+        - "sites/*/packages/*"
+      language: typescript
+      preset: site-pkg
+
     go-binary:
       match:
         - "tools/clikit"
@@ -148,6 +174,18 @@ presets:
     package_json:
       required_scripts:
         - e2e
+      required_fields:
+        - name
+        - version
+    dependencies:
+      check_links: false
+      check_circular: false
+
+  e2e-node-tests:
+    language: javascript
+    package_json:
+      required_scripts:
+        - test
       required_fields:
         - name
         - version
@@ -349,6 +387,17 @@ presets:
       check_links: false
       check_circular: false
 
+  site-pkg:
+    extends: backend-construction-boundary
+    language: typescript
+    package_json:
+      required_fields:
+        - name
+        - version
+    dependencies:
+      check_links: false
+      check_circular: false
+
   go-binary:
     language: go
     structure:
@@ -493,7 +542,7 @@ tasks:
         - "^build"
 
     - categories: [plugin-entry]
-      command: pnpm build
+      command: pnpm run build
       inputs:
         - "src/**"
         - "tsup.config.ts"
@@ -507,7 +556,7 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [fixture]
+    - categories: [fixture, fixture-adapter]
       command: node ../../../scripts/build-pack-extra.mjs
       inputs:
         - "manifest.js"
@@ -531,7 +580,7 @@ tasks:
         - "^build"   # deps' build must finish first
 
     - categories: [spa]
-      command: pnpm build
+      command: pnpm run build
       inputs:
         - "src/**"
         - "public/**"
@@ -564,7 +613,7 @@ tasks:
         - "kb-runner"
 
     - categories: [site]
-      command: pnpm build
+      command: pnpm run build
       inputs:
         - "app/**"
         - "components/**"
@@ -580,10 +629,11 @@ tasks:
         - "^build"   # wait for ts-lib deps (e.g. @kb-labs/sdk)
 
     - categories: [site-pkg]
-      command: tsc --noEmit
+      command: pnpm run build
       inputs:
         - "src/**"
         - "tsconfig*.json"
+        - "package.json"
         - "^dist/**"
       outputs: []
       deps:
@@ -606,7 +656,7 @@ tasks:
       outputs: []
 
     - categories: [site]
-      command: pnpm lint
+      command: pnpm run lint
       inputs:
         - "app/**"
         - "components/**"
@@ -633,7 +683,7 @@ tasks:
         - "^build"   # needs deps' dist/**/*.d.ts
 
     - categories: [site]
-      command: pnpm typecheck
+      command: pnpm run typecheck
       inputs:
         - "app/**"
         - "components/**"
@@ -667,6 +717,20 @@ tasks:
   # Affected only:
   #   kb-devkit run e2e --affected
   test:
+    - categories: [e2e-node-tests, e2e-platform]
+      command: pnpm run test
+      inputs:
+        - "**/*.test.mjs"
+        - "package.json"
+      outputs: []
+
+    - categories: [fixture-adapter]
+      command: pnpm run test
+      inputs:
+        - "*.test.js"
+        - "package.json"
+      outputs: []
+
     - categories: [ts-lib, ts-app]
       command: vitest run --passWithNoTests
       inputs:
@@ -732,10 +796,10 @@ tasks:
       cache: false
 
   e2e:
-    # Both the infrastructure matrix (e2e-suite) and the per-plugin matrix
-    # (plugin-e2e-suite) run the same `pnpm run e2e`. `--affected` then scopes
-    # to whichever suites' workspace deps changed.
-    - categories: [e2e-suite, plugin-e2e-suite]
+    # The infrastructure matrix (including e2e-platform's node-test category)
+    # and per-plugin matrix run the same `pnpm run e2e`. `--affected` scopes to
+    # whichever suites' workspace deps changed.
+    - categories: [e2e-suite, e2e-platform, plugin-e2e-suite]
       command: pnpm run e2e
       inputs:
         - "specs/**"
@@ -778,7 +842,12 @@ custom_checks:
     scope: workspace
 
   - name: repository-script-tests
-    run: env -u KB_DEVKIT_MODE node --test "scripts/**/*.test.mjs" "sites/web/apps/docs/scripts/**/*.test.mjs" "e2e/scripts/test-*.mjs" "e2e/delivery/scripts/**/*.test.mjs" 1>&2 && TMPDIR=/tmp env -u KB_DEVKIT_MODE python3 scripts/local-gate.test.py 1>&2
+    run: env -u KB_DEVKIT_MODE node --test "scripts/**/*.test.mjs" "sites/web/apps/docs/scripts/**/*.test.mjs" "e2e/delivery/scripts/**/*.test.mjs" 1>&2 && TMPDIR=/tmp env -u KB_DEVKIT_MODE python3 scripts/local-gate.test.py 1>&2
+    on: [check]
+    scope: workspace
+
+  - name: e2e-node-test-coverage
+    run: node scripts/checks/e2e-node-tests.mjs
     on: [check]
     scope: workspace
 

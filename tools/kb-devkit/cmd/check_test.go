@@ -45,15 +45,16 @@ func TestCandidateFixturePackagesUseFixturePreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discover workspace: %v", err)
 	}
+	fixtureCategories := map[string]bool{"fixture": true, "fixture-adapter": true}
 	fixtures := 0
 	for _, pkg := range ws.Packages {
-		if pkg.Category == "fixture" {
+		if fixtureCategories[pkg.Category] {
 			fixtures++
 			if pkg.Preset != "candidate-fixture" {
 				t.Errorf("fixture package %s uses preset %q, want candidate-fixture", pkg.Name, pkg.Preset)
 			}
 		}
-		if pkg.Preset == "candidate-fixture" && pkg.Category != "fixture" {
+		if pkg.Preset == "candidate-fixture" && !fixtureCategories[pkg.Category] {
 			t.Errorf("non-fixture package %s uses candidate-fixture preset", pkg.Name)
 		}
 	}
