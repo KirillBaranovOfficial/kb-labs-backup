@@ -127,6 +127,17 @@ func TestControlFileIsPrivateAndDescribesTheServer(t *testing.T) {
 	}
 }
 
+func TestConnectDoesNotImposeAWholeOperationTimeout(t *testing.T) {
+	_, _, state := startServer(t)
+	client, err := Connect(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.HTTP.Timeout != 0 {
+		t.Fatalf("control HTTP timeout = %s, want no client deadline so request context owns operation lifetime", client.HTTP.Timeout)
+	}
+}
+
 func TestTokenRejection(t *testing.T) {
 	server, runner, _ := startServer(t)
 	cases := map[string]struct {

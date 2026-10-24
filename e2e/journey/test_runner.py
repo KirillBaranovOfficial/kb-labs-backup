@@ -18,6 +18,7 @@ import jsonl
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
+from installer_case_steps import commit_marketplace_install_record
 from runner import REGISTRY, marketplace_install_flags
 
 
@@ -26,6 +27,15 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
         env = {"HOME": "/tmp/kb-journey-test-home"}
 
         self.assertEqual(marketplace_install_flags(env), ["--marketplace-npm-url", REGISTRY])
+
+    def test_clean_install_requires_the_marketplace_commit_receipt(self):
+        self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [
+            {"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+        ]}))
+        self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": []}))
+        self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": [
+            {"spec": "@kb-labs/commit", "id": "@kb-labs/other", "primaryKind": "plugin"},
+        ]}))
 
 
 def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:
@@ -600,15 +610,18 @@ thread.join()
         runtime_manifest = platform_current / "node_modules" / "@kb-labs" / "plugin-runtime" / "package.json"
         runtime_manifest.parent.mkdir(parents=True)
         shutil.copyfile(Path(__file__).resolve().parents[2] / "core/plugin-runtime/package.json", runtime_manifest)
-        receipt = platform_current / ".kb" / "v2" / "receipt.json"
-        receipt.parent.mkdir(parents=True)
-        receipt.write_text(json.dumps({"id": "receipt-main",
-                                       "plan": {"request": {},
-                                                "serviceGraph": {"platformVersion": "2.120.1"},
-                                                "artifacts": [{"id": "fixture-package", "kind": "plugin",
-                                                               "package": "@kb-labs/fixture-package",
-                                                               "version": "1.0.0"}]}}),
-                           encoding="utf-8")
+        receipt_path = platform_current / ".kb" / "v2" / "receipt.json"
+        receipt_path.parent.mkdir(parents=True)
+        install_receipt = {
+            "id": "receipt-main",
+            "plan": {"request": {"scenarioId": "commit"},
+                     "serviceGraph": {"platformVersion": "2.120.1"},
+                     "artifacts": [{"id": "fixture-package", "kind": "plugin",
+                                    "package": "@kb-labs/fixture-package", "version": "1.0.0"}]},
+            "marketplaceInstalls": [{"id": "@kb-labs/commit", "spec": "@kb-labs/commit",
+                                     "version": "1.0.0", "source": "registry"}],
+        }
+        receipt_path.write_text(json.dumps(install_receipt), encoding="utf-8")
         selection = selection if selection is not None else "PC-001.2,PC-002.3,PC-002.8"
         if selected_owners is None:
             selected_owners = {
@@ -718,9 +731,8 @@ thread.join()
                 output_path.write_text(json.dumps(payload), encoding="utf-8")
                 output = "service runner passed"
             elif "install" in argv and "--json" in argv:
-                result_record = {"ok": True, "data": {"receipt": {"id": "receipt-main", "plan": {
-                    "serviceGraph": {"platformVersion": "2.120.1"}, "artifacts": [{"id": "fixture"}],
-                }}, "firstAdmin": {"email": "journey-admin@example.test",
+                result_record = {"ok": True, "data": {"receipt": install_receipt,
+                    "firstAdmin": {"email": "journey-admin@example.test",
                     "password": "JourneyPassw0rd!", "state": "disclosed"}},
                     "meta": {"stream": {"result": True}}}
                 terminal = {"ok": True, "data": None, "meta": {"stream": {

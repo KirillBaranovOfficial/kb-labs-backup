@@ -223,4 +223,23 @@ describe('Gateway UX boundary', () => {
     expect(stream.body).toBe('stream response');
     expect(stream.headers['content-type']).toContain('text/plain');
   });
+
+  it('logs an aborted client request as a warning', async () => {
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as unknown as ILogger;
+    registerGatewayUxBoundary(app, logger);
+    app.get('/aborted-request', async () => { throw new DOMException('Request aborted', 'AbortError'); });
+    await app.ready();
+
+    const response = await app.inject({ method: 'GET', url: '/aborted-request' });
+
+    expect(response.statusCode).toBe(499);
+    expect(response.json().error).toMatchObject({ code: 'KB_RUNTIME_REQUEST_CANCELLED', severity: 'warning' });
+    expect(logger.warn).toHaveBeenCalledWith('HTTP route failed', expect.any(DOMException), expect.objectContaining({
+      statusCode: 499,
+      errorCode: 'KB_RUNTIME_REQUEST_CANCELLED',
+    }));
+    expect(logger.error).not.toHaveBeenCalled();
+  });
 });
