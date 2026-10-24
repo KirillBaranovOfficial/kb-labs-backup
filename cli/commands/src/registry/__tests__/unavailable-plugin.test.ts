@@ -8,8 +8,9 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openCatalog } from '@kb-labs/core-registry';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import type { DiscoveredPlugin } from '@kb-labs/core-discovery';
+import type { DiscoveredPlugin } from '@kb-labs/plugin-contracts';
 
 describe('failed enabled plugins', () => {
   // case: S-203.21
@@ -26,7 +27,7 @@ describe('failed enabled plugins', () => {
       });
       await writeMarketplaceLock(tmpDir, lock);
 
-      const discovery = await discoverManifestsDetailed(tmpDir, { platformRoot: tmpDir, projectRoot: tmpDir });
+      const discovery = await discoverManifestsDetailed(await openCatalog({ platformRoot: tmpDir, projectRoot: tmpDir }));
       const registry = createRegistry();
       await registerManifests(discovery.results, registry);
 
@@ -52,7 +53,7 @@ describe('failed enabled plugins', () => {
       });
       await writeMarketplaceLock(tmpDir, lock);
 
-      const discovery = await discoverManifestsDetailed(tmpDir, { platformRoot: tmpDir, projectRoot: tmpDir });
+      const discovery = await discoverManifestsDetailed(await openCatalog({ platformRoot: tmpDir, projectRoot: tmpDir }));
       expect(discovery.diagnostics).toEqual(expect.arrayContaining([
         expect.objectContaining({ code: 'COMMAND_HANDLER_MISSING', context: expect.objectContaining({ pluginId: '@kb-labs/e2e-analytics-emitter' }) }),
       ]));
@@ -89,7 +90,7 @@ describe('failed enabled plugins', () => {
       });
       await writeMarketplaceLock(tmpDir, lock);
 
-      const discovery = await discoverManifestsDetailed(tmpDir, { platformRoot: tmpDir, projectRoot: tmpDir });
+      const discovery = await discoverManifestsDetailed(await openCatalog({ platformRoot: tmpDir, projectRoot: tmpDir }));
       expect(discovery.diagnostics).toEqual(expect.arrayContaining([
         expect.objectContaining({ code: 'COMMAND_SCHEMA_INVALID', context: expect.objectContaining({ pluginId: '@kb-labs/e2e-analytics-emitter' }) }),
       ]));

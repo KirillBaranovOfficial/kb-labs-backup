@@ -7,11 +7,13 @@ import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { ADAPTER_DEFAULTS } from '@kb-labs/core-platform';
 import { createProjectRegistry, resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { writeMarketplaceLock, createInstallOwnedRelativePath } from '@kb-labs/core-discovery';
-import { adapterBind } from '../../commands/system/adapter/bind.js';
-import { adapterList } from '../../commands/system/adapter/list.js';
-import { adapterUnbind } from '../../commands/system/adapter/unbind.js';
+import { adapterBind as adapterBindCommand } from '../../commands/system/adapter/bind.js';
+import { adapterList as adapterListCommand } from '../../commands/system/adapter/list.js';
+import { adapterUnbind as adapterUnbindCommand } from '../../commands/system/adapter/unbind.js';
 import { configSet } from '../../commands/system/config/set.js';
 import { ADAPTER_CONFIG_KEYS } from '@kb-labs/core-runtime';
+import { openCatalog } from '@kb-labs/core-registry';
+import { setResolvedCatalog } from '../../registry/discovery-state.js';
 
 vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => {
   const original = await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>();
@@ -26,6 +28,29 @@ vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => {
 let sandbox: string;
 let platformRoot: string;
 let projectRoot: string;
+let testCatalog: Awaited<ReturnType<typeof openCatalog>> | undefined;
+
+const adapterBind = {
+  ...adapterBindCommand,
+  run: async (...args: Parameters<typeof adapterBindCommand.run>) => {
+    await testCatalog?.refresh();
+    return adapterBindCommand.run(...args);
+  },
+};
+const adapterList = {
+  ...adapterListCommand,
+  run: async (...args: Parameters<typeof adapterListCommand.run>) => {
+    await testCatalog?.refresh();
+    return adapterListCommand.run(...args);
+  },
+};
+const adapterUnbind = {
+  ...adapterUnbindCommand,
+  run: async (...args: Parameters<typeof adapterUnbindCommand.run>) => {
+    await testCatalog?.refresh();
+    return adapterUnbindCommand.run(...args);
+  },
+};
 
 function installPath(value: string) {
   return createInstallOwnedRelativePath(value, platformRoot);
@@ -92,9 +117,15 @@ beforeEach(async () => {
   vi.stubEnv('KB_PLATFORM_ROOT', platformRoot);
   vi.stubEnv('KB_HOME', kbHome);
   await createProjectRegistry({ env: process.env }).add(projectRoot);
+  testCatalog = await openCatalog({ platformRoot, projectRoot });
+  setResolvedCatalog(testCatalog);
 });
 
 afterEach(async () => {
+  setResolvedCatalog(undefined);
+  const openedCatalog = testCatalog;
+  testCatalog = undefined;
+  await openedCatalog?.dispose();
   vi.unstubAllEnvs();
   await rm(sandbox, { recursive: true, force: true });
 });

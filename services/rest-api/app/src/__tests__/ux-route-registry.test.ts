@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/plugin-contracts';
 import { restApiConfigSchema } from '@kb-labs/rest-api-core';
 import { platform, resetPlatform } from '@kb-labs/core-runtime';
 import { createServer } from '../server';

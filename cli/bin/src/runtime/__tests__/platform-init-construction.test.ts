@@ -27,14 +27,43 @@ vi.mock("@kb-labs/core-runtime", async (importOriginal) => ({
 import { initializePlatform } from "../platform-init.js";
 
 describe("CLI adapter construction", () => {
-  afterEach(() => vi.clearAllMocks());
+  let catalog: LoadPlatformConfigResult['catalog'] | undefined;
+  let catalogRoot: string | undefined;
 
-  function projectConfig(projectRoot: string, projectScope: 'required' | 'platform' = 'required'): LoadPlatformConfigResult {
+  afterEach(async () => {
+    const openedCatalog = catalog;
+    const root = catalogRoot;
+    catalog = undefined;
+    catalogRoot = undefined;
+    try {
+      await openedCatalog?.dispose();
+    } finally {
+      if (root) await rm(root, { recursive: true, force: true });
+      vi.clearAllMocks();
+    }
+  });
+
+  async function projectConfig(projectRoot: string, projectScope: 'required' | 'platform' = 'required'): Promise<LoadPlatformConfigResult> {
+    catalogRoot = await mkdtemp(path.join(tmpdir(), 'cli-platform-init-catalog-'));
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: catalogRoot,
+      KB_HOME: path.join(catalogRoot, '.kb'),
+      KB_PLATFORM_ROOT: catalogRoot,
+    };
+    delete env.KB_PROJECT_ROOT;
+    delete env.KB_PROJECT_ID;
+    const loaded = await loadPlatformConfig({
+      startDir: catalogRoot,
+      env,
+      loadEnvFile: false,
+      projectScope: 'platform',
+    });
+    catalog = loaded.catalog;
     return {
+      ...loaded,
+      catalog,
       platformConfig: { adapters: { storage: "@kb-labs/adapters-fs" } },
-      rawConfig: {},
-      rawPlatformConfig: {},
-      effectiveConfig: {},
       platformRoot: "/installed/platform",
       projectRoot,
       projectScope,
@@ -45,7 +74,7 @@ describe("CLI adapter construction", () => {
 
   it("constructs adapters once using the resolved project root for per-project defaults", async () => {
     const projectRoot = "/workspace/app";
-    const config = projectConfig(projectRoot);
+    const config = await projectConfig(projectRoot);
     const initializedPlatform = { ...mocks.platform, logger: mocks.platform.logger };
     mocks.initPlatform.mockResolvedValue(initializedPlatform);
 
@@ -63,7 +92,7 @@ describe("CLI adapter construction", () => {
   });
 
   it("does not construct adapters for global help or version", async () => {
-    const config = projectConfig("/installed/platform");
+    const config = await projectConfig("/installed/platform");
 
     const result = await initializePlatform(config, { skipAdapterInitialization: true });
 
@@ -73,7 +102,7 @@ describe("CLI adapter construction", () => {
 
   it("keeps platform-scoped adapters at the platform root while preserving project identity", async () => {
     const projectRoot = "/workspace/app";
-    const config = projectConfig(projectRoot, 'platform');
+    const config = await projectConfig(projectRoot, 'platform');
     mocks.initPlatform.mockResolvedValue(mocks.platform);
 
     const result = await initializePlatform(config);

@@ -8,6 +8,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
+import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 
 import {
   writeMarketplaceLock,
@@ -18,7 +19,7 @@ import {
 } from '@kb-labs/core-discovery';
 
 import {
-  createRegistry,
+  openCatalog,
 } from '../index.js';
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,24 @@ describe('Registry Integration', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
+  it('does not persist a snapshot when the catalog is opened with persistence disabled', async () => {
+    const kbHome = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-memory-home-'));
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+    const scopeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-memory-scope-'));
+    try {
+      const catalog = await openCatalog({ platformRoot: scopeRoot, projectRoot: scopeRoot }, { persistSnapshot: false });
+      await catalog.dispose();
+      const snapshotPath = resolveRuntimeStatePath(scopeRoot, ['cache', 'registry.json'], { root: kbHome });
+      await expect(fs.access(snapshotPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+      await fs.rm(kbHome, { recursive: true, force: true });
+      await fs.rm(scopeRoot, { recursive: true, force: true });
+    }
+  });
+
   it('full lifecycle: install → discover → query → uninstall → refresh', async () => {
     // 1. Install: create plugin + write to marketplace.lock
     const { dir, integrity } = await createFakePlugin(root, '@kb-labs/greeter', {
@@ -133,7 +152,7 @@ describe('Registry Integration', () => {
     await registerPlugin(root, '@kb-labs/greeter', dir, integrity, ['plugin', 'cli-command', 'rest-route']);
 
     // 2. Discover: create registry
-    const registry = await createRegistry({ root });
+    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
 
     // 3. Query: verify plugin and entities
     const plugins = registry.listPlugins();
@@ -188,7 +207,7 @@ describe('Registry Integration', () => {
     });
     await registerPlugin(root, '@kb-labs/plugin-c', c.dir, c.integrity, ['plugin', 'studio-widget']);
 
-    const registry = await createRegistry({ root });
+    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
 
     // Verify totals
     expect(registry.listPlugins()).toHaveLength(3);
@@ -227,7 +246,7 @@ describe('Registry Integration', () => {
     await registerPlugin(root, '@kb-labs/persistent', dir, integrity, ['plugin', 'cli-command']);
 
     // First registry: discovers and persists snapshot
-    const reg1 = await createRegistry({ root });
+    const reg1 = await openCatalog({ platformRoot: root, projectRoot: root });
     expect(reg1.listPlugins()).toHaveLength(1);
     const snap1 = reg1.snapshot();
     expect(snap1.schema).toBe('kb.registry/1');
@@ -235,7 +254,7 @@ describe('Registry Integration', () => {
     await reg1.dispose();
 
     // Second registry: should load from snapshot cache
-    const reg2 = await createRegistry({ root });
+    const reg2 = await openCatalog({ platformRoot: root, projectRoot: root });
     expect(reg2.listPlugins()).toHaveLength(1);
     expect(reg2.queryEntities({ kind: 'cli-command' })).toHaveLength(1);
     await reg2.dispose();
@@ -266,7 +285,7 @@ describe('Registry Integration', () => {
     existingLock.plugins['@kb-labs/ghost'] = lock.plugins['@kb-labs/ghost'];
     await writeMarketplaceLock(root, existingLock);
 
-    const registry = await createRegistry({ root });
+    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
 
     // Only good plugin loaded
     expect(registry.listPlugins()).toHaveLength(1);
@@ -285,7 +304,7 @@ describe('Registry Integration', () => {
   });
 
   it('onChange fires on refresh with added/removed plugins', async () => {
-    const registry = await createRegistry({ root });
+    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
     expect(registry.listPlugins()).toHaveLength(0);
 
     const diffs: Array<{ added: unknown[]; removed: unknown[]; changed: unknown[] }> = [];
@@ -321,7 +340,7 @@ describe('Registry Integration', () => {
     });
     await registerPlugin(root, '@kb-labs/api-plugin', dir, integrity, ['plugin', 'cli-command', 'rest-route']);
 
-    const registry = await createRegistry({ root });
+    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
 
     // OpenAPI
     const spec = registry.getOpenAPISpec('@kb-labs/api-plugin');
@@ -352,7 +371,7 @@ describe('Registry Integration', () => {
     });
     await registerPlugin(root, '@kb-labs/healthy', dir, integrity, ['plugin', 'rest-route']);
 
-    const registry = await createRegistry({ root });
+    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
     const health = await registry.getSystemHealth({ uptimeSec: 100 });
 
     expect(health.schema).toBe('kb.health/1');

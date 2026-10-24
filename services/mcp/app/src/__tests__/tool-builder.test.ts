@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
-import type { RegistrySnapshotManifestEntry } from '@kb-labs/core-registry';
+import type { RegistrySnapshotManifestEntry } from '@kb-labs/plugin-contracts';
 import { filterTools, validateManifests } from '../mcp/tool-builder.js';
 import type { Permits } from '../mcp/authz.js';
 

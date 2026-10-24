@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { SnapshotManager } from '../snapshot/snapshot-manager.js';
-import type { RegistrySnapshot } from '../types.js';
+import type { RegistrySnapshot } from '@kb-labs/plugin-contracts';
 
 /**
  * Regression for #23: a rebuilt (already-installed) plugin must invalidate the

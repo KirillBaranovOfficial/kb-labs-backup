@@ -13,6 +13,7 @@ import type { DetailedDiscovery } from '../../registry/discover.js';
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
 const discoverState = vi.hoisted(() => ({ diagnostics: [] as unknown[] }));
+const catalogState = vi.hoisted(() => ({ lock: vi.fn(async () => null as unknown), diagnostics: [] as unknown[] }));
 
 vi.mock('../../registry/discover.js', () => {
   const discoverManifests = vi.fn(async (..._args: unknown[]): Promise<unknown[]> => []);
@@ -52,16 +53,6 @@ const mockCollectorInstance = {
   hasErrors: vi.fn(() => false),
   countBySeverity: vi.fn(() => ({})),
 };
-
-vi.mock('@kb-labs/core-discovery', () => ({
-  readMarketplaceLock: vi.fn(async () => null),
-  DiagnosticCollector: class {
-    constructor() {
-      return mockCollectorInstance;
-    }
-  },
-  computeManifestIntegrity: vi.fn(),
-}));
 
 vi.mock('node:fs/promises', () => ({
   access: vi.fn(async () => undefined),
@@ -131,8 +122,18 @@ async function setDiscoveryResult(results: unknown[], diagnostics = discoverStat
 }
 
 async function getLockMock() {
-  const mod = await import('@kb-labs/core-discovery');
-  return mod.readMarketplaceLock as unknown as ReturnType<typeof vi.fn>;
+  return catalogState.lock as unknown as ReturnType<typeof vi.fn>;
+}
+
+async function setCatalog(): Promise<void> {
+  const state = await import('../../registry/discovery-state.js');
+  state.setResolvedCatalog({
+    marketplaceLocks: async () => {
+      const lock = await catalogState.lock();
+      return lock ? new Map([['/test/workspace', lock]]) : new Map();
+    },
+    discovery: () => ({ diagnostics: mockCollectorInstance.getEvents() }),
+  } as never);
 }
 
 async function getFsMock() {
@@ -145,9 +146,11 @@ async function getFsMock() {
 describe('diag — base (no --command)', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    catalogState.lock = vi.fn(async () => null);
     mockCollectorInstance.getEvents.mockReturnValue([]);
     discoverState.diagnostics = [];
     await setDiscoveryResult([]);
+    await setCatalog();
     const discovery = await getDiscoverMock();
     discovery.discoverManifests.mockReset();
     discovery.discoverManifests.mockResolvedValue([]);

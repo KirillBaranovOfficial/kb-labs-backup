@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { IEntityRegistry, RegistrySnapshot, SystemHealthSnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, RegistrySnapshot, SystemHealthSnapshot } from '@kb-labs/plugin-contracts';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { EventHub, BroadcastEvent } from '../../events/hub';
 import type { ReadinessState } from '../readiness';

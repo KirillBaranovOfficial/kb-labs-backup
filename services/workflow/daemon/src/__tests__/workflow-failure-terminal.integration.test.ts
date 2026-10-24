@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createRegistry } from '@kb-labs/core-registry';
+import { openCatalog } from '@kb-labs/core-registry';
 import { InMemoryCache, InMemoryEventBus, InMemoryStorage } from '@kb-labs/core-platform/inmemory';
 import { FaultInjectingCache } from '@kb-labs/shared-testing';
 import { mockLogger } from '@kb-labs/shared-testing';
@@ -61,7 +61,7 @@ describe('live workflow failure terminalization', () => {
     });
     const failedJobId = run.jobs[0]!.id;
     deadLetterKey = workflowProjectCacheKey(projectId, workflowDeadLetterCacheKey(run.id, failedJobId));
-    const registry = await createRegistry({ root: workspaceRoot });
+    const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot });
     let executionCount = 0;
     const backend = createNormalizedExecutionBackend({
       async execute(request) {

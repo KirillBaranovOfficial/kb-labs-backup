@@ -85,7 +85,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
       registerBuiltinCommands: () => {},
     });
 
-    expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(cwd, undefined, "platform");
+    expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(cwd, undefined, "platform", { persistCatalogSnapshot: false });
     expect(mocks.resolveProjectConfig).toHaveBeenCalledExactlyOnceWith(cwd, undefined);
     expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(projectConfig, { skipAdapterInitialization: false });
     expect(mocks.loadPlatformConfiguration.mock.invocationCallOrder[0]).toBeLessThan(
