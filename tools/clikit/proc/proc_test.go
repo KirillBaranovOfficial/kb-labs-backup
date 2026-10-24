@@ -394,7 +394,7 @@ func TestRunScratchAllowsUnixSocketNameUnderDeepStateDirectory(t *testing.T) {
 	)
 	output, err := command.CombinedOutput()
 	runID := outputRunID(t, state, "scratch-socket")
-	data, recordErr := os.ReadFile(filepath.Join(state, "runs", runID+".json"))
+	data, recordErr := os.ReadFile(proc.RunRecordFile(state, runID))
 	if recordErr != nil {
 		t.Fatalf("read socket run record: %v", recordErr)
 	}
@@ -1709,7 +1709,7 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 	}
 	firstRun := listing.Runs[0]
 	if runtime.GOOS == "darwin" && !waitUntil(3*time.Second, func() bool {
-		data, err := os.ReadFile(filepath.Join(state, "runs", firstRun.RunID+".json"))
+		data, err := os.ReadFile(proc.RunRecordFile(state, firstRun.RunID))
 		if err != nil {
 			return false
 		}
@@ -1803,7 +1803,7 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 
 func scratchForRun(t *testing.T, state, runID string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(state, "runs", runID+".json"))
+	data, err := os.ReadFile(proc.RunRecordFile(state, runID))
 	if err != nil {
 		t.Fatal(err)
 	}
