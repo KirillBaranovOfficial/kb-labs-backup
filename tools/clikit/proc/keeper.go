@@ -133,7 +133,10 @@ func runKeeper(cfg keeperConfig) int {
 	cmd := exec.Command(cfg.Command[0], cfg.Command[1:]...)
 	cmd.Dir = cfg.Dir
 	cmd.Env = environmentFor(cfg.Config, os.Environ())
-	configureCommand(cmd, cfg.RunID, cfg.StateDir, scratch)
+	if err := configureCommand(cmd, cfg.RunID, cfg.StateDir, scratch); err != nil {
+		writeReadyError(ready, err)
+		return keeperError(rec, "configure command", err)
+	}
 	if cfg.GrantedCPUs > 0 || cfg.MemoryBytes > 0 {
 		cmd.Env = append(filteredEnv(cmd.Env), fmt.Sprintf("KB_RUNNER_CPUS=%d", cfg.GrantedCPUs), fmt.Sprintf("KB_RUNNER_MEM_BYTES=%d", cfg.MemoryBytes))
 	}

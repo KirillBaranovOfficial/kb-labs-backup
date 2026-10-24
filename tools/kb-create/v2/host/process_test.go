@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kb-labs/clikit/diag"
 	"net"
 	"os"
 	"os/exec"
@@ -19,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/proc/child"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/receipt"
@@ -27,6 +28,31 @@ import (
 )
 
 var fakeHostBinary string
+
+func TestStopKillsHostGrandchild(t *testing.T) {
+	f := newRunner(t, 10, 1)
+	grandchildFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	f.runner.Spec.Command = "/bin/sh"
+	f.runner.Spec.Args = []string{"-c", fmt.Sprintf("sleep 60 & echo $! > %q; exec %q -port %d", grandchildFile, fakeHostBinary, f.port)}
+	info, err := f.runner.Start(context.Background())
+	if err != nil {
+		t.Fatalf("start host: %v", err)
+	}
+	data, err := os.ReadFile(grandchildFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandchildPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse grandchild pid: %v", err)
+	}
+	if _, err := f.runner.Stop(context.Background()); err != nil {
+		t.Fatalf("stop host: %v", err)
+	}
+	if processAlive(grandchildPID) {
+		t.Fatalf("host stop left grandchild %d alive (host pid %d)", grandchildPID, info.PID)
+	}
+}
 
 func TestLifecycleRecordReadersNeverSeePartialPublication(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "host.pid")
@@ -578,18 +604,17 @@ func TestActiveHostRejectsAReusedPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
-	configureHostProcess(child)
-	if err := child.Start(); err != nil {
+	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
+	if err := child.Start(command, child.ProcessGroup); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(child.Process.Pid, token)
-		_ = child.Wait()
+		KillProcessGroupIfIdentity(command.Process.Pid, token)
+		_ = command.Wait()
 	})
 	if err := writeJSONFile(state.HostPID(), map[string]any{
-		"pid": child.Process.Pid, "platformRoot": "/tmp/recorded-kb-root", "processIdentity": "different-process-identity",
+		"pid": command.Process.Pid, "platformRoot": "/tmp/recorded-kb-root", "processIdentity": "different-process-identity",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -607,18 +632,17 @@ func TestStopDoesNotSignalAReusedPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), foreignIdentity)
-	configureHostProcess(child)
-	if err := child.Start(); err != nil {
+	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), foreignIdentity)
+	if err := child.Start(command, child.ProcessGroup); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(child.Process.Pid, foreignIdentity)
-		_ = child.Wait()
+		KillProcessGroupIfIdentity(command.Process.Pid, foreignIdentity)
+		_ = command.Wait()
 	})
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
-		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot, "installationId": f.runner.InstallationID, "processIdentity": "recorded-owner-token",
+		"pid": command.Process.Pid, "platformRoot": f.runner.PlatformRoot, "installationId": f.runner.InstallationID, "processIdentity": "recorded-owner-token",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +654,7 @@ func TestStopDoesNotSignalAReusedPID(t *testing.T) {
 	if _, err := f.runner.Stop(context.Background()); err == nil {
 		t.Fatal("stop accepted a process whose identity differs from the recorded host")
 	}
-	if !processAlive(child.Process.Pid) {
+	if !processAlive(command.Process.Pid) {
 		t.Fatal("stop signalled the process after its PID identity failed validation")
 	}
 }
@@ -644,19 +668,18 @@ func TestOldHostRecordWithoutIdentityIsDiagnosedAndNeverSignalled(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
-	configureHostProcess(child)
-	if err := child.Start(); err != nil {
+	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
+	if err := child.Start(command, child.ProcessGroup); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(child.Process.Pid, token)
-		_ = child.Wait()
+		KillProcessGroupIfIdentity(command.Process.Pid, token)
+		_ = command.Wait()
 	})
 	// This is the host.pid shape written before processIdentity was required.
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
-		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot,
+		"pid": command.Process.Pid, "platformRoot": f.runner.PlatformRoot,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -670,7 +693,7 @@ func TestOldHostRecordWithoutIdentityIsDiagnosedAndNeverSignalled(t *testing.T) 
 	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
 		t.Fatalf("old host record stop diagnostic = %#v", err)
 	}
-	if !processAlive(child.Process.Pid) {
+	if !processAlive(command.Process.Pid) {
 		t.Fatal("stop signalled the process for an old record without identity")
 	}
 }
@@ -684,18 +707,17 @@ func TestX26RecordWithoutInstallationIDFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
-	configureHostProcess(child)
-	if err := child.Start(); err != nil {
+	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
+	if err := child.Start(command, child.ProcessGroup); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(child.Process.Pid, token)
-		_ = child.Wait()
+		KillProcessGroupIfIdentity(command.Process.Pid, token)
+		_ = command.Wait()
 	})
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
-		"pid": child.Process.Pid, "processIdentity": token, "platformRoot": f.runner.PlatformRoot,
+		"pid": command.Process.Pid, "processIdentity": token, "platformRoot": f.runner.PlatformRoot,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -712,7 +734,7 @@ func TestX26RecordWithoutInstallationIDFailsClosed(t *testing.T) {
 			if !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
 				t.Fatalf("x26 record diagnostic = %#v", err)
 			}
-			if !processAlive(child.Process.Pid) {
+			if !processAlive(command.Process.Pid) {
 				t.Fatal("operation signalled the live process from an x26-format record")
 			}
 		})

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -60,6 +61,12 @@ type externalWorkspacePackage struct {
 
 type externalCheckOutput struct {
 	Issues []Issue `json:"issues"`
+}
+
+// WriteExternalCheckOutput writes the shared JSON contract consumed from
+// workspace-scope custom checks.
+func WriteExternalCheckOutput(writer io.Writer, issues []Issue) error {
+	return json.NewEncoder(writer).Encode(externalCheckOutput{Issues: issues})
 }
 
 type externalFixOutput struct {

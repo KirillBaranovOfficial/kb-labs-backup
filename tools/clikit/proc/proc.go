@@ -901,7 +901,7 @@ func eventFor(rec record, kind EventType) Event {
 
 func commandText(command []string) string { return strings.Join(command, " ") }
 
-func configureCommand(cmd *exec.Cmd, runID, stateDir, scratch string) {
+func configureCommand(cmd *exec.Cmd, runID, stateDir, scratch string) error {
 	cmd.Env = append(filteredEnv(cmd.Env), runEnv+"="+runID, resourceStateEnv+"="+stateDir, "KB_RUNNER_SCRATCH="+scratch, "TMPDIR="+scratch, "TMP="+scratch, "TEMP="+scratch)
-	child.ConfigureCommand(cmd)
+	return child.Configure(cmd, child.ProcessGroup)
 }

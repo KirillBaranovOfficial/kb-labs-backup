@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kb-labs/clikit/proc/child"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
@@ -174,8 +175,7 @@ func (c hostCommand) spawnSupervisorUntil(ctx context.Context, process *host.Pro
 	}
 	cmd.Env = host.ProcessEnvironmentWithStartupDeadline(host.ProcessEnvironmentWithIdentity(os.Environ(), identityToken), startupDeadline)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
-	host.ConfigureDetached(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := child.Start(cmd, child.Detached); err != nil {
 		return host.Info{}, host.StartFailure(state, err, map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 	}
 	exited := make(chan struct{})
