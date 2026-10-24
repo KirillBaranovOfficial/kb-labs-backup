@@ -57,7 +57,9 @@
       "message": "Service {service} is not configured.",
       "hint": "Run `{command}` to bind an installed adapter for this capability.",
       "structuredDetailFields": [
-        "adapter"
+        "adapter",
+        "command",
+        "service"
       ]
     },
     {
@@ -886,6 +888,7 @@
       "processExitClass": "operation-failure",
       "message": "The KB Labs host is not running: cannot connect to {address}.",
       "hint": "Run \"kb-create start\", or \"kb-create doctor\" if the host should already be running.",
+      "structuredDetailFields": ["platformRoot"],
       "httpStatus": 500
     },
     {

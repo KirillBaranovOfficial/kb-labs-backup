@@ -88,7 +88,7 @@ async function startRuntime(options: {
   await writeFile(
     join(dir, ".kb", "kb.config.json"),
     JSON.stringify({
-      platform: { adapters: {} },
+      platform: { deployment: { topology: "local" }, adapters: {} },
     }),
   );
   const root = await canonicalizeProjectPath(dir);
@@ -289,6 +289,9 @@ describe("project runtime composition (real runHost, minimal modules)", () => {
   it("serves the explicit registered project when the platform root differs", async () => {
     const other = await mkdtemp(join(tmpdir(), "kb-runtime-other-"));
     await mkdir(join(other, ".kb"), { recursive: true });
+    await writeFile(join(other, ".kb", "kb.config.json"), JSON.stringify({
+      platform: { deployment: { topology: "local" }, adapters: {} },
+    }));
     try {
       const running = await startRuntime({ env: {
           KB_PROJECT_ROOT: await realpath(other),

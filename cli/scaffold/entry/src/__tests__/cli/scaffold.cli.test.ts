@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
+import { createCapturedUI, createMockContext } from '@kb-labs/sdk/testing';
 
 // Mock scaffold-core before importing the command
 vi.mock('@kb-labs/scaffold-core', () => ({

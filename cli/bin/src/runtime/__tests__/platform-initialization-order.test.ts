@@ -53,12 +53,15 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     return isolatedHome;
   }
 
-  function mockConfig(projectRoot: string, projectScope: 'required' | 'platform' = 'platform', rawConfig = { gateway: { access: { mode: "local" } } }) {
+  function mockConfig(projectRoot: string, projectScope: 'required' | 'platform' = 'platform', rawConfig = {
+    gateway: { access: { mode: "local" } },
+    platform: { deployment: { topology: "local" } },
+  }) {
     return {
       platformConfig: { adapters: { storage: "@kb-labs/adapters-fs" } },
       rawConfig,
       rawPlatformConfig: rawConfig,
-      effectiveConfig: {},
+      effectiveConfig: { platform: { deployment: { topology: "local" } } },
       platformRoot: isolatedHome,
       projectRoot,
       projectScope,
@@ -168,9 +171,10 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     const requests: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
       requests.push(String(input));
-      return new Response(JSON.stringify({ ok: true, total: 0, issues: [] }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, total: 0, issues: [], provenance: [] }), { status: 200 });
     }));
-    vi.spyOn(console, "log").mockImplementation(() => {});
+    const output: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line) => { output.push(String(line)); });
 
     const exitCode = await executeCli(["marketplace", "plugins", "doctor", "--scope", "project", "--json"], {
       cwd,
@@ -178,7 +182,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
       registerBuiltinCommands: () => {},
     });
 
-    expect(exitCode).toBe(0);
+    expect(exitCode, `${output.join("\n")}\nrequests: ${JSON.stringify(requests)}`).toBe(0);
     expect(requests).toEqual([`${gatewayUrl}/api/v1/marketplace/diagnostics?scope=project&projectRoot=${encodeURIComponent(cwd)}`]);
     expect(process.env.KB_GATEWAY_URL).toBeUndefined();
   });

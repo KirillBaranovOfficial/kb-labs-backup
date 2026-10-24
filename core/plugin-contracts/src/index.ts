@@ -103,7 +103,7 @@ export {
   PlatformError,
   isPluginError,
 } from "./errors.js";
-export { toErrorEnvelope } from "@kb-labs/core-platform/error-envelope";
+export { toErrorEnvelope } from "@kb-labs/core-platform";
 
 // Runtime
 export type {

@@ -602,7 +602,7 @@ export interface CatalogDetailsFor {
   "KB_HOST_STOP_FAILED": { "pid": string };
   "KB_HOST_STUDIO_ASSETS_MISSING": { "dir": string };
   "KB_HOST_UNHEALTHY": { "module": string };
-  "KB_HOST_UNREACHABLE": { "address": string };
+  "KB_HOST_UNREACHABLE": { "address": string; "platformRoot"?: string };
   "KB_HOST_VERSION_SKEW": { "client": string; "host": string };
   "KB_INSTALL_APPLY_FAILED": { "diagnosticPath"?: string; "logPath"?: string };
   "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH": { "artifact": string };
@@ -2409,7 +2409,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "ACQUIRE_TIMEOUT": [],
   "KB_ADAPTER_CREDENTIALS_MISSING": [],
   "KB_ADAPTER_MANIFEST_LOAD": [],
-  "KB_ADAPTER_NOT_CONFIGURED": ["adapter"],
+  "KB_ADAPTER_NOT_CONFIGURED": ["adapter","command","service"],
   "KB_ADAPTER_NOT_INSTALLED": ["path","slot"],
   "KB_ADAPTER_OPERATION_FAILED": [],
   "KB_ADAPTER_PROJECT_SCOPE": [],
@@ -2471,7 +2471,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_HOST_STOP_FAILED": [],
   "KB_HOST_STUDIO_ASSETS_MISSING": [],
   "KB_HOST_UNHEALTHY": [],
-  "KB_HOST_UNREACHABLE": [],
+  "KB_HOST_UNREACHABLE": ["platformRoot"],
   "KB_HOST_VERSION_SKEW": [],
   "KB_INSTALL_APPLY_FAILED": ["diagnosticPath","logPath"],
   "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH": [],

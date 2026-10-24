@@ -13,6 +13,29 @@ import { SessionManager } from '@kb-labs/cli-runtime/gateway';
 
 const CLI_CHILD_PROCESS_TIMEOUT_MS = 60_000;
 
+async function writeInstalledAdapterLock(
+  platformRoot: string,
+  workspaceRoot: string,
+  packageNames: readonly string[],
+): Promise<Record<string, unknown>> {
+  const installedPackageRoot = path.join(platformRoot, 'node_modules', '@kb-labs');
+  await mkdir(installedPackageRoot, { recursive: true });
+  for (const packageName of packageNames) {
+    await symlink(
+      path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', '')),
+      path.join(installedPackageRoot, packageName.slice('@kb-labs/'.length)),
+      'dir',
+    );
+  }
+  return Object.fromEntries(packageNames.map(packageName => [packageName, {
+    version: '2.120.1',
+    integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+    resolvedPath: path.relative(platformRoot, path.join(platformRoot, 'node_modules', packageName)),
+    source: 'platform',
+    enabled: true,
+  }]));
+}
+
 describe('installed platform adapter defaults', () => {
   let tempRoot: string | undefined;
   let gatewayServer: Server | undefined;
@@ -308,16 +331,7 @@ describe('installed platform adapter defaults', () => {
       '@kb-labs/adapters-openai',
       '@kb-labs/adapters-fs',
     ])];
-    const adapters = Object.fromEntries(packages.map(packageName => {
-      const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
-      return [packageName, {
-        version: '2.120.1',
-        integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-        resolvedPath: path.relative(platformRoot, packagePath),
-        source: 'platform',
-        enabled: true,
-      }];
-    }));
+    const adapters = await writeInstalledAdapterLock(platformRoot, workspaceRoot, packages);
     await writeFile(path.join(platformRoot, '.kb', 'marketplace.lock'), JSON.stringify({
       schema: 'kb.marketplace/3', plugins: {}, adapters,
     }));
@@ -496,16 +510,7 @@ describe('installed platform adapter defaults', () => {
       '@kb-labs/adapters-log-ringbuffer',
       '@kb-labs/adapters-log-document',
     ];
-    const adapters = Object.fromEntries(adapterPackages.map(packageName => {
-      const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
-      return [packageName, {
-        version: '2.120.1',
-        integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-        resolvedPath: path.relative(platformRoot, packagePath),
-        source: 'platform',
-        enabled: true,
-      }];
-    }));
+    const adapters = await writeInstalledAdapterLock(platformRoot, workspaceRoot, adapterPackages);
     const commitRoot = path.join(workspaceRoot, 'plugins/commit/entry');
     const commitPackageJSON = await readFile(path.join(commitRoot, 'package.json'));
     await cp(path.join(commitRoot, 'dist'), path.join(installedCommitRoot, 'dist'), { recursive: true });
@@ -520,7 +525,7 @@ describe('installed platform adapter defaults', () => {
           version: commitPackage.version,
           integrity: `sha256-${createHash('sha256').update(commitPackageJSON).digest('base64')}`,
           package: '@kb-labs/commit',
-          resolvedPath: path.relative(platformRoot, installedCommitRoot),
+          resolvedPath: path.relative(versionRoot, installedCommitRoot),
           source: 'platform',
           enabled: true,
         },
@@ -662,22 +667,15 @@ describe('installed platform adapter defaults', () => {
       '@kb-labs/adapters-openai',
       '@kb-labs/adapters-fs',
     ])];
-    const adapters = Object.fromEntries(packages.map(packageName => {
-      const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
-      return [packageName, {
-        version: '2.120.1',
-        integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-        resolvedPath: path.relative(platformRoot, packagePath),
-        source: 'platform',
-        enabled: true,
-      }];
-    }));
+    const adapters = await writeInstalledAdapterLock(platformRoot, workspaceRoot, packages);
     const commitPackageRoot = path.join(workspaceRoot, 'plugins/commit/entry');
     const commitManifestModule = await import(pathToFileURL(path.join(commitPackageRoot, 'dist/manifest.js')).href) as {
       manifest: { id: string; version: string };
     };
     const commitPackageJSON = await readFile(path.join(commitPackageRoot, 'package.json'));
     const commitPackage = JSON.parse(commitPackageJSON.toString('utf8')) as { name: string; version: string };
+    await mkdir(path.join(platformRoot, 'plugins'), { recursive: true });
+    await symlink(commitPackageRoot, path.join(platformRoot, 'plugins', 'commit'), 'dir');
     const mismatchedPluginId = `${commitManifestModule.manifest.id}-fixture-mismatch`;
     await writeFile(path.join(platformRoot, '.kb', 'marketplace.lock'), JSON.stringify({
       schema: 'kb.marketplace/3',
@@ -686,7 +684,7 @@ describe('installed platform adapter defaults', () => {
           version: commitPackage.version,
           integrity: `sha256-${createHash('sha256').update(commitPackageJSON).digest('base64')}`,
           package: commitPackage.name,
-          resolvedPath: path.relative(platformRoot, commitPackageRoot),
+          resolvedPath: 'plugins/commit',
           source: 'platform',
           enabled: true,
         },
