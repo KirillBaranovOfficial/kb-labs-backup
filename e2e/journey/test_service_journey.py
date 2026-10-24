@@ -1111,10 +1111,10 @@ raise SystemExit(1)
         root = Path(__file__).resolve().parents[2]
         node = shutil.which("node")
         self.assertIsNotNone(node)
-        for package in ("cli/bin", "plugins/qa/entry"):
+        for package in ("cli/bin", "plugins/qa"):
             package_root = root / package
             build = subprocess.run(
-                [str(package_root / "node_modules/.bin/tsup"), "--config", "tsup.config.ts"],
+                [str(root / "node_modules/.bin/tsup"), "--config", "tsup.config.ts"],
                 cwd=package_root, text=True, capture_output=True, check=False, timeout=900,
             )
             self.assertEqual(build.returncode, 0, f"case coverage CLI build failed: {build.stderr or build.stdout}")

@@ -102,28 +102,28 @@
       "pkg": "@kb-labs/mind",
       "description": "AI code search (RAG)",
       "default": true,
-      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/mind/entry"
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/mind"
     },
     {
       "id": "agents",
       "pkg": "@kb-labs/agents",
       "description": "Autonomous agents",
       "default": true,
-      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/agents/entry"
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/agents"
     },
     {
       "id": "review",
       "pkg": "@kb-labs/review",
       "description": "AI code review",
       "default": true,
-      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/review/entry"
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/review"
     },
     {
       "id": "commit",
       "pkg": "@kb-labs/commit",
       "description": "AI commit generation",
       "default": true,
-      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/commit/entry"
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/commit"
     }
   ],
   "binaries": [

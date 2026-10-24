@@ -42,7 +42,7 @@ const DEFAULT_SCOPE_BODY = { scope: 'project' as const, projectRoot: '/workspace
 function mockValidSyncConfig(): void {
   mockedReadFile.mockResolvedValueOnce(
     JSON.stringify({
-      marketplace: { sync: { include: ['plugins/*/entry'] } },
+      marketplace: { sync: { include: ['plugins/*'] } },
     }),
   );
 }
@@ -106,7 +106,7 @@ describe('marketplace:sync', () => {
 
   it('S-179.33: parses slash-star workspace globs in JSONC sync config', async () => {
     mockedReadFile.mockResolvedValueOnce(
-      '{ "marketplace": { "sync": { "include": ["plugins/*/entry",], }, }, }',
+      '{ "marketplace": { "sync": { "include": ["plugins/*",], }, }, }',
     );
     mockedPost.mockResolvedValue({ added: [], skipped: [], total: 0 });
 
@@ -114,7 +114,7 @@ describe('marketplace:sync', () => {
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(result).not.toHaveProperty('ok');
-    expect(mockedPost).toHaveBeenCalledWith('/workspace/sync', expect.objectContaining({ include: ['plugins/*/entry'] }));
+    expect(mockedPost).toHaveBeenCalledWith('/workspace/sync', expect.objectContaining({ include: ['plugins/*'] }));
   });
 
   it('S-179.34: reports invalid JSONC at its config path', async () => {

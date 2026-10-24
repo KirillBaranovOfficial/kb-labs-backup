@@ -41,7 +41,7 @@
 ## Installation
 
 ```bash
-pnpm kb marketplace install <%= it.scope ? it.scope + '/' : '' %><%= it.name %>-entry
+pnpm kb marketplace install <%= it.pluginId %>
 ```
 
 ---
@@ -128,31 +128,32 @@ Remove the comment markers above/below if this plugin adds Studio pages.
 **Layout**
 
 ```
-packages/
-  <%= it.name %>-contracts/   # public types (request/response shapes)
-  <%= it.name %>-core/        # pure business logic (testable in isolation)
-  <%= it.name %>-entry/       # V3 manifest + CLI command handlers
+src/
+  cli/commands/   # CLI handlers
+  core/           # plugin business logic
+  contracts/      # public plugin types
+  manifest.ts     # plugin manifest
 ```
 
 **Getting started**
 
 ```bash
 pnpm install
-pnpm -w build
+pnpm build
 pnpm kb <%= it.name %> hello
 ```
 
 **What to edit**
 
-- Business logic: `packages/<%= it.name %>-core/src/hello.ts`
-- CLI commands: `packages/<%= it.name %>-entry/src/manifest.ts`
-- Shared types: `packages/<%= it.name %>-contracts/src/index.ts`
+- Business logic: `src/core/hello.ts`
+- CLI commands: `src/cli/commands/hello.ts`
+- Shared types: `src/contracts/index.ts`
 
 **Link into the project**
 
 ```bash
 cd ../../..
-kb marketplace plugins add --link .kb/plugins/<%= it.name %>/packages/<%= it.name %>-entry
+kb marketplace plugins add --link .kb/plugins/<%= it.name %>
 ```
 
 **Health check**

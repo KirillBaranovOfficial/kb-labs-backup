@@ -82,9 +82,9 @@ describe('generated plugin files are type-safe', () => {
         versions: { ...baseCtx.versions, sdkSpec: 'canary', devkitSpec: 'canary', commandKitSpec: 'canary' },
       },
     });
-    const entryPackage = files.find(f => f.path.endsWith('-entry/package.json'));
-    expect(entryPackage?.contents).toContain('"@kb-labs/sdk": "canary"');
-    expect(entryPackage?.contents).toContain('"@kb-labs/shared-command-kit": "canary"');
+    const packageFile = files.find(f => f.path === 'package.json');
+    expect(packageFile?.contents).toContain('"@kb-labs/sdk": "canary"');
+    expect(packageFile?.contents).not.toContain('"@kb-labs/shared-command-kit"');
   });
 
   it('error.ts validationError signature takes (ctx, message, isJson?) — no hint param', async () => {

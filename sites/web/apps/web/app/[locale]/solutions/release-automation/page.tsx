@@ -51,7 +51,7 @@ const PLAN_OUTPUT = `$ kb release run
   │  ·  @kb-labs/core-types              1.4.1  →  1.4.2         │
   │  ·  @kb-labs/core-platform           1.4.1  →  1.4.2         │
   │  ·  @kb-labs/sdk                     1.4.1  →  1.4.2         │
-  │  ·  @kb-labs/release-manager-core   1.4.1  →  1.4.2          │
+  │  ·  @kb-labs/release/core   1.4.1  →  1.4.2          │
   │  ·  ... 8 more packages                                      │
   ╰──────────────────────────────────────────────────────────────╯
 
@@ -70,7 +70,7 @@ Proceed with release? [y/N] y
 // i18n-ignore
 const CHANGELOG_OUTPUT = `## [1.4.2] - 2026-05-24
 
-> **@kb-labs/release-manager-core** 1.4.1 → 1.4.2 (patch)
+> **@kb-labs/release/core** 1.4.1 → 1.4.2 (patch)
 
 ### Fixes
 - Atomic build now correctly handles symlinks inside dist/
@@ -96,7 +96,7 @@ const RELEASE_CONFIG = `{
       },
       "sdk": {
         "packages": {
-          "include": ["@kb-labs/sdk", "@kb-labs/agent-sdk"]
+          "include": ["@kb-labs/sdk", "@kb-labs/agents/sdk"]
         },
         "versioningStrategy": "independent",
         "checks": ["pnpm lint", "pnpm type-check", "pnpm test"]

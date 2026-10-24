@@ -7,7 +7,8 @@ import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
-import { readGatewaySuccessData, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { readGatewaySuccessData } from '@kb-labs/sdk/gateway';
+import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
 import { projectNetworkRequirement } from './list-projection.js';
 import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 

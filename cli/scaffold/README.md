@@ -12,8 +12,8 @@
 
 Scaffold generates KB Labs entities (plugins, adapters) from a block-based
 template system. Each entity type has a set of optional blocks you can compose:
-a `base` block gives you the three-package layout, a `cli` block adds CLI
-commands, a `rest` block adds REST routes. The generated code is immediately
+a `base` block creates one package at the plugin root, a `cli` block adds CLI
+commands, and a `rest` block adds REST routes. The generated code is immediately
 runnable with a working `hello` command and inline examples.
 
 ---
@@ -57,7 +57,7 @@ kb scaffold run plugin my-plugin --force               # overwrite existing
 
 Scaffolding writes files only. Build the generated workspace, then link the
 plugin entry from the project root with `kb marketplace plugins add --link
-.kb/plugins/my-plugin/packages/my-plugin-entry`. For adapters, run the scaffold
+.kb/plugins/my-plugin`. For adapters, run the scaffold
 from the platform root, build the package, link it with `--scope platform`, and
 bind it to a platform slot with `kb adapter bind <slot> <package-id>`.
 
@@ -94,7 +94,7 @@ kb scaffold doctor --json                # JSON output
 
 | Entity | Blocks | Description |
 |--------|--------|-------------|
-| `plugin` | `base`, `cli`, `rest`, `contracts` | KB Labs plugin (entry + core + contracts) |
+| `plugin` | `base`, `cli`, `rest`, `contracts` | KB Labs plugin (one package with internal source subpaths) |
 | `adapter` | `base`, `provider-example` | Platform adapter (LLM, storage, etc.) |
 
 ---

@@ -23,7 +23,7 @@ CI — see `e2e/install-flow/test.sh`'s "Step 1f").
 
 While validating it, a related gap surfaced: a plugin declares the platform
 capabilities it needs via its manifest's `platform.requires`/`optional`
-fields (e.g. `plugins/release/manager-cli/src/manifest.ts` declares
+fields (e.g. `plugins/release/src/cli/manifest.ts` declares
 `requires: ['storage','cache']`), but **capability/role names live in three
 places that don't talk to each other**, and nothing lets an install caller
 say which real adapter package should back a role:

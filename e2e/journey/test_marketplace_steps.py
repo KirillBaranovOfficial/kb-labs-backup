@@ -225,10 +225,10 @@ class MarketplaceStepTests(unittest.TestCase):
 
     def test_commit_fixture_publisher_uses_the_real_hub_publish_request(self):
         self.assertEqual(commit_publish_command("/workspace"), [
-            "hub", "publish", "--path", "/workspace/plugins/commit/entry", "--json",
+            "hub", "publish", "--path", "/workspace/plugins/commit", "--json",
         ])
-        self.assertEqual(_publish_fixture_command("/workspace", "plugins/qa/entry"), [
-            "hub", "publish", "--path", "/workspace/plugins/qa/entry", "--json",
+        self.assertEqual(_publish_fixture_command("/workspace", "plugins/qa"), [
+            "hub", "publish", "--path", "/workspace/plugins/qa", "--json",
         ])
 
     def test_registry_commit_fixture_publishes_in_workspace_and_installs_in_lane_project(self):
@@ -272,9 +272,9 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(entry["signatureStatus"], "verified")
             workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
             self.assertEqual([call[0] for call in calls if call[0][0] == "node"], [
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit/entry"), "--json"),
+                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit"), "--json"),
                 ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa/entry"), "--json"),
+                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"),
             ])
             self.assertEqual(journey.result().status, "PASS")
 

@@ -1,7 +1,7 @@
 # 09 — Процесс релиза: схема, точки отказа и план (DRAFT v0)
 
 > Собрано по коду и документам (2026-09): `docs/RELEASE-PROCESS.md`, ADR-0041/0042, `.kb/workflows/release-prepare.yml`, `release-promote.yml`,
-> `plugins/release/manager-core/src/checks.ts`, `.kb/kb.config.jsonc` (`release.flows`), `tools/kb-create/v2/catalog/catalog.go`, реальный `release-index.json`.
+> `plugins/release/src/core/checks.ts`, `.kb/kb.config.jsonc` (`release.flows`), `tools/kb-create/v2/catalog/catalog.go`, реальный `release-index.json`.
 > **Не проверялось:** сами GitHub-workflow (`release-build-candidate.yml`, `release-deliver-candidate.yml`) прочитаны только по описанию; ни один релиз не запускался.
 > Правило: релизы — только с явного разрешения автора (`CLAUDE.md`); документ ничего не запускает.
 
@@ -159,7 +159,7 @@ flowchart TB
   - один flow `release` вместо `sdk` + `platform` (в `release.flows` SDK и `platform-client` сейчас явно исключены из платформенного flow);
   - в матрице совместимости метки `sdk@` и `platform@` получают одну версию; формат матрицы (`kb.release-compatibility/2`, явные пары) **не меняем** — сегодня он просто генерируется с равными версиями, а разделение позже не потребует смены схемы;
   - `kb-create` `CheckCompatibility` остаётся как есть; в тестах матрицы (R4.2) добавляется инвариант «равные версии»;
-  - **теги не переименовываем:** объединённый flow остаётся `platform`, тег `platform-vX.Y.Z` (грамматика тега `{flow}-v{version}`, `plugins/release/manager-core/src/tag.ts`); `sdk-v*` перестают создаваться, старые остаются историей; при будущем разделении потока `sdk` возвращается со своим тегом; `vX.Y.Z-binaries` остаётся идентификатором ассетов того же релиза;
+  - **теги не переименовываем:** объединённый flow остаётся `platform`, тег `platform-vX.Y.Z` (грамматика тега `{flow}-v{version}`, `plugins/release/src/core/tag.ts`); `sdk-v*` перестают создаваться, старые остаются историей; при будущем разделении потока `sdk` возвращается со своим тегом; `vX.Y.Z-binaries` остаётся идентификатором ассетов того же релиза;
   - плата: SDK получает версию на каждый релиз платформы, даже если не менялся (уже так внутри lockstep-flow).
 
 ## 5. План (этапы R)

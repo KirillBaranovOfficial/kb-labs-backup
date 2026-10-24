@@ -65,17 +65,16 @@ workspace:
       language: typescript
       preset: spa-app
 
-    # Plugin entry packages — tsup (CLI/REST) + rspack (Studio widgets)
-    # Must come before ts-lib — plugins/*/entry would otherwise match ts-lib first
+    # Plugin roots — one sealed package per manifest identity.
+    # Must come before ts-lib so every plugins/<id> package gets this boundary.
     plugin-entry:
       match:
-        - "plugins/*/entry"
-        - "plugins/release/manager-cli"  # non-standard name, but has rspack studio build
+        - "plugins/*"
       language: typescript
       preset: plugin-entry
 
     # Backend app entrypoints (daemons, servers)
-    # Must come before ts-lib — plugins/*/*  would otherwise match first
+    # Must come before ts-lib — plugin roots are classified by the earlier plugin rule.
     ts-app:
       match:
         - "plugins/*/daemon"
@@ -116,7 +115,6 @@ workspace:
         - "cli/*"
         - "cli/*/*"
         - "shared/*"
-        - "plugins/*/*"
         - "services/*/*"
         - "infra/devkit"
         - "studio/*"
@@ -207,6 +205,10 @@ presets:
       check_links: true
       check_circular: true
       check_version_consistency: true
+      allowed_kb_deps:
+        - "@kb-labs/sdk"
+        - "@kb-labs/devkit"
+        - "@kb-labs/studio-plugin-tools"
 
   node-lib:
     extends: backend-construction-boundary
@@ -365,50 +367,6 @@ presets:
 # ──────────────────────────────────────────────────────────────────────────────
 
 structure_checks:
-  # Every plugin group MUST have entry/, contracts/, core/
-  plugin:
-    scope: "plugins/*"
-    required_packages:
-      - name: entry
-        description: "Plugin entry point — manifest, registerPlugin(), CLI commands, Studio pages"
-        required_files:
-          - src/index.ts
-        must_depend_on:
-          - "@kb-labs/sdk"
-      - name: contracts
-        description: "Type definitions — zero runtime dependencies"
-        required_files:
-          - src/index.ts
-        rules:
-          - no_runtime_deps   # only devDependencies + types allowed
-      - name: core
-        description: "Business logic"
-        required_files:
-          - src/index.ts
-    optional_packages:
-      - name: daemon
-        description: "HTTP service (long-running process with port)"
-        required_files:
-          - src/bootstrap.ts
-        must_depend_on:
-          - "@kb-labs/gateway-contracts"
-    dependency_rules:
-      # contracts has zero internal deps
-      - from: contracts
-        to: []
-      # core depends on contracts only (within the plugin)
-      - from: core
-        to: [contracts]
-      # entry wires everything together
-      - from: entry
-        to: [contracts, core]
-      # daemon depends on core + contracts
-      - from: daemon
-        to: [contracts, core]
-      # nothing depends on entry (it's the leaf)
-      - from: "*"
-        not_to: [entry]
-
   # Core packages MUST have contracts/ (types/) as foundation
   core:
     scope: "core"
@@ -1058,22 +1016,18 @@ custom_checks:
   # Standalone: node scripts/checks/check-<name>.mjs [--json] [--no-exceptions]
   # Tests:      pnpm test:checks
 
-  # Plugins must not import @kb-labs/core-* bypassing @kb-labs/sdk (0.2a).
-  - name: plugin-imports
-    run: node scripts/checks/check-plugin-imports.mjs
-    on: [check]
-
   # services/*, studio/*, plugins/*/daemon must not spawn kb / kb-create / kb-dev / kb-devkit
   # via child_process (0.2b, docs/architecture/target/05-executables.md section 3).
   - name: platform-spawn
     run: node scripts/checks/check-platform-spawn.mjs
     on: [check]
 
-  # Platform packages (@kb-labs/sdk, core-*, cli-*, shared-*, adapters-*, plugin-contracts/runtime/
-  # execution*) must be peerDependencies, not dependencies, in plugins/* and the plugin template (0.3).
-  - name: plugin-peer-deps
-    run: node scripts/checks/check-plugin-peer-deps.mjs
+  # Plugin package membership and both directions of the plugin/platform edge are checked
+  # against the live workspace registry. Runtime imports are parsed as TypeScript AST nodes.
+  - name: plugin-boundaries
+    run: node scripts/checks/check-plugin-boundaries.mjs
     on: [check]
+    scope: workspace
 
   # kb.plugin/3 cli.commands: verb from the closed vocabulary, lowercase kebab-case segments,
   # 'mutate' commands declare --json (0.5, docs/architecture/target/06-command-naming.md 1-3).

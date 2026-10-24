@@ -9,7 +9,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
-import { SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { SessionManager } from '@kb-labs/sdk/gateway';
 
 const CLI_CHILD_PROCESS_TIMEOUT_MS = 60_000;
 
@@ -437,7 +437,7 @@ describe('installed platform adapter defaults', () => {
       'dir',
     );
     await symlink(
-      path.join(workspaceRoot, 'plugins/commit/core'),
+      path.join(workspaceRoot, 'plugins/commit/src/core'),
       path.join(installedCommitRoot, 'node_modules', '@kb-labs', 'commit-core'),
       'dir',
     );
@@ -511,7 +511,7 @@ describe('installed platform adapter defaults', () => {
       '@kb-labs/adapters-log-document',
     ];
     const adapters = await writeInstalledAdapterLock(platformRoot, workspaceRoot, adapterPackages);
-    const commitRoot = path.join(workspaceRoot, 'plugins/commit/entry');
+    const commitRoot = path.join(workspaceRoot, 'plugins/commit');
     const commitPackageJSON = await readFile(path.join(commitRoot, 'package.json'));
     await cp(path.join(commitRoot, 'dist'), path.join(installedCommitRoot, 'dist'), { recursive: true });
     await writeFile(path.join(installedCommitRoot, 'package.json'), commitPackageJSON);
@@ -668,7 +668,7 @@ describe('installed platform adapter defaults', () => {
       '@kb-labs/adapters-fs',
     ])];
     const adapters = await writeInstalledAdapterLock(platformRoot, workspaceRoot, packages);
-    const commitPackageRoot = path.join(workspaceRoot, 'plugins/commit/entry');
+    const commitPackageRoot = path.join(workspaceRoot, 'plugins/commit');
     const commitManifestModule = await import(pathToFileURL(path.join(commitPackageRoot, 'dist/manifest.js')).href) as {
       manifest: { id: string; version: string };
     };

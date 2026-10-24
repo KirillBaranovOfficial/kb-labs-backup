@@ -19,6 +19,7 @@ export default defineConfig({
     'studio/catalog': 'src/studio/catalog.ts',
     'studio-build/index': 'src/studio-build/index.ts',
     'platform/index': 'src/platform/index.ts',
+    'gateway/index': 'src/gateway/index.ts',
   },
   dts: { resolve: true },
   treeshake: false,

@@ -1,5 +1,4 @@
-packages:
-  - packages/*
+packages: []
 
 # Older pnpm releases can report an allowlist mismatch as a hard error.
 # Keep the explicit allowlist above, but let the generated workspace install

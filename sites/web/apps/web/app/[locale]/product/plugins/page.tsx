@@ -78,10 +78,10 @@ kb marketplace install @you/my-plugin
 kb marketplace share --with user123
 kb marketplace share --link`;
 
-// Real snippet from plugins/clickup/entry/src/commands/task-create.ts
+// Real snippet from plugins/clickup/src/commands/task-create.ts
 const HANDLER_CODE = `\
 import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { requireApiKey, createTask } from '@kb-labs/clickup-core';
+import { requireApiKey, createTask } from '@kb-labs/clickup/core';
 
 export default defineCommand({
   id: 'clickup:task.create',

@@ -3,7 +3,7 @@
  */
 
 import { getHostServiceAddress, useEnv } from '@kb-labs/sdk';
-import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch } from '@kb-labs/sdk/gateway';
 
 const MARKETPLACE_PREFIX = '/api/v1/marketplace';
 const FETCH_TIMEOUT_MS = 30_000;

@@ -1,13 +1,13 @@
 id: plugin
 displayName: KB Labs Plugin
 description: |
-  A KB Labs plugin: three workspace packages (entry, core, contracts) that
+  A KB Labs plugin: one package with internal source folders for CLI, core, and contracts that
   register CLI commands, REST routes, Studio pages, or daemons via a V3
   manifest. Everything extends @kb-labs/devkit configs and talks to the
   platform exclusively through @kb-labs/sdk.
 
 output: .kb/plugins/<%= it.name %>
-manifestTarget: packages/<%= it.name %>-entry/src/manifest.ts
+manifestTarget: src/manifest.ts
 
 variables:
   - name: scope
@@ -29,7 +29,7 @@ variables:
     default: in-workspace
     choices:
       - value: in-workspace
-        label: Inside an existing KB Labs workspace (use workspace:* deps)
+        label: Inside an existing KB Labs workspace (SDK dependency uses workspace:*)
       - value: standalone
         label: Standalone repo (semver-pinned deps, own pnpm-workspace.yaml)
 

@@ -222,8 +222,8 @@ describe('diag — base (no --command)', () => {
     const discovered = [
       {
         packageName: '@kb-labs/quality',
-        manifestPath: '/test/workspace/plugins/quality/entry/dist/manifest.js',
-        pkgRoot: '/test/workspace/plugins/quality/entry',
+        manifestPath: '/test/workspace/plugins/{plugin}/dist/manifest.js',
+        pkgRoot: '/test/workspace/plugins/{plugin}',
         source: 'workspace',
         scope: 'platform',
         manifests: [
@@ -461,8 +461,8 @@ describe('diag --command', () => {
     const discovered = [
       {
         packageName: '@kb-labs/quality',
-        manifestPath: '/test/workspace/plugins/quality/entry/dist/manifest.js',
-        pkgRoot: '/test/workspace/plugins/quality/entry',
+        manifestPath: '/test/workspace/plugins/{plugin}/dist/manifest.js',
+        pkgRoot: '/test/workspace/plugins/{plugin}',
         source: 'workspace',
         scope: 'platform',
         manifests: [
@@ -484,7 +484,7 @@ describe('diag --command', () => {
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
       plugins: {
-        '@kb-labs/quality': { enabled: true, resolvedPath: '/test/workspace/plugins/quality/entry' },
+        '@kb-labs/quality': { enabled: true, resolvedPath: '/test/workspace/plugins/{plugin}' },
       },
     });
 

@@ -26,8 +26,8 @@ from invocations import (
 
 PLUGIN_NAME = "demo"
 PLUGIN_DIR = Path(".kb/plugins/demo")
-ENTRY_DIR = PLUGIN_DIR / "packages/demo-entry"
-CORE_SOURCE = PLUGIN_DIR / "packages/demo-core/src/hello.ts"
+ENTRY_DIR = PLUGIN_DIR
+CORE_SOURCE = PLUGIN_DIR / "src/core/hello.ts"
 ORIGINAL_GREETING = "Hello, ${who} from demo!"
 EDITED_GREETING = "Edited demo greeting for ${who}!"
 
@@ -469,8 +469,11 @@ def run_plugin_author_flow(
               "--mode", "standalone", "--yes"], executable=str(kb_path)),
              cwd=project, env=child_env, command_runner=command_runner)
         if not entry.is_dir() or not (entry / "package.json").is_file() or not core_source.is_file():
-            raise RuntimeError("kb scaffold run did not create .kb/plugins/demo with entry and core packages")
-        command_source = entry / "src/commands/hello.ts"
+            raise RuntimeError("kb scaffold run did not create one .kb/plugins/demo package with CLI and core source")
+        package = json.loads((entry / "package.json").read_text(encoding="utf-8"))
+        if package.get("name") != "@kb-labs/demo":
+            raise RuntimeError("generated demo package name does not match its @kb-labs/demo manifest identity")
+        command_source = entry / "src/cli/commands/hello.ts"
         source = command_source.read_text(encoding="utf-8")
         marker = "const { greeting } = hello({ who: input.flags.who ?? 'World' });"
         if marker not in source:
@@ -483,13 +486,13 @@ def run_plugin_author_flow(
 
     def _build() -> None:
         _run(["pnpm", "install"], cwd=plugin_root, env=child_env, command_runner=command_runner)
-        _run(["pnpm", "-w", "build"], cwd=plugin_root, env=child_env, command_runner=command_runner)
+        _run(["pnpm", "build"], cwd=plugin_root, env=child_env, command_runner=command_runner)
         if not (entry / "dist/manifest.js").is_file():
-            raise RuntimeError("pnpm -w build did not emit the plugin entry manifest")
+            raise RuntimeError("pnpm -w build did not emit the plugin manifest")
 
     def _link() -> None:
         nonlocal linked
-        _run(kb_command([ "marketplace", "plugins", "add", "--link", ".kb/plugins/demo/packages/demo-entry"], executable=str(kb_path)),
+        _run(kb_command([ "marketplace", "plugins", "add", "--link", ".kb/plugins/demo"], executable=str(kb_path)),
              cwd=project, env=child_env, command_runner=command_runner)
         linked = True
         _, plugin_id, lock_entry = _lock_entry(project)
@@ -518,7 +521,7 @@ def run_plugin_author_flow(
         if ORIGINAL_GREETING not in source:
             raise RuntimeError("generated demo greeting source no longer matches the scaffold template")
         core_source.write_text(source.replace(ORIGINAL_GREETING, EDITED_GREETING, 1), encoding="utf-8")
-        _run(["pnpm", "-w", "build"], cwd=plugin_root, env=child_env, command_runner=command_runner)
+        _run(["pnpm", "build"], cwd=plugin_root, env=child_env, command_runner=command_runner)
         output = _run(kb_command([ "demo", "hello"], executable=str(kb_path)), cwd=project, env=child_env,
                       command_runner=command_runner)
         if "Edited demo greeting for World!" not in output:

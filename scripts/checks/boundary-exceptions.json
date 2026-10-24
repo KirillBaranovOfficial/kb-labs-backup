@@ -2,103 +2,691 @@
   "$comment": "Explicit exceptions for the boundary/naming lints (tasks 0.2, 0.3, 0.5). Each entry is a violation that existed when the lint was introduced; new violations are NOT allowed. Remove an entry when its violation is fixed (a stale entry is reported as a warning). Fields: rule, package (repo-relative dir), target (offending import / dependency / command path / binary), since (YYYY-MM-DD), reason. Do not add entries to silence new code.",
   "version": 1,
   "exceptions": [
-    {"rule":"command-verb-vocabulary","package":"plugins/agents/entry","target":"agent diff","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/agents/entry","target":"agent history","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/agents/entry","target":"agent quality report","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/agents/entry","target":"agent rollback","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/agents/entry","target":"agent trace context","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/agents/entry","target":"agent trace diagnose","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/agents/entry","target":"agent trace filter","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/agents/entry","target":"agent trace iteration","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/agents/entry","target":"agent trace stats","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/clickup/entry","target":"clickup list statuses","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/clickup/entry","target":"clickup list tasks","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/clickup/entry","target":"clickup task search","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/clickup/entry","target":"clickup workspace","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/commit/entry","target":"commit apply","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/commit/entry","target":"commit generate","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/commit/entry","target":"commit open","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/commit/entry","target":"commit push","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/commit/entry","target":"commit reset","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/devlink/entry","target":"devlink backups","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/devlink/entry","target":"devlink freeze","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/devlink/entry","target":"devlink plan","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/devlink/entry","target":"devlink switch","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/devlink/entry","target":"devlink undo","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/inbox/entry","target":"inbox accounts","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/inbox/entry","target":"inbox folders","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/inbox/entry","target":"inbox mark","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/inbox/entry","target":"inbox move","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/inbox/entry","target":"inbox reply","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/inbox/entry","target":"inbox search","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/inbox/entry","target":"inbox send","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/inbox/entry","target":"inbox thread","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/infra-worker/plugin-template-core","target":"infra prepare","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/infra-worker/plugin-template-core","target":"infra snapshot capture","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/infra-worker/plugin-template-core","target":"infra snapshot restore","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/marketplace-registry/entry","target":"hub deprecate","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/marketplace-registry/entry","target":"hub publish","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/marketplace-registry/entry","target":"hub share","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/marketplace-registry/entry","target":"hub yank","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/mind/entry","target":"mind ask","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/mind/entry","target":"mind drop","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/mind/entry","target":"mind explore","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/mind/entry","target":"mind index","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/mind/entry","target":"mind reindex","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/mind/entry","target":"mind search","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/mind/entry","target":"mind sync health","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa baseline diff","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa check","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa ci evidence capture","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa ci evidence sync","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa ci overview","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa e2e flaky","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa gate","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa history","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa regressions","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa stats","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/qa/entry","target":"qa trends","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality build order","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality check builds","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality check layers","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality check tests","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality check types","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality context","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality coupling","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality cycles","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality dead code","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality fix deps","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality gate","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality health","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality history","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality snapshot","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality stats","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/quality/entry","target":"quality visualize","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release build","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release changelog","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release checks","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release deliver","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release git","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release pack","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release plan","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release promote","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release publish","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release report","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release rollback","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release stage","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release stage plan","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release verify","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/release/manager-cli","target":"release version","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/site-tools/entry","target":"site page","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/steward/entry","target":"steward commitment done","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/steward/entry","target":"steward commitment drop","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/steward/entry","target":"steward commitment snooze","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/steward/entry","target":"steward review","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"command-verb-vocabulary","package":"plugins/steward/entry","target":"steward who","since":"2026-09-26","reason":"Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) — decide per command whether to rename or extend the vocabulary through review."},
-    {"rule":"mutate-json-flag","package":"plugins/commit/entry","target":"commit reset","since":"2026-09-26","reason":"Mutating command declares no --json flag (06-command-naming.md section 3); predates the lint. Add a json flag."},
-    {"rule":"mutate-json-flag","package":"plugins/marketplace-registry/entry","target":"hub deprecate","since":"2026-09-26","reason":"Mutating command does not declare --json in its plugin manifest; the handler's internal flag type is not the manifest declaration checked by this rule. Add a manifest json flag."},
-    {"rule":"mutate-json-flag","package":"plugins/marketplace-registry/entry","target":"hub publish","since":"2026-09-26","reason":"Mutating command does not declare --json in its plugin manifest; the handler's internal flag type is not the manifest declaration checked by this rule. Add a manifest json flag."},
-    {"rule":"mutate-json-flag","package":"plugins/marketplace-registry/entry","target":"hub share","since":"2026-09-26","reason":"Mutating command does not declare --json in its plugin manifest; the handler's internal flag type is not the manifest declaration checked by this rule. Add a manifest json flag."},
-    {"rule":"mutate-json-flag","package":"plugins/marketplace-registry/entry","target":"hub yank","since":"2026-09-26","reason":"Mutating command does not declare --json in its plugin manifest; the handler's internal flag type is not the manifest declaration checked by this rule. Add a manifest json flag."}
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/agents",
+      "target": "agent diff",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/agents",
+      "target": "agent history",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/agents",
+      "target": "agent quality report",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/agents",
+      "target": "agent rollback",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/agents",
+      "target": "agent trace context",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/agents",
+      "target": "agent trace diagnose",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/agents",
+      "target": "agent trace filter",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/agents",
+      "target": "agent trace iteration",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/agents",
+      "target": "agent trace stats",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/clickup",
+      "target": "clickup list statuses",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/clickup",
+      "target": "clickup list tasks",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/clickup",
+      "target": "clickup task search",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/clickup",
+      "target": "clickup workspace",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/commit",
+      "target": "commit apply",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/commit",
+      "target": "commit generate",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/commit",
+      "target": "commit open",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/commit",
+      "target": "commit push",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/commit",
+      "target": "commit reset",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/devlink",
+      "target": "devlink backups",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/devlink",
+      "target": "devlink freeze",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/devlink",
+      "target": "devlink plan",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/devlink",
+      "target": "devlink switch",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/devlink",
+      "target": "devlink undo",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/inbox",
+      "target": "inbox accounts",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/inbox",
+      "target": "inbox folders",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/inbox",
+      "target": "inbox mark",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/inbox",
+      "target": "inbox move",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/inbox",
+      "target": "inbox reply",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/inbox",
+      "target": "inbox search",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/inbox",
+      "target": "inbox send",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/inbox",
+      "target": "inbox thread",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/infra-worker/plugin-template-core",
+      "target": "infra prepare",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/infra-worker/plugin-template-core",
+      "target": "infra snapshot capture",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/infra-worker/plugin-template-core",
+      "target": "infra snapshot restore",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/marketplace-registry",
+      "target": "hub deprecate",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/marketplace-registry",
+      "target": "hub publish",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/marketplace-registry",
+      "target": "hub share",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/marketplace-registry",
+      "target": "hub yank",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/mind",
+      "target": "mind ask",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/mind",
+      "target": "mind drop",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/mind",
+      "target": "mind explore",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/mind",
+      "target": "mind index",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/mind",
+      "target": "mind reindex",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/mind",
+      "target": "mind search",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/mind",
+      "target": "mind sync health",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa baseline diff",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa check",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa ci evidence capture",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa ci evidence sync",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa ci overview",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa e2e flaky",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa gate",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa history",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa regressions",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa stats",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/qa",
+      "target": "qa trends",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality build order",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality check builds",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality check layers",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality check tests",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality check types",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality context",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality coupling",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality cycles",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality dead code",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality fix deps",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality gate",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality health",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality history",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality snapshot",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality stats",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/quality",
+      "target": "quality visualize",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release build",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release changelog",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release checks",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release deliver",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release git",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release pack",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release plan",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release promote",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release publish",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release report",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release rollback",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release stage",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release stage plan",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release verify",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/release",
+      "target": "release version",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/site-tools",
+      "target": "site page",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/steward",
+      "target": "steward commitment done",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/steward",
+      "target": "steward commitment drop",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/steward",
+      "target": "steward commitment snooze",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/steward",
+      "target": "steward review",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "command-verb-vocabulary",
+      "package": "plugins/steward",
+      "target": "steward who",
+      "since": "2026-09-26",
+      "reason": "Verb is outside the closed vocabulary of 06-command-naming.md section 2; predates the lint. Renaming is a breaking CLI change (no aliases, 06 section 5) \u2014 decide per command whether to rename or extend the vocabulary through review."
+    },
+    {
+      "rule": "mutate-json-flag",
+      "package": "plugins/commit",
+      "target": "commit reset",
+      "since": "2026-09-26",
+      "reason": "Mutating command declares no --json flag (06-command-naming.md section 3); predates the lint. Add a json flag."
+    },
+    {
+      "rule": "mutate-json-flag",
+      "package": "plugins/marketplace-registry",
+      "target": "hub deprecate",
+      "since": "2026-09-26",
+      "reason": "Mutating command does not declare --json in its plugin manifest; the handler's internal flag type is not the manifest declaration checked by this rule. Add a manifest json flag."
+    },
+    {
+      "rule": "mutate-json-flag",
+      "package": "plugins/marketplace-registry",
+      "target": "hub publish",
+      "since": "2026-09-26",
+      "reason": "Mutating command does not declare --json in its plugin manifest; the handler's internal flag type is not the manifest declaration checked by this rule. Add a manifest json flag."
+    },
+    {
+      "rule": "mutate-json-flag",
+      "package": "plugins/marketplace-registry",
+      "target": "hub share",
+      "since": "2026-09-26",
+      "reason": "Mutating command does not declare --json in its plugin manifest; the handler's internal flag type is not the manifest declaration checked by this rule. Add a manifest json flag."
+    },
+    {
+      "rule": "mutate-json-flag",
+      "package": "plugins/marketplace-registry",
+      "target": "hub yank",
+      "since": "2026-09-26",
+      "reason": "Mutating command does not declare --json in its plugin manifest; the handler's internal flag type is not the manifest declaration checked by this rule. Add a manifest json flag."
+    }
   ]
 }

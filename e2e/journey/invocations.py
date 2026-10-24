@@ -1248,6 +1248,16 @@ class BackgroundCommand:
     def terminate(self) -> None:
         self.process.terminate()
 
+    def stop(self, timeout: float = 10) -> int:
+        """Stop a background process and guarantee it is reaped before returning."""
+        if self.process.poll() is None:
+            self.process.terminate()
+        try:
+            return self.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            return self.wait(timeout=timeout)
+
     def wait(self, timeout: float | None = None) -> int:
         try:
             result = self.process.wait(timeout=timeout)

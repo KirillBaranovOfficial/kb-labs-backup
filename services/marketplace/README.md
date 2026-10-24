@@ -18,7 +18,7 @@ For a local plugin, build it and pass an explicit relative link path:
 
 ```bash
 pnpm build
-kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb marketplace plugins add --link .kb/plugins/my-plugin
 ```
 
 ## Machine adapters

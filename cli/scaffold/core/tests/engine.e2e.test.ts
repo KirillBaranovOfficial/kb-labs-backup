@@ -42,16 +42,14 @@ describe('engine e2e: plugin/base block', () => {
       context: ctx,
     });
 
-    // Written paths should include all three packages + the emitted manifest.
+    // Written paths should include the single package root and emitted manifest.
     const paths = result.files.map((f) => f.path).sort();
     expect(paths).toContain('package.json');
     expect(paths).toContain('README.md');
-    expect(paths).toContain('packages/demo-contracts/package.json');
-    expect(paths).toContain('packages/demo-core/package.json');
-    expect(paths).toContain('packages/demo-entry/package.json');
-    expect(paths).toContain('packages/demo-core/src/hello.ts');
-    expect(paths).toContain('packages/demo-entry/src/commands/hello.ts');
-    expect(paths).toContain('packages/demo-entry/src/manifest.ts');
+    expect(paths.filter((path) => path.endsWith('/package.json') || path === 'package.json')).toEqual(['package.json']);
+    expect(paths).toContain('src/core/hello.ts');
+    expect(paths).toContain('src/cli/commands/hello.ts');
+    expect(paths).toContain('src/manifest.ts');
 
     // No skip-markers left in output.
     for (const f of result.files) {
@@ -73,7 +71,7 @@ describe('engine e2e: plugin/base block', () => {
 
     // The generated manifest.ts must reference the kb.plugin/3 schema.
     const manifestFile = result.files.find(
-      (f) => f.path === 'packages/demo-entry/src/manifest.ts',
+      (f) => f.path === 'src/manifest.ts',
     );
     expect(manifestFile).toBeDefined();
     expect(manifestFile!.contents).toContain('kb.plugin/3');
@@ -81,7 +79,7 @@ describe('engine e2e: plugin/base block', () => {
     expect(manifestFile!.contents).toContain('combinePermissions');
     expect(manifestFile!.contents).toContain('@kb-labs/sdk');
     const entryPackage = result.files.find(
-      (f) => f.path === 'packages/demo-entry/package.json',
+      (f) => f.path === 'package.json',
     )!;
     expect(JSON.parse(entryPackage.contents).name).toBe('@kb-labs/demo');
 
@@ -93,7 +91,7 @@ describe('engine e2e: plugin/base block', () => {
     }
   });
 
-  it('switches to standalone (pnpm-workspace.yaml present, semver deps)', async () => {
+  it('switches to standalone (one package with semver dependencies)', async () => {
     const entity = await loadEntity(templatesRoot, 'plugin');
     const standaloneCtx: RenderContext = {
       ...ctx,
@@ -109,11 +107,12 @@ describe('engine e2e: plugin/base block', () => {
     expect(paths).toContain('pnpm-workspace.yaml');
 
     const entryPkg = result.files.find(
-      (f) => f.path === 'packages/demo-entry/package.json',
+      (f) => f.path === 'package.json',
     )!;
-    // External deps use semver, internal deps use workspace:*.
-    expect(entryPkg.contents).toContain('"^2.18.0"');
-    expect(entryPkg.contents).toContain('"workspace:*"');
+    // The generated plugin is one package and depends on the public SDK.
+    const packageJson = JSON.parse(entryPkg.contents);
+    expect(packageJson.dependencies['@kb-labs/sdk']).toBe('^2.18.0');
+    expect(Object.values(packageJson.dependencies)).not.toContain('workspace:*');
   });
 
   it('composes blocks: base + cli + rest + contracts', async () => {
@@ -124,12 +123,12 @@ describe('engine e2e: plugin/base block', () => {
       context: { ...ctx, blocks: ['base', 'cli', 'rest', 'contracts'] },
     });
     const paths = result.files.map((f) => f.path);
-    expect(paths).toContain('packages/demo-entry/src/commands/ping.ts');
-    expect(paths).toContain('packages/demo-entry/src/rest/hello.ts');
-    expect(paths).toContain('packages/demo-contracts/src/events.ts');
+    expect(paths).toContain('src/cli/commands/ping.ts');
+    expect(paths).toContain('src/rest/hello.ts');
+    expect(paths).toContain('src/contracts/events.ts');
 
     const manifest = result.files.find(
-      (f) => f.path === 'packages/demo-entry/src/manifest.ts',
+      (f) => f.path === 'src/manifest.ts',
     )!;
     // Both commands present. Commands use `path:` (space-separated tokens) per
     // CliCommandDecl — discover.ts derives segments from path. The old `id:`+
@@ -192,7 +191,7 @@ describe('engine e2e: plugin/base block', () => {
     await writeFiles({ outRoot: target, files: result.files });
 
     const helloSrc = await readFile(
-      join(target, 'packages/demo-core/src/hello.ts'),
+      join(target, 'src/core/hello.ts'),
       'utf8',
     );
     expect(helloSrc).toContain('Hello,');

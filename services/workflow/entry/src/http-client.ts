@@ -16,8 +16,8 @@ import type {
   WorkflowHealthResponse,
 } from '@kb-labs/workflow-contracts';
 import { deriveProjectId, getHostServiceAddress, useEnv } from '@kb-labs/sdk';
+import { gatewayApiFetch } from '@kb-labs/sdk/gateway';
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
-import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import type { ErrorCode } from '@kb-labs/core-platform/error-envelope';
 

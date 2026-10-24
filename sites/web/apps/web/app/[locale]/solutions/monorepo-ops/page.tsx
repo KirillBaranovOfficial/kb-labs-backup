@@ -47,7 +47,7 @@ const BUILD_AFFECTED_OUTPUT = `$ kb-devkit run build --affected
   @kb-labs/core-types      ●  building   [1.4s]
   @kb-labs/core-platform   ●  building   [2.1s]
   @kb-labs/sdk             ●  building   [3.2s]
-  @kb-labs/commit-core     ●  building   [0.9s]
+  @kb-labs/commit/core     ●  building   [0.9s]
   @kb-labs/commit    ●  building   [1.3s]
   @kb-labs/qa        ◌  cached     [0ms]
   @kb-labs/quality   ◌  cached     [0ms]
@@ -61,7 +61,7 @@ const BUILD_FULL_OUTPUT = `$ kb-devkit run build
   @kb-labs/core-types      ◌  cached   [0ms]
   @kb-labs/core-platform   ◌  cached   [0ms]
   @kb-labs/sdk             ◌  cached   [0ms]
-  @kb-labs/agent-sdk       ◌  cached   [0ms]
+  @kb-labs/agents/sdk      ◌  cached   [0ms]
   ... 114 more packages
 
   Done in 0.8s  ·  0 built  ·  118 from cache`;

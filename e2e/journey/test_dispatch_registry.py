@@ -305,7 +305,7 @@ def _registered_command_registry(root: Path) -> tuple[set[str], set[str]]:
     """Derive command leaves and groups from shipped command declarations."""
     leaves: set[str] = set()
     groups: set[str] = set()
-    for manifest in root.glob("plugins/**/entry/src/manifest.ts"):
+    for manifest in root.glob("plugins/*/src/manifest.ts"):
         text = manifest.read_text(encoding="utf-8")
         group_meta = set(re.findall(r"groupMeta\s*:\s*\[([^\]]*)\]", text, re.S))
         group_paths = {path for block in group_meta

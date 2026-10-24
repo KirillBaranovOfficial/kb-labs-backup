@@ -40,7 +40,7 @@ fix:
   `exportsConvention: 'as-is'` — class names are kept as authored, not
   camelCased.
 - Plugin Module Federation remotes (`studio/plugin-tools`, used by every
-  `plugins/*/entry` Studio widget) use `css-loader` + `style-loader` with
+  `plugins/*` Studio widget) use `css-loader` + `style-loader` with
   `modules: true`. `@kb-labs/studio-ui-kit` itself is excluded from this path
   — it's a Module Federation `singleton: true` shared dependency, loaded once
   by the host, not bundled per-remote — so this rule only ever applies to a

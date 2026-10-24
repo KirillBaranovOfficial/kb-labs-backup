@@ -55,14 +55,14 @@ plugins/kb-labs-impact/
       { "name": "@kb-labs/sdk", "repo": "platform/kb-labs-sdk", "changedFiles": 3 }
     ],
     "dependent": [
-      { "name": "@kb-labs/agent-core", "repo": "plugins/kb-labs-agents", "reason": "depends on @kb-labs/sdk" }
+      { "name": "@kb-labs/agents/core", "repo": "plugins/kb-labs-agents", "reason": "depends on @kb-labs/sdk" }
     ],
     "transitive": [
-      { "name": "@kb-labs/agent-cli", "repo": "plugins/kb-labs-agents", "reason": "depends on @kb-labs/agent-core" }
+      { "name": "@kb-labs/agents/cli", "repo": "plugins/kb-labs-agents", "reason": "depends on @kb-labs/agents/core" }
     ]
   },
   "recommendations": [
-    "Rebuild @kb-labs/agent-core (depends on changed @kb-labs/sdk)",
+    "Rebuild @kb-labs/agents/core (depends on changed @kb-labs/sdk)",
     "Run tests in plugins/kb-labs-agents"
   ]
 }
@@ -115,7 +115,7 @@ plugins/kb-labs-impact/
 {
   "docs": {
     "stale": [
-      { "file": "CLI-REFERENCE.md", "reason": "@kb-labs/agent-cli changed", "action": "regenerate", "command": "pnpm kb docs generate-cli-reference" }
+      { "file": "CLI-REFERENCE.md", "reason": "@kb-labs/agents/cli changed", "action": "regenerate", "command": "pnpm kb docs generate-cli-reference" }
     ],
     "review": [
       { "file": "CLAUDE.md", "reason": "@kb-labs/sdk changed", "action": "review sections mentioning SDK" }
@@ -160,17 +160,17 @@ plugins/kb-labs-impact/
     @kb-labs/mind-engine (plugins/kb-labs-mind) — 1 file changed
 
   Dependent (3):
-    @kb-labs/agent-core ← depends on @kb-labs/sdk
-    @kb-labs/agent-cli ← depends on @kb-labs/agent-core
-    @kb-labs/commit-core ← depends on @kb-labs/sdk
+    @kb-labs/agents/core ← depends on @kb-labs/sdk
+    @kb-labs/agents/cli ← depends on @kb-labs/agents/core
+    @kb-labs/commit/core ← depends on @kb-labs/sdk
 
   ⚠️  Recommendations:
-    • Rebuild @kb-labs/agent-core, @kb-labs/commit-core
+    • Rebuild @kb-labs/agents/core, @kb-labs/commit/core
     • Run tests in plugins/kb-labs-agents, plugins/kb-labs-commit-plugin
 
 📄 Doc Impact
   Stale (1):
-    CLI-REFERENCE.md — @kb-labs/agent-cli changed
+    CLI-REFERENCE.md — @kb-labs/agents/cli changed
     → Run: pnpm kb docs generate-cli-reference
 
   Review (1):

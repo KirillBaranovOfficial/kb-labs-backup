@@ -29,7 +29,7 @@ kb quality context --package @kb-labs/sdk --json
   "layerName": "sdk / shared",
   "dir": "sdk/sdk",
   "coupling": { "afferent": 38, "efferent": 18, "instability": 0.32 },
-  "dependents": ["@kb-labs/agent-core", "..."],
+  "dependents": ["@kb-labs/agents/core", "..."],
   "dependencies": [],
   "devDependencies": ["@kb-labs/core-platform", "..."]
 }
@@ -150,8 +150,8 @@ kb quality gate --json
 
 ```
 plugins/quality/
-├── contracts/   @kb-labs/quality-contracts  — типы, константы, роуты
-├── core/        @kb-labs/quality-core       — анализаторы (AST, knip, coupling)
+├── contracts/   @kb-labs/quality/contracts  — типы, константы, роуты
+├── core/        @kb-labs/quality/core       — анализаторы (AST, knip, coupling)
 └── entry/       @kb-labs/quality      — CLI, REST handlers, Studio UI
 ```
 

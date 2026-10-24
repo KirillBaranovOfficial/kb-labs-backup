@@ -2,7 +2,7 @@ import { defineSystemCommand, throwSystemCommandError, type CommandResult } from
 import { writeFile, mkdir, stat } from 'node:fs/promises';
 import { join, resolve, normalize } from 'node:path';
 import { homedir, hostname } from 'node:os';
-import { gatewayApiFetch, GatewayApiError } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch, GatewayApiError } from '@kb-labs/sdk/gateway';
 
 type Flags = {
   gateway: { type: 'string'; description: string };

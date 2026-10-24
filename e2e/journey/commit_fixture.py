@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def commit_fixture_source_version(workspace: Path) -> str:
-    manifest_path = workspace / "plugins/commit/entry/package.json"
+    manifest_path = workspace / "plugins/commit/package.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     name = manifest.get("name")
     version = manifest.get("version")

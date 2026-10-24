@@ -2,77 +2,77 @@
   "schema": "kb.marketplace/3",
   "plugins": {
     "@kb-labs/agents": {
-      "link": "./plugins/agents/entry",
+      "link": "./plugins/agents",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/clickup": {
-      "link": "./plugins/clickup/entry",
+      "link": "./plugins/clickup",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/commit": {
-      "link": "./plugins/commit/entry",
+      "link": "./plugins/commit",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/devlink": {
-      "link": "./plugins/devlink/entry",
+      "link": "./plugins/devlink",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/github": {
-      "link": "./plugins/github/entry",
+      "link": "./plugins/github",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/inbox": {
-      "link": "./plugins/inbox/entry",
+      "link": "./plugins/inbox",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/marketplace-registry": {
-      "link": "./plugins/marketplace-registry/entry",
+      "link": "./plugins/marketplace-registry",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/mind": {
-      "link": "./plugins/mind/entry",
+      "link": "./plugins/mind",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/qa": {
-      "link": "./plugins/qa/entry",
+      "link": "./plugins/qa",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/quality": {
-      "link": "./plugins/quality/entry",
+      "link": "./plugins/quality",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/release": {
-      "link": "./plugins/release/manager-cli",
+      "link": "./plugins/release",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/review": {
-      "link": "./plugins/review/entry",
+      "link": "./plugins/review",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/site-tools": {
-      "link": "./plugins/site-tools/entry",
+      "link": "./plugins/site-tools",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/steward": {
-      "link": "./plugins/steward/entry",
+      "link": "./plugins/steward",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/viewer": {
-      "link": "./plugins/viewer/entry",
+      "link": "./plugins/viewer",
       "enabled": true,
       "source": "local"
     }

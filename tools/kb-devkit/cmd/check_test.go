@@ -55,8 +55,8 @@ func TestCheckRejectsCategoryMismatchWithApplicableCategories(t *testing.T) {
 		Presets: map[string]config.Preset{"node-lib": {Language: "typescript"}},
 		Custom:  []config.CustomCheck{{Name: "cli-naming", Run: "true", On: []string{"check"}, Categories: []string{"plugin-entry"}}},
 	}
-	ws := &workspace.Workspace{Packages: []workspace.Package{{Name: "@kb-labs/viewer-core", Category: "ts-lib", Preset: "node-lib"}}}
-	err := validateCheckSelection(ws, cfg, checks.Build(cfg, ".", "check"), []string{"cli-naming"}, "@kb-labs/viewer-core")
+	ws := &workspace.Workspace{Packages: []workspace.Package{{Name: "@kb-labs/viewer/core", Category: "ts-lib", Preset: "node-lib"}}}
+	err := validateCheckSelection(ws, cfg, checks.Build(cfg, ".", "check"), []string{"cli-naming"}, "@kb-labs/viewer/core")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != "KB_RUNTIME_INPUT_INVALID" {
 		t.Fatalf("error = %v, want typed KB_RUNTIME_INPUT_INVALID", err)
@@ -83,7 +83,7 @@ func TestCheckCLIRejectsReviewerCategoryMismatch(t *testing.T) {
 		t.Fatalf("build kb-devkit: %v\n%s", err, output)
 	}
 
-	command := exec.Command(binary, "check", "--package", "@kb-labs/viewer-core", "--only", "cli-naming", "--json")
+	command := exec.Command(binary, "check", "--package", "@kb-labs/viewer/core", "--only", "cli-naming", "--json")
 	command.Dir = workspaceRoot
 	command.Env = isolatedCheckEnv(t, tempDir)
 	output, err := command.CombinedOutput()

@@ -175,7 +175,7 @@ describe('MarketplaceService', () => {
   describe('install', () => {
     // case: S-268.14
     it('installs the npm artifact under the same identity recorded in the Marketplace lock', async () => {
-      const sourceDir = path.join(marketplaceServiceTestWorkspaceRoot, 'plugins/commit/entry');
+      const sourceDir = path.join(marketplaceServiceTestWorkspaceRoot, 'plugins/commit');
       const packageJson = JSON.parse(await fs.readFile(path.join(sourceDir, 'package.json'), 'utf8')) as { name: string; version: string };
       const dir = path.join(tmpDir, 'node_modules', '@kb-labs', 'commit');
       await fs.mkdir(path.dirname(dir), { recursive: true });
@@ -473,7 +473,7 @@ describe('MarketplaceService', () => {
       expect(await readMarketplaceLock(projectRoot, new DiagnosticCollector())).toEqual(before);
     }
 
-    it('installs platform-scope plugin entry packages in the shared store', async () => {
+    it('installs platform-scope plugin packages in the shared store', async () => {
       const packageId = '@kb-labs/custom-plugin';
       const { dir, integrity } = await createPluginDir(tmpDir, 'platform-plugin', packageId);
       const source: PackageSource = {

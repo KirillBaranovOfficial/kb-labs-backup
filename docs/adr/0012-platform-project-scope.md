@@ -292,7 +292,7 @@ kb scaffold run plugin demo --yes --mode standalone
 cd .kb/plugins/demo && pnpm install && pnpm build && cd -
 
 # Link under project scope (default, because cwd has .kb/kb.config.*)
-kb marketplace plugins link ./.kb/plugins/demo/packages/demo-entry
+kb marketplace plugins link ./.kb/plugins/demo
 # Writes /tmp/plugin-scope-test/.kb/marketplace.lock, NOT platform lock.
 
 kb marketplace plugins list                   # project

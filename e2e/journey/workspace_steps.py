@@ -4,17 +4,20 @@ from installed_fixture import configure_hermetic_cli_fixture, layout_relative, l
 
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
 from service_steps import Journey
 from invocations import (
     CompletedProcess,
+    BackgroundCommand,
     decode_ux_error_result,
     decode_ux_success_result,
     invocation_context,
     read_ux_cli_result,
     run_command,
+    start_background_command,
 )
 
 
@@ -22,11 +25,8 @@ def workspace_checkout_problem(repo_root: Path) -> str | None:
     required = (
         "cli/bin/dist/bin.js",
         "core/project-registry/dist/index.js",
-        "plugins/marketplace-registry/entry/dist/manifest.js",
-        "plugins/marketplace-registry/entry/dist/commands/publish.js",
-        "plugins/marketplace-registry/entry/node_modules/@kb-labs/sdk",
-        "plugins/marketplace-registry/entry/node_modules/@kb-labs/cli-runtime",
-        "plugins/marketplace-registry/entry/node_modules/execa",
+        "plugins/marketplace-registry/dist/manifest.js",
+        "plugins/marketplace-registry/dist/commands/publish.js",
         layout_value('versionStatePaths.kb_marketplace_lock'),
         "plugins",
     )
@@ -68,9 +68,36 @@ def _stage_workspace_checkout(repo_root: Path, stage_root: Path) -> Path:
         (stage_root / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
     staged_kb = stage_root / ".kb"
     staged_kb.mkdir()
-    for name in ("marketplace.lock", "kb.config.jsonc"):
-        (staged_kb / name).symlink_to(repo_root / ".kb" / name)
+    shutil.copy2(repo_root / ".kb" / "marketplace.lock", staged_kb / "marketplace.lock")
+    (staged_kb / "kb.config.jsonc").symlink_to(repo_root / ".kb" / "kb.config.jsonc")
     return stage_root
+
+
+def _start_marketplace_sync_fixture(repo_root: Path, workspace_root: Path, env: dict[str, str]):
+    fixture = Path(__file__).resolve().parent / "fixtures" / "marketplace-sync-server.mjs"
+    process = start_background_command(
+        ["node", str(fixture), str(workspace_root)], cwd=repo_root, env=env)
+    if not process.wait_for_output('"url":', 30):
+        process.terminate()
+        process.wait(timeout=10)
+        details = "".join(process.lines).strip()
+        return None, None, f"Marketplace sync fixture did not become ready: {details}"
+    try:
+        message = json.loads("".join(process.lines).splitlines()[0])
+        url = message["url"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        process.terminate()
+        process.wait(timeout=10)
+        details = "".join(process.lines).strip()
+        return None, None, f"Marketplace sync fixture returned invalid readiness data: {error}; {details}"
+    return process, url, None
+
+
+def _stop_marketplace_sync_fixture(process: BackgroundCommand) -> str | None:
+    returncode = process.stop(timeout=10)
+    if returncode != 0:
+        return f"Marketplace sync fixture exited {returncode}: {''.join(process.lines).strip()}"
+    return None
 
 
 def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bool = False) -> None:
@@ -82,7 +109,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 "workspace-cli",
                 lambda: problem,
                 cases=[
-                    "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
+                    "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13", "S-179.33",
                     "S-142.5", "S-203.1", "S-203.19", "S-204.7",
                 ],
             )
@@ -252,7 +279,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
         def unavailable_locked_workspace_plugin() -> str | None:
             fixture_root = Path(home) / "unbuilt-workspace"
             kb_dir = fixture_root / ".kb"
-            package_dir = fixture_root / "plugins/release/manager-cli"
+            package_dir = fixture_root / "plugins/release"
             kb_dir.mkdir(parents=True)
             for source in repo_root.iterdir():
                 if source.name in {".kb", ".git", "plugins"}:
@@ -264,17 +291,16 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 if source.name == "release":
                     continue
                 (fixture_plugins / source.name).symlink_to(source, target_is_directory=True)
-            (fixture_plugins / "release").mkdir()
+            package_dir.mkdir()
             for source in (repo_root / "plugins/release").iterdir():
-                if source.name != "manager-cli":
-                    (fixture_plugins / "release" / source.name).symlink_to(source, target_is_directory=True)
-            package_dir.mkdir(parents=True)
+                if source.name not in {"package.json", "dist"}:
+                    (package_dir / source.name).symlink_to(source, target_is_directory=source.is_dir())
             (package_dir / "package.json").write_text(json.dumps({
                 "name": "@kb-labs/release",
                 "kb": {"manifest": "./dist/manifest.js"},
             }), encoding="utf-8")
             locked = json.loads((repo_root / layout_value('versionStatePaths.kb_marketplace_lock')).read_text())
-            locked["plugins"]["@kb-labs/release"]["link"] = "./plugins/release/manager-cli"
+            locked["plugins"]["@kb-labs/release"]["link"] = "./plugins/release"
             config_source = repo_root / ".kb/kb.config.json"
             if not config_source.exists():
                 config_source = repo_root / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')
@@ -339,10 +365,29 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                      verify_agent_command_namespaces, cases=["S-142.5"])
 
         def verify_synced_workspace_lock() -> str | None:
+            process, marketplace_url, startup_error = _start_marketplace_sync_fixture(repo_root, workspace_root, env)
+            if startup_error:
+                return startup_error
+            if process is None or marketplace_url is None:
+                return "Marketplace sync fixture did not return a process and URL"
+            previous_url = env.get("KB_MARKETPLACE_URL")
+            env["KB_MARKETPLACE_URL"] = marketplace_url
             try:
-                lock = json.loads((repo_root / layout_value('versionStatePaths.kb_marketplace_lock')).read_text())
+                sync = run("marketplace", "sync", "--scope", "project", "--json")
+            finally:
+                if previous_url is None:
+                    env.pop("KB_MARKETPLACE_URL", None)
+                else:
+                    env["KB_MARKETPLACE_URL"] = previous_url
+                cleanup_error = _stop_marketplace_sync_fixture(process)
+            if cleanup_error:
+                return cleanup_error
+            if sync.returncode != 0:
+                return f"workspace marketplace sync failed (exit {sync.returncode}): {sync.stderr or sync.stdout}"
+            try:
+                lock = json.loads((workspace_root / layout_value('versionStatePaths.kb_marketplace_lock')).read_text())
             except (OSError, json.JSONDecodeError) as error:
-                return f"workspace marketplace lock could not be read: {error}"
+                return f"staged workspace marketplace lock could not be read: {error}"
             expected_plugins = ("@kb-labs/release", "@kb-labs/review", "@kb-labs/mind", "@kb-labs/agents")
             missing_plugins = [plugin for plugin in expected_plugins if plugin not in lock.get("plugins", {})]
             adapters = lock.get("adapters", {})
@@ -354,4 +399,4 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 return "workspace marketplace lock has no machine-level adapter entries"
             return None
 
-        journey.step("verify synced workspace plugins and adapters in the v3 lock", "workspace-cli", verify_synced_workspace_lock, cases=["S-179.4"])
+        journey.step("verify synced workspace plugins and adapters in the v3 lock", "workspace-cli", verify_synced_workspace_lock, cases=["S-179.4", "S-179.33"])

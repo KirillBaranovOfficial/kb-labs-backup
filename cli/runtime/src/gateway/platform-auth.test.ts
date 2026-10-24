@@ -6,15 +6,13 @@ const mocks = vi.hoisted(() => ({
   load: vi.fn(), credentialsLoad: vi.fn(),
 }));
 
-vi.mock('./session.js', () => ({
+vi.mock('@kb-labs/sdk/gateway', () => ({
   SessionManager: class {
     async load() { return mocks.load(); }
     async save() {}
     async clear() {}
     getFilePath() { return '/tmp/session.json'; }
   },
-}));
-vi.mock('./credentials.js', () => ({
   CredentialsManager: class {
     async load() { return mocks.credentialsLoad(); }
     async save() {}
@@ -22,16 +20,17 @@ vi.mock('./credentials.js', () => ({
   },
 }));
 
+
 let hasUsablePlatformAuth: typeof import('./platform-auth.js').hasUsablePlatformAuth;
-let SavedAuthFileError: typeof import('./saved-auth-file.js').SavedAuthFileError;
-let AuthSessionOwner: typeof import('./auth-session.js').AuthSessionOwner;
+let SavedAuthFileError: typeof import('@kb-labs/sdk/gateway').SavedAuthFileError;
+let AuthSessionOwner: typeof import('@kb-labs/sdk/gateway').AuthSessionOwner;
 
 beforeEach(async () => {
   vi.resetModules();
   mocks.load.mockReset();
   mocks.credentialsLoad.mockReset();
-  ({ SavedAuthFileError } = await import('./saved-auth-file.js'));
-  ({ AuthSessionOwner } = await import('./auth-session.js'));
+  ({ SavedAuthFileError } = await import('@kb-labs/sdk/gateway'));
+  ({ AuthSessionOwner } = await import('@kb-labs/sdk/gateway'));
   ({ hasUsablePlatformAuth } = await import('./platform-auth.js'));
   mocks.credentialsLoad.mockResolvedValue(null);
 });

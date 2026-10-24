@@ -38,11 +38,11 @@ uninstall it and verify that its route is no longer available.
 ## Pass criteria
 
 The installable artifact is `@kb-labs/commit` and its manifest ID is
-`@kb-labs/commit` (`plugins/commit/entry/package.json:2`;
-`plugins/commit/entry/src/manifest.ts:63`). Commit declares
+`@kb-labs/commit` (`plugins/commit/src/package.json:2`;
+`plugins/commit/src/manifest.ts:63`). Commit declares
 `GET /v1/plugins/commit/status` in its manifest and response
-contract (`plugins/commit/entry/src/manifest.ts:227-247`;
-`plugins/commit/contracts/src/routes.ts:7-24`). REST route mounting replaces
+contract (`plugins/commit/src/manifest.ts:227-247`;
+`plugins/commit/src/contracts/routes.ts:7-24`). REST route mounting replaces
 the manifest `/v1` prefix with the REST service's internal `/api/v1` base path
 (`services/rest-api/app/src/routes/plugins.ts:404-450`); the Gateway's project
 service declaration strips that internal base from the public URL. `KB_PLUGIN_NOT_INSTALLED` is the typed response for a route whose plugin is

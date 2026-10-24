@@ -16,7 +16,7 @@ Adopt a three-level test pyramid enforced by devkit:
 
 ### Level 1 — Handler tests (fast, no daemon)
 
-- **Location:** `plugins/*/entry/src/__tests__/cli/*.cli.test.ts`
+- **Location:** `plugins/*/src/__tests__/cli/*.cli.test.ts`
 - **Tool:** Vitest + `vi.mock` for the HTTP client
 - **Helpers:** `@kb-labs/shared-testing-e2e` — `mockCLIInput`, `createCapturedUI`, `createMockContext`, `mockObject`
 - **Run:** `pnpm run test:cli` (per plugin) or `kb-devkit run test:cli` (all)

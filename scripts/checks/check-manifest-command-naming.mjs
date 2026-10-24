@@ -33,11 +33,11 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { findPluginEntryPackages, runLint } from './lib/boundary-common.mjs';
+import { runLint } from './lib/boundary-common.mjs';
 
 export const CHECK_NAME = 'manifest-command-naming';
 export const RULES = ['command-verb-vocabulary', 'command-path-case', 'mutate-json-flag', 'command-operation-type', 'manifest-example-command-path'];
@@ -144,8 +144,22 @@ export function changedFiles(root, ref) {
   return { files: r.stdout.split('\n').map((l) => l.trim()).filter(Boolean) };
 }
 
-export function collect(root, env = process.env) {
+export function collect(root, input = {}, env = process.env) {
   const violations = [];
+  const registered = input.workspace?.packages;
+  if (!Array.isArray(registered)) {
+    return [{
+      rule: 'plugin-registry-missing',
+      severity: 'error',
+      package: '(workspace)',
+      target: 'workspace.packages',
+      file: 'devkit.yaml',
+      message: 'the live workspace package registry is missing; run `kb-devkit check` to supply it',
+    }];
+  }
+  const pluginPackages = registered.filter((pkg) => pkg.category === 'plugin-entry');
+  const registeredPaths = new Set(pluginPackages.map((pkg) => resolve(root, pkg.dir)));
+  const scannedPaths = new Set();
   const baseRef = env.KB_DEVKIT_BASE_REF;
   let changed = null; // null = not affected-aware: every unbuilt package is reported
   if (baseRef) {
@@ -167,7 +181,12 @@ export function collect(root, env = process.env) {
   const skipped = [];
   /** packages whose manifest could not be read (their exceptions cannot be judged stale) */
   const unscanned = [];
-  for (const pkg of findPluginEntryPackages(root)) {
+  for (const registeredPackage of pluginPackages) {
+    const packageRoot = resolve(root, registeredPackage.dir);
+    const relDir = relative(root, packageRoot).split('\\').join('/');
+    const pkgJsonPath = join(packageRoot, 'package.json');
+    const pkg = { dir: packageRoot, relDir, json: JSON.parse(readFileSync(pkgJsonPath, 'utf-8')) };
+    scannedPaths.add(packageRoot);
     const manifestRel = pkg.json?.kb?.manifest;
     if (typeof manifestRel !== 'string') continue;
     // The shared devkit emitter always writes the declarative artifact here,
@@ -202,6 +221,17 @@ export function collect(root, env = process.env) {
         message: `${pkg.relDir}: ${v.message}`,
       });
     }
+  }
+  if (scannedPaths.size !== registeredPaths.size
+      || [...registeredPaths].some((packageRoot) => !scannedPaths.has(packageRoot))) {
+    violations.push({
+      rule: 'plugin-registry-incomplete',
+      severity: 'error',
+      package: '(workspace)',
+      target: 'plugin-entry package set',
+      file: 'devkit.yaml',
+      message: 'the scanned plugin manifest package set does not match the live workspace registry',
+    });
   }
   if (unscanned.length > 0) {
     violations.push({

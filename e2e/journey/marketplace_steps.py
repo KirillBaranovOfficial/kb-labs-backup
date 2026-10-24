@@ -39,7 +39,7 @@ CommandRunner = Callable[..., CompletedProcess[str]]
 
 
 def commit_publish_command(workspace_root: str | Path) -> list[str]:
-    return ["hub", "publish", "--path", str(Path(workspace_root) / "plugins" / "commit" / "entry"), "--json"]
+    return ["hub", "publish", "--path", str(Path(workspace_root) / "plugins" / "commit"), "--json"]
 
 
 def _publish_fixture_command(workspace_root: str | Path, package_path: str) -> list[str]:
@@ -452,12 +452,12 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
     def install_fixture() -> None:
         wait_for_marketplace_ready(project, base_env, runner)
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
-        published = _json(_publish_workspace_fixture(workspace, "plugins/commit/entry", base_env, runner),
+        published = _json(_publish_workspace_fixture(workspace, "plugins/commit", base_env, runner),
                            commit_publish_command(workspace))
         version = published.get("version")
         if not isinstance(version, str) or not version:
             raise RuntimeError("kb hub publish did not return the published Commit version")
-        for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa/entry"):
+        for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa"):
             publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
                                 _publish_fixture_command(workspace, fixture_path))
             if not isinstance(publication.get("version"), str) or not publication.get("version"):

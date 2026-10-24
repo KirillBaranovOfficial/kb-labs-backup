@@ -64,6 +64,10 @@
     "./platform": {
       "types": "./dist/platform/index.d.ts",
       "import": "./dist/platform/index.js"
+    },
+    "./gateway": {
+      "types": "./dist/gateway/index.d.ts",
+      "import": "./dist/gateway/index.js"
     }
   },
   "kbLabs": {

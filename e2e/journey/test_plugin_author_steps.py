@@ -28,14 +28,13 @@ with log.open("a", encoding="utf-8") as stream:
 plugin = root / ".kb/plugins/demo"
 lock_path = root / ".kb/marketplace.lock"
 if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and args[6:] == ["--yes"]:
-    entry = plugin / "packages/demo-entry"
-    core = plugin / "packages/demo-core/src/hello.ts"
-    entry.mkdir(parents=True)
-    (entry / "src/commands").mkdir(parents=True)
+    plugin.mkdir(parents=True)
+    (plugin / "src/cli/commands").mkdir(parents=True)
+    core = plugin / "src/core/hello.ts"
     core.parent.mkdir(parents=True, exist_ok=True)
-    (entry / "package.json").write_text('{"name":"demo-entry","version":"0.1.0","kb":{"manifest":"manifest.json"}}')
-    (entry / "manifest.json").write_text(json.dumps({"id": "@kb-labs/demo"}))
-    (entry / "src/commands/hello.ts").write_text(
+    (plugin / "package.json").write_text('{"name":"@kb-labs/demo","version":"0.1.0","kb":{"manifest":"manifest.json"}}')
+    (plugin / "manifest.json").write_text(json.dumps({"id": "@kb-labs/demo"}))
+    (plugin / "src/cli/commands/hello.ts").write_text(
         "const { greeting } = hello({ who: input.flags.who ?? 'World' });\n")
     core.write_text('return { greeting: `Hello, ${who} from demo!` };\n')
 elif args[:3] == ["marketplace", "plugins", "add"]:
@@ -44,7 +43,7 @@ elif args[:3] == ["marketplace", "plugins", "add"]:
         raise SystemExit(1)
     link_path = args[args.index("--link") + 1]
     if not (root / link_path / "package.json").is_file():
-        raise SystemExit("entry package is missing")
+        raise SystemExit("plugin package is missing")
     manifest = json.loads((root / link_path / "manifest.json").read_text())
     plugin_id = manifest["id"]
     lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {plugin_id: {
@@ -148,16 +147,16 @@ with Path(os.environ["FAKE_JOURNEY_LOG"]).open("a", encoding="utf-8") as stream:
     stream.write("pnpm " + " ".join(args) + "\n")
 if args == ["install"]:
     raise SystemExit(0)
-if args == ["-w", "build"]:
+if args == ["build"]:
     if os.environ.get("FAIL_PNPM_BUILD"):
         detail = os.environ.get("LONG_BUILD_ERROR", "simulated build error")
         print(detail)
         raise SystemExit(2)
     plugin = Path.cwd()
-    source = (plugin / "packages/demo-core/src/hello.ts").read_text()
+    source = (plugin / "src/core/hello.ts").read_text()
     output = "Edited demo greeting for World!" if "Edited demo greeting" in source else "Hello, World from demo!"
-    (plugin / "packages/demo-entry/dist").mkdir(parents=True, exist_ok=True)
-    (plugin / "packages/demo-entry/dist/manifest.js").write_text("export default {};\n")
+    (plugin / "dist").mkdir(parents=True, exist_ok=True)
+    (plugin / "dist/manifest.js").write_text("export default {};\n")
     (plugin / ".built-output").write_text(output)
     raise SystemExit(0)
 raise SystemExit("unexpected pnpm command: " + " ".join(args))
@@ -302,12 +301,12 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(commands[:9], [
             "kb scaffold run plugin demo --mode standalone --yes",
             "pnpm install",
-            "pnpm -w build",
-            "kb marketplace plugins add --link .kb/plugins/demo/packages/demo-entry",
+            "pnpm build",
+            "kb marketplace plugins add --link .kb/plugins/demo",
             "kb marketplace plugins list --json",
             "kb --help",
             "kb demo hello",
-            "pnpm -w build",
+            "pnpm build",
             "kb demo hello",
         ])
         self.assertTrue(commands[9].startswith("kb marketplace plugins remove "))
@@ -336,7 +335,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
         self.assertEqual(result.status, "FAIL")
         self.assertEqual(result.first_failure["name"], "build generated plugin")
-        self.assertIn("pnpm -w build exited 2; simulated build error", result.first_failure["message"])
+        self.assertIn("pnpm build exited 2; simulated build error", result.first_failure["message"])
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-003.1", "kind": "journey", "status": "PASS"},
             {"claimId": "S-003.2", "kind": "journey", "status": "FAIL"},

@@ -9,10 +9,10 @@ async function makeScaffoldedPlugin(
   name: string,
   opts: { withDist?: boolean } = {},
 ) {
-  const entryDir = join(pluginsRoot, name, 'packages', `${name}-entry`);
-  await mkdir(entryDir, { recursive: true });
+  const pluginRoot = join(pluginsRoot, name);
+  await mkdir(pluginRoot, { recursive: true });
   await writeFile(
-    join(entryDir, 'package.json'),
+    join(pluginRoot, 'package.json'),
     JSON.stringify({
       name: `@kb-labs/${name}`,
       version: '0.1.0',
@@ -21,10 +21,10 @@ async function makeScaffoldedPlugin(
     }),
   );
   if (opts.withDist) {
-    await mkdir(join(entryDir, 'dist'), { recursive: true });
-    await writeFile(join(entryDir, 'dist', 'manifest.js'), 'export default {};');
+    await mkdir(join(pluginRoot, 'dist'), { recursive: true });
+    await writeFile(join(pluginRoot, 'dist', 'manifest.js'), 'export default {};');
   }
-  return entryDir;
+  return pluginRoot;
 }
 
 async function writeLock(
@@ -88,7 +88,7 @@ describe('doctor lock sync', () => {
     await makeScaffoldedPlugin(pluginsRoot, 'bar', { withDist: true });
     await writeLock(workspaceRoot, {
       '@kb-labs/bar': {
-        resolvedPath: './.kb/plugins/bar/packages/bar-entry',
+        resolvedPath: './.kb/plugins/bar',
       },
     });
 
@@ -104,7 +104,7 @@ describe('doctor lock sync', () => {
     await makeScaffoldedPlugin(pluginsRoot, 'baz', { withDist: true });
     await writeLock(workspaceRoot, {
       '@kb-labs/baz': {
-        resolvedPath: './.kb/plugins/baz/packages/baz-entry',
+        resolvedPath: './.kb/plugins/baz',
         enabled: false,
       },
     });

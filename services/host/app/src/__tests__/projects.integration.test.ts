@@ -319,7 +319,7 @@ describe("kb-host project routing", () => {
       expect((await absentBeforeInstall.json() as PluginRouteBody).error?.code).toBe("KB_PLUGIN_NOT_INSTALLED");
 
       const projectLockPath = join(project.root, ".kb", "marketplace.lock");
-      const commitLink = relative(project.root, join(workspaceRoot, "plugins/commit/entry"));
+      const commitLink = relative(project.root, join(workspaceRoot, "plugins/commit"));
       const installedLock = {
         schema: "kb.marketplace/3",
         plugins: {

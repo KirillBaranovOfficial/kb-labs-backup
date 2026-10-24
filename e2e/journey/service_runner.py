@@ -990,7 +990,7 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                 "workspace-cli",
                 lambda: problem,
                 cases=[
-                    "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
+                    "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13", "S-179.33",
                     "S-142.5", "S-203.1", "S-203.19", "S-204.7",
                 ],
             )
@@ -1000,7 +1000,7 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
 
     graph.flow("workspace CLI flows", "workspace", "workspace",
                run_workspace_flows,
-               cases=["S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
+               cases=["S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13", "S-179.33",
                       "S-142.5", "S-203.1", "S-203.19", "S-204.7"], record_empty_success=False)
     project_b_root = (service_project_b(graph).get("projectBRoot", "")
                       if graph.states.get("fixtures-installed", {}).get("passed") is True else "")
