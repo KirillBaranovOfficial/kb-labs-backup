@@ -88,6 +88,7 @@ fi
 ACTIVE_MONITORS=()
 MONITORED_CONTAINER_IDS=()
 source "$ROOT/e2e/journey/compose-owner.sh"
+source "$ROOT/e2e/journey/runner-toolchain.sh"
 trap journey_compose_cleanup EXIT
 journey_compose_init "$ROOT"
 if (( COMPOSE_AVAILABLE )); then COMPOSE=("${JOURNEY_COMPOSE[@]}"); else COMPOSE=(); fi
@@ -210,6 +211,7 @@ start_project_container_monitors() {
 mkdir -p .journey/reports
 rm -f .journey/reports/journey-summary.md
 find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
+journey_toolchain_ensure "$ROOT"
 journey_compose build publisher runner idp-stub
 if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
   journey_compose build marketplace-state marketplace-registry

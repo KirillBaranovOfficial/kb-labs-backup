@@ -63,6 +63,7 @@ jobs:
           path: |
             e2e/packages/*.tgz
             .journey/release/**
+            .journey/runner-inputs/**
           if-no-files-found: error
           retention-days: 1
           include-hidden-files: true

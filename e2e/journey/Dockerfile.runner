@@ -1,3 +1,5 @@
+ARG KB_JOURNEY_TOOLCHAIN_IMAGE
+
 FROM golang:1.26-bookworm AS release-index-sealer
 
 WORKDIR /src/kb-create
@@ -5,10 +7,12 @@ COPY tools/clikit /src/clikit
 COPY tools/kb-create /src/kb-create
 RUN go build -trimpath -o /out/kb-create-release-index ./v2/cmd/kb-create-release-index
 
-FROM node:24-bookworm
-
-ARG KB_JOURNEY_GIT_REVISION=unknown
-ENV KB_JOURNEY_GIT_REVISION=${KB_JOURNEY_GIT_REVISION}
+# The toolchain stage owns the slow, rarely-changing layers (apt packages, pnpm,
+# Playwright and Chromium). e2e/journey/run.sh builds and tags it from these
+# inputs, and the runner stage below starts FROM that tagged image so per-run
+# build-cache trimming cannot evict the toolchain. Its inputs are declared in
+# journey_resources.TOOLCHAIN_STAGE_INPUTS and hashed into the image tag.
+FROM node:24-bookworm AS toolchain
 
 RUN apt-get update -qq && apt-get install -y -qq ca-certificates curl git jq python3 procps iproute2 lsof \
     && npm install -g pnpm@12.8.1 \
@@ -16,7 +20,6 @@ RUN apt-get update -qq && apt-get install -y -qq ca-certificates curl git jq pyt
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV NODE_PATH=/opt/kb-studio-playwright/node_modules
-ENV KB_JOURNEY_RESOURCE_LAYOUT=runner-image
 
 COPY .journey/runner-inputs/studio-playwright-version /tmp/studio-playwright-version
 RUN npm install --prefix /opt/kb-studio-playwright "@playwright/test@$(cat /tmp/studio-playwright-version)" \
@@ -24,6 +27,13 @@ RUN npm install --prefix /opt/kb-studio-playwright "@playwright/test@$(cat /tmp/
 RUN rm /tmp/studio-playwright-version
 
 ENV PATH="/root/.local/bin:/root/.local/share/pnpm:$PATH"
+
+FROM ${KB_JOURNEY_TOOLCHAIN_IMAGE}
+
+ARG KB_JOURNEY_GIT_REVISION=unknown
+ENV KB_JOURNEY_GIT_REVISION=${KB_JOURNEY_GIT_REVISION}
+ENV KB_JOURNEY_RESOURCE_LAYOUT=runner-image
+
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
 COPY --from=release-index-sealer /out/kb-create-release-index /usr/local/bin/kb-create-release-index
 COPY e2e/journey /opt/kb-journey/e2e/journey
