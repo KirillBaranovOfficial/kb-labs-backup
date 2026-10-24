@@ -10,6 +10,7 @@ packages:
   - services/*/*
   - adapters/*
   - infra/devkit
+  - tools/kb-create
   - studio/*
   - sites/*
   - sites/*/apps/*

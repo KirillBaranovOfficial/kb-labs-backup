@@ -58,7 +58,7 @@ if ! env KB_DEVKIT_BASE_REF="$BUILD_BASE" "$work/kb-devkit" run build --affected
   exit 1
 fi
 output_check_rc=0
-node "$ROOT/e2e/scripts/validate-package-outputs.mjs" --build-outputs "$ROOT" > "$OUT/release-build-output-check.log" 2>&1 || output_check_rc=$?
+node "$ROOT/e2e/platform/validate-package-outputs.mjs" --build-outputs "$ROOT" > "$OUT/release-build-output-check.log" 2>&1 || output_check_rc=$?
 cat "$OUT/release-build-output-check.log" >> "$OUT/build.log"
 if [ "$output_check_rc" -ne 0 ]; then
   build_seconds=$(( $(date +%s) - stage_started ))

@@ -45,13 +45,14 @@ WORKDIR /src
 COPY e2e/packages /src/packages
 COPY e2e/platform/registry-manifest.json /src/registry-manifest.json
 COPY e2e/platform/prepare-release-index.mjs /src/prepare-release-index.mjs
-COPY e2e/platform/package-provenance.mjs /src/package-provenance.mjs
 COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
 COPY e2e/platform/release-index-version.mjs /src/release-index-version.mjs
 COPY tools/kb-create/scripts/prepare-binary-manifest.mjs /src/kb-create/scripts/prepare-binary-manifest.mjs
 COPY tools/kb-create/scripts/prepare-release-index.mjs /src/kb-create/scripts/prepare-release-index.mjs
 COPY tools/kb-create/scripts/platform-release-config.mjs /src/kb-create/scripts/platform-release-config.mjs
-COPY tools/kb-create/scripts/platform-release-config.mjs /tools/kb-create/scripts/platform-release-config.mjs
+COPY tools/kb-create/package.json /src/node_modules/kb-create/package.json
+COPY tools/kb-create/scripts/package-provenance.mjs /src/node_modules/kb-create/scripts/package-provenance.mjs
+COPY tools/kb-create/scripts/platform-release-config.mjs /src/node_modules/kb-create/scripts/platform-release-config.mjs
 COPY tools/kb-create/config/platform-release.jsonc /src/platform-release.jsonc
 COPY tools/kb-create/config/platform-release.jsonc /src/kb-create/config/platform-release.jsonc
 COPY --from=go-builder /out/kb-create-linux-amd64 /out/binaries/kb-create-linux-amd64

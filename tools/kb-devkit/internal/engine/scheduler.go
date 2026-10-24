@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -393,6 +394,9 @@ func buildDAG(
 		k := pending[next]
 		n := nodes[k]
 		def := ResolveTaskDef(cfg, k.task, n.pkg.Category)
+		if err := validatePackageScriptTask(n.pkg, k.task, def.Command); err != nil {
+			return nil, err
+		}
 		var deps []nodeKey
 		for _, dep := range def.Deps {
 			workspaceDependency := strings.HasPrefix(dep, "^")
@@ -433,6 +437,29 @@ func buildDAG(
 	}
 
 	return nodes, nil
+}
+
+func validatePackageScriptTask(pkg workspace.Package, task, command string) error {
+	parts := splitCommand(command)
+	if len(parts) < 3 || filepath.Base(parts[0]) != "pnpm" || parts[1] != "run" {
+		return nil
+	}
+	script := parts[2]
+	manifestPath := filepath.Join(pkg.Dir, "package.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("read package manifest for DevKit task %q on %q: %w", task, pkg.Name, err)
+	}
+	var manifest struct {
+		Scripts map[string]json.RawMessage `json:"scripts"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("parse package manifest for DevKit task %q on %q: %w", task, pkg.Name, err)
+	}
+	if _, exists := manifest.Scripts[script]; !exists {
+		return fmt.Errorf("DevKit task %q for package %q invokes missing package script %q; declare it in package.json or remove the task assignment, then rerun kb-devkit run %s --packages %s", task, pkg.Name, script, task, pkg.Name)
+	}
+	return nil
 }
 
 // buildPkgDepMap reads package.json deps for each package.

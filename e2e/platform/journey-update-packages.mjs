@@ -3,9 +3,9 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
-import { invokePackageProvenanceOwner } from './package-provenance.mjs';
+import { invokePackageProvenanceOwner } from 'kb-create/scripts/package-provenance.mjs';
 import { fileURLToPath } from 'node:url';
-import { releaseArtifactPackageNames, shippedPlatformPackageSet } from '../../tools/kb-create/scripts/platform-release-config.mjs';
+import { releaseArtifactPackageNames, shippedPlatformPackageSet } from 'kb-create/scripts/platform-release-config.mjs';
 import { readPackedPackageManifests } from './release-index-package-stage.mjs';
 
 export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest, digestTool, platformMembers) {

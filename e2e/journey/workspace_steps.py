@@ -74,7 +74,7 @@ def _stage_workspace_checkout(repo_root: Path, stage_root: Path) -> Path:
 
 
 def _start_marketplace_sync_fixture(repo_root: Path, workspace_root: Path, env: dict[str, str]):
-    fixture = Path(__file__).resolve().parent / "fixtures" / "marketplace-sync-server.mjs"
+    fixture = Path(__file__).resolve().parents[1] / "platform" / "fixtures" / "marketplace-sync-server.mjs"
     process = start_background_command(
         ["node", str(fixture), str(workspace_root)], cwd=repo_root, env=env)
     if not process.wait_for_output('"url":', 30):

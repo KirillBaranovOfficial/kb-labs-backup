@@ -15,18 +15,19 @@ const defaultMaxDepth = 3
 // with an empty Category field. Useful for tools like bundle that need the full workspace graph.
 // Respects workspace.exclude and workspace.maxDepth from cfg when cfg is provided.
 func DiscoverAll(root string, cfg *config.DevkitConfig) ([]Package, error) {
-	pkgDirs, err := resolveWorkspaceDirs(root, cfg)
+	dirs, err := resolveWorkspaceDirs(root, cfg)
 	if err != nil {
 		return nil, err
 	}
 	var result []Package
-	for _, dir := range pkgDirs {
+	for _, dir := range dirs.all {
 		rel, _ := filepath.Rel(root, dir)
 		name := readPackageName(dir)
 		result = append(result, Package{
-			Name:    name,
-			Dir:     dir,
-			RelPath: rel,
+			Name:       name,
+			Dir:        dir,
+			RelPath:    rel,
+			PnpmMember: dirs.pnpm[dir],
 		})
 	}
 	return result, nil
@@ -45,16 +46,25 @@ func DiscoverAll(root string, cfg *config.DevkitConfig) ([]Package, error) {
 //
 // Recursion depth for ** is controlled by cfg.Workspace.MaxDepth (default 3).
 func discoverPackages(root string, cfg *config.DevkitConfig) ([]Package, error) {
-	pkgDirs, err := resolveWorkspaceDirs(root, cfg)
+	dirs, err := resolveWorkspaceDirs(root, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return classifyPackages(root, pkgDirs, cfg), nil
+	packages := classifyPackages(root, dirs.all, cfg)
+	for i := range packages {
+		packages[i].PnpmMember = dirs.pnpm[packages[i].Dir]
+	}
+	return packages, nil
+}
+
+type resolvedPackageDirs struct {
+	all  []string
+	pnpm map[string]bool
 }
 
 // collectPackageDirs resolves the full list of package directories from workspace
 // patterns, respecting excludes and maxDepth from cfg.
-func resolveWorkspaceDirs(root string, cfg *config.DevkitConfig) ([]string, error) {
+func resolveWorkspaceDirs(root string, cfg *config.DevkitConfig) (resolvedPackageDirs, error) {
 	var patterns []string
 	var err error
 	if cfg != nil && len(cfg.Workspace.Discovery) > 0 {
@@ -64,7 +74,7 @@ func resolveWorkspaceDirs(root string, cfg *config.DevkitConfig) ([]string, erro
 		if err != nil {
 			patterns, err = readPackageJSONWorkspaces(root)
 			if err != nil {
-				return nil, err
+				return resolvedPackageDirs{}, err
 			}
 		}
 	}
@@ -75,6 +85,7 @@ func resolveWorkspaceDirs(root string, cfg *config.DevkitConfig) ([]string, erro
 	}
 
 	seen := make(map[string]bool)
+	pnpmMembers := make(map[string]bool)
 	var pkgDirs []string
 
 	for _, pattern := range patterns {
@@ -86,10 +97,11 @@ func resolveWorkspaceDirs(root string, cfg *config.DevkitConfig) ([]string, erro
 		}
 		dirs := expandPattern(root, pattern, maxDepth)
 		for _, dir := range dirs {
-			if seen[dir] {
+			if cfg != nil && isExcluded(root, dir, cfg.Workspace.Exclude) {
 				continue
 			}
-			if cfg != nil && isExcluded(root, dir, cfg.Workspace.Exclude) {
+			pnpmMembers[dir] = true
+			if seen[dir] {
 				continue
 			}
 			seen[dir] = true
@@ -114,7 +126,7 @@ func resolveWorkspaceDirs(root string, cfg *config.DevkitConfig) ([]string, erro
 		}
 	}
 
-	return pkgDirs, nil
+	return resolvedPackageDirs{all: pkgDirs, pnpm: pnpmMembers}, nil
 }
 
 // expandPattern expands a single pnpm-workspace pattern into concrete package dirs.

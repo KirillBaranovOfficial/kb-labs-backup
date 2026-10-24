@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commandSources, sourceFragmentSources } from '../lib/doc-source-map.mjs';
 import { renderGeneratedDocSource } from '../lib/expand-doc-sources.mjs';
-import { parseNodeEnginePolicy } from '../../../../../core/plugin-runtime/src/platform-resolve/node-engine.mjs';
+import { parseNodeEnginePolicy } from '@kb-labs/plugin-runtime';
 
 const docsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(docsDir, '../../../..');

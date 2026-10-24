@@ -1817,6 +1817,9 @@ importers:
         specifier: workspace:*
         version: link:../../shared/cli-ui
     devDependencies:
+      '@kb-labs/adapters-environment-docker':
+        specifier: workspace:*
+        version: link:../../adapters/environment-docker
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
@@ -2280,6 +2283,8 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  e2e/delivery: {}
+
   e2e/gateway:
     devDependencies:
       '@kb-labs/core-platform':
@@ -2360,6 +2365,9 @@ importers:
 
   e2e/mind:
     devDependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared
@@ -2403,9 +2411,24 @@ importers:
 
   e2e/platform:
     devDependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../core/discovery
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
+      '@kb-labs/devkit':
+        specifier: workspace:*
+        version: link:../../infra/devkit
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared
+      '@kb-labs/marketplace-api':
+        specifier: workspace:*
+        version: link:../../services/marketplace/api
+      '@kb-labs/marketplace-core':
+        specifier: workspace:*
+        version: link:../../services/marketplace/core
       '@kb-labs/rest-api-app':
         specifier: workspace:*
         version: link:../../services/rest-api/app
@@ -2415,6 +2438,9 @@ importers:
       '@playwright/test':
         specifier: ^1.52.0
         version: 1.59.1
+      kb-create:
+        specifier: workspace:*
+        version: link:../../tools/kb-create
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
@@ -3618,6 +3644,9 @@ importers:
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../../core/platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../../core/project-registry
       '@kb-labs/core-registry':
         specifier: workspace:*
         version: link:../../../core/registry
@@ -4199,6 +4228,9 @@ importers:
       '@kb-labs/core-extension-store':
         specifier: workspace:*
         version: link:../../../core/extension-store
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
       '@kb-labs/marketplace-api':
         specifier: workspace:*
         version: link:../api
@@ -5164,6 +5196,9 @@ importers:
 
   shared/cli-ui:
     dependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts
@@ -5533,6 +5568,9 @@ importers:
         specifier: ^4.0.2
         version: 4.0.2
     devDependencies:
+      '@kb-labs/plugin-runtime':
+        specifier: workspace:*
+        version: link:../../../../core/plugin-runtime
       '@kb-labs/web-config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -5775,6 +5813,9 @@ importers:
       '@fontsource/geist-sans':
         specifier: ^5.3.0
         version: 5.3.0
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@tanstack/react-query':
         specifier: ^5.62.23
         version: 5.97.0(react@19.2.5)
@@ -6408,6 +6449,12 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  tools/kb-create:
+    devDependencies:
+      '@kb-labs/plugin-runtime':
+        specifier: workspace:*
+        version: link:../../core/plugin-runtime
 
 packages:
 
