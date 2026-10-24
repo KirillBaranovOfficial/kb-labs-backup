@@ -13,8 +13,8 @@ import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
 import { createContextLogger, createErrorEnvelope, serializeError } from '@kb-labs/core-platform';
 import { mountRoutes } from '@kb-labs/plugin-execution/http';
 import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
-import { registerEnvelopeMiddleware } from '../envelope';
-import { assertNoStackTraceLeak } from '../../__tests__/helpers/safe-error-envelope';
+import { registerEnvelopeMiddleware } from '../../src/middleware/envelope';
+import { assertNoStackTraceLeak } from '../../src/__tests__/helpers/safe-error-envelope';
 import { platform } from '@kb-labs/core-runtime';
 
 const TEST_CONFIG: RestApiConfig = {

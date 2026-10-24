@@ -5,7 +5,7 @@ import { mockLogger } from '@kb-labs/shared-testing';
 import { EnvSecretProvider, WorkflowEngine, type JobQueueEntry } from '@kb-labs/workflow-engine';
 import type { JobRun } from '@kb-labs/workflow-contracts';
 import { createWorkflowWorker } from '../worker.js';
-import { createWorkflowExecutionBackendFixture } from './execution-backend-fixture.js';
+import { createWorkflowExecutionBackendFixture } from '../../test-fixtures/execution-backend-fixture.js';
 
 describe('workflow project queue ownership', () => {
   // case: S-007.2

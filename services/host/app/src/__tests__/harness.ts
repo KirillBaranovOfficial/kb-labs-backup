@@ -94,7 +94,8 @@ async function writeProject(
   await writeFile(
     join(projectRoot, ".kb", "kb.config.json"),
     JSON.stringify({
-      platform: { adapters: {}, ...config.platform },
+      platform: { deployment: { topology: 'local' }, adapters: {}, ...config.platform },
+      marketplace: { sources: [{ kind: 'npm', url: 'https://registry.npmjs.org' }] },
       gateway: {
         studio: { enabled: false },
         ...(!config.defaultGatewayPort ? { port: gatewayPort } : {}),

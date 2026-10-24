@@ -19,7 +19,7 @@ import (
 	"github.com/kb-labs/clikit/diag/catalogcheck"
 )
 
-// case: S-203.2, S-203.6
+// case: S-203.2
 func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
@@ -31,7 +31,8 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	var catalog struct {
-		Codes []CatalogEntry `json:"codes"`
+		Codes                []CatalogEntry `json:"codes"`
+		EnvironmentVariables []string       `json:"environmentVariables"`
 	}
 	if err := json.Unmarshal(content, &catalog); err != nil {
 		t.Fatal(err)
@@ -59,7 +60,10 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 		t.Fatalf("generated Go catalog has %d entries; platform catalog has %d", len(catalogEntries), len(entries))
 	}
 
-	scan, err := catalogcheck.Scan(filepath.Join(root, "tools"))
+	if !reflect.DeepEqual(catalog.EnvironmentVariables, CatalogEnvironmentVariableNames()) {
+		t.Fatalf("generated environment variables = %v, want catalogue values %v", CatalogEnvironmentVariableNames(), catalog.EnvironmentVariables)
+	}
+	scan, err := catalogcheck.Scan(filepath.Join(root, "tools"), CatalogEnvironmentVariableNames())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +76,51 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 			}
 		}
 		t.Errorf("Go tool emits uncatalogued code %s in %s", code, strings.Join(relative, ", "))
+	}
+}
+
+func TestCatalogDeclaresEnvironmentVariableNames(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "core", "platform", "src", "error-envelope", "errors.catalog.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		EnvironmentVariables []string `json:"environmentVariables"`
+	}
+	if err := json.Unmarshal(content, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.EnvironmentVariables) == 0 {
+		t.Fatal("shared error catalogue declares no environment variable names")
+	}
+	if !reflect.DeepEqual(catalog.EnvironmentVariables, CatalogEnvironmentVariableNames()) {
+		t.Fatalf("generated environment variables = %v, want catalogue values %v", CatalogEnvironmentVariableNames(), catalog.EnvironmentVariables)
+	}
+	toolsDir := filepath.Join(t.TempDir(), "tools", "fixture")
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var source strings.Builder
+	source.WriteString("package fixture\n")
+	for _, name := range catalog.EnvironmentVariables {
+		fmt.Fprintf(&source, "var _ = %q\n", name)
+	}
+	fixture := filepath.Join(toolsDir, "fixture.go")
+	if err := os.WriteFile(fixture, []byte(source.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)), CatalogEnvironmentVariableNames())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range catalog.EnvironmentVariables {
+		if _, exists := scan.Codes[name]; exists {
+			t.Errorf("catalogued environment variable %s was reported as a diagnostic code", name)
+		}
 	}
 }
 
@@ -495,7 +544,7 @@ func TestCatalogScannerRejectsUncataloguedFixtureLiteral(t *testing.T) {
 	if err := os.WriteFile(fixture, []byte("package fixture\nconst code = \"KB_FIXTURE_404\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)))
+	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +564,7 @@ func TestCatalogScannerIgnoresKBMapIndexKeys(t *testing.T) {
 	if err := os.WriteFile(fixture, []byte("package fixture\nvar env = map[string]string{}\nfunc set() { env[\"KB_INSTALLATION_ID\"] = \"id\" }\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)))
+	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
