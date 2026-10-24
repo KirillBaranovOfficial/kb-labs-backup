@@ -663,6 +663,8 @@ exec "$REAL_TAR" "$@"
     # case: S-262.1
     def test_candidate_output_preflight_fails_before_package_packing(self):
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
+        shutil.copy2(REPO / "e2e/journey/compose-owner.sh", self.root / "e2e/journey/compose-owner.sh")
+        shutil.copy2(REPO / "e2e/journey/candidate-services.sh", self.root / "e2e/journey/candidate-services.sh")
         env = {**self.env, "FAIL_OUTPUT_CHECK": "1"}
         result = subprocess.run(
             ["bash", str(self.root / "e2e/journey/prepare-candidate.sh")],

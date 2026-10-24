@@ -29,7 +29,26 @@ journey_start_registry() {
   fi
   JOURNEY_REGISTRY_HOST_URL="http://127.0.0.1:$host_port"
   export JOURNEY_REGISTRY_HOST_URL
-  echo "Journey registry: $JOURNEY_REGISTRY_HOST_URL (third-party tarball cache retained in the Verdaccio volume)."
+  echo "Journey registry: $JOURNEY_REGISTRY_HOST_URL (third-party tarball cache retained in the Verdaccio volume)." >&2
+}
+
+journey_install_candidate_runtime() {
+  local index_path="$1" packages_directory="$2" install_root="$3"
+  local root="${KB_JOURNEY_WORKSPACE_SOURCE:-$(pwd)}"
+  journey_start_registry || return
+  (
+    cd "$root/tools/kb-create"
+    go run ./cmd/candidate-runtime-root \
+      --index "$index_path" \
+      --packages "$packages_directory" \
+      --root "$install_root" \
+      --registry "$JOURNEY_REGISTRY_HOST_URL"
+  )
+}
+
+journey_install_workspace_dependencies() {
+  journey_start_registry || return
+  pnpm install --frozen-lockfile --registry "$JOURNEY_REGISTRY_HOST_URL"
 }
 
 journey_stop_registry() {

@@ -185,7 +185,7 @@ trap cleanup EXIT INT TERM
 RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if (( ! no_build )); then
-  pnpm install --frozen-lockfile
+  e2e/journey/install-workspace-dependencies.sh
   kb-devkit run build --affected
   e2e/journey/prepare-candidate.sh
 fi

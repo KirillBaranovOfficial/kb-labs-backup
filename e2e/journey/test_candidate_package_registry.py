@@ -85,11 +85,127 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="journey-compose-registry-port-") as temporary:
             result, calls, _, node_args = self._start_compose_registry(temporary)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Journey registry: http://127.0.0.1:49183", result.stdout)
+        self.assertIn("Journey registry: http://127.0.0.1:49183", result.stderr)
         self.assertTrue(any(call.endswith("port verdaccio 4873") for call in calls), calls)
         self.assertEqual(node_args[-1], "http://127.0.0.1:49183", node_args)
         self.assertIn("Journey candidate registry: http://127.0.0.1:49666", result.stdout)
         self.assertNotIn("127.0.0.1:4873", result.stdout)
+
+    # case: S-195.6
+    def test_candidate_runtime_install_uses_compose_registry(self):
+        with tempfile.TemporaryDirectory(prefix="journey-candidate-runtime-registry-") as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            (workspace / "e2e/journey").mkdir(parents=True)
+            (workspace / "e2e/verdaccio").mkdir(parents=True)
+            (workspace / "tools/kb-create").mkdir(parents=True)
+            shutil.copy2(ROOT / "e2e/journey/compose-owner.sh", workspace / "e2e/journey/compose-owner.sh")
+            shutil.copy2(ROOT / "e2e/journey/candidate-services.sh", workspace / "e2e/journey/candidate-services.sh")
+            shutil.copy2(CLEAR_CANDIDATES, workspace / "e2e/verdaccio/clear-candidates.sh")
+            calls_path = root / "compose-calls.txt"
+            clear_path = root / "cleared-storage-script.sh"
+            go_args = root / "go-args.txt"
+            docker = bin_dir / "docker"
+            docker.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$*\" >> \"$FAKE_DOCKER_CALLS\"\n"
+                "case \"$*\" in\n"
+                "  *'compose version') exit 0 ;;\n"
+                "  *' port verdaccio 4873') printf '127.0.0.1:49183\\n'; exit 0 ;;\n"
+                "  *'run --rm --no-deps --entrypoint sh verdaccio -s -- /verdaccio/storage') cat > \"$FAKE_CLEAR_SCRIPT\"; exit 0 ;;\n"
+                "  *'up -d --wait verdaccio'|*'stop verdaccio') exit 0 ;;\n"
+                "esac\nexit 97\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o755)
+            go = bin_dir / "go"
+            go.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAKE_GO_ARGS\"\nprintf '/runtime/content\\n'\n",
+                encoding="utf-8",
+            )
+            go.chmod(0o755)
+            npx = bin_dir / "npx"
+            npx.write_text("#!/bin/sh\nprintf 'npx\\n' >> \"$FAKE_DOCKER_CALLS\"\nexit 97\n", encoding="utf-8")
+            npx.chmod(0o755)
+            env = isolated_environment(
+                root / "home", bin_dir, required_tools=("bash", "cat"),
+                overrides={"FAKE_DOCKER_CALLS": str(calls_path), "FAKE_CLEAR_SCRIPT": str(clear_path),
+                           "FAKE_GO_ARGS": str(go_args), "KB_JOURNEY_WORKSPACE_SOURCE": str(workspace)},
+            )
+            result = subprocess.run(
+                ["bash", "-c",
+                 'source e2e/journey/compose-owner.sh; source e2e/journey/candidate-services.sh; '
+                 'journey_compose_init "$KB_JOURNEY_WORKSPACE_SOURCE"; '
+                 'runtime_root="$(journey_install_candidate_runtime index.json packages root)"; '
+                 'printf "RUNTIME_ROOT=%s\\n" "$runtime_root"; journey_stop_registry',
+                 "journey-candidate-runtime-test"],
+                cwd=workspace, env=env, capture_output=True, text=True, check=False,
+            )
+            compose_calls = calls_path.read_text(encoding="utf-8").splitlines()
+            package_manager_args = go_args.read_text(encoding="utf-8").splitlines()
+            workspace_paths = {path.relative_to(workspace).as_posix() for path in workspace.rglob("*")}
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "RUNTIME_ROOT=/runtime/content\n")
+        self.assertIn("Journey registry: http://127.0.0.1:49183", result.stderr)
+        self.assertTrue(any(call.endswith("port verdaccio 4873") for call in compose_calls), compose_calls)
+        self.assertIn("--registry", package_manager_args)
+        registry_index = package_manager_args.index("--registry")
+        self.assertEqual(package_manager_args[registry_index + 1], "http://127.0.0.1:49183")
+        self.assertNotIn("registry.npmjs.org", package_manager_args)
+        self.assertFalse(any("npx" in call or "verdaccio@" in call for call in compose_calls), compose_calls)
+        self.assertEqual(len([call for call in compose_calls if call.startswith("compose ")]), 5, compose_calls)
+        self.assertEqual(workspace_paths, {
+            "e2e", "e2e/journey", "e2e/journey/compose-owner.sh", "e2e/journey/candidate-services.sh",
+            "e2e/verdaccio", "e2e/verdaccio/clear-candidates.sh", "tools", "tools/kb-create",
+        })
+
+    # case: S-195.6
+    def test_workspace_install_uses_compose_registry(self):
+        with tempfile.TemporaryDirectory(prefix="journey-workspace-install-registry-") as temporary:
+            root = Path(temporary)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            calls_path = root / "compose-calls.txt"
+            clear_path = root / "cleared-storage-script.sh"
+            pnpm_args = root / "pnpm-args.txt"
+            docker = bin_dir / "docker"
+            docker.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$*\" >> \"$FAKE_DOCKER_CALLS\"\n"
+                "case \"$*\" in\n"
+                "  *'compose version') exit 0 ;;\n"
+                "  *' port verdaccio 4873') printf '127.0.0.1:49183\\n'; exit 0 ;;\n"
+                "  *'run --rm --no-deps --entrypoint sh verdaccio -s -- /verdaccio/storage') cat > \"$FAKE_CLEAR_SCRIPT\"; exit 0 ;;\n"
+                "  *'up -d --wait verdaccio') exit 0 ;;\n"
+                "esac\nexit 97\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o755)
+            pnpm = bin_dir / "pnpm"
+            pnpm.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAKE_PNPM_ARGS\"\n",
+                encoding="utf-8",
+            )
+            pnpm.chmod(0o755)
+            env = isolated_environment(
+                root / "home", bin_dir, required_tools=("bash", "cat", "dirname"),
+                overrides={"FAKE_DOCKER_CALLS": str(calls_path), "FAKE_CLEAR_SCRIPT": str(clear_path),
+                           "FAKE_PNPM_ARGS": str(pnpm_args)},
+            )
+            result = subprocess.run(
+                ["bash", str(ROOT / "e2e/journey/install-workspace-dependencies.sh")],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
+            compose_calls = calls_path.read_text(encoding="utf-8").splitlines()
+            install_args = pnpm_args.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any(call.endswith("port verdaccio 4873") for call in compose_calls), compose_calls)
+        self.assertEqual(install_args, ["install", "--frozen-lockfile", "--registry", "http://127.0.0.1:49183"])
+        self.assertNotIn("registry.npmjs.org", install_args)
 
     # case: S-195.3
     def test_host_registry_lifecycle_has_no_second_config_or_storage_owner(self):

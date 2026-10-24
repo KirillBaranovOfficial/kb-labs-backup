@@ -2,6 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+source "$ROOT/e2e/journey/compose-owner.sh"
+source "$ROOT/e2e/journey/candidate-services.sh"
+journey_compose_init "$ROOT"
+trap journey_compose_cleanup EXIT
 OUT="$ROOT/.journey"
 PACKAGES="$ROOT/e2e/packages"
 TAG="journey-candidate"
@@ -86,11 +91,21 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
 # Install the real candidate graph through kb-create's staging and package
 # installer, then run the same built-entrypoint checker used by S-054.16.
 RUNTIME_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kb-candidate-runtime-root.XXXXXX")"
-trap 'rm -rf "$RUNTIME_ROOT"' EXIT
-RUNTIME_CONTENT_ROOT="$(cd "$ROOT/tools/kb-create" && go run ./cmd/candidate-runtime-root \
-  --index "$TARGET/release-index.json" \
-  --packages "$PACKAGES" \
-  --root "$RUNTIME_ROOT")"
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if ! rm -rf "$RUNTIME_ROOT"; then
+    echo "Could not remove candidate runtime temp root $RUNTIME_ROOT." >&2
+    (( status != 0 )) || status=1
+  fi
+  if ! journey_compose_cleanup; then
+    echo "Could not remove journey Compose overlay temp state." >&2
+    status=1
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+RUNTIME_CONTENT_ROOT="$(journey_install_candidate_runtime "$TARGET/release-index.json" "$PACKAGES" "$RUNTIME_ROOT")"
 node "$ROOT/e2e/journey/sdk_runtime_import_check.mjs" "$RUNTIME_CONTENT_ROOT"
 
 (
