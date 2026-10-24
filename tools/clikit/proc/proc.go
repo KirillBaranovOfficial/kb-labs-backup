@@ -492,7 +492,7 @@ func List(stateDir string) Listing {
 			return err
 		}
 		var readErr error
-		records, readErr = readRecordsLocked(stateDir)
+		records, readErr = readAllRecordsLocked(stateDir)
 		return readErr
 	}); err != nil {
 		return Listing{Error: fmt.Errorf("proc: read run registry: %w", err)}

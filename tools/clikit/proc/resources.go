@@ -546,8 +546,8 @@ func cleanupResources(stateDir, runID string) []ResourceOutcome {
 			}
 		}
 		if !enteredLock || !cleanupFailed {
-			if markErr := markRunDirtyWithoutLock(stateDir, runID, err.Error()); markErr != nil {
-				if lostErr := markRunLostWithoutLock(stateDir, runID, errors.Join(err, markErr).Error()); lostErr != nil {
+			if markErr := markRunDirty(stateDir, runID, err.Error()); markErr != nil {
+				if lostErr := markRunLost(stateDir, runID, errors.Join(err, markErr).Error()); lostErr != nil {
 					err = errors.Join(err, markErr, lostErr)
 				}
 			}
@@ -658,22 +658,10 @@ func markRunLostLocked(stateDir, runID, reason string) error {
 	return writeRecordAtomic(rec)
 }
 
-func markRunDirtyWithoutLock(stateDir, runID, reason string) error {
-	rec, err := readRecordLocked(stateDir, runID)
-	if err != nil {
-		return err
-	}
-	rec.Status, rec.Error = StatusDirty, reason
-	return writeRecordAtomic(rec)
-}
-
-func markRunLostWithoutLock(stateDir, runID, reason string) error {
-	rec, err := readRecordLocked(stateDir, runID)
-	if err != nil {
-		return err
-	}
-	rec.Status, rec.Error = StatusLost, reason
-	return writeRecordAtomic(rec)
+func markRunLost(stateDir, runID, reason string) error {
+	return withStateLock(stateDir, func() error {
+		return markRunLostLocked(stateDir, runID, reason)
+	})
 }
 
 func pendingResourceFailures(stateDir, runID string, cause error) []ResourceOutcome {
@@ -906,7 +894,7 @@ func GarbageCollect(stateDir string) ([]ResourceOutcome, error) {
 		if err := pruneStateLocked(stateDir); err != nil {
 			return err
 		}
-		records, err := readRecordsLocked(stateDir)
+		records, err := readAllRecordsLocked(stateDir)
 		if err != nil {
 			return err
 		}
@@ -959,7 +947,7 @@ func Leftovers(stateDir string) ([]ResourceOutcome, error) {
 		if err := pruneStateLocked(stateDir); err != nil {
 			return err
 		}
-		records, err := readRecordsLocked(stateDir)
+		records, err := readAllRecordsLocked(stateDir)
 		if err != nil {
 			return err
 		}
