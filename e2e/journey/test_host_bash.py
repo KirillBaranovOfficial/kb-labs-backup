@@ -26,7 +26,7 @@ class HostBashTests(unittest.TestCase):
             repo = sandbox / "repo"
             journey = repo / "e2e/journey"
             journey.mkdir(parents=True)
-            for name in ("run.sh", "compose-owner.sh", "candidate-services.sh", "teardown-compose.sh", "storage_has_packages.sh",
+            for name in ("run.sh", "compose-owner.sh", "candidate-services.sh", "runner-toolchain.sh", "teardown-compose.sh", "storage_has_packages.sh",
                          "container_outcomes.py", "jsonl.py"):
                 shutil.copy2(JOURNEY / name, journey / name)
 
