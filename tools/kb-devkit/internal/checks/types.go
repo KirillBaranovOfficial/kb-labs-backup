@@ -2,6 +2,7 @@
 package checks
 
 import (
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
@@ -23,16 +24,17 @@ const (
 
 // Issue is a single finding from a rule check.
 type Issue struct {
-	Check        string     `json:"check"`
-	Severity     Severity   `json:"severity"`
-	Message      string     `json:"message"`
-	File         string     `json:"file,omitempty"`
-	Line         int        `json:"line,omitempty"`
-	Fix          string     `json:"fix,omitempty"`
-	AutoFix      bool       `json:"autoFix,omitempty"`
-	Capability   Capability `json:"capability,omitempty"`
-	CheckFailure bool       `json:"checkFailure,omitempty"`
-	Cause        string     `json:"cause,omitempty"`
+	Check             string     `json:"check"`
+	Severity          Severity   `json:"severity"`
+	Message           string     `json:"message"`
+	File              string     `json:"file,omitempty"`
+	Line              int        `json:"line,omitempty"`
+	Fix               string     `json:"fix,omitempty"`
+	AutoFix           bool       `json:"autoFix,omitempty"`
+	Capability        Capability `json:"capability,omitempty"`
+	CheckFailure      bool       `json:"checkFailure,omitempty"`
+	Cause             string     `json:"cause,omitempty"`
+	FailureDiagnostic *diag.Diag `json:"-"`
 }
 
 // Rule is the interface every checker must implement.

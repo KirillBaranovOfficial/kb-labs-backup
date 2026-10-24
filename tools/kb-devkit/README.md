@@ -131,6 +131,12 @@ Validates each package against the rules declared in its matched preset: naming,
 - `results`
 
 External command-based checks declared in `custom_checks` are included in the same pipeline.
+The workspace `checks.timeout_ms` value bounds each external check. It defaults
+to 900000 milliseconds (15 minutes); the KB Labs workspace declares 2400000
+milliseconds (40 minutes) to cover its two-pass Go suite. While checks run,
+`kb-devkit check` writes their package, check name, and elapsed time to stderr;
+an expired external check returns `KB_DEVKIT_CHECK_EXECUTION_FAILED` with its
+check name.
 
 ### `fix` — auto-fix violations
 

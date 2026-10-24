@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/proc/child"
 )
 
 //go:generate node generate-node-policy.mjs
@@ -92,7 +93,7 @@ const (
 func (o Operation) timeout() time.Duration {
 	switch o {
 	case OperationVersionProbe:
-		return 2 * time.Second
+		return 10 * time.Second
 	case OperationPackageManager:
 		return 15 * time.Minute
 	case OperationWorkspaceTask:
@@ -125,6 +126,23 @@ type CommandError struct {
 
 func (e *CommandError) Error() string { return e.Err.Error() }
 func (e *CommandError) Unwrap() error { return e.Err }
+
+type TimeoutBound string
+
+const (
+	BoundOperation TimeoutBound = "operation"
+	BoundCaller    TimeoutBound = "caller"
+)
+
+type TimeoutError struct {
+	Bound   TimeoutBound
+	Budget  time.Duration
+	Elapsed time.Duration
+}
+
+func (e *TimeoutError) Error() string {
+	return fmt.Sprintf("external command exceeded its %s execution budget of %s", e.Bound, e.Budget.Round(time.Millisecond))
+}
 
 var outerHome = func() string {
 	current, err := user.Current()
@@ -176,10 +194,17 @@ func resolvePnpmAt(cacheRoot string) (node, script string, err error) {
 // Run executes an external tool with the operation's shared timeout and emits
 // catalogued diagnostics on stalls, including the bounded stderr tail.
 func Run(ctx context.Context, invocation Invocation) (Result, error) {
+	return run(ctx, invocation, invocation.Operation.timeout())
+}
+
+func run(ctx context.Context, invocation Invocation, operationTimeout time.Duration) (Result, error) {
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(ctx, invocation.Operation.timeout())
+	callerDeadline, hasCallerDeadline := ctx.Deadline()
+	operationDeadline := started.Add(operationTimeout)
+	callerBound := hasCallerDeadline && callerDeadline.Before(operationDeadline)
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, invocation.Executable, invocation.Args...)
+	command := exec.Command(invocation.Executable, invocation.Args...)
 	command.Dir = invocation.Dir
 	command.Stdin = invocation.Stdin
 	if invocation.Env != nil {
@@ -194,12 +219,15 @@ func Run(ctx context.Context, invocation Invocation) (Result, error) {
 	if invocation.Stderr != nil {
 		command.Stderr = io.MultiWriter(&stderr, invocation.Stderr)
 	}
-	err := command.Run()
+	err := child.Run(ctx, command)
 	result := Result{Stdout: stdout.String(), Stderr: stderr.String(), Elapsed: time.Since(started)}
 	if err == nil {
 		return result, nil
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if callerBound {
+			return result, &TimeoutError{Bound: BoundCaller, Budget: callerDeadline.Sub(started), Elapsed: result.Elapsed}
+		}
 		values := map[string]string{
 			"tool":        diag.RedactText(invocation.Tool),
 			"argsSummary": summarizeArgs(invocation.Args),

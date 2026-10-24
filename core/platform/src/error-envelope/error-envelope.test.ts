@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import { catalogEnvironmentVariables } from './error-codes.generated.js';
 import type { CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from "./error-codes.generated.js";
 
 import type { ErrorCode, ProductErrorCode } from './index.js';
@@ -180,6 +181,10 @@ describe('errors.catalog.json lint', () => {
     expectTypeOf<'NOT_CATALOGUED_CODE'>().not.toMatchTypeOf<ErrorCode>();
     expectTypeOf<ProductErrorCode>().toMatchTypeOf<ErrorCode>();
     expectTypeOf<'KB_TYPO'>().not.toMatchTypeOf<ErrorCode>();
+  });
+
+  it('keeps generated environment names synchronized with the shared catalogue', () => {
+    expect(Object.values(catalogEnvironmentVariables).sort()).toEqual([...errorCatalog.environmentVariables].sort());
   });
 
   it('has unique codes', () => {

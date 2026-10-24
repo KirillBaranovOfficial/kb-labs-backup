@@ -6,6 +6,8 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/kb-labs/devkit/internal/config"
@@ -43,7 +45,17 @@ Use --package to check a single package.`,
 		if checkPackage != "" {
 			ws.Packages = ws.FilterByName([]string{checkPackage})
 		}
-		results := checks.RunAll(ws, cfg, registry, checkOnly)
+		progressWriter := clikitcommand.FromCommand(cmd).ErrorWriter()
+		var progressMu sync.Mutex
+		results := checks.RunAll(ws, cfg, registry, checkOnly, func(event checks.ProgressEvent) {
+			progressMu.Lock()
+			defer progressMu.Unlock()
+			state := "DONE"
+			if event.Running {
+				state = "RUN"
+			}
+			fmt.Fprintf(progressWriter, "[%s] %s:%s elapsed %s\n", state, event.Package, event.Check, event.Elapsed.Round(time.Second))
+		})
 		packagesChecked := checkedPackageCount(results)
 		if failures := checkExecutionFailures(results); len(failures) > 0 {
 			return externalCheckFailureError(failures, results)
@@ -251,11 +263,17 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 }
 
 type externalCheckFailure struct {
-	Check string
-	Cause string
+	Check      string
+	Cause      string
+	Diagnostic *diag.Diag
 }
 
 func externalCheckFailureError(failures []externalCheckFailure, results map[string]checks.PackageResult) error {
+	for _, failure := range failures {
+		if failure.Diagnostic != nil {
+			return failure.Diagnostic
+		}
+	}
 	checks := make(map[string]bool, len(failures))
 	causes := make([]string, 0, len(failures))
 	for _, failure := range failures {
@@ -269,14 +287,16 @@ func externalCheckFailureError(failures []externalCheckFailure, results map[stri
 }
 
 func checkExecutionFailures(results map[string]checks.PackageResult) []externalCheckFailure {
-	failures := make(map[string]map[string]struct{})
+	failures := make(map[string]map[string]*diag.Diag)
 	for _, result := range results {
 		for _, issue := range result.Issues {
 			if issue.CheckFailure {
 				if failures[issue.Check] == nil {
-					failures[issue.Check] = make(map[string]struct{})
+					failures[issue.Check] = make(map[string]*diag.Diag)
 				}
-				failures[issue.Check][issue.Cause] = struct{}{}
+				if diagnostic, exists := failures[issue.Check][issue.Cause]; !exists || diagnostic == nil {
+					failures[issue.Check][issue.Cause] = issue.FailureDiagnostic
+				}
 			}
 		}
 	}
@@ -293,7 +313,7 @@ func checkExecutionFailures(results map[string]checks.PackageResult) []externalC
 		}
 		sort.Strings(causes)
 		for _, cause := range causes {
-			result = append(result, externalCheckFailure{Check: checkName, Cause: cause})
+			result = append(result, externalCheckFailure{Check: checkName, Cause: cause, Diagnostic: failures[checkName][cause]})
 		}
 	}
 	return result

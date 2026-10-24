@@ -4,10 +4,16 @@
   "title": "KB Labs error catalog",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "codes"],
+  "required": ["version", "environmentVariables", "codes"],
   "properties": {
     "$schema": { "type": "string" },
     "version": { "const": 1 },
+    "environmentVariables": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Environment variable names shared by generated platform and Go contracts. Each name is emitted as a language constant."
+    },
     "codes": {
       "type": "array",
       "items": {
@@ -25,6 +31,7 @@
           "message": { "type": "string", "minLength": 1, "description": "Template; {name} placeholders are filled from details." },
           "hint": { "type": "string", "minLength": 1, "description": "Template; {name} placeholders are filled from details." },
           "hintWithoutCorrelationId": { "type": "string", "minLength": 1, "description": "Hint used when the error has no correlation ID to fill its normal hint." },
+          "environmentVariables": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 }, "description": "Canonical names of environment settings required to correct this diagnostic." },
           "runtimeTemplateParameters": { "type": "object", "additionalProperties": { "enum": ["required", "optional"] }, "description": "Parameters supplied by the runtime rather than error details. Optional parameters are only rendered when their runtime context is present." },
           "structuredDetailFields": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true, "description": "Additional safe structured details accepted when reconstructing a received catalogued envelope." },
           "deprecated": { "type": "boolean" }

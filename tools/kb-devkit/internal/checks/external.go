@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
@@ -25,6 +27,7 @@ type externalRule struct {
 	workspaceRoot string
 	checkConfig   config.CheckPackConfig
 	graphTasks    []string
+	timeout       time.Duration
 }
 
 type externalInput struct {
@@ -101,12 +104,13 @@ func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issu
 		return out.Issues
 	}
 	return []Issue{{
-		Check:        r.name,
-		Severity:     SeverityError,
-		Message:      "External check could not complete.",
-		CheckFailure: true,
-		Cause:        safeExternalCause(err),
-		File:         pkg.Dir,
+		Check:             r.name,
+		Severity:          SeverityError,
+		Message:           "External check could not complete.",
+		CheckFailure:      true,
+		Cause:             safeExternalCause(err),
+		File:              pkg.Dir,
+		FailureDiagnostic: externalDiagnostic(err),
 	}}
 }
 
@@ -132,7 +136,7 @@ func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 	if len(out.Issues) > 0 {
 		return out.Issues
 	}
-	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root}}
+	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root, FailureDiagnostic: externalDiagnostic(err)}}
 }
 
 func (r *externalRule) Apply(pkg workspace.Package, issues []Issue, dryRun bool) error {
@@ -177,7 +181,16 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 		"KB_DEVKIT_DRY_RUN="+fmt.Sprintf("%t", input.DryRun),
 	)
 
-	result, runErr := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "sh", Executable: "sh", Args: []string{"-c", command}, Dir: r.workspaceRoot, Env: env, Stdin: bytes.NewReader(payload), Operation: toolchain.OperationWorkspaceTask})
+	ctx := context.Background()
+	cancel := func() {}
+	if r.timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, r.timeout)
+	}
+	defer cancel()
+	result, runErr := toolchain.Run(ctx, toolchain.Invocation{
+		Tool: "sh", Executable: "sh", Args: []string{"-c", command}, Dir: r.workspaceRoot,
+		Env: env, Stdin: bytes.NewReader(payload), Operation: toolchain.OperationWorkspaceTask,
+	})
 
 	var parsed externalCheckOutput
 	if strings.TrimSpace(result.Stdout) != "" {
@@ -194,11 +207,23 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 }
 
 func safeExternalCause(err error) string {
+	var timeoutErr *toolchain.TimeoutError
+	if errors.As(err, &timeoutErr) && timeoutErr.Bound == toolchain.BoundCaller {
+		return fmt.Sprintf("external check exceeded its configured %s execution budget", timeoutErr.Budget.Round(time.Millisecond))
+	}
 	var exitErr *toolchain.CommandError
 	if errors.As(err, &exitErr) {
 		return fmt.Sprintf("external command exited with status %d", exitErr.ExitCode)
 	}
 	return "external check output could not be read or decoded"
+}
+
+func externalDiagnostic(err error) *diag.Diag {
+	var diagnostic *diag.Diag
+	if errors.As(err, &diagnostic) {
+		return diagnostic
+	}
+	return nil
 }
 
 func modeForCommand(issues []Issue) string {

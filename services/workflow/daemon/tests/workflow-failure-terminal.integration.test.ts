@@ -10,7 +10,7 @@ import { FaultInjectingCache } from '@kb-labs/shared-testing';
 import { mockLogger } from '@kb-labs/shared-testing';
 import { EnvSecretProvider, WorkflowEngine, workflowDeadLetterCacheKey, workflowProjectCacheKey } from '@kb-labs/workflow-engine';
 import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
-import { createWorkflowWorker } from '../worker.js';
+import { createWorkflowWorker } from '../src/worker.js';
 
 // case: S-029.2, S-009.4
 describe('live workflow failure terminalization', () => {
@@ -111,7 +111,7 @@ describe('live workflow failure terminalization', () => {
     const events = new InMemoryEventBus();
     const projectId = 'prj_0000000000000001';
     const engine = new WorkflowEngine({ projectId, cache, storage, events, logger, secretProvider: new EnvSecretProvider() });
-    const child = fork(fileURLToPath(new URL('./workflow-worker-death-child.ts', import.meta.url)), [], {
+    const child = fork(fileURLToPath(new URL('../test-fixtures/workflow-worker-death-child.ts', import.meta.url)), [], {
       execArgv: ['--import', 'tsx'],
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       serialization: 'advanced',

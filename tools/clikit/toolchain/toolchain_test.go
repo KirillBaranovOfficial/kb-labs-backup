@@ -61,12 +61,36 @@ func TestExternalToolStallReturnsCataloguedDiagnostic(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture requires POSIX")
 	}
-	tool := filepath.Join(t.TempDir(), "never-exits")
-	if err := os.WriteFile(tool, []byte("#!/bin/sh\nprintf 'stalled-tool-output\\n' >&2\nexec sleep 30\n"), 0o700); err != nil {
+	dir := t.TempDir()
+	tool := filepath.Join(dir, "never-exits")
+	ready := filepath.Join(dir, "ready")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nprintf 'stalled-tool-output\\n' >&2\n: > \"$READY_FILE\"\nexec sleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("READY_FILE", ready)
 	started := time.Now()
-	_, err := Run(context.Background(), Invocation{Tool: "fixture", Executable: tool, Args: []string{"--wait"}, Operation: OperationVersionProbe})
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := run(context.Background(), Invocation{Tool: "fixture", Executable: tool, Args: []string{"--wait"}, Operation: OperationVersionProbe}, 5*time.Second)
+		errCh <- err
+	}()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	readyPoll := time.NewTicker(time.Millisecond)
+	defer readyPoll.Stop()
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		select {
+		case err := <-errCh:
+			t.Fatalf("stalled fixture exited before it signaled readiness: %v", err)
+		case <-deadline.C:
+			t.Fatal("stalled fixture did not signal that stderr was written")
+		case <-readyPoll.C:
+		}
+	}
+	err := <-errCh
 	if err == nil {
 		t.Fatal("stalled process returned success")
 	}
@@ -74,13 +98,32 @@ func TestExternalToolStallReturnsCataloguedDiagnostic(t *testing.T) {
 	if !errors.As(err, &failure) || failure.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" {
 		t.Fatalf("stall failure = %#v", err)
 	}
-	if elapsed := time.Since(started); elapsed > 5*time.Second {
+	if elapsed := time.Since(started); elapsed > 6*time.Second {
 		t.Fatalf("stall bound took %s", elapsed)
 	}
 	for key, want := range map[string]string{"tool": "fixture", "argsSummary": "--wait", "stderrTail": "stalled-tool-output", "nextCommand": "'" + tool + "' '--wait'"} {
 		if got := fmt.Sprint(failure.Meta[key]); !strings.Contains(got, want) {
 			t.Errorf("timeout detail %s = %q, want %q", key, got, want)
 		}
+	}
+}
+
+// case: S-179.27
+func TestCallerDeadlineWinsOverOperationBound(t *testing.T) {
+	tool := filepath.Join(t.TempDir(), "never-exits")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := run(ctx, Invocation{Tool: "fixture", Executable: tool, Operation: OperationWorkspaceTask}, 2*time.Second)
+	var timedOut *TimeoutError
+	if !errors.As(err, &timedOut) || timedOut.Bound != BoundCaller || timedOut.Budget.Round(time.Millisecond) != 100*time.Millisecond {
+		t.Fatalf("caller deadline error = %#v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("caller deadline took %s", elapsed)
 	}
 }
 

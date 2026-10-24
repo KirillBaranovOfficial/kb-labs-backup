@@ -18,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/kb-labs/clikit/proc/child"
 )
 
 const (
@@ -65,7 +67,9 @@ type Config struct {
 	Command     []string
 	Dir         string
 	Env         []string
-	Keep        []string
+	// CleanEnv makes Env the complete environment for both the keeper and its command.
+	CleanEnv bool
+	Keep     []string
 }
 
 type Event struct {
@@ -359,7 +363,8 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 		return nil, errors.Join(fmt.Errorf("proc: start canceled: %w", err), readReady.Close(), writeReady.Close())
 	}
 	cmd := exec.Command(cfg.HelperPath, "__keeper")
-	cmd.Env = append(filteredEnv(os.Environ()), stateEnv+"="+base64.RawStdEncoding.EncodeToString(encoded), readyEnv+"=3")
+	keeperEnv := environmentFor(cfg, os.Environ())
+	cmd.Env = append(keeperEnv, stateEnv+"="+base64.RawStdEncoding.EncodeToString(encoded), readyEnv+"=3")
 	cmd.ExtraFiles = []*os.File{writeReady}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -851,6 +856,13 @@ func filteredEnv(env []string) []string {
 	return out
 }
 
+func environmentFor(cfg Config, parent []string) []string {
+	if cfg.CleanEnv {
+		return append([]string(nil), cfg.Env...)
+	}
+	return append(filteredEnv(parent), cfg.Env...)
+}
+
 func decodeReady(r *os.File) (record, error) {
 	var ready readyMessage
 	if err := json.NewDecoder(r).Decode(&ready); err != nil {
@@ -891,5 +903,5 @@ func commandText(command []string) string { return strings.Join(command, " ") }
 
 func configureCommand(cmd *exec.Cmd, runID, stateDir, scratch string) {
 	cmd.Env = append(filteredEnv(cmd.Env), runEnv+"="+runID, resourceStateEnv+"="+stateDir, "KB_RUNNER_SCRATCH="+scratch, "TMPDIR="+scratch, "TMP="+scratch, "TEMP="+scratch)
-	configureCommandPlatform(cmd)
+	child.ConfigureCommand(cmd)
 }

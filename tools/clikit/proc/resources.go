@@ -3,6 +3,7 @@
 package proc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,9 +13,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/kb-labs/clikit/proc/child"
 	"golang.org/x/sys/unix"
 )
 
@@ -162,18 +163,11 @@ func resourceCommand(ctx context.Context, prefix []string, args ...string) ([]by
 	if len(prefix) == 0 || prefix[0] == "" {
 		return nil, errors.New("resource command prefix is empty")
 	}
-	command := exec.CommandContext(ctx, prefix[0], append(prefix[1:], args...)...)
-	configureCommandPlatform(command)
-	command.Cancel = func() error {
-		if command.Process == nil {
-			return os.ErrProcessDone
-		}
-		if err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-			return err
-		}
-		return nil
-	}
-	return command.CombinedOutput()
+	command := exec.Command(prefix[0], append(prefix[1:], args...)...)
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	err := child.Run(ctx, command)
+	return output.Bytes(), err
 }
 
 func ledgerPath(stateDir, runID string) string {

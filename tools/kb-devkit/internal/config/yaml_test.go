@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -44,6 +46,54 @@ tasks:
 	}
 	if len(cfg.Tasks["test"]) != 2 || cfg.Tasks["test"][1].Command != "go test ./..." {
 		t.Fatalf("list task variants = %#v", cfg.Tasks["test"])
+	}
+}
+
+// case: S-179.27
+func TestChecksTimeoutConfiguration(t *testing.T) {
+	cfg, err := parseYAMLBytes([]byte("checks:\n  timeout_ms: 250\n"))
+	if err != nil {
+		t.Fatalf("parse configured timeout: %v", err)
+	}
+	if cfg.Checks.TimeoutMS != 250 {
+		t.Fatalf("timeout_ms = %d, want configured 250", cfg.Checks.TimeoutMS)
+	}
+
+	root := t.TempDir()
+	configPath := filepath.Join(root, "devkit.yaml")
+	if err := os.WriteFile(configPath, []byte("schemaVersion: 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadFile(configPath)
+	if err != nil {
+		t.Fatalf("load default timeout: %v", err)
+	}
+	if cfg.Checks.TimeoutMS != DefaultCheckTimeoutMS {
+		t.Fatalf("default timeout_ms = %d, want %d", cfg.Checks.TimeoutMS, DefaultCheckTimeoutMS)
+	}
+
+	if _, err := parseYAMLBytes([]byte("checks:\n  timeout_ms: 0\n")); err == nil || !strings.Contains(err.Error(), "checks.timeout_ms must be a positive integer") {
+		t.Fatalf("zero timeout error = %v, want positive-integer validation", err)
+	}
+}
+
+// case: S-179.27
+func TestChecksTimeoutInheritedFromExtendedPack(t *testing.T) {
+	root := t.TempDir()
+	packPath := filepath.Join(root, "pack.yaml")
+	configPath := filepath.Join(root, "devkit.yaml")
+	if err := os.WriteFile(packPath, []byte("checks:\n  timeout_ms: 250\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("extends:\n  - ./pack.yaml\nschemaVersion: 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(configPath)
+	if err != nil {
+		t.Fatalf("load config extending timeout pack: %v", err)
+	}
+	if cfg.Checks.TimeoutMS != 250 {
+		t.Fatalf("timeout_ms = %d, want inherited 250", cfg.Checks.TimeoutMS)
 	}
 }
 

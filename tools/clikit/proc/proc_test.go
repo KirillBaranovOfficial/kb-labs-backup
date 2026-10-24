@@ -707,15 +707,23 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 func TestSilentLeafEmitsOneStallEvent(t *testing.T) {
 	state := t.TempDir()
 	helper := buildHelper(t)
+	leafPIDFile := filepath.Join(state, "leaf.pid")
+	releaseFile := filepath.Join(state, "release-leaves")
 	run, err := startTest(context.Background(), proc.Config{
 		HelperPath: helper, StateDir: state, Tag: "stall", Stall: 250 * time.Millisecond,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
-		Command: []string{"/bin/sleep", "3"},
+		Command: []string{helper, "hold", leafPIDFile, releaseFile},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cleanupRun(t, state, run)
+	// Registered after cleanupRun, so LIFO order releases the held leaf before
+	// the run kill: the leaf exits on its own and the keeper reaps a live tree.
+	t.Cleanup(func() { releaseHeldLeaves(t, releaseFile) })
+	if _, err := waitPIDFile(leafPIDFile, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
 	if !waitUntil(5*time.Second, func() bool {
 		listing := proc.List(state)
 		return listing.Error == nil && len(listing.Runs) == 1 && listing.Runs[0].Status == proc.StatusStalled
@@ -735,14 +743,14 @@ func TestSilentLeafEmitsOneStallEvent(t *testing.T) {
 		t.Fatalf("kb-runner ps does not show stalled run and tree elapsed time: %s", psOutput)
 	}
 	leaves := eventLeaves(t, state, "stall")
-	var foundSleep bool
+	var foundLeaf bool
 	for _, leaf := range leaves {
-		if strings.Contains(leaf.Command, "sleep") && !leaf.Unverified && leaf.ElapsedMS > 0 && leaf.Identity != "" {
-			foundSleep = true
+		if leaf.Command == filepath.Base(helper) && !leaf.Unverified && leaf.ElapsedMS > 0 && leaf.Identity != "" {
+			foundLeaf = true
 		}
 	}
-	if !foundSleep {
-		t.Fatalf("stall event leaves = %+v, want the command's verified sleep leaf with elapsed time and identity", leaves)
+	if !foundLeaf {
+		t.Fatalf("stall event leaves = %+v, want the command's verified held leaf with elapsed time and identity", leaves)
 	}
 }
 
@@ -1191,6 +1199,16 @@ func cleanupRun(t *testing.T, state string, run *proc.Run) {
 	})
 }
 
+// releaseHeldLeaves frees every leaf the test started on the testhelper hold
+// mode. Cleanup paths must call it before killing keepers so held leaves exit
+// through the keeper's own reaping instead of being orphaned.
+func releaseHeldLeaves(t *testing.T, releaseFile string) {
+	t.Helper()
+	if err := os.WriteFile(releaseFile, []byte("release\n"), 0o600); err != nil {
+		t.Logf("release held fixture leaves via %s: %v", releaseFile, err)
+	}
+}
+
 func forceKillRecordedTree(t *testing.T, state string) {
 	t.Helper()
 	listing := proc.List(state)
@@ -1429,8 +1447,10 @@ func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 		err error
 	}
 	startedResult := make(chan startResult, 1)
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	t.Cleanup(cancelStart)
 	go func() {
-		_, err := startTest(context.Background(), proc.Config{
+		_, err := startTest(startCtx, proc.Config{
 			HelperPath: badHelper, StateDir: state, Tag: "wrong-helper", Stall: time.Hour,
 			StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 			Command: []string{"/usr/bin/true"},
@@ -1442,9 +1462,14 @@ func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 	case result := <-startedResult:
 		err = result.err
 	case <-time.After(4 * time.Second):
+		cancelStart()
 		killBadHelper()
-		<-startedResult
-		t.Fatal("Start did not reject an incorrect helper within four seconds")
+		select {
+		case <-startedResult:
+			t.Fatal("Start did not reject an incorrect helper within four seconds")
+		case <-time.After(2 * time.Second):
+			t.Fatal("Start did not stop after its context was cancelled")
+		}
 	}
 	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
 		t.Fatalf("Start error = %v, want clear helper-dispatch error", err)
@@ -2142,7 +2167,12 @@ func TestMinFreeWaitIsVisibleAndEmitsOneEvent(t *testing.T) {
 func TestWaitReturnsRecordedExitAndFilteredEvents(t *testing.T) {
 	state := t.TempDir()
 	runner := buildRunner(t)
-	command := exec.Command(runner,
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	t.Cleanup(func() {
+		cancel()
+		forceKillRecordedTree(t, state)
+	})
+	command := exec.CommandContext(ctx, runner,
 		"run", "--tag", "result", "--state", state, "--stall", "100ms",
 		"--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"),
 		"--", "/bin/sh", "-c", "/bin/sleep 0.4; exit 7",
@@ -2310,8 +2340,13 @@ func TestEventsFollowStreamsLaterFilteredRecords(t *testing.T) {
 func TestPSShowsRunningQueuedBlockedAndStalledTogether(t *testing.T) {
 	state := t.TempDir()
 	runner := buildRunner(t)
+	helper := buildHelper(t)
+	releaseFile := filepath.Join(state, "release-leaves")
 	var commands []*exec.Cmd
 	t.Cleanup(func() {
+		// Release the held leaves first so they exit on their own and their
+		// keepers reap them; killing the launchers first would orphan them.
+		releaseHeldLeaves(t, releaseFile)
 		for _, command := range commands {
 			if command.Process != nil {
 				_ = command.Process.Kill()
@@ -2329,8 +2364,15 @@ func TestPSShowsRunningQueuedBlockedAndStalledTogether(t *testing.T) {
 		commands = append(commands, command)
 		return command
 	}
+	heldCommand := func(pidFile string) []string {
+		return []string{helper, "hold", pidFile, releaseFile}
+	}
+	startHeld := func(args []string, pidFile string) *exec.Cmd {
+		t.Helper()
+		return start(append(args, heldCommand(pidFile)...)...)
+	}
 	startWorker := func(tag, pidFile string) *exec.Cmd {
-		return start("run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err"), "--slot-group", "ps-workers", "--slots", "1", "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", pidFile)
+		return startHeld([]string{"run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err"), "--slot-group", "ps-workers", "--slots", "1", "--"}, pidFile)
 	}
 	activePID := filepath.Join(state, "active.pid")
 	startWorker("active", activePID)
@@ -2338,17 +2380,17 @@ func TestPSShowsRunningQueuedBlockedAndStalledTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	holderPID := filepath.Join(state, "gate-holder.pid")
-	start("gate", "hold", "maintenance", "--tag", "gate-holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "gate-holder.out"), "--stderr", filepath.Join(state, "gate-holder.err"), "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", holderPID)
+	startHeld([]string{"gate", "hold", "maintenance", "--tag", "gate-holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "gate-holder.out"), "--stderr", filepath.Join(state, "gate-holder.err"), "--"}, holderPID)
 	if _, err := waitPIDFile(holderPID, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	start("run", "--tag", "stalled", "--state", state, "--stall", "100ms", "--stdout", filepath.Join(state, "stalled.out"), "--stderr", filepath.Join(state, "stalled.err"), "--", "/bin/sleep", "30")
+	startHeld([]string{"run", "--tag", "stalled", "--state", state, "--stall", "100ms", "--stdout", filepath.Join(state, "stalled.out"), "--stderr", filepath.Join(state, "stalled.err"), "--"}, filepath.Join(state, "stalled.pid"))
 	if !waitUntil(5*time.Second, func() bool {
 		return psHasTagStatus(outputPS(t, runner, state), "stalled", "STALLED")
 	}) {
 		t.Fatalf("silent command did not become stalled before queued work: %s", outputPS(t, runner, state))
 	}
-	start("run", "--tag", "blocked", "--state", state, "--stall", "1h", "--wait-gate", "maintenance", "--stdout", filepath.Join(state, "blocked.out"), "--stderr", filepath.Join(state, "blocked.err"), "--", "/bin/sleep", "30")
+	startHeld([]string{"run", "--tag", "blocked", "--state", state, "--stall", "1h", "--wait-gate", "maintenance", "--stdout", filepath.Join(state, "blocked.out"), "--stderr", filepath.Join(state, "blocked.err"), "--"}, filepath.Join(state, "blocked.pid"))
 	startWorker("queued", filepath.Join(state, "queued.pid"))
 	if !waitUntil(5*time.Second, func() bool {
 		output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()

@@ -4,11 +4,35 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
+
+// case: S-179.27
+func TestWorkspaceExternalCheckFailsAtDeclaredExecutionBudget(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.DevkitConfig{
+		Checks: config.ChecksConfig{TimeoutMS: 25},
+		Custom: []config.CustomCheck{{Name: "slow-check", Run: "sleep 5", On: []string{"check"}, Scope: "workspace"}},
+	}
+	ws := &workspace.Workspace{Root: root}
+	started := time.Now()
+	results := RunAll(ws, cfg, Build(cfg, root, "check"), []string{"slow-check"}, nil)
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("check elapsed = %s, want timeout within 1s", elapsed)
+	}
+	issues := results["workspace"].Issues
+	if len(issues) != 1 || !issues[0].CheckFailure || issues[0].Check != "slow-check" {
+		t.Fatalf("issues = %#v, want timed-out check failure named slow-check", issues)
+	}
+	if !strings.Contains(issues[0].Cause, "25ms") {
+		t.Fatalf("cause = %q, want declared 25ms execution budget", issues[0].Cause)
+	}
+}
 
 func TestExternalCommandCheckAndFix(t *testing.T) {
 	root := t.TempDir()
@@ -71,7 +95,7 @@ fi
 	}
 
 	registry := Build(cfg, root, "check")
-	results := RunAll(ws, cfg, registry, []string{"external-readme"})
+	results := RunAll(ws, cfg, registry, []string{"external-readme"}, nil)
 	result := results["@acme/demo"]
 	if len(result.Issues) != 1 || result.Issues[0].Check != "external-readme" {
 		t.Fatalf("issues = %#v, want external-readme issue", result.Issues)
@@ -120,7 +144,7 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 		{Name: "@acme/adapter", Dir: filepath.Join(root, "adapters", "adapter"), Category: "adapter", Preset: "typescript", Language: "typescript", RelPath: "adapters/adapter"},
 		{Name: "@acme/library", Dir: filepath.Join(root, "packages", "library"), Category: "ts-lib", Preset: "typescript", Language: "typescript", RelPath: "packages/library"},
 	}}
-	results := RunAll(ws, cfg, Build(cfg, root, "check"), nil)
+	results := RunAll(ws, cfg, Build(cfg, root, "check"), nil, nil)
 	if got := string(mustReadFile(t, callsPath)); got != "x" {
 		t.Fatalf("workspace check calls = %q, want one invocation", got)
 	}
@@ -201,7 +225,7 @@ func TestExternalCheckHonorsCategoryFilter(t *testing.T) {
 		{Name: "@acme/adapter", Dir: root, Category: "adapter", Preset: "typescript", Language: "typescript"},
 		{Name: "@acme/library", Dir: root, Category: "ts-lib", Preset: "typescript", Language: "typescript"},
 	}}
-	results := RunAll(ws, cfg, Build(cfg, root, "check"), []string{"adapter-manifest"})
+	results := RunAll(ws, cfg, Build(cfg, root, "check"), []string{"adapter-manifest"}, nil)
 	if len(results["@acme/adapter"].Issues) != 1 {
 		t.Fatalf("adapter issues = %#v, want one", results["@acme/adapter"].Issues)
 	}

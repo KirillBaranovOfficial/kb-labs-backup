@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/format"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,6 +33,7 @@ type entry struct {
 	StructuredDetailFields         []string                   `json:"structuredDetailFields"`
 	RequiredStructuredDetailFields []string                   `json:"requiredStructuredDetailFields"`
 	StructuredDetailSchemas        map[string]json.RawMessage `json:"structuredDetailSchemas"`
+	EnvironmentVariables           map[string]string          `json:"environmentVariables"`
 }
 
 func main() {
@@ -53,12 +55,16 @@ func run() diag.ExitStatus {
 		return fail(err)
 	}
 	var catalog struct {
-		Codes []entry `json:"codes"`
+		Codes                []entry  `json:"codes"`
+		EnvironmentVariables []string `json:"environmentVariables"`
 	}
 	if err := json.Unmarshal(content, &catalog); err != nil {
 		return fail(err)
 	}
 	if err := validate(catalog.Codes); err != nil {
+		return fail(err)
+	}
+	if err := validateEnvironmentVariables(catalog.EnvironmentVariables); err != nil {
 		return fail(err)
 	}
 	sort.Slice(catalog.Codes, func(i, j int) bool { return catalog.Codes[i].Code < catalog.Codes[j].Code })
@@ -69,9 +75,23 @@ func run() diag.ExitStatus {
 		if item.HintWithoutCorrelationID != "" {
 			hintWithoutCorrelationID = fmt.Sprintf(", HintWithoutCorrelationID: %q", item.HintWithoutCorrelationID)
 		}
-		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RequiredStructuredDetailFields: %s, StructuredDetailSchemas: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringSliceLiteral(item.RequiredStructuredDetailFields), rawJSONMapLiteral(item.StructuredDetailSchemas), stringMapLiteral(item.RuntimeTemplateParameters))
+		environmentVariables := ""
+		if len(item.EnvironmentVariables) > 0 {
+			environmentVariables = ", EnvironmentVariables: " + stringMapLiteral(item.EnvironmentVariables)
+		}
+		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RequiredStructuredDetailFields: %s, StructuredDetailSchemas: %s, RuntimeTemplateParameters: %s%s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringSliceLiteral(item.RequiredStructuredDetailFields), rawJSONMapLiteral(item.StructuredDetailSchemas), stringMapLiteral(item.RuntimeTemplateParameters), environmentVariables)
 	}
-	_, _ = source.WriteString("}\n")
+	_, _ = source.WriteString("}\n\nconst (\n")
+	environmentNames := append([]string(nil), catalog.EnvironmentVariables...)
+	sort.Strings(environmentNames)
+	for _, name := range environmentNames {
+		_, _ = fmt.Fprintf(&source, "\t%s = %q\n", name, name)
+	}
+	_, _ = source.WriteString(")\n\nfunc CatalogEnvironmentVariableNames() []string {\n\treturn []string{\n")
+	for _, identifier := range environmentNames {
+		_, _ = fmt.Fprintf(&source, "\t\t%s,\n", identifier)
+	}
+	_, _ = source.WriteString("\t}\n}\n")
 	formatted, err := format.Source(source.Bytes())
 	if err != nil {
 		return fail(err)
@@ -80,6 +100,23 @@ func run() diag.ExitStatus {
 		return fail(err)
 	}
 	return diag.SuccessStatus()
+}
+
+func validateEnvironmentVariables(variables []string) error {
+	if variables == nil {
+		return fmt.Errorf("catalog must declare environmentVariables")
+	}
+	seen := make(map[string]struct{}, len(variables))
+	for _, name := range variables {
+		if !token.IsIdentifier(name) || token.Lookup(name).IsKeyword() {
+			return fmt.Errorf("environment variable name %q must be a Go identifier", name)
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("duplicate environment variable name %s", name)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
 }
 
 var templateParameterPattern = regexp.MustCompile(`\{([A-Za-z0-9_]+)\}`)

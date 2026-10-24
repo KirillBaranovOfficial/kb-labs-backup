@@ -190,6 +190,8 @@ var catalogEntries = map[string]CatalogEntry{
 	"KB_RELEASE_TREE_DIRTY":                         {Code: "KB_RELEASE_TREE_DIRTY", HTTPStatus: 500, Area: "release", Stage: "preflight", Severity: "error", Retryable: false, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "Working tree has uncommitted changes.", Hint: "Commit or discard the unrelated changes, then retry the release command.", TemplateParameters: nil, RequiredTemplateParameters: nil, StructuredDetailFields: []string{"check", "classification", "changes", "toolGenerated"}, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
 	"KB_RELEASE_VERSION_CONFLICT":                   {Code: "KB_RELEASE_VERSION_CONFLICT", HTTPStatus: 500, Area: "release", Stage: "run", Severity: "error", Retryable: false, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "Package {package}@{version} already exists in the immutable registry.", Hint: "After assigning a new package version in the source, run `bash e2e/journey/prepare-candidate.sh` to rebuild the immutable candidate.", TemplateParameters: []string{"package", "version"}, RequiredTemplateParameters: []string{"package", "version"}, StructuredDetailFields: nil, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
 	"KB_RESTART_WORK_IN_FLIGHT":                     {Code: "KB_RESTART_WORK_IN_FLIGHT", HTTPStatus: 409, Area: "host", Stage: "run", Severity: "error", Retryable: true, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "The host has active work and cannot be restarted.", Hint: "Wait for active work to finish, or rerun with `{interruptCommand}`.", TemplateParameters: []string{"interruptCommand"}, RequiredTemplateParameters: []string{"interruptCommand"}, StructuredDetailFields: []string{"items"}, RequiredStructuredDetailFields: []string{"items"}, StructuredDetailSchemas: map[string]json.RawMessage{"items": json.RawMessage("{\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"required\": [\"kind\", \"id\", \"owningService\"],\n            \"properties\": {\"kind\": {\"type\": \"string\"}, \"id\": {\"type\": \"string\"}, \"owningService\": {\"type\": \"string\"}},\n            \"additionalProperties\": false\n          }\n        }")}, RuntimeTemplateParameters: nil},
+	"KB_RUNNER_ZAI_KEY_FILE_INVALID":                {Code: "KB_RUNNER_ZAI_KEY_FILE_INVALID", HTTPStatus: 400, Area: "runtime", Stage: "resolve", Severity: "error", Retryable: false, ProcessExitClass: ProcessExitClass("input-refusal"), Message: "The z.ai key file is missing, empty, unreadable, or accessible by other users.", Hint: "Set KB_RUNNER_ZAI_KEY_FILE to a non-empty owner-only file with mode 0600, then run {binary} agent --help to see the required start flags.", TemplateParameters: []string{"binary"}, RequiredTemplateParameters: []string{"binary"}, StructuredDetailFields: []string{"keyFile"}, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil, EnvironmentVariables: map[string]string{"keyFile": "KB_RUNNER_ZAI_KEY_FILE"}},
+	"KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE":           {Code: "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE", HTTPStatus: 400, Area: "runtime", Stage: "resolve", Severity: "error", Retryable: false, ProcessExitClass: ProcessExitClass("input-refusal"), Message: "The ZCode agent could not be started inside the required macOS sandbox.", Hint: "Restore macOS sandbox-exec; if Command Line Tools are missing, run `xcode-select --install`. Then rerun {binary} agent start with the ZCode vendor.", TemplateParameters: []string{"binary"}, RequiredTemplateParameters: []string{"binary"}, StructuredDetailFields: nil, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
 	"KB_RUNTIME_APPROVAL_INPUT_INVALID":             {Code: "KB_RUNTIME_APPROVAL_INPUT_INVALID", HTTPStatus: 400, Area: "runtime", Stage: "run", Severity: "error", Retryable: false, ProcessExitClass: ProcessExitClass("input-refusal"), Message: "The approval request is invalid.", Hint: "Provide jobId, stepId, and an action of approve or reject, then retry.", TemplateParameters: nil, RequiredTemplateParameters: nil, StructuredDetailFields: nil, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
 	"KB_RUNTIME_APPROVAL_LIST_FAILED":               {Code: "KB_RUNTIME_APPROVAL_LIST_FAILED", HTTPStatus: 500, Area: "runtime", Stage: "run", Severity: "error", Retryable: false, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "Pending approvals could not be listed.", Hint: "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.", TemplateParameters: nil, RequiredTemplateParameters: nil, StructuredDetailFields: nil, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
 	"KB_RUNTIME_APPROVAL_NOT_PENDING":               {Code: "KB_RUNTIME_APPROVAL_NOT_PENDING", HTTPStatus: 409, Area: "runtime", Stage: "run", Severity: "error", Retryable: false, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "The workflow step is not waiting for approval.", Hint: "Run \"kb workflow runs view <run-id>\" to inspect the step state.", TemplateParameters: nil, RequiredTemplateParameters: nil, StructuredDetailFields: nil, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
@@ -272,4 +274,50 @@ var catalogEntries = map[string]CatalogEntry{
 	"WORKER_START_FAILED":                           {Code: "WORKER_START_FAILED", HTTPStatus: 503, Area: "plugin", Stage: "run", Severity: "error", Retryable: true, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "A worker could not be started.", Hint: "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after the recorded delay.", TemplateParameters: []string{"failureCode"}, RequiredTemplateParameters: []string{"failureCode"}, StructuredDetailFields: []string{"failedAt", "failureAttempt", "failureMessage", "retryInMs"}, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
 	"WORKER_TREE_UNVERIFIED":                        {Code: "WORKER_TREE_UNVERIFIED", HTTPStatus: 500, Area: "plugin", Stage: "run", Severity: "error", Retryable: true, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "The worker process tree could not be verified after termination.", Hint: "Run `kb health` to inspect worker pool health and unverified process trees.", TemplateParameters: nil, RequiredTemplateParameters: nil, StructuredDetailFields: nil, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
 	"WORKER_UNAVAILABLE":                            {Code: "WORKER_UNAVAILABLE", HTTPStatus: 503, Area: "plugin", Stage: "run", Severity: "error", Retryable: true, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "No worker is available and worker startup is failing.", Hint: "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after workers recover.", TemplateParameters: []string{"failureCode"}, RequiredTemplateParameters: []string{"failureCode"}, StructuredDetailFields: []string{"failedAt", "failureAttempt", "failureMessage", "retryInMs"}, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
+}
+
+const (
+	KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO = "KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO"
+	KB_CREATE_PROCESS_IDENTITY                    = "KB_CREATE_PROCESS_IDENTITY"
+	KB_DEPLOY_BASE_REF                            = "KB_DEPLOY_BASE_REF"
+	KB_DEVKIT_FAIL_LINES                          = "KB_DEVKIT_FAIL_LINES"
+	KB_DEV_INSTANCE                               = "KB_DEV_INSTANCE"
+	KB_DEV_PROJECT_ID                             = "KB_DEV_PROJECT_ID"
+	KB_DEV_PROJECT_ROOT                           = "KB_DEV_PROJECT_ROOT"
+	KB_DEV_RUNTIME_DIR                            = "KB_DEV_RUNTIME_DIR"
+	KB_DEV_SERVICE                                = "KB_DEV_SERVICE"
+	KB_ENV_HOME                                   = "KB_ENV_HOME"
+	KB_ENV_OFFSET                                 = "KB_ENV_OFFSET"
+	KB_ENV_SHELL                                  = "KB_ENV_SHELL"
+	KB_HOME                                       = "KB_HOME"
+	KB_HOST_CONTROL_TOKEN                         = "KB_HOST_CONTROL_TOKEN"
+	KB_NET_OFFSET                                 = "KB_NET_OFFSET"
+	KB_PLATFORM_ROOT                              = "KB_PLATFORM_ROOT"
+	KB_PROJECT_ROOT                               = "KB_PROJECT_ROOT"
+	KB_SOCKET_HASH                                = "KB_SOCKET_HASH"
+	KB_SOCKET_PATH                                = "KB_SOCKET_PATH"
+)
+
+func CatalogEnvironmentVariableNames() []string {
+	return []string{
+		KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO,
+		KB_CREATE_PROCESS_IDENTITY,
+		KB_DEPLOY_BASE_REF,
+		KB_DEVKIT_FAIL_LINES,
+		KB_DEV_INSTANCE,
+		KB_DEV_PROJECT_ID,
+		KB_DEV_PROJECT_ROOT,
+		KB_DEV_RUNTIME_DIR,
+		KB_DEV_SERVICE,
+		KB_ENV_HOME,
+		KB_ENV_OFFSET,
+		KB_ENV_SHELL,
+		KB_HOME,
+		KB_HOST_CONTROL_TOKEN,
+		KB_NET_OFFSET,
+		KB_PLATFORM_ROOT,
+		KB_PROJECT_ROOT,
+		KB_SOCKET_HASH,
+		KB_SOCKET_PATH,
+	}
 }

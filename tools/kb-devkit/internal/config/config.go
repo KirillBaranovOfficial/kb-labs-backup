@@ -261,8 +261,11 @@ type CustomCheck struct {
 }
 
 type ChecksConfig struct {
-	Packages map[string]CheckPackConfig `yaml:"packages"`
+	TimeoutMS int                        `yaml:"timeout_ms"`
+	Packages  map[string]CheckPackConfig `yaml:"packages"`
 }
+
+const DefaultCheckTimeoutMS = 900000
 
 type CheckPackConfig struct {
 	Enabled bool           `yaml:"enabled"`

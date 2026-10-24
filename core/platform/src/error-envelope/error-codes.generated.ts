@@ -188,6 +188,8 @@ export type CatalogErrorCode =
   | "KB_RELEASE_TREE_DIRTY"
   | "KB_RELEASE_VERSION_CONFLICT"
   | "KB_RESTART_WORK_IN_FLIGHT"
+  | "KB_RUNNER_ZAI_KEY_FILE_INVALID"
+  | "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE"
   | "KB_RUNTIME_APPROVAL_INPUT_INVALID"
   | "KB_RUNTIME_APPROVAL_LIST_FAILED"
   | "KB_RUNTIME_APPROVAL_NOT_PENDING"
@@ -458,6 +460,8 @@ export interface CatalogTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string };
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<never, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<never, never>;
@@ -728,6 +732,8 @@ export interface CatalogDetailsFor {
   "KB_RELEASE_TREE_DIRTY": { "check"?: string; "classification"?: string; "changes"?: string; "toolGenerated"?: string };
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string; "items": readonly { "kind": string; "id": string; "owningService": string }[] };
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string; "keyFile"?: string };
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<string, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<string, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<string, never>;
@@ -811,6 +817,28 @@ export interface CatalogDetailsFor {
   "WORKER_TREE_UNVERIFIED": Record<string, never>;
   "WORKER_UNAVAILABLE": { "failureCode": string; "failedAt"?: string; "failureAttempt"?: string; "failureMessage"?: string; "retryInMs"?: string };
 }
+
+export const catalogEnvironmentVariables = {
+  "KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO": "KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO",
+  "KB_CREATE_PROCESS_IDENTITY": "KB_CREATE_PROCESS_IDENTITY",
+  "KB_DEPLOY_BASE_REF": "KB_DEPLOY_BASE_REF",
+  "KB_DEVKIT_FAIL_LINES": "KB_DEVKIT_FAIL_LINES",
+  "KB_DEV_INSTANCE": "KB_DEV_INSTANCE",
+  "KB_DEV_PROJECT_ID": "KB_DEV_PROJECT_ID",
+  "KB_DEV_PROJECT_ROOT": "KB_DEV_PROJECT_ROOT",
+  "KB_DEV_RUNTIME_DIR": "KB_DEV_RUNTIME_DIR",
+  "KB_DEV_SERVICE": "KB_DEV_SERVICE",
+  "KB_ENV_HOME": "KB_ENV_HOME",
+  "KB_ENV_OFFSET": "KB_ENV_OFFSET",
+  "KB_ENV_SHELL": "KB_ENV_SHELL",
+  "KB_HOME": "KB_HOME",
+  "KB_HOST_CONTROL_TOKEN": "KB_HOST_CONTROL_TOKEN",
+  "KB_NET_OFFSET": "KB_NET_OFFSET",
+  "KB_PLATFORM_ROOT": "KB_PLATFORM_ROOT",
+  "KB_PROJECT_ROOT": "KB_PROJECT_ROOT",
+  "KB_SOCKET_HASH": "KB_SOCKET_HASH",
+  "KB_SOCKET_PATH": "KB_SOCKET_PATH",
+} as const;
 
 export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": ["acquireTimeoutMs"],
@@ -998,6 +1026,8 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -1268,6 +1298,8 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": [],
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": [],
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -1538,6 +1570,8 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -1808,6 +1842,8 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -2078,6 +2114,8 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": [],
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": [],
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -2348,6 +2386,8 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -2618,6 +2658,8 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_TREE_DIRTY": ["check","classification","changes","toolGenerated"],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RESTART_WORK_IN_FLIGHT": ["items"],
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["keyFile"],
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
@@ -2888,6 +2930,8 @@ export interface CatalogMessageTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
   "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": Record<never, never>;
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<never, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<never, never>;
@@ -3158,6 +3202,8 @@ export interface CatalogHintTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": Record<never, never>;
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string };
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<never, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<never, never>;
@@ -3428,6 +3474,8 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": Record<never, never>;
   "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
+  "KB_RUNNER_ZAI_KEY_FILE_INVALID": Record<never, never>;
+  "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
   "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<never, never>;
   "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<never, never>;

@@ -3,7 +3,7 @@ import { ConsoleLogger, InMemoryEventBus } from '@kb-labs/core-platform/inmemory
 import { openCatalog } from '@kb-labs/core-registry'
 import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct'
 import { EnvSecretProvider, WorkflowEngine } from '@kb-labs/workflow-engine'
-import { createWorkflowWorker } from '../worker.js'
+import { createWorkflowWorker } from '../src/worker.js'
 
 type Adapter = 'cache' | 'storage'
 type AdapterCall = { type: 'adapter'; id: number; adapter: Adapter; method: string; args: unknown[] }
