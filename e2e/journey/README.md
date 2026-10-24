@@ -111,6 +111,15 @@ fresh-host test is copied into that image at build time and targets the gateway
 at `http://127.0.0.1:4000` from within the same container. The image is built by
 `e2e/journey/run.sh`; no browser installation is needed on the host.
 
+The slow, rarely-changing toolchain layers (apt packages, pnpm, Playwright and
+Chromium) live in the `toolchain` stage of `e2e/journey/Dockerfile.runner`.
+`run.sh` builds and tags that stage as `kb-journey-runner-toolchain:<hash>` —
+the hash covers the stage and the staged Playwright version — and the runner
+stage starts `FROM` that tagged image, so per-run build-cache trimming cannot
+evict the toolchain. Each run logs one line, `==> journey runner toolchain
+<image> built` or `reused`, and reclaims older toolchain tags by their
+`org.kb-labs.journey.runner-toolchain` label.
+
 The runner image keeps `runner.py`, `service_runner.py`, `service_steps.py`,
 `studio_steps.py`, and the other journey Python modules together in
 `/opt/kb-journey`. The `kb-journey-runner` executable is a small bootstrap that

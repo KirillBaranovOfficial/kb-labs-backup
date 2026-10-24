@@ -33,6 +33,19 @@ CONFIG_JSONC_RESOURCE = RunnerImageResource(
     "/opt/kb-journey/core/config/dist/jsonc-edit.mjs",
 )
 
+TOOLCHAIN_STAGE_NAME = "toolchain"
+TOOLCHAIN_IMAGE_REPOSITORY = "kb-journey-runner-toolchain"
+TOOLCHAIN_IMAGE_LABEL = "org.kb-labs.journey.runner-toolchain"
+TOOLCHAIN_DOCKERFILE = "e2e/journey/Dockerfile.runner"
+PLAYWRIGHT_VERSION_INPUT = ".journey/runner-inputs/studio-playwright-version"
+
+# The slow, rarely-changing runner toolchain layers. They are copied inside the
+# `FROM ... AS toolchain` stage of Dockerfile.runner, which e2e/journey/run.sh
+# builds and tags from these inputs so per-run cache trimming cannot evict them.
+TOOLCHAIN_STAGE_INPUTS = (
+    RunnerImageResource(PLAYWRIGHT_VERSION_INPUT, "/tmp/studio-playwright-version"),
+)
+
 
 RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("tools/kb-create/install.sh", "/usr/local/share/kb-create/install.sh"),
@@ -67,8 +80,6 @@ RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("e2e/journey/entrypoint.py", "/usr/local/bin/kb-journey-runner"),
     RunnerImageResource("e2e/journey/studio-playwright.config.mjs",
                         "/opt/kb-studio-playwright/playwright.config.mjs"),
-    RunnerImageResource(".journey/runner-inputs/studio-playwright-version",
-                        "/tmp/studio-playwright-version"),
     RunnerImageResource(".journey/runner-inputs/studio-specs", "/opt/kb-studio-playwright/specs"),
     RunnerImageResource("tools/clikit/diag/gen/main.go", "/opt/kb-journey/tools/clikit/diag/gen/main.go"),
     RunnerImageResource("tools/kb-create/main.go", "/opt/kb-journey/tools/kb-create/main.go"),
@@ -272,8 +283,56 @@ def stage_studio_playwright_specs(output_dir: Path | None = None) -> tuple[Path,
     return tuple(sorted(destination.rglob("*.spec.js")))
 
 
-def main() -> int:
+def runner_toolchain_stage_text(dockerfile: Path | None = None) -> str:
+    """Extract the toolchain build stage: the single declaration of toolchain inputs."""
+    path = dockerfile or workspace_resource(*PurePosixPath(TOOLCHAIN_DOCKERFILE).parts)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    starts = [index for index, line in enumerate(lines)
+              if line.startswith("FROM ") and line.split()[-1] == TOOLCHAIN_STAGE_NAME]
+    if len(starts) != 1:
+        raise ValueError(
+            f"{path} must declare exactly one 'FROM ... AS {TOOLCHAIN_STAGE_NAME}' stage owning "
+            f"the runner toolchain inputs; found {len(starts)}"
+        )
+    end = next((index for index in range(starts[0] + 1, len(lines))
+                if lines[index].startswith("FROM ")), len(lines))
+    return "\n".join(lines[starts[0]:end]).strip()
+
+
+def runner_toolchain_image(*, dockerfile: Path | None = None,
+                           playwright_version_input: Path | None = None) -> str:
+    """Derive the tagged toolchain image reference from its exact build inputs.
+
+    The tag hashes the toolchain stage of Dockerfile.runner (base image, apt
+    package list, pnpm and Playwright install commands) plus the staged
+    Playwright version, so a changed input yields a new tag that the harness
+    builds, while per-run runner-stage changes reuse the existing image.
+    """
+    stage = runner_toolchain_stage_text(dockerfile)
+    version_input = playwright_version_input or workspace_resource(
+        *PurePosixPath(PLAYWRIGHT_VERSION_INPUT).parts)
     try:
+        playwright_version = version_input.read_text(encoding="utf-8")
+    except FileNotFoundError as error:
+        raise FileNotFoundError(
+            f"The journey runner toolchain needs its staged Playwright version at "
+            f"{version_input}. Next: bash e2e/journey/stage-runner-inputs.sh "
+            "(or e2e/journey/prepare-candidate.sh before the journey build)."
+        ) from error
+    digest = hashlib.sha256(f"{stage}\n{playwright_version}".encode("utf-8")).hexdigest()[:16]
+    return f"{TOOLCHAIN_IMAGE_REPOSITORY}:{digest}"
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    try:
+        if argv == ["--toolchain-image"]:
+            print(runner_toolchain_image())
+            print(TOOLCHAIN_IMAGE_LABEL)
+            return 0
+        if argv:
+            print(f"unknown journey_resources option: {' '.join(argv)}", file=sys.stderr)
+            return 2
         stage_runner_image_inputs()
     except (FileNotFoundError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(error, file=sys.stderr)

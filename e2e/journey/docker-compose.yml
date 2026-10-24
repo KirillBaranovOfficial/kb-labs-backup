@@ -33,6 +33,10 @@ services:
       dockerfile: e2e/journey/Dockerfile.runner
       args:
         KB_JOURNEY_GIT_REVISION: ${KB_JOURNEY_GIT_REVISION:-unknown}
+        # e2e/journey/run.sh exports the input-derived toolchain image built
+        # from the Dockerfile.runner `toolchain` stage; this sentinel is only
+        # reachable by bypassing run.sh and names the required entry.
+        KB_JOURNEY_TOOLCHAIN_IMAGE: ${KB_JOURNEY_TOOLCHAIN_IMAGE:-kb-journey-runner-toolchain:requires-e2e-journey-run-sh}
     image: ${KB_JOURNEY_RUNNER_IMAGE:-kb-installer-journey:local}
     depends_on:
       origin:
