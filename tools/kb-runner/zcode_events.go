@@ -8,6 +8,16 @@ import (
 	"fmt"
 )
 
+// zcodeErrorAttribution mirrors the structured attribution the ZCode CLI
+// projects into a turn failure (core/src/errors/error-payload.ts).
+type zcodeErrorAttribution struct {
+	ProviderErrorCode string `json:"providerErrorCode"`
+	StatusCode        int    `json:"statusCode"`
+	Source            string `json:"source"`
+	ExceptionKind     string `json:"exceptionKind"`
+	ErrorPhase        string `json:"errorPhase"`
+}
+
 func parseZcodeEvent(line []byte) (VendorEvent, error) {
 	var row struct {
 		Type      string `json:"type"`
@@ -15,7 +25,9 @@ func parseZcodeEvent(line []byte) (VendorEvent, error) {
 		Response  string `json:"response"`
 		Payload   struct {
 			Error struct {
-				Message string `json:"message"`
+				Message     string                `json:"message"`
+				Code        string                `json:"code"`
+				Attribution zcodeErrorAttribution `json:"attribution"`
 			} `json:"error"`
 		} `json:"payload"`
 		Usage struct {
@@ -39,6 +51,12 @@ func parseZcodeEvent(line []byte) (VendorEvent, error) {
 		if event.Message == "" {
 			event.Message = "ZCode turn failed without an error message"
 		}
+		event.ProviderCode = row.Payload.Error.Attribution.ProviderErrorCode
+		if event.ProviderCode == "" {
+			event.ProviderCode = row.Payload.Error.Code
+		}
+		event.StatusCode = row.Payload.Error.Attribution.StatusCode
+		event.FailureSource = zcodeFailureSource(row.Payload.Error.Attribution)
 	case "result":
 		event.Kind = EventFinal
 		event.FinalMessage = row.Response
@@ -47,6 +65,19 @@ func parseZcodeEvent(line []byte) (VendorEvent, error) {
 		event.Tokens = event.InputTokens + event.OutputTokens
 	}
 	return event, nil
+}
+
+// zcodeFailureSource normalizes the vendor's structured transport attribution
+// into a single source marker the failure table consumes: connect-phase
+// failures, transport exceptions, and network-sourced errors are transport
+// losses regardless of which field carried them.
+func zcodeFailureSource(attribution zcodeErrorAttribution) string {
+	switch {
+	case attribution.Source == "network", attribution.ExceptionKind == "transport", attribution.ErrorPhase == "connect":
+		return "network"
+	default:
+		return attribution.Source
+	}
 }
 
 func zcodeArgs(request AgentRequest, resume bool) []string {

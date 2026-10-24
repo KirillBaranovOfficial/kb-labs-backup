@@ -24,6 +24,15 @@ import (
 	"github.com/kb-labs/clikit/proc"
 )
 
+// maxProviderRecoveryAttempts bounds how many times one job resumes the same
+// vendor session after transient provider failures.
+const maxProviderRecoveryAttempts = 3
+
+// providerContinuationPrompt is the fixed message a resumed session receives
+// after a transient provider failure. The vendor keeps the session state, so
+// the prompt only has to point the agent back at the interrupted task.
+const providerContinuationPrompt = "The provider connection dropped mid-task (transient vendor error). Continue the same task from where you were. Re-check the worktree state first (git status, your notes), do not redo finished steps, and keep the final report current."
+
 func agentCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		_, err := fmt.Fprintf(out, "Usage: %s agent start --stream <name> --vendor <%s> --workdir <path> --prompt-file <path> [phase commands]\n", root.Name(), strings.Join(vendorNamesFor(nil), "|"))
@@ -60,7 +69,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	stall := fs.Duration("stall", 30*time.Minute, "fail the job after this no-output interval")
 	fiveHour := fs.Float64("five-hour-threshold", 95, "quota admission threshold")
 	week := fs.Float64("week-threshold", 98, "weekly quota admission threshold")
-	providerFailureThreshold := fs.Int("provider-failure-threshold", 3, "consecutive provider network errors before pausing")
+	providerFailureThreshold := fs.Int("provider-failure-threshold", 3, "consecutive transient provider errors before recording a sustained outage")
 	var writable pathListFlag
 	fs.Var(&writable, "add-dir", "additional writable directory (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -210,6 +219,10 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		cmd, err = adapter.Start(context.Background(), req)
 	}
 	if err != nil {
+		closeErr := closeProviderAttempt(store, id, *session, "failed", ReasonVendorError, attemptUsageFor(*vendor, "failed"))
+		if closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("record failed provider attempt: %w", closeErr))
+		}
 		var sandboxErr zcodeSandboxError
 		if errors.As(err, &sandboxErr) {
 			return failZcodeSandboxJob(store, id, root, finalPath, err)
@@ -218,18 +231,26 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		if closeErr := closeProviderAttempt(store, id, *session, "failed", ReasonVendorError, attemptUsageFor(*vendor, "failed")); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("record failed provider attempt: %w", closeErr))
+		}
 		return failAgentJob(store, id, PhaseRun, ReasonVendorError, root, finalPath, err)
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err = cmd.Start(); err != nil {
+		if closeErr := closeProviderAttempt(store, id, *session, "failed", ReasonVendorError, attemptUsageFor(*vendor, "failed")); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("record failed provider attempt: %w", closeErr))
+		}
 		return failAgentJob(store, id, PhaseRun, ReasonVendorError, root, finalPath, err)
 	}
 	health := newHealthTracker(*providerFailureThreshold)
+	failures := vendorRegistry[*vendor].failures
 	var final strings.Builder
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	var scanErr error
+	var streamFailure vendorFailure
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
 		event, e := health.Observe(*vendor, line)
@@ -268,22 +289,35 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 			if event.FinalMessage != "" {
 				final.WriteString(event.FinalMessage)
 			}
-		}
-		if event.Kind == EventProviderUnreachable || event.Kind == EventRateLimited || event.Kind == EventAuthExpired {
+			// The vendor recovered after an earlier failure event: the run
+			// completed, so the failure no longer decides the outcome.
+			streamFailure = unrelatedFailure
 			if updateErr := store.Update(id, func(j *Job) error {
-				j.State = JobPaused
-				if event.Kind == EventRateLimited {
-					j.Reason = ReasonRateLimited
-				} else if event.Kind == EventProviderUnreachable {
-					j.Reason = ReasonProviderUnreachable
-				} else {
-					j.Reason = ReasonAuthExpired
+				if j.State == JobPaused {
+					j.State = JobRunning
+					j.Reason = ReasonNone
 				}
 				return nil
 			}); updateErr != nil {
 				scanErr = updateErr
 				break
 			}
+			continue
+		}
+		failure := failures.classify(event)
+		if failure.class == failureUnrelated {
+			continue
+		}
+		streamFailure = failure
+		if updateErr := store.Update(id, func(j *Job) error {
+			j.Reason = failure.reason
+			if failure.class == failureTransient {
+				j.State = JobPaused
+			}
+			return nil
+		}); updateErr != nil {
+			scanErr = updateErr
+			break
 		}
 	}
 	if e := scanner.Err(); e != nil {
@@ -303,33 +337,35 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	if getErr != nil {
 		return 1, getErr
 	}
-	if waitErr != nil && completedJob.State == JobPaused && *recoveryAttempt < 3 && completedJob.SessionID != "" {
+	failure := streamFailure
+	if failure.class == failureUnrelated {
+		if classified, ok := failures.classifyStderr(adapter.Redact(stderr.String())); ok {
+			failure = classified
+		}
+	}
+	if waitErr != nil && failure.class == failureTransient && completedJob.SessionID != "" && *recoveryAttempt < maxProviderRecoveryAttempts {
 		nextAttempt := *recoveryAttempt + 1
-		if updateErr := store.Update(id, func(job *Job) error {
-			last := &job.Attempts[len(job.Attempts)-1]
-			last.FinishedAt = time.Now().UTC()
-			last.SessionID = completedJob.SessionID
-			last.Reason = job.Reason
-			last.Outcome = "paused"
-			return nil
-		}); updateErr != nil {
+		if updateErr := closeProviderAttempt(store, id, completedJob.SessionID, "paused", failure.reason, attemptUsageFor(*vendor, "paused")); updateErr != nil {
 			return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record paused provider attempt: %w", updateErr))
 		}
-		if err := waitForProviderRecovery(context.Background(), adapter, completedJob.Reason, nextAttempt, *fiveHour, *week); err != nil {
-			return failAgentJob(store, id, PhaseRun, completedJob.Reason, root, finalPath, err)
+		if err := store.Update(id, func(job *Job) error {
+			job.State = JobPaused
+			job.Reason = failure.reason
+			return nil
+		}); err != nil {
+			return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record paused provider state: %w", err))
 		}
-		retryArgs := append([]string(nil), args...)
-		retryArgs = append(retryArgs, "--session", completedJob.SessionID, "--recovery-attempt", strconv.Itoa(nextAttempt))
+		if err := waitForProviderRecovery(context.Background(), adapter, *vendor, failure.reason, nextAttempt, *fiveHour, *week); err != nil {
+			return failAgentJob(store, id, PhaseRun, failure.reason, root, finalPath, err)
+		}
+		retryArgs, err := continuationRetryArgs(root, args, *state, id, completedJob.SessionID, nextAttempt)
+		if err != nil {
+			return failAgentJob(store, id, PhaseRun, failure.reason, root, finalPath, err)
+		}
 		return agentStartCommand(root, retryArgs, out, errOut)
 	}
 	if waitErr == nil {
-		if updateErr := store.Update(id, func(job *Job) error {
-			last := &job.Attempts[len(job.Attempts)-1]
-			last.FinishedAt = time.Now().UTC()
-			last.SessionID = completedJob.SessionID
-			last.Outcome = "ok"
-			return nil
-		}); updateErr != nil {
+		if updateErr := closeProviderAttempt(store, id, completedJob.SessionID, "ok", ReasonNone, attemptUsageFor(*vendor, "ok")); updateErr != nil {
 			return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record completed provider attempt: %w", updateErr))
 		}
 	}
@@ -350,17 +386,27 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 			err = store.Terminate(id, JobTerminal{State: JobOK, Phase: PhaseRun, Next: root.InvocationCommand() + " status", MessagePath: finalPath, SessionID: completedJob.SessionID})
 		}
 	} else {
-		state := JobFailed
+		terminalState := JobFailed
 		reason := ReasonVendorError
 		if errors.Is(waitErr, context.DeadlineExceeded) {
-			state = JobStalled
+			terminalState = JobStalled
 			reason = ReasonStall
-		}
-		if strings.Contains(strings.ToLower(stderr.String()), "rate limit") {
-			reason = ReasonRateLimited
+		} else if failure.class != failureUnrelated {
+			reason = failure.reason
 		}
 		diagnostic := providerFailureDetail(exitSummary(waitErr), adapter.Redact(stderr.String()))
-		err = store.Terminate(id, JobTerminal{State: state, Phase: PhaseRun, Reason: reason, Error: diagnostic, Next: root.InvocationCommand() + " status", MessagePath: finalPath, SessionID: completedJob.SessionID})
+		if failure.class == failureTransient && terminalState == JobFailed {
+			resumeNext, resumeErr := manualResumeCommand(root, args, *state, id, completedJob.SessionID)
+			if resumeErr != nil {
+				diagnostic = fmt.Sprintf("transient provider failure persisted after %d recovery attempts and the continuation prompt could not be written: %v; %s", maxProviderRecoveryAttempts, resumeErr, diagnostic)
+			} else {
+				diagnostic = fmt.Sprintf("transient provider failure persisted after %d recovery attempts; resume the session manually:\n%s\n%s", maxProviderRecoveryAttempts, resumeNext, diagnostic)
+			}
+		}
+		if updateErr := closeProviderAttempt(store, id, completedJob.SessionID, "failed", reason, attemptUsageFor(*vendor, "failed")); updateErr != nil {
+			diagnostic = providerFailureDetail(fmt.Sprintf("%v; also could not record the failed provider attempt: %v", waitErr, updateErr), adapter.Redact(stderr.String()))
+		}
+		err = store.Terminate(id, JobTerminal{State: terminalState, Phase: PhaseRun, Reason: reason, Error: diagnostic, Next: root.InvocationCommand() + " status", MessagePath: finalPath, SessionID: completedJob.SessionID})
 	}
 	if err != nil {
 		return 1, err
@@ -370,6 +416,88 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	}
 	_, err = fmt.Fprintf(out, "job %s ok\n", id)
 	return 0, err
+}
+
+// continuationRetryArgs builds the worker command line for a resume: the same
+// invocation with the prompt replaced by the fixed continuation prompt file,
+// the recorded session, and the next recovery attempt number.
+func continuationRetryArgs(root runnerRoot, args []string, state, id, sessionID string, nextAttempt int) ([]string, error) {
+	continuePath, err := writeContinuationPrompt(state, id)
+	if err != nil {
+		return nil, err
+	}
+	retryArgs := replaceFlagValue(args, "prompt-file", continuePath)
+	return append(retryArgs, "--session", sessionID, "--recovery-attempt", strconv.Itoa(nextAttempt)), nil
+}
+
+// manualResumeCommand renders the exact command an operator runs to resume a
+// session whose automatic recovery attempts are exhausted.
+func manualResumeCommand(root runnerRoot, args []string, state, id, sessionID string) (string, error) {
+	continuePath, err := writeContinuationPrompt(state, id)
+	if err != nil {
+		return "", err
+	}
+	resumeArgs := replaceFlagValue(args, "prompt-file", continuePath)
+	if sessionID != "" {
+		resumeArgs = append(resumeArgs, "--session", sessionID)
+	}
+	return shellJoin(append([]string{root.Invocation(), "agent", "start"}, resumeArgs...)), nil
+}
+
+func writeContinuationPrompt(state, id string) (string, error) {
+	continuePath := filepath.Join(state, "jobs", id+".continue.md")
+	if err := os.MkdirAll(filepath.Dir(continuePath), 0700); err != nil {
+		return "", fmt.Errorf("write continuation prompt: %w", err)
+	}
+	if err := os.WriteFile(continuePath, []byte(providerContinuationPrompt), 0o600); err != nil {
+		return "", fmt.Errorf("write continuation prompt: %w", err)
+	}
+	return continuePath, nil
+}
+
+// replaceFlagValue rewrites the value of a flag in a command line, accepting
+// both "--name value" and "--name=value" spellings.
+func replaceFlagValue(args []string, name, value string) []string {
+	replaced := append([]string(nil), args...)
+	for index := 0; index < len(replaced); index++ {
+		arg := replaced[index]
+		if arg == "--"+name && index+1 < len(replaced) {
+			replaced[index+1] = value
+			index++
+			continue
+		}
+		if strings.HasPrefix(arg, "--"+name+"=") {
+			replaced[index] = "--" + name + "=" + value
+		}
+	}
+	return replaced
+}
+
+// closeProviderAttempt closes the in-flight provider attempt with its outcome
+// and spend accounting.
+func closeProviderAttempt(store *jobStore, id, sessionID, outcome string, reason JobReason, usage string) error {
+	return store.Update(id, func(job *Job) error {
+		if len(job.Attempts) == 0 {
+			return fmt.Errorf("job %q has no provider attempt to close", id)
+		}
+		attempt := &job.Attempts[len(job.Attempts)-1]
+		attempt.FinishedAt = time.Now().UTC()
+		attempt.SessionID = sessionID
+		attempt.Reason = reason
+		attempt.Outcome = outcome
+		attempt.Usage = usage
+		return nil
+	})
+}
+
+// attemptUsageFor resolves the spend accounting of a closed attempt: vendors
+// that stream usage before the final result always record what they observed;
+// the rest expose no usage for an attempt that never produced one.
+func attemptUsageFor(vendor, outcome string) string {
+	if outcome == "ok" || vendorRegistry[vendor].usageOnFailure == usagePartialOnFailure {
+		return attemptUsageRecorded
+	}
+	return attemptUsageUnknown
 }
 
 func agentProcessFailure(store *jobStore, id string, waitErr error, root runnerRoot) error {
@@ -460,7 +588,7 @@ func nextBlockedReset(limits []VendorLimit, fiveHour, week float64) *time.Time {
 	return next
 }
 
-func waitForProviderRecovery(ctx context.Context, adapter AgentAdapter, reason JobReason, attempt int, fiveHour, week float64) error {
+func waitForProviderRecovery(ctx context.Context, adapter AgentAdapter, vendor string, reason JobReason, attempt int, fiveHour, week float64) error {
 	delay := time.Duration(1<<min(attempt-1, 5)) * time.Second
 	if reason == ReasonRateLimited {
 		limits, err := adapter.Limits(ctx)
@@ -469,6 +597,18 @@ func waitForProviderRecovery(ctx context.Context, adapter AgentAdapter, reason J
 				delay = time.Until(*reset)
 			}
 		}
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
+	}
+	if vendorRegistry[vendor].limitsMode != vendorLimitsAppServer {
+		// The vendor exposes no vendor-confidence limits source, so there is
+		// nothing to probe: the increasing backoff is the recovery wait.
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		select {

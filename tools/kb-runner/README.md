@@ -67,3 +67,9 @@ kb-runner limits --state "$RUNNER_STATE"
 ```
 
 The grant is accounting only and does not select or fall back to ZCode.
+
+## Transient provider failures resume the same session
+
+Agent jobs survive provider hiccups. Each vendor adapter owns a failure table that classifies every provider failure from the structured fields the vendor emits — ZCode's `turn.failed` attribution (provider codes such as 3009, HTTP statuses, network transport markers) or the vendor's failure kinds — into transient (network loss, concurrency and rate limits, 5xx) and permanent (authentication, quota exhaustion, invalid request) classes.
+
+A transient failure pauses the job, waits out an increasing backoff (for vendors that publish limit windows, the wait follows the vendor's reset time), and resumes the same session with a fixed continuation prompt written to `<state>/jobs/<job>.continue.md`. Up to three resumes are attempted per job, and every attempt is recorded in the job's `Attempts` with its number, session, outcome, reason, and spend accounting. Permanent failures, unclassifiable failures, and exhausted attempts end the job with the catalogued reason, the diagnostic, and the exact manual resume command. A failed turn never reports spend as zero: when the vendor does not expose usage for a failed turn, the attempt is recorded as usage unknown and `limits` marks the ledger total incomplete.
