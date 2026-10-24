@@ -6,6 +6,7 @@ package engine
 import (
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/devkit/internal/config"
 )
 
@@ -33,9 +34,10 @@ type TaskResult struct {
 	Stdout       string
 	Stderr       string
 	Error        string
-	LogPath      string `json:"logPath,omitempty"`
-	LogError     string `json:"logError,omitempty"`
-	LogDirectory string `json:"logDirectory,omitempty"`
+	Diagnostic   *diag.Diag `json:"diagnostic,omitempty"`
+	LogPath      string     `json:"logPath,omitempty"`
+	LogError     string     `json:"logError,omitempty"`
+	LogDirectory string     `json:"logDirectory,omitempty"`
 }
 
 // ResolveTaskDef returns the TaskDef for a specific (task name, package category) pair.

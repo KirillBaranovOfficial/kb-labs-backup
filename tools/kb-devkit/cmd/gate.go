@@ -1,12 +1,12 @@
 package cmd
 
 import (
-	"bytes"
+	"context"
 	"fmt"
 	clikitcommand "github.com/kb-labs/clikit/command"
-	"os/exec"
 	"strings"
 
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/spf13/cobra"
 )
@@ -112,17 +112,13 @@ func init() {
 }
 
 func getStagedFiles() ([]string, error) {
-	cmd := exec.Command("git", "diff", "--cached", "--name-only")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = nil
-
-	if err := cmd.Run(); err != nil {
+	result, err := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "git", Executable: "git", Args: []string{"diff", "--cached", "--name-only"}, Operation: toolchain.OperationVersionProbe})
+	if err != nil {
 		return nil, fmt.Errorf("git diff --cached: %w", err)
 	}
 
 	var files []string
-	for _, line := range strings.Split(out.String(), "\n") {
+	for _, line := range strings.Split(result.Stdout, "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			files = append(files, line)

@@ -2,13 +2,14 @@ package checks
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
@@ -163,10 +164,7 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 		return externalCheckOutput{}, fmt.Errorf("marshal external check input for %s: %w", r.name, err)
 	}
 
-	cmd := exec.Command("sh", "-c", command)
-	cmd.Dir = r.workspaceRoot
-	cmd.Stdin = bytes.NewReader(payload)
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"KB_DEVKIT_MODE="+modeForCommand(input.Issues),
 		"KB_DEVKIT_CHECK_NAME="+r.name,
 		"KB_DEVKIT_WORKSPACE_ROOT="+r.workspaceRoot,
@@ -179,14 +177,11 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 		"KB_DEVKIT_DRY_RUN="+fmt.Sprintf("%t", input.DryRun),
 	)
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
+	result, runErr := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "sh", Executable: "sh", Args: []string{"-c", command}, Dir: r.workspaceRoot, Env: env, Stdin: bytes.NewReader(payload), Operation: toolchain.OperationWorkspaceTask})
 
 	var parsed externalCheckOutput
-	if strings.TrimSpace(stdout.String()) != "" {
-		if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil && runErr == nil {
+	if strings.TrimSpace(result.Stdout) != "" {
+		if err := json.Unmarshal([]byte(result.Stdout), &parsed); err != nil && runErr == nil {
 			return externalCheckOutput{}, fmt.Errorf("decode external check %s output: %w", r.name, err)
 		}
 	}
@@ -199,9 +194,9 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 }
 
 func safeExternalCause(err error) string {
-	var exitErr *exec.ExitError
+	var exitErr *toolchain.CommandError
 	if errors.As(err, &exitErr) {
-		return fmt.Sprintf("external command exited with status %d", exitErr.ExitCode())
+		return fmt.Sprintf("external command exited with status %d", exitErr.ExitCode)
 	}
 	return "external check output could not be read or decoded"
 }

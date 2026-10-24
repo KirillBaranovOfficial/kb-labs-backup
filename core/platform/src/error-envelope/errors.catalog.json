@@ -914,6 +914,30 @@
       "httpStatus": 500
     },
     {
+      "code": "KB_TOOLCHAIN_PNPM_UNAVAILABLE",
+      "area": "toolchain",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The workspace-pinned pnpm {version} is not present in the Corepack cache.",
+      "hint": "Run `{nextCommand}` from the workspace root to populate the pinned toolchain cache, then rerun the command.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_TOOLCHAIN_EXTERNAL_TIMEOUT",
+      "area": "toolchain",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "External tool {tool} stalled after {elapsed} while running {argsSummary}.",
+      "hint": "Inspect the tool output, then rerun `{nextCommand}`.",
+      "structuredDetailFields": ["tool", "argsSummary", "elapsed", "stderrTail", "nextCommand"],
+      "requiredStructuredDetailFields": ["tool", "argsSummary", "elapsed", "stderrTail", "nextCommand"],
+      "httpStatus": 500
+    },
+    {
       "code": "KB_INSTALL_APPLY_FAILED",
       "area": "install",
       "stage": "apply",
@@ -924,7 +948,9 @@
       "hint": "Inspect the local log and the diagnostic dossier, fix the reported prerequisite, or run \"kb-create doctor --fix\".",
       "structuredDetailFields": [
         "diagnosticPath",
-        "logPath"
+        "logPath",
+        "packageManagerExitCode",
+        "packageManagerStderrTail"
       ],
       "httpStatus": 500
     },
