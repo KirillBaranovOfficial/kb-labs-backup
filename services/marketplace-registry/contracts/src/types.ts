@@ -3,7 +3,8 @@
  * Shared types for the KB Labs Marketplace Registry.
  */
 
-import type { EntitySignature, EntityKind, MarketplaceIdentityResolution } from '@kb-labs/core-discovery';
+import type { MarketplaceIdentityResolution } from '@kb-labs/plugin-contracts';
+import type { EntitySignature, EntityKind } from '@kb-labs/plugin-contracts';
 
 // ---------------------------------------------------------------------------
 // Package metadata (read from package.json at publish time)

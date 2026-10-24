@@ -12,7 +12,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createErrorEnvelope, createValidatedErrorEnvelope, type DetailsFor, type ICache, type IAnalytics, type ILogger } from '@kb-labs/core-platform';
 import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { createUxFailureResult, createUxSuccessResult } from '@kb-labs/core-platform/ux-result';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import { filterTools, type McpTool } from './tool-builder.js';
 import { callTool, type PlatformResolver } from './tool-router.js';
 import { actionForOperation, type Permits } from './authz.js';

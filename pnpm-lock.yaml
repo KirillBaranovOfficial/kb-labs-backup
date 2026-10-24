@@ -1033,9 +1033,6 @@ importers:
       '@kb-labs/core-contracts':
         specifier: workspace:*
         version: link:../../core/contracts
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../core/discovery
       '@kb-labs/core-ipc':
         specifier: workspace:*
         version: link:../../core/ipc
@@ -1151,6 +1148,9 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../core/discovery
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
@@ -2011,9 +2011,6 @@ importers:
       '@kb-labs/core-contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../discovery
       '@kb-labs/core-ipc':
         specifier: workspace:*
         version: link:../ipc
@@ -2023,6 +2020,9 @@ importers:
       '@kb-labs/core-project-registry':
         specifier: workspace:*
         version: link:../project-registry
+      '@kb-labs/core-registry':
+        specifier: workspace:*
+        version: link:../registry
       '@kb-labs/core-resource-broker':
         specifier: workspace:*
         version: link:../resource-broker
@@ -2032,6 +2032,9 @@ importers:
       '@kb-labs/llm-router':
         specifier: workspace:*
         version: link:../llm-router
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../plugin-contracts
       '@kb-labs/plugin-execution-factory':
         specifier: workspace:*
         version: link:../plugin-execution-factory
@@ -2039,6 +2042,9 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../discovery
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
@@ -5180,9 +5186,6 @@ importers:
       '@kb-labs/core-contracts':
         specifier: workspace:*
         version: link:../../../core/contracts
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../../core/platform
@@ -5333,9 +5336,9 @@ importers:
 
   services/marketplace-registry/contracts:
     dependencies:
-      '@kb-labs/core-discovery':
+      '@kb-labs/plugin-contracts':
         specifier: workspace:*
-        version: link:../../../core/discovery
+        version: link:../../../core/plugin-contracts
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
@@ -5352,15 +5355,15 @@ importers:
 
   services/marketplace-registry/core:
     dependencies:
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../../core/platform
       '@kb-labs/marketplace-registry-contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
@@ -5380,9 +5383,6 @@ importers:
       '@kb-labs/core-contracts':
         specifier: workspace:*
         version: link:../../../core/contracts
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../../core/platform
@@ -5395,6 +5395,9 @@ importers:
       '@kb-labs/marketplace-npm':
         specifier: workspace:*
         version: link:../npm
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
       '@kb-labs/shared-http':
         specifier: workspace:*
         version: link:../../../shared/http
@@ -5472,9 +5475,6 @@ importers:
 
   services/marketplace/contracts:
     dependencies:
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../../core/plugin-contracts
@@ -5534,9 +5534,6 @@ importers:
 
   services/marketplace/npm:
     dependencies:
-      '@kb-labs/core-discovery':
-        specifier: workspace:*
-        version: link:../../../core/discovery
       '@kb-labs/marketplace-contracts':
         specifier: workspace:*
         version: link:../contracts

@@ -33,6 +33,7 @@ import {
 import type { PlatformConfig } from "./config.js";
 import {
   loadPlatformConfig,
+  type LoadPlatformConfigOptions,
   type LoadPlatformConfigResult,
 } from "./config-loader.js";
 import { initPlatform, resetPlatform } from "./loader.js";
@@ -74,6 +75,8 @@ export interface PlatformLaunchOptions {
   uiProvider?: PlatformUiProvider;
   /** Host addresses needed by this process's own adapters, passed without global env mutation. */
   hostServiceEnvironment?: HostServiceEnvironment;
+  /** Optional health observation exposed by this host's execution backend. */
+  executionHealth?: LoadPlatformConfigOptions['executionHealth'];
   /** Required platform assembly pipeline. */
   assemblyHook: PlatformAssemblyHook;
 }
@@ -101,6 +104,7 @@ export interface PlatformRuntime {
     kind: PlatformApplicationKind;
   };
   platform: PlatformContainer;
+  catalog: LoadPlatformConfigResult['catalog'];
   logger: IContextLogger;
   /** Read side of the platform log system for diagnostics and tooling. */
   readonly logs: ILogReader;
@@ -230,6 +234,7 @@ async function launch(
     loadEnvFile: loadEnv,
     projectScope: options.projectScope,
     projectId: options.projectId,
+    executionHealth: options.executionHealth,
   });
   publishConfigGlobals(loadResult, storeRawConfig);
 
@@ -264,6 +269,7 @@ async function launch(
         hostServiceEnvironment,
         workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
         workspaceRoot: projectRoot,
+        catalog: loadResult.catalog,
       },
     );
   } catch (error) {
@@ -284,6 +290,7 @@ async function launch(
         hostServiceEnvironment,
         workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
         workspaceRoot: projectRoot,
+        catalog: loadResult.catalog,
       },
     );
   }
@@ -341,6 +348,7 @@ async function launch(
   const runtime: PlatformRuntime = {
     application: { id: applicationId, kind },
     platform,
+    catalog: loadResult.catalog,
     logger,
     get logs() {
       return platform.logs;
@@ -355,7 +363,7 @@ async function launch(
     },
     startupReport,
     shutdown(reason = "platform-runtime.shutdown") {
-      shutdownPromise ??= platform.shutdown().finally(() => {
+      shutdownPromise ??= loadResult.catalog.dispose().then(() => platform.shutdown()).finally(() => {
         logger.event("info", {
           event: "platform.stopped",
           message: "Platform runtime stopped",

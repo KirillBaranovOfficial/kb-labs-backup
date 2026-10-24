@@ -4,13 +4,8 @@
  */
 
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import type {
-  EntityKind,
-  EntitySignature,
-  MarketplaceLockEntry,
-  MarketplaceResolvedIdentity,
-  MarketplaceIdentityResolution,
-} from '@kb-labs/core-discovery';
+import type { MarketplaceLockEntry, MarketplaceResolvedIdentity, MarketplaceIdentityResolution } from '@kb-labs/plugin-contracts';
+import type { EntityKind, EntitySignature } from '@kb-labs/plugin-contracts';
 
 // ---------------------------------------------------------------------------
 // PackageSource — abstraction over where packages come from

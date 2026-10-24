@@ -1,6 +1,6 @@
 /** Resolve manifest-declared built-in adapter defaults for installed platforms. */
 
-import { discoverAdapters, findDiscoveredAdapter, type DiscoveredAdapter } from './discover-adapters.js';
+import { findDiscoveredAdapter, type DiscoveredAdapter } from './discover-adapters.js';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { ADAPTER_DEFAULTS, type AdapterSlot } from '@kb-labs/core-platform';
 import { ADAPTER_CONFIG_KEYS, type AdapterValue, type AdaptersConfig } from './config.js';
@@ -71,21 +71,6 @@ export function adapterPackageRoot(spec: string): string {
   const name = adapterPackageName(spec);
   const segments = name.split('/');
   return name.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0] ?? name;
-}
-
-/**
- * Fill blank adapter slots from installed manifests declaring `defaultFor` entry points.
- * Explicit platform bindings always win. Only manifest metadata and
- * marketplace locks are used here, so core-platform stays independent of
- * concrete adapter packages.
- */
-export async function resolveInstalledAdapterDefaults(
-  config: ResolvedAdapterConfig,
-  platformRoot: string,
-  projectRoot = platformRoot,
-): Promise<ResolvedAdapterConfig> {
-  const discovered = await discoverAdapters(platformRoot);
-  return resolveDiscoveredAdapterDefaults(config, discovered, projectRoot);
 }
 
 export function resolveDiscoveredAdapterDefaults(

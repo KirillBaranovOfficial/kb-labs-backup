@@ -22,7 +22,9 @@ import { createCompletionCommand, autoUpdateCompletion } from "../commands/syste
 import { diag } from "../commands/system/diag";
 import { registerManifests, preflightManifests } from "../registry/register";
 import { setRegisteredDiscovery } from '../registry/discovery-state.js';
-import type { DiagnosticEvent } from '@kb-labs/core-discovery';
+import { setResolvedCatalog } from '../registry/discovery-state.js';
+import { openCatalog } from '@kb-labs/core-registry';
+import type { DiagnosticEvent, IEntityRegistry } from '@kb-labs/plugin-contracts';
 import { getContextCwd } from "@kb-labs/shared-cli-ui";
 import type { ILogger } from "@kb-labs/core-platform";
 import { platform } from "@kb-labs/core-runtime";
@@ -53,6 +55,7 @@ export interface RegisterBuiltinCommandsInput {
    * here. When omitted, falls back to `cwd`.
    */
   projectRoot?: string;
+  catalog?: IEntityRegistry;
 }
 
 // eslint-disable-next-line sonarjs/cognitive-complexity
@@ -70,14 +73,17 @@ export async function registerBuiltinCommands(
   registry.markPartial(true);
   registeredCommands.length = 0;
   setRegisteredDiscovery(undefined);
+  setResolvedCatalog(undefined);
 
   try {
     const cwd = getContextCwd({ cwd: input.cwd });
-    const { discoverManifestsDetailed } = await import('../registry/discover');
-    const discovery = await discoverManifestsDetailed(cwd, {
-      platformRoot: input.platformRoot,
-      projectRoot: input.projectRoot,
+    const catalog = input.catalog ?? await openCatalog({
+      platformRoot: input.platformRoot ?? cwd,
+      projectRoot: input.projectRoot ?? cwd,
     });
+    setResolvedCatalog(catalog);
+    const { discoverManifestsDetailed } = await import('../registry/discover');
+    const discovery = await discoverManifestsDetailed(catalog);
     const discovered = discovery.results;
     discoveryDiagnostics = discovery.diagnostics;
     setRegisteredDiscovery(discovery);

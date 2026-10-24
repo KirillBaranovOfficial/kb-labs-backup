@@ -19,7 +19,7 @@ import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform/
 import { resolveMarketplaceLockScope } from '@kb-labs/core-discovery';
 import { glob } from 'glob';
 import semver from 'semver';
-import type { EntityKind, MarketplaceLock, MarketplaceLockEntry } from '@kb-labs/core-discovery';
+import type { MarketplaceLock, MarketplaceLockEntry, EntityKind } from '@kb-labs/plugin-contracts';
 import {
   readMarketplaceLock,
   writeMarketplaceLock,

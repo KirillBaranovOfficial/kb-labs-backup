@@ -46,6 +46,7 @@ import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
 import { resolveProjectScope } from "./command-scope";
 import { handleExecutionError } from "./execution-error";
 import { runtimeContext } from "@kb-labs/plugin-contracts";
+import type { IEntityRegistry } from "@kb-labs/plugin-contracts";
 
 declare global {
   var __KB_PLATFORM_CONFIG__: PlatformConfig | undefined;
@@ -118,6 +119,7 @@ export interface CliRuntimeOptions {
     env: NodeJS.ProcessEnv;
     platformRoot?: string;
     projectRoot?: string;
+    catalog?: IEntityRegistry;
   }) => Promise<void> | void;
   parseArgs?: typeof parseArgs;
   registry?: typeof registry;
@@ -164,7 +166,10 @@ export async function executeCli(
     | { ok: true; value: Awaited<ReturnType<typeof loadPlatformConfiguration>> }
     | { ok: false; error: unknown };
   try {
-    configResolution = { ok: true, value: await loadPlatformConfiguration(cwd, options.moduleUrl, 'platform') };
+    const config = global.help || global.version
+      ? await loadPlatformConfiguration(cwd, options.moduleUrl, 'platform', { persistCatalogSnapshot: false })
+      : await loadPlatformConfiguration(cwd, options.moduleUrl, 'platform');
+    configResolution = { ok: true, value: config };
   } catch (error) {
     configResolution = { ok: false, error };
   }
@@ -316,6 +321,7 @@ export async function executeCli(
     logger: cliLogger,
     platformRoot,
     projectRoot,
+    catalog: initialized.catalog,
   });
 
   // ── Handle --version early ─────────────────────────────────────────────────

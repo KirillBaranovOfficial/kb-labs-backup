@@ -29,6 +29,7 @@ import { defineSystemCommand, throwSystemCataloguedError, throwSystemCataloguedF
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 
 import { generateExamples } from '../../../utils/generate-examples';
+import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 import {
   CONFIG_SCOPES,
   parseKeyPath,
@@ -138,6 +139,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         startDir: getContextCwd(ctx),
         loadEnvFile: false,
         projectScope: scope === 'platform' ? 'platform' : 'required',
+        catalog: requireResolvedCatalog(),
         ...(roots.projectId ? { projectId: roots.projectId } : {}),
       });
       const platform = await loadEffectiveConfig(roots.configRoot, {

@@ -3,7 +3,7 @@
  * Strategy for plugins — detects ManifestV3 and extracts entity kinds.
  */
 
-import type { EntityKind } from '@kb-labs/core-discovery';
+import type { EntityKind } from '@kb-labs/plugin-contracts';
 import type { EntityKindStrategy } from '@kb-labs/marketplace-contracts';
 import { loadManifestFile, DiagnosticCollector, extractEntityKinds } from '@kb-labs/core-discovery';
 

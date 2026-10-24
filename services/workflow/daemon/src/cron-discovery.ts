@@ -10,7 +10,7 @@ import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, basename, extname } from 'node:path';
 import YAML from 'yaml';
 import type { ILogger } from '@kb-labs/core-platform';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { CronScheduler } from './cron-scheduler.js';
 import {
   PluginCronJobSchema,

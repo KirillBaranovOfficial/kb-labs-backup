@@ -10,11 +10,10 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../utils/generate-examples';
 import { registry } from '../../registry/service';
-import { getRegisteredDiscovery } from '../../registry/discovery-state.js';
+import { getRegisteredDiscovery, getResolvedCatalog } from '../../registry/discovery-state.js';
 import { preflightManifests } from '../../registry/register';
 import { validateManifests } from '../../registry/schema';
-import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
-import type { MarketplaceEntry } from '@kb-labs/core-discovery';
+import type { MarketplaceEntry } from '@kb-labs/plugin-contracts';
 import type { DiscoveryResult } from '../../registry/types';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { access as fsAccess } from 'node:fs/promises';
@@ -398,8 +397,9 @@ async function runDiscoveryStage(
 async function runLockStage(
   ctx: TraceCtx,
 ): Promise<TraceStage & { enrich?: Partial<TraceCtx> }> {
-  const collector = new DiagnosticCollector();
-  const lock = await readMarketplaceLock(ctx.cwd, collector, 'project');
+  const catalog = getResolvedCatalog();
+  if (!catalog) throw new Error('The CLI catalog was not opened during command registration.');
+  const lock = (await catalog.marketplaceLocks()).get(path.resolve(ctx.cwd));
 
   if (!lock) {
     // Registry already confirmed the command — no lock is fine for workspace plugins
@@ -635,10 +635,11 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
 
     // 3. Marketplace lock — also surface DiagnosticCollector events
     try {
-      const collector = new DiagnosticCollector();
-      const lock = await readMarketplaceLock(cwd, collector, 'project');
+      const catalog = getResolvedCatalog();
+      if (!catalog) throw new Error('The CLI catalog was not opened during command registration.');
+      const lock = (await catalog.marketplaceLocks()).get(path.resolve(cwd));
 
-      for (const event of collector.getEvents()) {
+      for (const event of catalog.discovery().diagnostics) {
         if (event.severity === 'error' || event.severity === 'warning') {
           diagnostics.push({
             category: 'lock-event',

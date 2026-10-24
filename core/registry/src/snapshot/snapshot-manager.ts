@@ -13,7 +13,7 @@ import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import type { ICache } from '@kb-labs/core-platform/adapters';
-import type { RegistrySnapshot, RegistrySnapshotManifestEntry, SnapshotWithoutIntegrity } from '../types.js';
+import type { RegistrySnapshot, RegistrySnapshotManifestEntry, SnapshotWithoutIntegrity } from '@kb-labs/plugin-contracts';
 import { cloneValue, computeSnapshotChecksum, safeParseInt, SNAPSHOT_CHECKSUM_ALGORITHM } from './snapshot-utils.js';
 
 /** Runtime state (ADR-0044): lives under `<KB_HOME>/state/<projectId>/cache/`, not in the repository. */
@@ -29,6 +29,7 @@ export interface SnapshotManagerOptions {
   platformVersion: string;
   cache?: ICache;
   cacheSnapshotKey?: string;
+  persistSnapshot?: boolean;
   /** Machine-level root for runtime state. Defaults to `$KB_HOME` or `~/.kb`. */
   kbHome?: string;
 }
@@ -41,6 +42,7 @@ export class SnapshotManager {
   private readonly platformVersion: string;
   private readonly cache?: ICache;
   private readonly cacheKey?: string;
+  private readonly persistSnapshot: boolean;
   private readonly root: string;
   private lastChecksum: string | null = null;
   private persistLock: Promise<void> = Promise.resolve();
@@ -55,6 +57,7 @@ export class SnapshotManager {
     this.platformVersion = opts.platformVersion;
     this.cache = opts.cache;
     this.cacheKey = opts.cacheSnapshotKey;
+    this.persistSnapshot = opts.persistSnapshot ?? true;
   }
 
   /** Load snapshot: memory cache → disk primary → disk backup → null. */
@@ -92,6 +95,7 @@ export class SnapshotManager {
 
   /** Persist snapshot to disk + platform cache. Serialized to prevent races. */
   async persist(snapshot: RegistrySnapshot): Promise<void> {
+    if (!this.persistSnapshot) return;
     // Serialize concurrent persist() calls
     this.persistLock = this.persistLock.then(() => this.doPersist(snapshot));
     return this.persistLock;

@@ -25,8 +25,8 @@
   },
   "dependencies": {
     "@kb-labs/core-contracts": "workspace:*",
-    "@kb-labs/core-discovery": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/marketplace-contracts": "workspace:*",
     "@kb-labs/marketplace-core": "workspace:*",
     "@kb-labs/marketplace-npm": "workspace:*",

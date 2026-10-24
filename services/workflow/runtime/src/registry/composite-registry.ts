@@ -1,5 +1,5 @@
 import type { ResolvedWorkflow, WorkflowRegistry } from './types'
-import type { IEntityRegistry } from '@kb-labs/core-registry'
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts'
 import type { WorkspaceWorkflowRegistry } from './workspace-registry'
 import type { RemoteWorkflowRegistry } from './remote-registry'
 import { extractWorkflows } from './plugin-workflows'

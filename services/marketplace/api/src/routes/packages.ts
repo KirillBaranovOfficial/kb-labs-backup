@@ -21,7 +21,7 @@
 
 import '../types.js';
 import type { FastifyInstance } from 'fastify';
-import type { EntityKind } from '@kb-labs/core-discovery';
+import type { EntityKind } from '@kb-labs/plugin-contracts';
 import {
   parseMutatingScope,
   parseQueryScope,

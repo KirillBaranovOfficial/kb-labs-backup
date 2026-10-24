@@ -33,13 +33,13 @@ export type {
 
 // Loader
 export { initPlatform, resetPlatform } from "./loader.js";
+export { loadCatalogAdapterEntries } from './adapter-module-loader.js';
 export { requireProjectContext } from "./project-context.js";
 export {
   adapterPackageName,
   adapterPackageRoot,
   configuredAdapterForSlot,
   projectEffectiveAdapterImplementation,
-  resolveInstalledAdapterDefaults,
   resolveDiscoveredAdapterDefaults,
 } from "./default-adapters.js";
 export type { AdapterConfigValues, ConfiguredAdapterValue } from "./default-adapters.js";
