@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGatewayInstallClientUsesPlatformMarketplaceOperation(t *testing.T) {
@@ -35,6 +36,25 @@ func TestGatewayInstallClientUsesPlatformMarketplaceOperation(t *testing.T) {
 	}
 	if len(installed) != 1 || installed[0].Spec != "@kb-labs/commit" || installed[0].ID != "@kb-labs/commit" || installed[0].Source != "registry" || installed[0].Version != "2.1.0" {
 		t.Fatalf("Marketplace result = %#v", installed)
+	}
+}
+
+// case: PC-001.2
+func TestGatewayInstallClientWaitsForMarketplaceInstallPastFormerTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		time.Sleep(31 * time.Second)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusCreated)
+		_, _ = writer.Write([]byte(`{"installed":[{"spec":"@kb-labs/commit","id":"@kb-labs/commit","version":"2.1.0","primaryKind":"plugin","source":"registry","signatureStatus":"verified"}],"scope":"platform"}`))
+	}))
+	defer server.Close()
+
+	installed, err := (GatewayInstallClient{}).Install(context.Background(), server.URL, []string{"@kb-labs/commit"})
+	if err != nil {
+		t.Fatalf("slow Marketplace install failed: %v", err)
+	}
+	if len(installed) != 1 || installed[0].Spec != "@kb-labs/commit" || installed[0].ID != "@kb-labs/commit" {
+		t.Fatalf("slow Marketplace install result = %#v", installed)
 	}
 }
 

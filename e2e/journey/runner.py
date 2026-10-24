@@ -35,7 +35,8 @@ from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_installer_case_steps, run_invalid_request_step,
                                   run_apply_scenario_step,
-                                  run_uninstall_decline_step, run_missing_project_request_steps)
+                                  run_uninstall_decline_step, run_missing_project_request_steps,
+                                  commit_marketplace_install_record)
 from installer_case_steps import parse_install_refusal
 from journey_resources import case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
 from project_service_path import project_service_path
@@ -117,6 +118,8 @@ def marketplace_install_flags(env: dict[str, str]) -> list[str]:
                       "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN"])
     flags.extend(["--marketplace-npm-url", REGISTRY])
     return flags
+
+
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
 RUNNER_SCENARIOS = {
     "commit": {
@@ -1289,6 +1292,7 @@ def _main(*, update_variant_runner=None):
         return finalize_run(passed)
     first_admin_shown_once = False
     install_plan_summary_ok = False
+    install_marketplace_ok = False
     if FRONT == "human" and not VARIANT.endswith("secured"):
         PROJECT.mkdir(parents=True, exist_ok=True)
         choice = "commit" if VARIANT == "human-nondefault" else ""
@@ -1369,6 +1373,7 @@ def _main(*, update_variant_runner=None):
                               and record.get("meta", {}).get("stream", {}).get("result") is True]
             install_receipt = result_records[0].get("data", {}).get("receipt", {}) if len(result_records) == 1 else {}
             install_plan = install_receipt.get("plan", {}) if isinstance(install_receipt, dict) else {}
+            install_marketplace_ok = commit_marketplace_install_record(install_receipt) is not None
             install_plan_summary_ok = (isinstance(install_plan, dict)
                                        and bool(install_plan.get("serviceGraph", {}).get("platformVersion"))
                                        and bool(install_plan.get("artifacts")))
@@ -1492,8 +1497,9 @@ def _main(*, update_variant_runner=None):
                     requires=("step:candidate provenance",),
                     runners=("human:default", "human:nondefault"))
     record_case("clean install leaves a running host and reports its resolved plan",
-                install_running and install_plan_summary_ok and (mode != "secured" or first_admin_shown_once),
-                "install did not leave a reachable host, return one result with a resolved plan, or return the secured credential exactly once",
+                install_running and install_plan_summary_ok and install_marketplace_ok
+                and (mode != "secured" or first_admin_shown_once),
+                "install did not leave a reachable host, return its Commit Marketplace receipt and resolved plan, or return the secured credential exactly once",
                 cases=["PC-001.2"], requires=("step:candidate provenance",),
                 runners=("agent:commit", "agent-secured:commit", "service-local:explore",
                          "service-secured:explore"))

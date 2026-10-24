@@ -55,6 +55,19 @@ describe('shared HTTP failure boundary', () => {
     expect(statusForHttpFailure({ code: 'KB_AUTH_CLOCK_SKEW' }, 401)).toBe(500);
   });
 
+  it('classifies an aborted HTTP request as a warning-level client cancellation', () => {
+    const abort = new DOMException('Request aborted', 'AbortError');
+    const failure = normalizeHttpFailure(abort, { correlationId: 'request-aborted', statusCode: 500 });
+
+    expect(codeForHttpFailure(abort, 500)).toBe('KB_RUNTIME_REQUEST_CANCELLED');
+    expect(statusForHttpFailure(abort, 500)).toBe(499);
+    expect(failure.error).toMatchObject({
+      code: 'KB_RUNTIME_REQUEST_CANCELLED',
+      severity: 'warning',
+      correlationId: 'request-aborted',
+    });
+  });
+
   it('preserves a validated product failure and keeps the transport HTTP status', () => {
     const failure = createUxFailureResult(createProductErrorEnvelope({
       code: 'COMMIT_PUSH_REJECTED',

@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
@@ -42,7 +41,7 @@ func Connect(state host.State) (*Client, error) {
 	default:
 		return nil, unavailable(fmt.Errorf("launcher process identity for PID %d is missing or stale", file.PID))
 	}
-	return &Client{File: file, HTTP: &http.Client{Timeout: 60 * time.Second}}, nil
+	return &Client{File: file, HTTP: http.DefaultClient}, nil
 }
 
 func unavailable(cause error) *diag.Diag {
