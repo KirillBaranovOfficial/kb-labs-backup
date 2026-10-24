@@ -40,6 +40,8 @@ class HostBashTests(unittest.TestCase):
                 f"#!{sys.executable}\nimport os, sys\n"
                 "if sys.argv[1:2] == ['e2e/journey/container_outcomes.py'] and '--write-log-name' in sys.argv:\n"
                 "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+                "if sys.argv[1:] == ['" + str(repo) + "/e2e/journey/journey_resources.py', '--toolchain-image']:\n"
+                "    print('kb-journey-runner-toolchain:test')\n    print('dev.kblabs.journey.toolchain')\n"
                 "raise SystemExit(0)\n",
             )
             self._write_stub(bin_dir / "git", "#!/bin/sh\nprintf 'test-revision\\n'\n")
@@ -107,6 +109,7 @@ class HostBashTests(unittest.TestCase):
             "if action in {'version', 'ps', 'down', 'build', 'up', 'stop', 'rm'}: raise SystemExit(0)\n"
             "if action == 'run':\n    print('publisher-container-id')\n    raise SystemExit(0)\n"
             "if action == 'exec': raise SystemExit(1)\n"
+            "if args[:1] == ['images']: raise SystemExit(0)\n"
             "if args[:1] == ['wait']:\n"
             "    print('17')\n"
             "    raise SystemExit(0)\n"

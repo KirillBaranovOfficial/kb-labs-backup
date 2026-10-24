@@ -16,9 +16,13 @@ journey_toolchain_ensure() {
   # Read by line: bash 3.2 (macOS host bash) does not honor $'\n' inside
   # parameter-expansion patterns, which would empty the image reference.
   {
-    read -r toolchain_image
-    read -r toolchain_label
+    read -r toolchain_image || true
+    read -r toolchain_label || true
   } <<< "$derivation"
+  if [[ -z "$toolchain_image" || -z "$toolchain_label" ]]; then
+    echo "Journey runner toolchain derivation returned no image reference and label. Next: python3 e2e/journey/journey_resources.py --toolchain-image" >&2
+    return 1
+  fi
   if [[ -z "$(docker images -q "$toolchain_image")" ]]; then
     if ! (cd "$root" && docker build --target toolchain \
         -t "$toolchain_image" \
