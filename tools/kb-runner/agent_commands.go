@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -84,6 +85,9 @@ func readStatusLimits(state string, root runnerRoot) []VendorLimit {
 			all = append(all, limits...)
 			continue
 		}
+		if spec.limitsMode == vendorLimitsLedger {
+			continue
+		}
 		b, err := os.ReadFile(filepath.Join(state, "limits", vendor+".json"))
 		if err == nil {
 			var cache struct {
@@ -132,11 +136,15 @@ func limitsCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, 
 
 func limitsRecordCommand(root runnerRoot, args []string, out io.Writer) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") || len(args) == 0 {
-		_, err := fmt.Fprintf(out, "Usage: %s limits record claude --state <dir> --session <pct> --session-resets <duration|local-time> --weekly <pct> --weekly-resets <local-time|weekday-time>\n", root.Name())
+		ledgerMode := vendorLimitsLedger
+		_, err := fmt.Fprintf(out, "Usage: %s limits record claude --state <dir> --session <pct> --session-resets <duration|local-time> --weekly <pct> --weekly-resets <local-time|weekday-time> | %s limits record <%s> --state <dir> --grant <tokens[K|M|B]>\n", root.Name(), root.Name(), strings.Join(vendorNamesFor(&ledgerMode), "|"))
 		return 0, err
 	}
+	if spec, ok := vendorRegistry[args[0]]; ok && spec.limitsMode == vendorLimitsLedger {
+		return limitsRecordVendorGrantCommand(root, args[0], args[1:], out)
+	}
 	if args[0] != "claude" {
-		return 2, fmt.Errorf("%s limits record: only Claude has a recorded limits source; next: %s limits record claude --help", root.Name(), root.InvocationCommand())
+		return 2, fmt.Errorf("%s limits record: supported records are Claude readings and grants for ledger vendors; next: %s limits record --help", root.Name(), root.InvocationCommand())
 	}
 	if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
 		_, err := fmt.Fprintf(out, "Usage: %s limits record claude --state <dir> --session <pct> --session-resets <duration|local-time> --weekly <pct> --weekly-resets <local-time|weekday-time>\n", root.Name())
@@ -169,11 +177,37 @@ func limitsRecordCommand(root runnerRoot, args []string, out io.Writer) (int, er
 	return 0, nil
 }
 
+func limitsRecordVendorGrantCommand(root runnerRoot, vendor string, args []string, out io.Writer) (int, error) {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		_, err := fmt.Fprintf(out, "Usage: %s limits record %s --state <dir> --grant <tokens[K|M|B]>\n", root.Name(), vendor)
+		return 0, err
+	}
+	fs := flag.NewFlagSet("limits record "+vendor, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	state := fs.String("state", defaultRunnerState(), "runner state directory")
+	grant := fs.String("grant", "", "total token grant (integer, K, M, or B)")
+	if err := fs.Parse(args); err != nil {
+		return 2, fmt.Errorf("%s limits record %s: %w; next: %s limits record %s --help", root.Name(), vendor, err, root.InvocationCommand(), vendor)
+	}
+	if len(fs.Args()) != 0 || *grant == "" {
+		return 2, fmt.Errorf("%s limits record %s: provide --grant; next: %s limits record %s --help", root.Name(), vendor, root.InvocationCommand(), vendor)
+	}
+	recorded, err := newVendorGrantStore(*state, vendor, time.Now).Record(*grant)
+	if err != nil {
+		return 1, fmt.Errorf("%s limits record %s: %w; next: %s limits record %s --help", root.Name(), vendor, err, root.InvocationCommand(), vendor)
+	}
+	if _, err := fmt.Fprintf(out, "Recorded %s token grant: %d tokens\n", vendor, recorded.Tokens); err != nil {
+		return 1, err
+	}
+	return 0, nil
+}
+
 type limitsProviderFactory func(string) (limitsProvider, error)
 
 func limitsCommandWithProviderFactory(root runnerRoot, args []string, out, errOut io.Writer, providerFactory limitsProviderFactory) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprintf(out, "Usage: %s limits [--state <dir>] [--json] [--capture <dir>] | %s limits record claude --state <dir> --session <pct> --session-resets <duration|local-time> --weekly <pct> --weekly-resets <local-time|weekday-time>\n", root.Name(), root.Name())
+		ledgerMode := vendorLimitsLedger
+		_, err := fmt.Fprintf(out, "Usage: %s limits [--state <dir>] [--json] [--capture <dir>] | %s limits record claude ... | %s limits record <%s> --state <dir> --grant <tokens[K|M|B]>\n", root.Name(), root.Name(), root.Name(), strings.Join(vendorNamesFor(&ledgerMode), "|"))
 		return 0, err
 	}
 	fs := flag.NewFlagSet("limits", flag.ContinueOnError)
@@ -197,6 +231,20 @@ func limitsCommandWithProviderFactory(root runnerRoot, args []string, out, errOu
 				continue
 			}
 			all = append(all, limits...)
+			continue
+		}
+		if spec.limitsMode == vendorLimitsLedger {
+			jobs, err := newJobStore(*state).List()
+			if err != nil {
+				all = append(all, unavailableLimits(vendor, "ledger", err)...)
+				continue
+			}
+			limit, err := vendorSpendLimit(vendor, *state, jobs)
+			if err != nil {
+				all = append(all, unavailableLimits(vendor, "ledger", err)...)
+				continue
+			}
+			all = append(all, limit)
 			continue
 		}
 		provider, createErr := providerFactory(vendor)
@@ -235,6 +283,12 @@ func limitsCommandWithProviderFactory(root runnerRoot, args []string, out, errOu
 		return 0, nil
 	}
 	for _, l := range all {
+		if l.Spend != nil {
+			if _, err := fmt.Fprintln(out, formatVendorSpend(l.Vendor, *l.Spend)); err != nil {
+				return 1, err
+			}
+			continue
+		}
 		if _, err := fmt.Fprintf(out, "%-8s %-8s %6.1f%% %-12s %s %s", l.Vendor, l.Window, l.UsedPercent, l.Confidence, l.Source, l.Error); err != nil {
 			return 1, err
 		}

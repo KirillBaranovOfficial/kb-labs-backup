@@ -26,6 +26,7 @@ type CatalogEntry struct {
 	RequiredTemplateParameters []string          `json:"requiredTemplateParameters,omitempty"`
 	StructuredDetailFields     []string          `json:"structuredDetailFields,omitempty"`
 	RuntimeTemplateParameters  map[string]string `json:"runtimeTemplateParameters,omitempty"`
+	EnvironmentVariables       map[string]string `json:"environmentVariables,omitempty"`
 }
 
 // LookupCatalog returns platform metadata for a typed error code.

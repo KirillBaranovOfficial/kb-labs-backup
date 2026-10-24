@@ -98,6 +98,8 @@ type Job struct {
 	SessionID    string            `json:"sessionId,omitempty"`
 	MessagePath  string            `json:"messagePath,omitempty"`
 	Tokens       uint64            `json:"tokens,omitempty"`
+	InputTokens  uint64            `json:"inputTokens,omitempty"`
+	OutputTokens uint64            `json:"outputTokens,omitempty"`
 	SlotGroup    string            `json:"slotGroup,omitempty"`
 	SlotCeiling  int               `json:"slotCeiling,omitempty"`
 	Attempts     []ProviderAttempt `json:"attempts,omitempty"`
@@ -376,6 +378,15 @@ type VendorLimit struct {
 	Stale       bool           `json:"stale,omitempty"`
 	Pace        *ClaudePace    `json:"pace,omitempty"`
 	Attempts    []LimitAttempt `json:"attempts,omitempty"`
+	Spend       *VendorSpend   `json:"spend,omitempty"`
+}
+
+type VendorSpend struct {
+	ThisJob   uint64 `json:"thisJob"`
+	Total     uint64 `json:"total"`
+	Grant     uint64 `json:"grant,omitempty"`
+	Remaining uint64 `json:"remaining,omitempty"`
+	HasGrant  bool   `json:"hasGrant"`
 }
 type AgentStatus struct {
 	Jobs        []Job         `json:"jobs"`

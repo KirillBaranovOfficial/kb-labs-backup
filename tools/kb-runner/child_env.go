@@ -3,8 +3,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -56,5 +58,67 @@ func vendorWorkerEnvironment(vendor string) ([]string, error) {
 	if binary := os.Getenv(spec.binaryEnv); binary != "" {
 		declared = append(declared, spec.binaryEnv+"="+binary)
 	}
+	if vendor == "zai" {
+		keyName, err := zaiKeyFileEnvironmentName()
+		if err != nil {
+			return nil, err
+		}
+		keyFile := os.Getenv(keyName)
+		if _, err := readZaiKeyFile(keyFile); err != nil {
+			return nil, err
+		}
+		declared = append(declared, keyName+"="+keyFile)
+	}
 	return childEnvironment(declared)
+}
+
+func vendorAgentEnvironment(vendor string, declared []string, state, jobID, secret string) ([]string, error) {
+	if vendor == "zcode" {
+		home, ok := os.LookupEnv("HOME")
+		if !ok || home == "" {
+			return nil, errors.New("ZCode agent environment requires the account HOME for its login data")
+		}
+		values := append([]string(nil), declared...)
+		values = append(values, "ZCODE_DATA_BASE_DIR="+filepath.Join(home, ".zcode-kb-runner"))
+		return childEnvironment(values)
+	}
+	if vendor != "zai" {
+		return childEnvironment(declared)
+	}
+	if state == "" || jobID == "" || secret == "" {
+		return nil, errors.New("z.ai agent environment requires state, job identity, and a validated key")
+	}
+	vendorDir := filepath.Join(state, "vendors", "zai", jobID)
+	vendorHome := filepath.Join(vendorDir, "home")
+	configDir := filepath.Join(vendorDir, "claude-config")
+	if err := os.MkdirAll(vendorHome, 0o700); err != nil {
+		return nil, fmt.Errorf("create isolated z.ai home directory: %w", err)
+	}
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create isolated z.ai Claude config directory: %w", err)
+	}
+	models := []struct {
+		setting      string
+		name         string
+		defaultValue string
+	}{
+		{"ZAI_OPUS_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "glm-5.3"},
+		{"ZAI_SONNET_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "glm-5.3"},
+		{"ZAI_HAIKU_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "glm-5.3-flash"},
+	}
+	values := append([]string(nil), declared...)
+	values = append(values,
+		"HOME="+vendorHome,
+		"ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic",
+		"ANTHROPIC_AUTH_TOKEN="+secret,
+		"CLAUDE_CONFIG_DIR="+configDir,
+	)
+	for _, model := range models {
+		value := os.Getenv(model.setting)
+		if value == "" {
+			value = model.defaultValue
+		}
+		values = append(values, model.name+"="+value)
+	}
+	return childEnvironment(values)
 }

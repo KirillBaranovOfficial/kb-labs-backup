@@ -25,7 +25,10 @@ type vendorLimitsMode uint8
 const (
 	vendorLimitsAppServer vendorLimitsMode = iota + 1
 	vendorLimitsRecorded
+	vendorLimitsLedger
 )
+
+const defaultAgentVendor = "codex"
 
 type vendorSpec struct {
 	agent         bool
@@ -33,17 +36,26 @@ type vendorSpec struct {
 	binaryDefault string
 	childEnv      []string
 	limitsMode    vendorLimitsMode
+	parser        func([]byte) (VendorEvent, error)
 }
 
 var vendorRegistry = map[string]vendorSpec{
-	"codex":  {agent: true, binaryEnv: "CODEX_BIN", binaryDefault: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex", limitsMode: vendorLimitsAppServer},
-	"claude": {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsRecorded},
+	"codex":  {agent: true, binaryEnv: "CODEX_BIN", binaryDefault: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex", limitsMode: vendorLimitsAppServer, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("codex", line) }},
+	"claude": {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsRecorded, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("claude", line) }},
+	"zai":    {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsLedger, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("claude", line) }},
+	"zcode":  {agent: true, binaryEnv: "ZCODE_BIN", binaryDefault: "~/Desktop/work/zcode/zcode", limitsMode: vendorLimitsLedger, parser: parseZcodeEvent},
 }
 
 func vendors() []string {
+	return vendorNamesFor(nil)
+}
+
+func vendorNamesFor(mode *vendorLimitsMode) []string {
 	names := make([]string, 0, len(vendorRegistry))
-	for name := range vendorRegistry {
-		names = append(names, name)
+	for name, spec := range vendorRegistry {
+		if mode == nil || spec.limitsMode == *mode {
+			names = append(names, name)
+		}
 	}
 	sort.Strings(names)
 	return names
@@ -68,6 +80,8 @@ type VendorEvent struct {
 	FinalMessage string    `json:"finalMessage,omitempty"`
 	Tool         string    `json:"tool,omitempty"`
 	Tokens       uint64    `json:"tokens,omitempty"`
+	InputTokens  uint64    `json:"inputTokens,omitempty"`
+	OutputTokens uint64    `json:"outputTokens,omitempty"`
 	RawType      string    `json:"rawType,omitempty"`
 }
 
@@ -84,6 +98,10 @@ func newHealthTracker(threshold int) *healthTracker {
 	return &healthTracker{threshold: threshold, failures: map[string]int{}}
 }
 func (h *healthTracker) Observe(vendor string, line []byte) (VendorEvent, error) {
+	_, ok := vendorRegistry[vendor]
+	if !ok {
+		return VendorEvent{}, fmt.Errorf("unsupported vendor %q", vendor)
+	}
 	e, err := parseVendorEvent(vendor, line)
 	if err != nil {
 		return VendorEvent{}, err
@@ -123,12 +141,15 @@ type AgentRequest struct {
 	Model        string
 	SessionID    string
 	FinalPath    string
+	StateDir     string
+	JobID        string
 }
 type AgentAdapter interface {
 	Start(context.Context, AgentRequest) (*exec.Cmd, error)
 	Resume(context.Context, AgentRequest) (*exec.Cmd, error)
 	Interrupt(*os.Process) error
 	Parse([]byte) (VendorEvent, error)
+	Redact(string) string
 	Limits(context.Context) ([]VendorLimit, error)
 }
 
@@ -140,6 +161,17 @@ type fakeLimitProvider struct {
 func (f fakeLimitProvider) Limits(context.Context) ([]VendorLimit, error) { return f.limits, f.err }
 
 func parseVendorEvent(vendor string, line []byte) (VendorEvent, error) {
+	spec, ok := vendorRegistry[vendor]
+	if !ok {
+		return VendorEvent{}, fmt.Errorf("unsupported vendor %q", vendor)
+	}
+	if spec.parser == nil {
+		return VendorEvent{}, fmt.Errorf("vendor %q has no stream parser", vendor)
+	}
+	return spec.parser(line)
+}
+
+func parseClaudeCodexEvent(vendor string, line []byte) (VendorEvent, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(line, &obj); err != nil {
 		return VendorEvent{}, err
@@ -164,7 +196,13 @@ func parseVendorEvent(vendor string, line []byte) (VendorEvent, error) {
 	}
 	msg, err := decodeString("message")
 	if err != nil {
-		return VendorEvent{}, err
+		if vendor != "claude" {
+			return VendorEvent{}, err
+		}
+		msg, err = decodeClaudeMessage(obj["message"])
+		if err != nil {
+			return VendorEvent{}, err
+		}
 	}
 	session, err := decodeString("session_id")
 	if err != nil {
@@ -177,6 +215,39 @@ func parseVendorEvent(vendor string, line []byte) (VendorEvent, error) {
 		}
 	}
 	e := VendorEvent{RawType: typ, SessionID: session, Kind: EventActivity, Message: msg}
+	var usage struct {
+		Input  uint64 `json:"input_tokens"`
+		Output uint64 `json:"output_tokens"`
+	}
+	var usagePayload struct {
+		Usage struct {
+			Input  uint64 `json:"input_tokens"`
+			Output uint64 `json:"output_tokens"`
+		} `json:"usage"`
+		Message json.RawMessage `json:"message"`
+	}
+	if err := json.Unmarshal(line, &usagePayload); err != nil {
+		return VendorEvent{}, err
+	}
+	usage = usagePayload.Usage
+	if usage.Input == 0 && usage.Output == 0 {
+		var message struct {
+			Usage struct {
+				Input  uint64 `json:"input_tokens"`
+				Output uint64 `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		messageJSON := strings.TrimSpace(string(usagePayload.Message))
+		if strings.HasPrefix(messageJSON, "{") {
+			if err := json.Unmarshal(usagePayload.Message, &message); err != nil {
+				return VendorEvent{}, fmt.Errorf("decode Claude message usage: %w", err)
+			}
+			usage = message.Usage
+		} else if messageJSON != "" && !strings.HasPrefix(messageJSON, "\"") && messageJSON != "null" {
+			return VendorEvent{}, fmt.Errorf("Claude message must be a string or object")
+		}
+	}
+	e.InputTokens, e.OutputTokens = usage.Input, usage.Output
 	switch typ {
 	case "thread.started", "session_started":
 		e.Kind = EventStarted
@@ -197,6 +268,12 @@ func parseVendorEvent(vendor string, line []byte) (VendorEvent, error) {
 		if e.Tokens == 0 {
 			e.Tokens = payload.Usage.Total
 		}
+		if vendor == "claude" {
+			e.InputTokens, e.OutputTokens = usage.Input, usage.Output
+		}
+	case "assistant":
+		// Claude assistant events carry per-message usage; the final result
+		// carries the turn total, so accounting both would double count it.
 	case "tool_use", "tool.started":
 		e.Kind = EventTool
 		e.Tool, err = decodeString("name")
@@ -225,16 +302,33 @@ func parseVendorEvent(vendor string, line []byte) (VendorEvent, error) {
 			e.Kind = EventVendorError
 		}
 	}
-	if vendor != "codex" && vendor != "claude" {
-		return VendorEvent{}, fmt.Errorf("unsupported vendor %q", vendor)
-	}
 	return e, nil
+}
+
+func decodeClaudeMessage(raw json.RawMessage) (string, error) {
+	var message struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &message); err != nil {
+		return "", fmt.Errorf("Claude message must be text or a message object: %w", err)
+	}
+	var text strings.Builder
+	for _, block := range message.Content {
+		if block.Type == "text" {
+			text.WriteString(block.Text)
+		}
+	}
+	return text.String(), nil
 }
 
 type commandAdapter struct {
 	vendor   string
 	binary   string
 	childEnv []string
+	secret   string
 }
 
 func newAdapter(vendor string) (AgentAdapter, error) {
@@ -245,11 +339,22 @@ func newAdapter(vendor string) (AgentAdapter, error) {
 	if !spec.agent {
 		return nil, fmt.Errorf("vendor %q is not available for agent runs", vendor)
 	}
-	bin := os.Getenv(spec.binaryEnv)
-	if bin == "" {
-		bin = spec.binaryDefault
+	bin, err := vendorBinary(spec)
+	if err != nil {
+		return nil, err
 	}
-	return commandAdapter{vendor: vendor, binary: bin, childEnv: spec.childEnv}, nil
+	adapter := commandAdapter{vendor: vendor, binary: bin, childEnv: spec.childEnv}
+	if vendor == "zai" {
+		keyName, err := zaiKeyFileEnvironmentName()
+		if err != nil {
+			return nil, err
+		}
+		adapter.secret, err = readZaiKeyFile(os.Getenv(keyName))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return adapter, nil
 }
 func newLimitsProvider(vendor string) (limitsProvider, error) {
 	spec, ok := vendorRegistry[vendor]
@@ -265,6 +370,23 @@ func newLimitsProvider(vendor string) (limitsProvider, error) {
 	}
 	return commandAdapter{vendor: vendor, binary: bin, childEnv: spec.childEnv}, nil
 }
+
+func vendorBinary(spec vendorSpec) (string, error) {
+	if binary := os.Getenv(spec.binaryEnv); binary != "" {
+		return binary, nil
+	}
+	if strings.HasPrefix(spec.binaryDefault, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve vendor wrapper path from HOME: %w", err)
+		}
+		return filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(spec.binaryDefault, "~/"))), nil
+	}
+	if spec.binaryDefault == "" {
+		return "", errors.New("vendor registry entry has no binary default")
+	}
+	return spec.binaryDefault, nil
+}
 func (a commandAdapter) Start(ctx context.Context, r AgentRequest) (*exec.Cmd, error) {
 	var args []string
 	if a.vendor == "codex" {
@@ -279,16 +401,26 @@ func (a commandAdapter) Start(ctx context.Context, r AgentRequest) (*exec.Cmd, e
 			args = append(args, "-o", r.FinalPath)
 		}
 		args = append(args, "-")
+	} else if a.vendor == "zcode" {
+		args = zcodeArgs(r, false)
 	} else {
 		args = []string{"-p", r.Prompt, "--output-format", "stream-json"}
 		if r.Model != "" {
 			args = append(args, "--model", r.Model)
 		}
 	}
-	cmd := exec.CommandContext(ctx, a.binary, args...)
-	cmd.Dir = r.Workdir
+	var cmd *exec.Cmd
 	var err error
-	cmd.Env, err = childEnvironment(a.childEnv)
+	if a.vendor == "zcode" {
+		cmd, err = a.zcodeCommand(ctx, r, args...)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		cmd = exec.CommandContext(ctx, a.binary, args...)
+	}
+	cmd.Dir = r.Workdir
+	cmd.Env, err = vendorAgentEnvironment(a.vendor, a.childEnv, r.StateDir, r.JobID, a.secret)
 	if err != nil {
 		return nil, err
 	}
@@ -310,17 +442,25 @@ func (a commandAdapter) Resume(ctx context.Context, r AgentRequest) (*exec.Cmd, 
 		cmd := exec.CommandContext(ctx, a.binary, args...)
 		cmd.Dir = r.Workdir
 		var err error
-		cmd.Env, err = childEnvironment(a.childEnv)
+		cmd.Env, err = vendorAgentEnvironment(a.vendor, a.childEnv, r.StateDir, r.JobID, a.secret)
 		if err != nil {
 			return nil, err
 		}
 		cmd.Stdin = strings.NewReader(r.Prompt)
 		return cmd, nil
 	}
-	cmd := exec.CommandContext(ctx, a.binary, "-p", r.Prompt, "--output-format", "stream-json", "--resume", r.SessionID)
-	cmd.Dir = r.Workdir
+	var cmd *exec.Cmd
 	var err error
-	cmd.Env, err = childEnvironment(a.childEnv)
+	if a.vendor == "zcode" {
+		cmd, err = a.zcodeCommand(ctx, r, zcodeArgs(r, true)...)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		cmd = exec.CommandContext(ctx, a.binary, "-p", r.Prompt, "--output-format", "stream-json", "--resume", r.SessionID)
+	}
+	cmd.Dir = r.Workdir
+	cmd.Env, err = vendorAgentEnvironment(a.vendor, a.childEnv, r.StateDir, r.JobID, a.secret)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +468,25 @@ func (a commandAdapter) Resume(ctx context.Context, r AgentRequest) (*exec.Cmd, 
 }
 func (a commandAdapter) Interrupt(p *os.Process) error { return p.Signal(os.Interrupt) }
 func (a commandAdapter) Parse(line []byte) (VendorEvent, error) {
-	return parseVendorEvent(a.vendor, line)
+	_, ok := vendorRegistry[a.vendor]
+	if !ok {
+		return VendorEvent{}, fmt.Errorf("unsupported vendor %q", a.vendor)
+	}
+	event, err := parseVendorEvent(a.vendor, line)
+	if err != nil {
+		return VendorEvent{}, err
+	}
+	event.Message = a.Redact(event.Message)
+	event.FinalMessage = a.Redact(event.FinalMessage)
+	event.SessionID = a.Redact(event.SessionID)
+	event.Tool = a.Redact(event.Tool)
+	return event, nil
+}
+func (a commandAdapter) Redact(value string) string {
+	if a.secret == "" {
+		return value
+	}
+	return strings.ReplaceAll(value, a.secret, "[REDACTED]")
 }
 func (a commandAdapter) Limits(ctx context.Context) ([]VendorLimit, error) {
 	spec, ok := vendorRegistry[a.vendor]
@@ -344,6 +502,8 @@ func (a commandAdapter) Limits(ctx context.Context) ([]VendorLimit, error) {
 			}},
 		)
 	case vendorLimitsRecorded:
+		return []VendorLimit{}, nil
+	case vendorLimitsLedger:
 		return []VendorLimit{}, nil
 	default:
 		return nil, fmt.Errorf("vendor %q has no limits source", a.vendor)

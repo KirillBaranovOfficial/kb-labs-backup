@@ -26,7 +26,7 @@ import (
 
 func agentCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprintf(out, "Usage: %s agent start --stream <name> --vendor codex|claude --workdir <path> --prompt-file <path> [phase commands]\n", root.Name())
+		_, err := fmt.Fprintf(out, "Usage: %s agent start --stream <name> --vendor <%s> --workdir <path> --prompt-file <path> [phase commands]\n", root.Name(), strings.Join(vendorNamesFor(nil), "|"))
 		return 0, err
 	}
 	if len(args) == 0 || args[0] != "start" {
@@ -40,7 +40,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	fs.SetOutput(io.Discard)
 	state := fs.String("state", defaultRunnerState(), "durable runner state directory")
 	stream := fs.String("stream", "", "stable stream name")
-	vendor := fs.String("vendor", "codex", "agent provider")
+	vendor := fs.String("vendor", defaultAgentVendor, "agent provider; reserve vendors require explicit selection")
 	model := fs.String("model", "", "provider model")
 	workdir := fs.String("workdir", "", "agent working directory")
 	promptFile := fs.String("prompt-file", "", "prompt or resume message file")
@@ -99,7 +99,11 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		argsForWorker := append([]string{"__agent_worker", "--job-id", id}, args...)
 		workerEnv, envErr := vendorWorkerEnvironment(*vendor)
 		if envErr != nil {
-			return failAgentJob(store, id, PhaseWorktree, ReasonSetup, root, finalPath, fmt.Errorf("build agent child environment: %w", envErr))
+			var keyErr zaiKeyFileError
+			if errors.As(envErr, &keyErr) {
+				return failZaiKeySetup(store, id, root, finalPath, envErr)
+			}
+			return failAgentJob(store, id, PhaseWorktree, ReasonSetup, root, finalPath, envErr)
 		}
 		stdoutPath := filepath.Join(*state, "jobs", id+".stdout.log")
 		stderrPath := filepath.Join(*state, "jobs", id+".stderr.log")
@@ -134,7 +138,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	}
 	adapter, err := newAdapter(*vendor)
 	if err != nil {
-		return 2, err
+		return 2, zaiKeyDiagnostic(root, err)
 	}
 	prompt, err := os.ReadFile(*promptFile)
 	if err != nil {
@@ -198,7 +202,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	}); err != nil {
 		return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record provider attempt: %w", err))
 	}
-	req := AgentRequest{Prompt: string(prompt), Workdir: *workdir, Effort: *effort, Model: *model, SessionID: *session, WritableDirs: writable, FinalPath: finalPath}
+	req := AgentRequest{Prompt: string(prompt), Workdir: *workdir, Effort: *effort, Model: *model, SessionID: *session, WritableDirs: writable, FinalPath: finalPath, StateDir: *state, JobID: id}
 	var cmd *exec.Cmd
 	if *session != "" {
 		cmd, err = adapter.Resume(context.Background(), req)
@@ -206,6 +210,10 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		cmd, err = adapter.Start(context.Background(), req)
 	}
 	if err != nil {
+		var sandboxErr zcodeSandboxError
+		if errors.As(err, &sandboxErr) {
+			return failZcodeSandboxJob(store, id, root, finalPath, err)
+		}
 		return failAgentJob(store, id, PhaseRun, ReasonVendorError, root, finalPath, fmt.Errorf("agent job %s could not start provider: %v", id, err))
 	}
 	stdout, err := cmd.StdoutPipe()
@@ -226,9 +234,13 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		line := append([]byte(nil), scanner.Bytes()...)
 		event, e := health.Observe(*vendor, line)
 		if e != nil {
-			scanErr = e
+			scanErr = fmt.Errorf("parse provider event: %w", e)
 			break
 		}
+		event.Message = adapter.Redact(event.Message)
+		event.FinalMessage = adapter.Redact(event.FinalMessage)
+		event.SessionID = adapter.Redact(event.SessionID)
+		event.Tool = adapter.Redact(event.Tool)
 		if logErr := appendJobEvent(logs, event); logErr != nil {
 			scanErr = logErr
 			break
@@ -238,8 +250,14 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 			if event.SessionID != "" {
 				j.SessionID = event.SessionID
 			}
-			if event.Kind == EventUsage {
-				j.Tokens = event.Tokens
+			if event.Kind == EventUsage || (vendorRegistry[*vendor].limitsMode == vendorLimitsLedger && event.Kind == EventFinal && (event.InputTokens != 0 || event.OutputTokens != 0)) {
+				if vendorRegistry[*vendor].limitsMode == vendorLimitsLedger {
+					j.InputTokens += event.InputTokens
+					j.OutputTokens += event.OutputTokens
+					j.Tokens = j.InputTokens + j.OutputTokens
+				} else if event.Tokens != 0 {
+					j.Tokens = event.Tokens
+				}
 			}
 			return nil
 		}); updateErr != nil {
@@ -269,7 +287,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}
 	}
 	if e := scanner.Err(); e != nil {
-		scanErr = e
+		scanErr = fmt.Errorf("read provider event stream: %w", e)
 	}
 	if scanErr != nil {
 		killErr := cmd.Process.Kill()
@@ -341,14 +359,14 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		if strings.Contains(strings.ToLower(stderr.String()), "rate limit") {
 			reason = ReasonRateLimited
 		}
-		diagnostic := providerFailureDetail(exitSummary(waitErr), stderr.String())
+		diagnostic := providerFailureDetail(exitSummary(waitErr), adapter.Redact(stderr.String()))
 		err = store.Terminate(id, JobTerminal{State: state, Phase: PhaseRun, Reason: reason, Error: diagnostic, Next: root.InvocationCommand() + " status", MessagePath: finalPath, SessionID: completedJob.SessionID})
 	}
 	if err != nil {
 		return 1, err
 	}
 	if waitErr != nil {
-		return 1, fmt.Errorf("agent job %s ended in %s: %s; next: %s status", id, PhaseRun, providerFailureDetail(exitSummary(waitErr), stderr.String()), root.InvocationCommand())
+		return 1, fmt.Errorf("agent job %s ended in %s: %s; next: %s status", id, PhaseRun, providerFailureDetail(exitSummary(waitErr), adapter.Redact(stderr.String())), root.InvocationCommand())
 	}
 	_, err = fmt.Fprintf(out, "job %s ok\n", id)
 	return 0, err
