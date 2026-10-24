@@ -163,6 +163,7 @@ test('Dockerfile cases leave real-worktree Dockerfile status unchanged', () => {
 async function fixtureWorkspace(policy) {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-node-engine-policy-'));
   await writePackage(workspaceRoot, '.', '@fixture/root', policy);
+  await setWorkspacePackageManager(workspaceRoot);
   await initializeTemporaryGit(workspaceRoot, ['package.json']);
   return workspaceRoot;
 }
@@ -171,7 +172,8 @@ async function createTrackedDockerfileRepo(t, dockerfile) {
   const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-node-docker-policy-'));
   t.after(() => rm(repositoryRoot, { recursive: true, force: true }));
   const declaration = readNodeEngineDeclaration(path.join(root, 'package.json'));
-  await writeFile(path.join(repositoryRoot, 'package.json'), JSON.stringify({ engines: { node: declaration } }));
+  const workspacePackageManager = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).packageManager;
+  await writeFile(path.join(repositoryRoot, 'package.json'), JSON.stringify({ packageManager: workspacePackageManager, engines: { node: declaration } }));
   await writeFile(path.join(repositoryRoot, 'Dockerfile'), dockerfile);
   await initializeTemporaryGit(repositoryRoot, ['package.json', 'Dockerfile']);
   const generated = spawnSync(process.execPath, [generator, '--root', repositoryRoot], { encoding: 'utf8' });
@@ -181,6 +183,14 @@ async function createTrackedDockerfileRepo(t, dockerfile) {
     repositoryRoot,
     requiredMajor: parseNodeEnginePolicy(declaration).requiredMajor,
   };
+}
+
+async function setWorkspacePackageManager(workspaceRoot) {
+  const sourceManifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const fixtureManifestPath = path.join(workspaceRoot, 'package.json');
+  const fixtureManifest = JSON.parse(await readFile(fixtureManifestPath, 'utf8'));
+  fixtureManifest.packageManager = sourceManifest.packageManager;
+  await writeFile(fixtureManifestPath, JSON.stringify(fixtureManifest));
 }
 
 async function initializeTemporaryGit(repositoryRoot, files) {

@@ -74,6 +74,24 @@ func TestCheckCLIRejectsReviewerCategoryMismatch(t *testing.T) {
 	}
 	moduleDir := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), ".."))
 	workspaceRoot := filepath.Clean(filepath.Join(moduleDir, "../.."))
+	cfg, err := config.LoadFile(filepath.Join(workspaceRoot, "devkit.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.New(workspaceRoot, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packageName string
+	for _, pkg := range ws.Packages {
+		if pkg.Category == "ts-lib" {
+			packageName = pkg.Name
+			break
+		}
+	}
+	if packageName == "" {
+		t.Fatal("workspace has no package in the ts-lib category")
+	}
 	tempDir := t.TempDir()
 	binary := filepath.Join(tempDir, "kb-devkit")
 	build := exec.Command("go", "build", "-o", binary, ".")
@@ -83,7 +101,7 @@ func TestCheckCLIRejectsReviewerCategoryMismatch(t *testing.T) {
 		t.Fatalf("build kb-devkit: %v\n%s", err, output)
 	}
 
-	command := exec.Command(binary, "check", "--package", "@kb-labs/viewer/core", "--only", "cli-naming", "--json")
+	command := exec.Command(binary, "check", "--package", packageName, "--only", "cli-naming", "--json")
 	command.Dir = workspaceRoot
 	command.Env = isolatedCheckEnv(t, tempDir)
 	output, err := command.CombinedOutput()

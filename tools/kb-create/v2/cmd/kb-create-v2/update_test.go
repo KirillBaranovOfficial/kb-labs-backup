@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
@@ -122,7 +123,7 @@ func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 	}
 	primary := applyRoot(indexA, requestA, "PRIMARY_SECRET=primary-secret")
 	if primary.code != 0 {
-		t.Fatalf("primary built CLI apply failed: %s", primary.output)
+		t.Fatalf("primary built CLI apply failed: %s\n%s", primary.output, installerEvidence(t, inst.root))
 	}
 	if _, code, output := inst.run("stop", "--json"); code != 0 {
 		t.Fatalf("stop primary host before secondary apply: %s", output)
@@ -164,7 +165,7 @@ func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 		if installed.Plan.Host != nil {
 			hostArgs = installed.Plan.Host.Args
 		}
-		t.Fatalf("secondary built CLI apply failed: %s\nhost args: %#v\nhost log: %s\nlauncher log: %s\nreceipt: %#v (%v)", secondary.output, hostArgs, hostLog, launcherLog, installed, receiptErr)
+		t.Fatalf("secondary built CLI apply failed: %s\nhost args: %#v\nhost log: %s\nlauncher log: %s\nreceipt: %#v (%v)\n%s", secondary.output, hostArgs, hostLog, launcherLog, installed, receiptErr, installerEvidence(t, secondaryRoot))
 	}
 	installed, err := receipt.Read(platformRootForTest(t, secondaryRoot))
 	if err != nil {
@@ -183,6 +184,27 @@ func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 			t.Fatalf("secondary apply serialized private value %q", privateValue)
 		}
 	}
+}
+
+func installerEvidence(t *testing.T, root string) string {
+	t.Helper()
+	var evidence strings.Builder
+	for _, directory := range []string{"diagnostics", "logs"} {
+		files, err := filepath.Glob(filepath.Join(root, "installer", directory, "apply-*") + "*")
+		if err != nil {
+			t.Errorf("find installer %s: %v", directory, err)
+			continue
+		}
+		for _, path := range files {
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Errorf("read installer evidence %q: %v", path, readErr)
+				continue
+			}
+			fmt.Fprintf(&evidence, "installer evidence %s:\n%s\n", path, data)
+		}
+	}
+	return evidence.String()
 }
 
 // case: S-023.18
@@ -1856,9 +1878,7 @@ type productionPackageFixtureRunner struct {
 }
 
 func (r productionPackageFixtureRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
-	command := exec.CommandContext(ctx, name, args...)
-	command.Stdout, command.Stderr = output, output
-	if err := command.Run(); err != nil {
+	if err := (artifacts.CommandRunner{}).Run(ctx, output, name, args...); err != nil {
 		return err
 	}
 	root := ""
