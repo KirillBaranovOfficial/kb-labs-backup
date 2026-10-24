@@ -82,5 +82,8 @@
   },
   "kb": {
     "manifest": "./dist/manifest.js"
+  },
+  "kbLabs": {
+    "catalogRole": "reader"
   }
 }

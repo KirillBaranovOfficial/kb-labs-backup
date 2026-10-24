@@ -10,15 +10,13 @@
  *     tools the calling identity is permitted to use.
  */
 
-import { createRegistry } from '@kb-labs/core-registry';
 import { generateCommandSchema } from '@kb-labs/cli-commands';
 import { getHandlerPermissions } from '@kb-labs/plugin-contracts';
-import type { ICache } from '@kb-labs/core-platform';
 import type {
   IEntityRegistry,
   RegistrySnapshot,
   RegistrySnapshotManifestEntry,
-} from '@kb-labs/core-registry';
+} from '@kb-labs/plugin-contracts';
 import type { CliCommandDecl, PermissionSpec } from '@kb-labs/plugin-contracts';
 import type { CommandManifest } from '@kb-labs/cli-commands';
 import type { Permits } from './authz.js';
@@ -44,22 +42,6 @@ export interface ToolBuildDiagnostic {
   /** decl.id when present, else the raw (possibly missing) path — whatever identifies the command in the manifest. */
   commandId: string;
   error: string;
-}
-
-/**
- * Build and initialize the entity registry. Called ONCE at daemon startup; the
- * returned registry's snapshot() feeds filterTools() on every request.
- */
-export async function createToolRegistry(opts: {
-  root: string;
-  platformRoot?: string;
-  cache: ICache;
-}): Promise<IEntityRegistry> {
-  return createRegistry({
-    root: opts.root,
-    platformRoot: opts.platformRoot,
-    cache: { ttlMs: 60_000, adapter: opts.cache },
-  });
 }
 
 /**

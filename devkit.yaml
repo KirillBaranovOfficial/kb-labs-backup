@@ -867,6 +867,11 @@ custom_checks:
     on: [check]
     scope: workspace
 
+  - name: catalog-package-roles
+    run: node scripts/checks/check-catalog-package-roles.mjs
+    on: [check]
+    scope: workspace
+
   - name: lifecycle-builds
     run: node scripts/checks/check-lifecycle-builds.mjs
     on: [check]

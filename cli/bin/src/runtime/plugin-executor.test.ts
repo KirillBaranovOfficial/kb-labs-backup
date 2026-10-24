@@ -9,7 +9,8 @@ import {
 import type { ILogger } from '@kb-labs/core-platform';
 import { PluginError } from '@kb-labs/plugin-contracts';
 import * as pluginContracts from '@kb-labs/plugin-contracts';
-import { registry, registerBuiltinCommands, resolveCliHandlerPath } from '@kb-labs/cli-commands';
+import { registry, registerBuiltinCommands } from '@kb-labs/cli-commands';
+import { resolveCliHandlerPath } from '@kb-labs/core-platform';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 import { fileURLToPath } from 'node:url';
 

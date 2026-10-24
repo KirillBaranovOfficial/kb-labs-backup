@@ -11,7 +11,7 @@ import type { WorkflowEngine } from "@kb-labs/workflow-engine";
 import type { WorkflowService } from "@kb-labs/workflow-engine";
 import { createMissingSecretError } from "@kb-labs/workflow-engine";
 import type { SecretProvider } from "@kb-labs/workflow-engine";
-import type { IEntityRegistry } from "@kb-labs/core-registry";
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import { logDiagnosticEvent } from "@kb-labs/core-platform";
 import { isTerminal } from "@kb-labs/workflow-constants";
 import { getJobSecretNames, getStepSecretNames, requireWorkflowId } from "@kb-labs/workflow-contracts";

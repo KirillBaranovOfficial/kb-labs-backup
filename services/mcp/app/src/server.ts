@@ -34,11 +34,11 @@ import {
 import { can, type Policy, type Identity } from '@kb-labs/core-policy';
 import { PlatformAuditStore, isErrorCode, type ICache, type ILogger } from '@kb-labs/core-platform';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import { createDaemonServer, getListenOptions, type ObservabilityCollectorLike } from '@kb-labs/shared-http';
 import { readForwardedIdentity } from '@kb-labs/gateway-contracts';
 import { toIdentity, actionForOperation, type Permits } from './mcp/authz.js';
-import { createToolRegistry, validateManifests } from './mcp/tool-builder.js';
+import { validateManifests } from './mcp/tool-builder.js';
 import { type PlatformResolver } from './mcp/tool-router.js';
 import { resolveVisibleTools, executeToolCall, invalidMcpToolArguments, mcpToolError, mcpToolSuccess, unexpectedMcpResult, validateToolArguments } from './mcp/request-handler.js';
 import { McpObservabilityCollector } from './observability/collector.js';
@@ -67,6 +67,7 @@ export interface McpDaemonServerOptions {
   host: string;
   logger: ILogger;
   cache: ICache;
+  catalog: IEntityRegistry;
   /** Default global platform container — used as the resolvePlatform fallback. */
   platform: PlatformContainer;
   /** Tenant → platform container seam. Defaults to always returning `platform`. */
@@ -116,11 +117,7 @@ export class McpDaemonServer {
 
   async start(): Promise<string> {
     // Initialize the registry ONCE; snapshot() is reused per request.
-    this.registry = await createToolRegistry({
-      root: this.opts.projectRoot,
-      platformRoot: this.opts.platformRoot,
-      cache: this.opts.cache,
-    });
+    this.registry = this.opts.catalog;
 
     // Structural manifest validation runs ONCE here, independent of any
     // identity's permissions — so broken manifests are visible in logs and
@@ -167,7 +164,8 @@ export class McpDaemonServer {
   }
 
   private async registerMcpRoutes(server: FastifyInstance): Promise<void> {
-    const { cache, logger } = this.opts;
+    const { logger } = this.opts;
+    const { cache } = this.opts;
 
     // ── Diagnostics ──────────────────────────────────────────────────────
     // Same visibility as /health — no per-tenant data, just which manifest

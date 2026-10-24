@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
-import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/plugin-contracts';
 import {
   checkCanonicalObservabilityMetrics,
   validateServiceObservabilityDescribe,

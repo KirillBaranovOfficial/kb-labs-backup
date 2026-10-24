@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { WorkflowService } from '@kb-labs/workflow-engine';
 import type { CronScheduler } from '../cron-scheduler.js';
 import { CronDiscovery } from '../cron-discovery.js';

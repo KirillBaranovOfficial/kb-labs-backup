@@ -1,5 +1,6 @@
 {
   "name": "@kb-labs/marketplace-core",
+  "kbLabs": { "catalogRole": "writer" },
   "description": "Marketplace service — unified install/uninstall/enable/disable for all entity types",
   "version": "2.120.1",
   "type": "module",

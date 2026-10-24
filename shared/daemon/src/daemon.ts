@@ -54,6 +54,7 @@ interface PlatformLaunchOptions {
   storeRawConfig?: boolean;
   uiProvider?: PlatformUiProvider;
   hostServiceEnvironment?: import('@kb-labs/core-platform').HostServiceEnvironment;
+  executionHealth?: NonNullable<Parameters<typeof launchPlatform>[0]['executionHealth']>;
 }
 
 export interface ServiceConfig extends NetworkServiceConfig {
@@ -190,6 +191,7 @@ export async function runHost(config: HostConfig): Promise<void> {
     storeRawConfig: config.platform.storeRawConfig,
     uiProvider: config.platform.uiProvider,
     hostServiceEnvironment: config.platform.hostServiceEnvironment,
+    executionHealth: config.platform.executionHealth,
   });
 
   const logger = runtime.logger.forComponent("service-bootstrap");

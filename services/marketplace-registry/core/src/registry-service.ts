@@ -16,7 +16,7 @@ import type {
   ShareToken,
   RegistryIdentityResolution,
 } from '@kb-labs/marketplace-registry-contracts';
-import type { EntitySignature } from '@kb-labs/core-discovery';
+import type { EntitySignature } from '@kb-labs/plugin-contracts';
 
 const STORAGE_PREFIX = 'marketplace-registry';
 const CACHE_TTL_META = 5 * 60 * 1000;

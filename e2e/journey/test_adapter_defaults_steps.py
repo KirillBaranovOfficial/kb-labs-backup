@@ -82,10 +82,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             resolver_parent.mkdir(parents=True)
             (platform_runtime / "package.json").write_text(json.dumps({
                 "name": "@kb-labs/core-runtime",
-                "dependencies": {"@kb-labs/core-discovery": "2.0.0"},
+                "dependencies": {"@kb-labs/core-platform": "2.0.0"},
             }))
-            workspace_discovery = Path(__file__).resolve().parents[2] / "core" / "discovery"
-            (resolver_parent / "core-discovery").symlink_to(workspace_discovery, target_is_directory=True)
+            workspace_platform = Path(__file__).resolve().parents[2] / "core" / "platform"
+            (resolver_parent / "core-platform").symlink_to(workspace_platform, target_is_directory=True)
             receipt = root / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text(json.dumps({"plan": {"artifacts": [

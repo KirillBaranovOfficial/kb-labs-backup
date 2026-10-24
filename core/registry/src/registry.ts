@@ -6,8 +6,30 @@
  */
 
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import { DiscoveryManager, type DiscoveredPlugin, type DiagnosticEvent } from '@kb-labs/core-discovery';
+import type {
+  IEntityRegistry,
+  IEntityRegistryWriter,
+  EntityEntry,
+  EntityRef,
+  EntityFilter,
+  EntityKind,
+  DiagnosticEvent,
+  RegistrySnapshot,
+  RegistryDiff,
+  PluginBrief,
+  OpenAPISpec,
+  StudioRegistry,
+  SystemHealthSnapshot,
+  SystemHealthOptions,
+  DiagnosticReport,
+  RegistrySnapshotManifestEntry,
+  CatalogAdapter,
+  DiscoveryResult,
+} from '@kb-labs/plugin-contracts';
+import { DiscoveryManager, extractEntityKinds, computePackageIntegrity, createDiscoveryInputFingerprinter } from '@kb-labs/core-discovery';
+import type { DiscoveredPlugin } from '@kb-labs/plugin-contracts';
 import { EntityCatalog } from './catalog/entity-catalog.js';
+import { resolveCatalogAdapters } from './adapters.js';
 import { SnapshotManager } from './snapshot/snapshot-manager.js';
 import { HealthAggregator, resetGitInfoCache } from './health/health-aggregator.js';
 import { generateOpenAPISpec } from './generators/openapi-spec.js';
@@ -18,27 +40,14 @@ import {
   disablePlugin as disablePluginState,
 } from './state/plugin-state.js';
 import type {
-  IEntityRegistry,
   RegistryOptions,
-  PluginBrief,
-  RegistrySnapshot,
-  RegistryDiff,
-  EntityEntry,
-  EntityRef,
-  EntityFilter,
-  EntityKind,
-  OpenAPISpec,
-  StudioRegistry,
-  SystemHealthSnapshot,
-  SystemHealthOptions,
-  DiagnosticReport,
 } from './types.js';
 
 const PLATFORM_VERSION = '1.0.0';
 
-export class EntityRegistry implements IEntityRegistry {
+export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   private readonly root: string;
-  private readonly discovery: DiscoveryManager;
+  private readonly discoveryManager: DiscoveryManager;
   private readonly snapshotMgr: SnapshotManager;
   private readonly health: HealthAggregator;
   private readonly catalog = new EntityCatalog();
@@ -46,6 +55,8 @@ export class EntityRegistry implements IEntityRegistry {
   private plugins: DiscoveredPlugin[] = [];
   private manifests = new Map<string, ManifestV3>();
   private diagnosticEvents: DiagnosticEvent[] = [];
+  private discoveryResultValue!: DiscoveryResult;
+  private adapterEntries = new Map<string, CatalogAdapter>();
   private attemptedPluginCount = 0;
   private changeListeners: Array<(diff: RegistryDiff) => void> = [];
   private rev = 0;
@@ -54,7 +65,7 @@ export class EntityRegistry implements IEntityRegistry {
   constructor(private readonly opts: RegistryOptions) {
     this.root = opts.root ?? process.cwd();
 
-    this.discovery = new DiscoveryManager({
+    this.discoveryManager = new DiscoveryManager({
       root: this.root,
       platformRoot: opts.platformRoot,
       importTimeoutMs: opts.importTimeoutMs,
@@ -67,6 +78,7 @@ export class EntityRegistry implements IEntityRegistry {
       platformVersion: opts.platformVersion ?? PLATFORM_VERSION,
       cache: opts.cache?.adapter,
       cacheSnapshotKey: opts.cache?.snapshotKey,
+      persistSnapshot: opts.persistSnapshot,
     });
 
     this.health = new HealthAggregator({
@@ -92,6 +104,26 @@ export class EntityRegistry implements IEntityRegistry {
       && cached.manifests.every(e => typeof e.origin === 'string' && typeof e.scope === 'string')
     ) {
       this.applySnapshot(cached);
+      this.discoveryResultValue = {
+        plugins: cached.manifests.map((entry) => ({
+          id: entry.pluginId,
+          version: entry.manifest.version,
+          packageRoot: entry.pluginRoot,
+          packageName: entry.packageName,
+          scope: entry.scope,
+          origin: entry.origin,
+          manifestPath: entry.manifestPath,
+          manifestKind: entry.manifestKind,
+          source: entry.source,
+          provides: extractEntityKinds(entry.manifest),
+        })),
+        manifests: new Map(cached.manifests.map((entry) => [entry.pluginId, entry.manifest])),
+        failures: [],
+        diagnostics: cached.diagnostics ?? [],
+      };
+      this.adapterEntries = await resolveCatalogAdapters(this.discoveryManager, this.opts.platformRoot ?? this.root, {
+        workspaceAdapters: this.opts.workspaceAdapters,
+      });
       this.initialized = true;
       return;
     }
@@ -104,7 +136,11 @@ export class EntityRegistry implements IEntityRegistry {
   async refresh(): Promise<void> {
     const oldPlugins = new Map(this.plugins.map(p => [p.id, p]));
 
-    const result = await this.discovery.discover();
+    const result = await this.discoveryManager.discover();
+    this.discoveryResultValue = result;
+    this.adapterEntries = await resolveCatalogAdapters(this.discoveryManager, this.opts.platformRoot ?? this.root, {
+      workspaceAdapters: this.opts.workspaceAdapters,
+    });
     this.plugins = result.plugins;
     this.manifests = result.manifests;
     this.diagnosticEvents = result.diagnostics;
@@ -205,8 +241,28 @@ export class EntityRegistry implements IEntityRegistry {
     return this.buildSnapshot();
   }
 
+  discovery(): DiscoveryResult {
+    return this.discoveryResultValue;
+  }
+
+  adapters(): ReadonlyMap<string, CatalogAdapter> {
+    return this.adapterEntries;
+  }
+
+  marketplaceLocks() {
+    return this.discoveryManager.getMarketplaceLocks();
+  }
+
+  computePackageIntegrity(packageRoot: string): Promise<string> {
+    return computePackageIntegrity(packageRoot);
+  }
+
+  discoveryInputFingerprinter() {
+    return createDiscoveryInputFingerprinter();
+  }
+
   findStoredPluginPackageForRestPrefix(requestedPrefix: string, basePath: string): Promise<string | undefined> {
-    return this.discovery.findStoredPluginPackageForRestPrefix(requestedPrefix, basePath);
+    return this.discoveryManager.findStoredPluginPackageForRestPrefix(requestedPrefix, basePath);
   }
 
   onChange(cb: (diff: RegistryDiff) => void): () => void {

@@ -5,6 +5,7 @@ import { configuredAdapterForSlot, loadPlatformConfig, PlatformUserConfigSchema,
 import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
+import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 import { resolveConfigRoots, userConfigFileForScope } from '../config/shared';
 
 type Flags = {
@@ -58,7 +59,8 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
     }
 
     try {
-      const loaded = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform' });
+      const catalog = requireResolvedCatalog();
+      const loaded = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform', catalog });
       const currentAdapters = loaded.platformConfig.adapters ?? {};
       const configuredAdapter = configuredAdapterForSlot(slot, currentAdapters);
       if (!configuredAdapter) {
@@ -77,7 +79,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
       });
       const adapters = result.dryRun
         ? { ...currentAdapters, [configuredAdapter.key]: packageId }
-        : (await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform' })).platformConfig.adapters ?? {};
+        : (await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform', catalog: requireResolvedCatalog() })).platformConfig.adapters ?? {};
       return {
         slot,
         packageId,

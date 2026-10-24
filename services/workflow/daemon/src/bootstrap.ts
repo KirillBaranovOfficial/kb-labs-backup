@@ -19,7 +19,6 @@ import { CronScheduler } from "./cron-scheduler.js";
 import { CronDiscovery } from "./cron-discovery.js";
 import { WorkflowFileWatcher } from "./file-watcher.js";
 import { createServer } from "./server.js";
-import { createRegistry } from "@kb-labs/core-registry";
 import { requireProjectContext } from "@kb-labs/core-runtime";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -55,6 +54,7 @@ export async function bootstrap(_cwd: string = process.cwd()): Promise<void> {
  */
 export async function setup({
   platform,
+  runtime,
   port,
   host,
   projectRoot,
@@ -121,12 +121,7 @@ export async function setup({
       .with(bindings ?? {});
 
   bootstrapLogger.info("Loading plugin registry snapshot");
-  const cliApi = await createRegistry({
-    root: workspaceRoot,
-    platformRoot,
-    cache: { ttlMs: 10 * 60 * 1000 },
-  });
-  await cliApi.initialize();
+  const cliApi = runtime.catalog;
   const plugins = await cliApi.listPlugins();
   bootstrapLogger.info("Plugin registry snapshot loaded", {
     pluginsFound: plugins.length,
@@ -287,7 +282,6 @@ export async function setup({
     await cronScheduler.stop();
     await worker.stop();
     await server.close();
-    await cliApi.dispose();
     // Platform shutdown is owned by runService after this callback returns.
   };
 }

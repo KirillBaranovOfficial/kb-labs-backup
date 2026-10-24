@@ -1,6 +1,6 @@
 import type { ICache, ILogger, IStorage } from '@kb-labs/core-platform'
 import { ConsoleLogger, InMemoryEventBus } from '@kb-labs/core-platform/inmemory'
-import { createRegistry } from '@kb-labs/core-registry'
+import { openCatalog } from '@kb-labs/core-registry'
 import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct'
 import { EnvSecretProvider, WorkflowEngine } from '@kb-labs/workflow-engine'
 import { createWorkflowWorker } from '../worker.js'
@@ -62,7 +62,7 @@ async function startWorker(): Promise<void> {
   const workspaceRoot = process.cwd()
   const engine = new WorkflowEngine({ projectId, cache, storage, events: new InMemoryEventBus(), logger, secretProvider: new EnvSecretProvider(), workspaceRoot })
   await engine.cleanupStaleRuns()
-  const registry = await createRegistry({ root: workspaceRoot })
+  const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot })
   const backend = createNormalizedExecutionBackend({
     async execute() {
       process.send?.({ type: 'step-started' })

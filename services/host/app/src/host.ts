@@ -13,7 +13,6 @@
 
 import { createRequire } from "node:module";
 import { loadEffectiveConfig, validatePlatformAdapterOptions } from "@kb-labs/core-config";
-import { createDiscoveryInputFingerprinter } from "@kb-labs/core-discovery";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import {
   GATEWAY_SERVICE_NETWORK,
@@ -389,7 +388,7 @@ export async function createHostConfig(
             ? { stopTimeoutMs: overrides.stopTimeoutMs }
             : {}),
         });
-      const fingerprintDiscoveryInputs = createDiscoveryInputFingerprinter();
+      const fingerprintDiscoveryInputs = ctx.runtime.catalog.discoveryInputFingerprinter();
       const manager = new ProjectRuntimeManager({
         launcher,
         logger,

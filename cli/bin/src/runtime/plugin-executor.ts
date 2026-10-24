@@ -26,7 +26,7 @@ import {
   createContextLogger,
 } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
-import { resolveCliHandlerPath } from "@kb-labs/cli-commands";
+import { resolveCliHandlerPath } from "@kb-labs/core-platform";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
 import { cliBinaryName } from './cli-binary.js';
 import { createCLIUIFacade } from "./ui-facade";

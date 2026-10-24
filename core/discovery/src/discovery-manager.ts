@@ -10,17 +10,11 @@ import { CliCommandDeclSchema, resolvePluginBasePath, type ManifestV3 } from '@k
 import { createExtensionStore } from '@kb-labs/core-extension-store';
 import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import type {
-  DiscoveryResult,
-  DiscoveredPlugin,
-  DiscoveryFailure,
-  DiscoveryOrigin,
-  DiscoveryScope,
-  DiagnosticEvent,
-  MarketplaceEntry,
-  EntityKind,
-} from './types.js';
+  DiscoveryResult, DiscoveryFailure, DiscoveredPlugin, DiscoveryOrigin, DiscoveryScope, DiagnosticEvent, EntityKind,
+  MarketplaceEntry, MarketplaceLock,
+} from '@kb-labs/plugin-contracts';
 import { DiagnosticCollector } from './diagnostics.js';
-import { resolveCliHandlerPath } from './resolve-cli-handler.js';
+import { resolveCliHandlerPath } from '@kb-labs/core-platform';
 import { describeHandlerAccessFailure } from './handler-access.js';
 import { isPortableRelativePath, isUserOwnedLinkPath, readMarketplaceLock } from './marketplace-lock.js';
 import { resolveMarketplaceLockScope, type MarketplaceLockRoots } from './marketplace-lock-scope.js';
@@ -145,6 +139,8 @@ export class DiscoveryManager {
   private readonly workspace: boolean;
   private readonly extensionStore: IExtensionStore;
   private readonly onInputRead?: (filePath: string) => void;
+  private marketplaceLocks = new Map<string, MarketplaceLock>();
+  private marketplaceLocksLoaded = false;
   /** plugins.allow/block/linked per scope root, read at the start of discover() */
   private policies = new Map<string, PluginPolicyResult>();
 
@@ -174,6 +170,8 @@ export class DiscoveryManager {
    *   4. Return aggregated result with diagnostics
    */
   async discover(): Promise<DiscoveryResult> {
+    this.marketplaceLocks.clear();
+    this.marketplaceLocksLoaded = false;
     const diag = new DiagnosticCollector();
     const policyResults = await Promise.all(this.scopes.map(async ({ scope, root }) => [scope, root, await readPluginPolicy(root, this.onInputRead)] as const));
     this.policies = new Map(policyResults.map(([, root, result]) => [root, result]));
@@ -207,6 +205,14 @@ export class DiscoveryManager {
     return { plugins, manifests, failures, diagnostics: diag.getEvents() };
   }
 
+  /** The exact lock objects read for the latest resolved view, keyed by scope root. */
+  async getMarketplaceLocks(): Promise<ReadonlyMap<string, MarketplaceLock>> {
+    if (!this.marketplaceLocksLoaded) {
+      await this.loadMarketplaceLocks(new DiagnosticCollector());
+    }
+    return this.marketplaceLocks;
+  }
+
   /** Resolve an unmounted REST namespace to the package that declares it in the extension store. */
   async findStoredPluginPackageForRestPrefix(
     requestedPrefix: string,
@@ -230,12 +236,12 @@ export class DiscoveryManager {
   // -------------------------------------------------------------------------
 
   private async collectCandidates(diag: DiagnosticCollector): Promise<Candidate[]> {
+    await this.loadMarketplaceLocks(diag);
     // Lock entries. Project scope is read last so it overwrites a platform entry
     // with the same lock key (project overrides platform).
     const locked = new Map<string, Candidate>();
     for (const { scope, root } of this.scopes) {
-      const lockScope = await resolveMarketplaceLockScope(this.lockRoots, root);
-      const lock = await readMarketplaceLock(root, diag, lockScope, this.onInputRead);
+      const lock = this.marketplaceLocks.get(root);
       if (!lock) {continue;}
       for (const [id, entry] of Object.entries(lock.plugins)) {
         const invalidOwnedPath = entry.source === 'local'
@@ -299,6 +305,16 @@ export class DiscoveryManager {
       }
     }
     return candidates;
+  }
+
+  private async loadMarketplaceLocks(diag: DiagnosticCollector): Promise<void> {
+    if (this.marketplaceLocksLoaded) return;
+    for (const { root } of this.scopes) {
+      const lockScope = await resolveMarketplaceLockScope(this.lockRoots, root);
+      const lock = await readMarketplaceLock(root, diag, lockScope, this.onInputRead);
+      if (lock) this.marketplaceLocks.set(root, lock);
+    }
+    this.marketplaceLocksLoaded = true;
   }
 
   // -------------------------------------------------------------------------

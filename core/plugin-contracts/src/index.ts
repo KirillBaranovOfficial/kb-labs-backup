@@ -331,3 +331,6 @@ export type {
   MutateHandler,
   ExecuteHandler,
 } from "./archetypes.js";
+
+export * from './catalog.js';
+export { mergeOpenAPISpecs } from './openapi-merge.js';

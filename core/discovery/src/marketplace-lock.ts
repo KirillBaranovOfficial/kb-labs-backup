@@ -7,7 +7,10 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DISCOVERY_MARKETPLACE_LOCK } from './discovery-inputs.js';
-import type { MarketplaceLock, MarketplaceEntry, MarketplaceAdapterEntry, EntityKind, EntitySignature, UserOwnedLinkPath, InstallOwnedRelativePath } from './types.js';
+import type {
+  EntityKind, EntitySignature, MarketplaceLock, MarketplaceEntry,
+  MarketplaceAdapterEntry, UserOwnedLinkPath, InstallOwnedRelativePath,
+} from '@kb-labs/plugin-contracts';
 import { DiagnosticCollector } from './diagnostics.js';
 
 const SCHEMA_VERSION = 'kb.marketplace/3' as const;
