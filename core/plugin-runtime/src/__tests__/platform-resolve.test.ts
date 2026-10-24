@@ -33,7 +33,12 @@ function write(file: string, content: string): void {
 }
 
 /** A dual ESM/CJS package that reports which copy it is. */
-function writePackage(root: string, name: string, copy: string): void {
+function writePackage(
+  root: string,
+  name: string,
+  copy: string,
+  extraExports: Record<string, { import: string; require: string }> = {},
+): void {
   const dir = join(root, 'node_modules', ...name.split('/'));
   write(
     join(dir, 'package.json'),
@@ -43,6 +48,7 @@ function writePackage(root: string, name: string, copy: string): void {
       exports: {
         '.': { import: './index.mjs', require: './index.cjs' },
         './testing': { import: './testing.mjs', require: './testing.cjs' },
+        ...extraExports,
       },
     }),
   );
@@ -50,6 +56,10 @@ function writePackage(root: string, name: string, copy: string): void {
   write(join(dir, 'index.cjs'), `exports.copy = ${JSON.stringify(copy)};\n`);
   write(join(dir, 'testing.mjs'), `export const copy = ${JSON.stringify(`${copy}/testing`)};\n`);
   write(join(dir, 'testing.cjs'), `exports.copy = ${JSON.stringify(`${copy}/testing`)};\n`);
+  for (const [subpath, targets] of Object.entries(extraExports)) {
+    write(join(dir, targets.import), `export const copy = ${JSON.stringify(`${copy}/${subpath.slice(2)}`)};\n`);
+    write(join(dir, targets.require), `exports.copy = ${JSON.stringify(`${copy}/${subpath.slice(2)}`)};\n`);
+  }
 }
 
 class RecordingLogger {
@@ -72,7 +82,9 @@ describe('platform resolve hook', () => {
     write(join(platformRoot, 'package.json'), JSON.stringify({ name: 'platform', private: true }));
     writePackage(platformRoot, '@kb-labs/sdk', 'host');
     writePackage(platformRoot, '@kb-labs/core-runtime', 'host');
-    writePackage(platformRoot, '@kb-labs/commit-core', 'host');
+    writePackage(platformRoot, '@kb-labs/commit', 'host', {
+      './core': { import: './core.mjs', require: './core.cjs' },
+    });
 
     // The store lives outside the platform root; the plugin brings nested copies.
     const entry = join(sandbox, 'store', 'entries', 'my-plugin@1.0.0');
@@ -87,7 +99,9 @@ describe('platform resolve hook', () => {
     write(join(pluginDir, 'node_modules', '@kb-labs', 'sdk', 'index.cjs'),
       `exports.copy = 'private'; throw new Error('nested SDK copy must not load');\n`);
     writePackage(pluginDir, '@kb-labs/core-runtime', 'private');
-    writePackage(pluginDir, '@kb-labs/commit-core', 'private');
+    writePackage(pluginDir, '@kb-labs/commit', 'private', {
+      './core': { import: './core.mjs', require: './core.cjs' },
+    });
     // Only the plugin has this one; the host does not provide it.
     writePackage(pluginDir, '@kb-labs/core-only-in-plugin', 'private');
 
@@ -97,7 +111,7 @@ describe('platform resolve hook', () => {
         `import { copy as sdk } from '@kb-labs/sdk';`,
         `import { copy as sdkTesting } from '@kb-labs/sdk/testing';`,
         `import { copy as runtime } from '@kb-labs/core-runtime';`,
-        `import { copy as own } from '@kb-labs/commit-core';`,
+        `import { copy as own } from '@kb-labs/commit/core';`,
         `export const seen = { sdk, sdkTesting, runtime, own };`,
       ].join('\n'),
     );
@@ -108,7 +122,7 @@ describe('platform resolve hook', () => {
         `  sdk: require('@kb-labs/sdk').copy,`,
         `  sdkTesting: require('@kb-labs/sdk/testing').copy,`,
         `  runtime: require('@kb-labs/core-runtime').copy,`,
-        `  own: require('@kb-labs/commit-core').copy,`,
+        `  own: require('@kb-labs/commit/core').copy,`,
         `};`,
       ].join('\n'),
     );
@@ -161,7 +175,7 @@ describe('platform resolve hook', () => {
       sdkTesting: 'host/testing',
       runtime: 'host',
       // Not a platform package: the plugin's own dependency stays private.
-      own: 'private',
+      own: 'private/core',
     });
   });
 
@@ -172,7 +186,7 @@ describe('platform resolve hook', () => {
       sdk: 'host',
       sdkTesting: 'host/testing',
       runtime: 'host',
-      own: 'private',
+      own: 'private/core',
     });
   });
 
@@ -255,7 +269,7 @@ describe('platformPackageOf', () => {
   });
 
   it.each([
-    '@kb-labs/commit-core',
+    '@kb-labs/commit/core',
     '@kb-labs/plugin-template-core',
     '@kb-labs/gateway-app',
     '@other/core-runtime',

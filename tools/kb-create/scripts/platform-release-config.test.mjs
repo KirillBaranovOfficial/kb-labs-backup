@@ -54,7 +54,7 @@ test('the shipped platform package set contains the runtime dependency closure w
   assert.deepEqual([...releaseArtifactRoots].filter(name => pluginPackages.has(name)), [],
     'platform artifact roots must not declare plugin packages as members');
   const releaseArtifactClosure = shippedPlatformPackageSet(releaseArtifactRoots, packageManifests);
-  assert.equal(releaseArtifactClosure.has('@kb-labs/agent-contracts'), false,
+  assert.equal(releaseArtifactClosure.has('@kb-labs/agents/contracts'), false,
     'plugin-only dependencies must not enter the generated platform artifact closure');
 
   const roots = platformPackageRoots({
@@ -79,6 +79,6 @@ test('the shipped platform package set contains the runtime dependency closure w
   }
   assert.deepEqual([...shipped].filter(name => pluginPackages.has(name)), [],
     'platform dependency closure must not include registered plugin packages');
-  assert.equal(shipped.has('@kb-labs/agent-contracts'), false,
+  assert.equal(shipped.has('@kb-labs/agents/contracts'), false,
     'plugin-only dependencies must not enter the platform release closure');
 });

@@ -52,7 +52,7 @@ describe('PermissionSpec container mapping', () => {
 
   // case: S-244.3
   it('accepts shipped default permissions and refuses the shipped GitHub plugin grants', async () => {
-    const githubManifestModuleUrl = new URL('../../../../plugins/github/entry/src/manifest.ts', import.meta.url);
+    const githubManifestModuleUrl = new URL('../../../../plugins/github/src/manifest.ts', import.meta.url);
     const githubManifestModule = await import(githubManifestModuleUrl.href) as {
       manifest: { permissions: PermissionSpec };
     };

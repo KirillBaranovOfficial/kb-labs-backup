@@ -10,14 +10,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@kb-labs/core-runtime', () => ({ loadPlatformConfig: mocks.loadPlatformConfig }));
-vi.mock('./session.js', () => ({
+vi.mock('@kb-labs/sdk/gateway', () => ({
   SessionManager: class {
     async load() { return mocks.session; }
     isExpired() { return false; }
     getFilePath() { return '/tmp/session.json'; }
   },
 }));
-vi.mock('./credentials.js', () => ({
+vi.mock('@kb-labs/sdk/gateway', () => ({
   CredentialsManager: class { async load() { return null; } },
 }));
 

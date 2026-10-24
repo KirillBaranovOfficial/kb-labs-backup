@@ -114,10 +114,10 @@ describe('failed enabled plugins', () => {
       failures: [{
         id: '@kb-labs/release',
         packageName: '@kb-labs/release',
-        packageRoot: '/workspace/plugins/release/manager-cli',
+        packageRoot: '/workspace/plugins/release/src/cli',
         scope: 'platform',
         origin: 'linked',
-        manifestPath: '/workspace/plugins/release/manager-cli/dist/manifest.js',
+        manifestPath: '/workspace/plugins/release/src/cli/dist/manifest.js',
         reason: 'manifest',
         message: 'No manifest found; run `pnpm build`.',
         diagnosticCode: 'PLUGIN_ID_MISMATCH',

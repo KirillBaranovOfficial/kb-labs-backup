@@ -9,7 +9,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
-import { SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { SessionManager } from '@kb-labs/sdk/gateway';
 
 const CLI_CHILD_PROCESS_TIMEOUT_MS = 60_000;
 
@@ -398,7 +398,7 @@ describe('installed platform adapter defaults', () => {
     const installRoot = path.join(tempRoot, 'install');
     const versionRoot = path.join(installRoot, 'versions', 'v1');
     const platformRoot = path.join(installRoot, 'current');
-    const installedCommitRoot = path.join(versionRoot, 'plugins', 'commit-entry');
+    const installedCommitRoot = path.join(versionRoot, 'plugins', 'commit');
     const projectRoot = path.join(tempRoot, 'project');
     const secondProjectRoot = path.join(tempRoot, 'project-b');
     const home = path.join(tempRoot, 'home');
@@ -423,7 +423,7 @@ describe('installed platform adapter defaults', () => {
       'dir',
     );
     await symlink(
-      path.join(workspaceRoot, 'plugins/commit/core'),
+      path.join(workspaceRoot, 'plugins/commit/src/core'),
       path.join(installedCommitRoot, 'node_modules', '@kb-labs', 'commit-core'),
       'dir',
     );
@@ -506,7 +506,7 @@ describe('installed platform adapter defaults', () => {
         enabled: true,
       }];
     }));
-    const commitRoot = path.join(workspaceRoot, 'plugins/commit/entry');
+    const commitRoot = path.join(workspaceRoot, 'plugins/commit');
     const commitPackageJSON = await readFile(path.join(commitRoot, 'package.json'));
     await cp(path.join(commitRoot, 'dist'), path.join(installedCommitRoot, 'dist'), { recursive: true });
     await writeFile(path.join(installedCommitRoot, 'package.json'), commitPackageJSON);
@@ -672,7 +672,7 @@ describe('installed platform adapter defaults', () => {
         enabled: true,
       }];
     }));
-    const commitPackageRoot = path.join(workspaceRoot, 'plugins/commit/entry');
+    const commitPackageRoot = path.join(workspaceRoot, 'plugins/commit');
     const commitManifestModule = await import(pathToFileURL(path.join(commitPackageRoot, 'dist/manifest.js')).href) as {
       manifest: { id: string; version: string };
     };

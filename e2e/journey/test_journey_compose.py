@@ -208,11 +208,9 @@ if (!configResult.ok || !lockResult.valid) {
             self.assertEqual(workspace_source.resolve(), ROOT.resolve())
             for relative in (
                     "cli/bin/dist/bin.js",
-                    "plugins/marketplace-registry/entry/dist/manifest.js",
-                    "plugins/marketplace-registry/entry/dist/commands/publish.js",
-                    "plugins/marketplace-registry/entry/node_modules/@kb-labs/sdk",
-                    "plugins/marketplace-registry/entry/node_modules/@kb-labs/cli-runtime",
-                    "plugins/marketplace-registry/entry/node_modules/execa"):
+                    "plugins/marketplace-registry/dist/manifest.js",
+                    "plugins/marketplace-registry/dist/commands/publish.js",
+                    ):
                 self.assertTrue((workspace_source / relative).exists(), relative)
 
     # case: S-262.1

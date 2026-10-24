@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ServicePortConfigError, createErrorEnvelope } from '@kb-labs/core-platform';
 import type { Presenter } from '@kb-labs/cli-runtime';
-import { AuthSessionOwner, HttpSseGatewayTransport } from '@kb-labs/cli-runtime/gateway';
+import { AuthSessionOwner } from '@kb-labs/sdk/gateway';
+import { HttpSseGatewayTransport } from '@kb-labs/cli-runtime/gateway';
 import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
 import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';

@@ -18,8 +18,8 @@ describe('installed platform plugin identities', () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-discovery-installed-plugin-ids-'));
     const platformRoot = path.join(tempRoot, 'platform');
     const projectRoot = path.join(tempRoot, 'project');
-    const sourceRoot = path.join(workspaceRoot, 'plugins/commit/entry');
-    const installedPluginRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'commit-entry');
+    const sourceRoot = path.join(workspaceRoot, 'plugins/commit');
+    const installedPluginRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'commit');
     await Promise.all([
       fs.mkdir(path.join(platformRoot, '.kb'), { recursive: true }),
       fs.mkdir(projectRoot, { recursive: true }),

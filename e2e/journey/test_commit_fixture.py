@@ -11,7 +11,7 @@ class CommitFixtureTests(unittest.TestCase):
     def test_baseline_version_comes_from_the_commit_fixture_package(self):
         with tempfile.TemporaryDirectory(prefix="kb-commit-source-version-") as temporary:
             workspace = Path(temporary)
-            package = workspace / "plugins/commit/entry"
+            package = workspace / "plugins/commit"
             package.mkdir(parents=True)
             (package / "package.json").write_text(
                 '{"name":"@kb-labs/commit","version":"2.120.1"}', encoding="utf-8")
@@ -21,7 +21,7 @@ class CommitFixtureTests(unittest.TestCase):
     def test_missing_commit_identity_is_rejected(self):
         with tempfile.TemporaryDirectory(prefix="kb-commit-source-version-") as temporary:
             workspace = Path(temporary)
-            package = workspace / "plugins/commit/entry"
+            package = workspace / "plugins/commit"
             package.mkdir(parents=True)
             (package / "package.json").write_text('{"name":"other","version":"2.120.1"}', encoding="utf-8")
 

@@ -118,7 +118,7 @@ describe('marketplace plugins add', () => {
     expect(names).toContain('remove');
     expect(marketplacePluginGroup?.describe).toBe('Plugin management');
     expect(marketplacePluginCommands.find(({ name }) => name === 'add')?.examples)
-      .toContain('kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry');
+      .toContain('kb marketplace plugins add --link .kb/plugins/my-plugin');
     expect(marketplacePluginCommands.find(({ name }) => name === 'remove')?.examples)
       .toContain('kb marketplace plugins remove @kb-labs/my-plugin');
   });
@@ -128,7 +128,7 @@ describe('marketplace plugins add', () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await addCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '.kb/plugins/my-plugin/packages/my-plugin-entry' } }));
+    const result = await addCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '.kb/plugins/my-plugin' } }));
 
     expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);

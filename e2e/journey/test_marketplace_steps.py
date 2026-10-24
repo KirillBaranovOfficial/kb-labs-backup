@@ -52,13 +52,13 @@ class MarketplaceStepTests(unittest.TestCase):
                 (package / "package.json").write_text(json.dumps(
                     {"name": "@kb-labs/commit", "version": "2.120.1"}))
                 destination = command[command.index("--pack-destination") + 1]
-                subprocess.run(["tar", "-czf", str(Path(destination) / "kb-labs-commit-entry-2.120.1.tgz"),
+                subprocess.run(["tar", "-czf", str(Path(destination) / "kb-labs-commit-2.120.1.tgz"),
                                 "-C", str(package.parent), "package"], check=True)
                 return subprocess.CompletedProcess(command, 0, "", "")
             if command[:3] == ["npm", "pack", "--ignore-scripts"]:
                 manifest = json.loads((Path(cwd) / "package.json").read_text())
                 destination = Path(command[command.index("--pack-destination") + 1])
-                (destination / f"kb-labs-commit-entry-{manifest['version']}.tgz").write_text(manifest["version"])
+                (destination / f"kb-labs-commit-{manifest['version']}.tgz").write_text(manifest["version"])
                 return subprocess.CompletedProcess(command, 0, "", "")
             if command[0] == "tar":
                 return subprocess.run(command, capture_output=True, text=True)
@@ -76,7 +76,7 @@ class MarketplaceStepTests(unittest.TestCase):
         self.assertEqual(version, "3.0.0")
         self.assertEqual(len(published), 1)
         self.assertEqual(published[0]["registry"], "http://registry.test")
-        self.assertEqual(published[0]["files"], ["kb-labs-commit-entry-3.0.0.tgz"])
+        self.assertEqual(published[0]["files"], ["kb-labs-commit-3.0.0.tgz"])
         self.assertNotEqual(published[0]["home"], "/journey-home")
 
     def test_shared_commit_fixture_uses_release_one_npm_source_without_registry_lane(self):
@@ -196,10 +196,10 @@ class MarketplaceStepTests(unittest.TestCase):
 
     def test_commit_fixture_publisher_uses_the_real_hub_publish_request(self):
         self.assertEqual(commit_publish_command("/workspace"), [
-            "hub", "publish", "--path", "/workspace/plugins/commit/entry", "--json",
+            "hub", "publish", "--path", "/workspace/plugins/commit", "--json",
         ])
-        self.assertEqual(_publish_fixture_command("/workspace", "plugins/qa/entry"), [
-            "hub", "publish", "--path", "/workspace/plugins/qa/entry", "--json",
+        self.assertEqual(_publish_fixture_command("/workspace", "plugins/qa"), [
+            "hub", "publish", "--path", "/workspace/plugins/qa", "--json",
         ])
 
     def test_registry_commit_fixture_publishes_in_workspace_and_installs_in_lane_project(self):
@@ -243,9 +243,9 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(entry["signatureStatus"], "verified")
             workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
             self.assertEqual([call[0] for call in calls if call[0][0] == "node"], [
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit/entry"), "--json"),
+                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit"), "--json"),
                 ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa/entry"), "--json"),
+                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"),
             ])
             self.assertEqual(journey.result().status, "PASS")
 

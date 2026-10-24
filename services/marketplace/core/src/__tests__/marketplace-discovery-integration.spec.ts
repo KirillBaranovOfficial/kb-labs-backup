@@ -248,10 +248,10 @@ describe('Marketplace → Discovery Integration', () => {
     await expect(fs.access(path.join(projectRoot, '.kb', 'marketplace.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('link → discover: a linked entry package uses its manifest identity', async () => {
+  it('link → discover: a linked plugin package uses its manifest identity', async () => {
     const projectRoot = path.join(tmpDir, 'project');
     await fs.mkdir(projectRoot, { recursive: true });
-    const dir = path.join(projectRoot, 'packages', 'demo-entry');
+    const dir = path.join(projectRoot, 'plugins', 'demo');
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
       name: '@kb-labs/demo',
@@ -274,7 +274,7 @@ describe('Marketplace → Discovery Integration', () => {
       async rollbackInstall() {},
     };
     const service = makeMarketplaceService({ platformRoot: tmpDir, source });
-    const result = await service.link({ scope: 'project', projectRoot }, 'packages/demo-entry');
+    const result = await service.link({ scope: 'project', projectRoot }, 'plugins/demo');
     const lock = JSON.parse(await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8')) as {
       plugins: Record<string, { resolvedPath?: string }>;
     };
