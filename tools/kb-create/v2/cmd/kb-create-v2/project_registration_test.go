@@ -20,12 +20,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/proc/child"
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -1012,7 +1012,6 @@ func startSecuredProjectRegistrationGateway(t *testing.T) string {
 	command := exec.CommandContext(ctx, tsRunner, fixture)
 	command.Dir = workspaceRoot
 	command.Env = os.Environ()
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -1020,14 +1019,14 @@ func startSecuredProjectRegistrationGateway(t *testing.T) string {
 	}
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
-	if err := command.Start(); err != nil {
+	if err := child.Start(command, child.ProcessGroup); err != nil {
 		cancel()
 		t.Fatalf("start secured Gateway fixture: %v", err)
 	}
 	t.Cleanup(func() {
 		cancel()
 		if command.ProcessState == nil {
-			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+			_ = child.KillTree(command.Process.Pid)
 		}
 		_ = command.Wait()
 		if stderr.Len() > 0 {
