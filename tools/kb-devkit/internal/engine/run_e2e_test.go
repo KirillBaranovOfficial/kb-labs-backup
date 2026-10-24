@@ -343,7 +343,7 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	}
 }
 
-// case: S-179.23, S-179.37
+// case: S-179.23, S-179.37, S-261.6
 func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceRoot(t, root, []string{"packages/*"})

@@ -257,6 +257,8 @@ export type CatalogErrorCode =
   | "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE"
   | "KB_SERVICE_HEALTH_TIMEOUT"
   | "KB_SERVICE_UNAVAILABLE"
+  | "KB_TOOLCHAIN_EXTERNAL_TIMEOUT"
+  | "KB_TOOLCHAIN_PNPM_UNAVAILABLE"
   | "KB_UPDATE_APPLY_FAILED"
   | "KB_UPDATE_DOWNGRADE_REFUSED"
   | "KB_UPDATE_DOWNLOAD_FAILED"
@@ -527,6 +529,8 @@ export interface CatalogTemplateParameters {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": { "connectionId": string };
   "KB_SERVICE_HEALTH_TIMEOUT": Record<never, never>;
   "KB_SERVICE_UNAVAILABLE": Record<never, never>;
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "argsSummary": string; "elapsed": string; "nextCommand": string; "tool": string };
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "nextCommand": string; "version": string };
   "KB_UPDATE_APPLY_FAILED": { "version": string };
   "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;
@@ -610,7 +614,7 @@ export interface CatalogDetailsFor {
   "KB_HOST_UNHEALTHY": { "module": string };
   "KB_HOST_UNREACHABLE": { "address": string; "platformRoot"?: string };
   "KB_HOST_VERSION_SKEW": { "client": string; "host": string };
-  "KB_INSTALL_APPLY_FAILED": { "diagnosticPath"?: string; "logPath"?: string };
+  "KB_INSTALL_APPLY_FAILED": { "diagnosticPath"?: string; "logPath"?: string; "packageManagerExitCode"?: string; "packageManagerStderrTail"?: string };
   "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH": { "artifact": string };
   "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED": Record<string, never>;
   "KB_INSTALL_CONFIG_REQUIRED": { "field": string };
@@ -797,6 +801,8 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": { "connectionId": string };
   "KB_SERVICE_HEALTH_TIMEOUT": Record<string, never>;
   "KB_SERVICE_UNAVAILABLE": { "service"?: string; "status"?: string; "timeout"?: string };
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "argsSummary": string; "elapsed": string; "nextCommand": string; "tool": string; "stderrTail": string };
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "nextCommand": string; "version": string };
   "KB_UPDATE_APPLY_FAILED": { "version": string; "diagnosticPath"?: string; "logPath"?: string };
   "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
   "KB_UPDATE_DOWNLOAD_FAILED": Record<string, never>;
@@ -1089,6 +1095,8 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["argsSummary","elapsed","nextCommand","tool"],
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["nextCommand","version"],
   "KB_UPDATE_APPLY_FAILED": ["version"],
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
@@ -1359,6 +1367,8 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["argsSummary","elapsed","tool"],
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["version"],
   "KB_UPDATE_APPLY_FAILED": ["version"],
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
@@ -1629,6 +1639,8 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["nextCommand"],
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["nextCommand"],
   "KB_UPDATE_APPLY_FAILED": [],
   "KB_UPDATE_DOWNGRADE_REFUSED": [],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
@@ -1899,6 +1911,8 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["argsSummary","elapsed","nextCommand","tool"],
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["nextCommand","version"],
   "KB_UPDATE_APPLY_FAILED": ["version"],
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
@@ -2169,6 +2183,8 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["argsSummary","elapsed","tool"],
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["version"],
   "KB_UPDATE_APPLY_FAILED": ["version"],
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
@@ -2439,6 +2455,8 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["nextCommand"],
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["nextCommand"],
   "KB_UPDATE_APPLY_FAILED": [],
   "KB_UPDATE_DOWNGRADE_REFUSED": [],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
@@ -2522,7 +2540,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_HOST_UNHEALTHY": [],
   "KB_HOST_UNREACHABLE": ["platformRoot"],
   "KB_HOST_VERSION_SKEW": [],
-  "KB_INSTALL_APPLY_FAILED": ["diagnosticPath","logPath"],
+  "KB_INSTALL_APPLY_FAILED": ["diagnosticPath","logPath","packageManagerExitCode","packageManagerStderrTail"],
   "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH": [],
   "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED": [],
   "KB_INSTALL_CONFIG_REQUIRED": [],
@@ -2709,6 +2727,8 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": ["service","status","timeout"],
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["tool","argsSummary","elapsed","stderrTail","nextCommand"],
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": [],
   "KB_UPDATE_APPLY_FAILED": ["diagnosticPath","logPath"],
   "KB_UPDATE_DOWNGRADE_REFUSED": [],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
@@ -2979,6 +2999,8 @@ export interface CatalogMessageTemplateParameters {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": { "connectionId": string };
   "KB_SERVICE_HEALTH_TIMEOUT": Record<never, never>;
   "KB_SERVICE_UNAVAILABLE": Record<never, never>;
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "argsSummary": string; "elapsed": string; "tool": string };
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "version": string };
   "KB_UPDATE_APPLY_FAILED": { "version": string };
   "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;
@@ -3249,6 +3271,8 @@ export interface CatalogHintTemplateParameters {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": Record<never, never>;
   "KB_SERVICE_HEALTH_TIMEOUT": Record<never, never>;
   "KB_SERVICE_UNAVAILABLE": Record<never, never>;
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "nextCommand": string };
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "nextCommand": string };
   "KB_UPDATE_APPLY_FAILED": Record<never, never>;
   "KB_UPDATE_DOWNGRADE_REFUSED": Record<never, never>;
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;
@@ -3519,6 +3543,8 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": Record<never, never>;
   "KB_SERVICE_HEALTH_TIMEOUT": Record<never, never>;
   "KB_SERVICE_UNAVAILABLE": Record<never, never>;
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": Record<never, never>;
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": Record<never, never>;
   "KB_UPDATE_APPLY_FAILED": Record<never, never>;
   "KB_UPDATE_DOWNGRADE_REFUSED": Record<never, never>;
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;

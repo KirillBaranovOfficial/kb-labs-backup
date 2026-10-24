@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/semrange"
@@ -28,23 +30,59 @@ type Runner interface {
 	Run(context.Context, io.Writer, string, ...string) error
 }
 
-type commandRunner struct {
+type CommandRunner struct {
 	environment []string
 }
 
-func (r commandRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
+const externalCommandStderrTailBytes = 4096
+
+type externalCommandFailure struct {
+	exitCode   int
+	stderrTail string
+	cause      error
+}
+
+func (f *externalCommandFailure) Error() string { return f.cause.Error() }
+func (f *externalCommandFailure) Unwrap() error { return f.cause }
+
+func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
+	var executable string
 	if name == "pnpm" {
-		// Corepack downloads and caches this exact package-manager release; the
-		// user's globally installed pnpm never participates in an install.
-		args = append([]string{"pnpm@11.4.0"}, args...)
-		name = "corepack"
+		node, script, err := toolchain.PnpmExecutable()
+		if err != nil {
+			return err
+		}
+		executable = node
+		args = append([]string{script}, args...)
+	} else {
+		executable = name
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
+	var env []string
 	if len(r.environment) > 0 {
-		cmd.Env = packageManagerEnvironment(os.Environ(), r.environment)
+		env = packageManagerEnvironment(os.Environ(), r.environment)
 	}
-	cmd.Stdout, cmd.Stderr = output, output
-	return cmd.Run()
+	result, err := toolchain.Run(ctx, toolchain.Invocation{Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager})
+	if result.Stdout != "" {
+		_, _ = io.WriteString(output, result.Stdout)
+	}
+	if result.Stderr != "" {
+		_, _ = io.WriteString(output, result.Stderr)
+	}
+	if err != nil {
+		var commandFailure *toolchain.CommandError
+		if errors.As(err, &commandFailure) {
+			return &externalCommandFailure{exitCode: commandFailure.ExitCode, stderrTail: commandFailure.StderrTail, cause: err}
+		}
+		return err
+	}
+	return nil
+}
+
+func tailText(content []byte, limit int) string {
+	if len(content) > limit {
+		content = content[len(content)-limit:]
+	}
+	return strings.TrimRight(strings.ToValidUTF8(string(content), "�"), "\r\n")
 }
 
 func packageManagerEnvironment(base, overrides []string) []string {
@@ -224,17 +262,33 @@ func (p Pnpm) run(command string, specs ...string) error {
 		if p.PackageManagerRoot == "" {
 			return fmt.Errorf("pnpm package-manager state root is required")
 		}
-		runner = commandRunner{environment: p.packageManagerEnvironment()}
+		runner = CommandRunner{environment: p.packageManagerEnvironment()}
 	}
 	log := p.Log
 	if log == nil {
 		log = io.Discard
 	}
 	if err := runner.Run(context.Background(), log, "pnpm", args...); err != nil {
+		var diagnostic *diag.Diag
+		if errors.As(err, &diagnostic) {
+			return diagnostic
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() < 0 {
 			failure := contracts.NewDiag(contracts.CodePackageManagerKilled, "The package manager was killed, likely out of memory. The tuned install peaked at 992.3 MiB RSS (the unbounded run reached 1.14 GiB); this install requires 1.20 GiB available memory.", "Free memory, then rerun `kb-create install`.", err)
 			failure.Meta = map[string]any{"requiredAvailableMemory": "1.20 GiB", "unboundedPeakMemory": "1.14 GiB", "tunedPeakMemory": "992.3 MiB"}
+			return failure
+		}
+		var commandFailure *externalCommandFailure
+		if errors.As(err, &commandFailure) {
+			failure := contracts.NewDiag(contracts.CodeApplyFailed,
+				"The package manager could not apply the exact artifacts.",
+				"Read the installer log and fix the reported pnpm failure, then rerun `kb-create install`.",
+				fmt.Errorf("pnpm %s exact artifacts: %w", command, err))
+			failure.Meta = map[string]any{
+				"packageManagerExitCode":   fmt.Sprint(commandFailure.exitCode),
+				"packageManagerStderrTail": commandFailure.stderrTail,
+			}
 			return failure
 		}
 		return fmt.Errorf("pnpm %s exact artifacts: %w", command, err)

@@ -21,10 +21,6 @@ func configureKeeper(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
 
-func configureCommandPlatform(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-}
-
 func prepareKeeperPlatform() error { return nil }
 
 func monitorParent(parentPID int, parentIdentity string) (<-chan error, error) {

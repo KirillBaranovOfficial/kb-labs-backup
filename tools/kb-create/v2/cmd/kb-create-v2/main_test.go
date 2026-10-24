@@ -717,20 +717,12 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 			return err
 		}
 	}
-	pnpm := artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, Runner: testPnpmRunner{}}
+	pnpm := artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, PackageManagerRoot: layout.PackageManagerStateDir()}
 	err = pnpm.Install(items)
 	if progress != nil {
 		progress("Install packages", false)
 	}
 	return err
-}
-
-type testPnpmRunner struct{}
-
-func (testPnpmRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
-	command := exec.CommandContext(ctx, name, args...)
-	command.Stdout, command.Stderr = output, output
-	return command.Run()
 }
 
 func (a installArtifacts) installRoot() (string, error) {

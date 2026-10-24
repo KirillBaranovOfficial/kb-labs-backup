@@ -34,6 +34,7 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
                                   _snapshot_installation_owned_tree, shim_owner_matches,
                                   assert_foreign_shim_diagnosis, assert_other_shim_diagnosis,
                                   assert_gateway_index_diagnosis, verify_installation_spellings)
+from installer_case_steps import verify_package_manager_failure_diagnostic
 from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
                                   verify_stable_installation_spellings)
@@ -151,6 +152,61 @@ def journey_layout_path_violations(journey_root: Path, layout: dict, owner_modul
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_package_manager_failure_diagnostic_requires_exit_stderr_and_transcript(self):
+        with tempfile.TemporaryDirectory(prefix="journey-pnpm-failure-") as temporary:
+            home = Path(temporary)
+            platform_root = home / "kb-platform"
+            platform_root.mkdir()
+            index = home / "release-index.json"
+            index.write_text("{}\n")
+            failure_root = platform_root.parent / "pc001-pnpm-failure-root"
+            stderr = "x149-pnpm-fixture: registry unavailable"
+            log = home / "apply.log"
+            log.write_text(stderr + "\n")
+            diagnostic = home / "apply.json"
+            diagnostic.write_text("{}\n")
+
+            def run_command(args, **kwargs):
+                if args[1] == "plan":
+                    payload = {"ok": True, "data": {"plan": {"request": {
+                        "platformRoot": str(failure_root),
+                    }}}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+                self.assertEqual(args[1], "apply")
+                self.assertIn(str(home / "pc001-pnpm-failure-bin"), kwargs["env"]["PATH"])
+                error = {
+                    "code": "KB_INSTALL_APPLY_FAILED",
+                    "message": "The operation did not reach a verified installation.",
+                    "hint": "Inspect the local log.",
+                    "correlationId": "a" * 32,
+                    "details": {
+                        "packageManagerExitCode": "47",
+                        "packageManagerStderrTail": stderr,
+                        "logPath": str(log),
+                        "diagnosticPath": str(diagnostic),
+                    },
+                }
+                return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": error}), "")
+
+            verify_package_manager_failure_diagnostic(
+                launcher="kb-create", stable_index=index, platform_root=platform_root,
+                registry="http://registry.test", run_command=run_command,
+            )
+
+            def dropped_stderr(args, **kwargs):
+                result = run_command(args, **kwargs)
+                if args[1] == "apply":
+                    response = json.loads(result.stdout)
+                    response["error"]["details"].pop("packageManagerStderrTail")
+                    result.stdout = json.dumps(response)
+                return result
+
+            with self.assertRaisesRegex(RuntimeError, "exit code or stderr tail"):
+                verify_package_manager_failure_diagnostic(
+                    launcher="kb-create", stable_index=index, platform_root=platform_root,
+                    registry="http://registry.test", run_command=dropped_stderr,
+                )
+
     def test_diagnostic_hint_contains_the_command_declared_in_details(self):
         command = "next-step"
         self.assertTrue(installer_case_steps.diagnostic_hint_has_next_command({
@@ -1939,7 +1995,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
             owners = {claim: step.name for step in journey.steps for claim in step.cases}
-            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
+            expected = {"PC-001.2", "PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2", "S-054.23",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",

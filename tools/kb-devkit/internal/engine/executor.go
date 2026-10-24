@@ -2,8 +2,10 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/cache"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
@@ -113,6 +117,10 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	}
 	if runErr != nil {
 		result.Error = runErr.Error()
+		var diagnostic *diag.Diag
+		if errors.As(runErr, &diagnostic) {
+			result.Diagnostic = diagnostic
+		}
 	} else if !result.OK {
 		result.Error = fmt.Sprintf("command exited with code %d", exitCode)
 	}
@@ -251,33 +259,35 @@ func (e *Executor) runCommand(command, dir, packageName, taskName string, heartb
 		errW = io.MultiWriter(&errBuf, os.Stderr)
 	}
 
-	cmd := exec.Command(bin, parts[1:]...)
-	cmd.Dir = dir
-	cmd.Stdout = outW
-	cmd.Stderr = errW
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"NODE_PATH="+filepath.Join(e.wsRoot, "node_modules"),
 	)
-
-	if err := cmd.Start(); err != nil {
-		return "", "", 1, err
-	}
 	started := time.Now()
-	wait := make(chan error, 1)
-	go func() { wait <- cmd.Wait() }()
-	var runErr error
+	type commandResult struct {
+		result toolchain.Result
+		err    error
+	}
+	wait := make(chan commandResult, 1)
+	go func() {
+		result, err := toolchain.Run(context.Background(), toolchain.Invocation{
+			Tool: parts[0], Executable: bin, Args: parts[1:], Dir: dir, Env: env,
+			Operation: toolchain.OperationWorkspaceTask, Stdout: outW, Stderr: errW,
+		})
+		wait <- commandResult{result: result, err: err}
+	}()
+	var completed commandResult
 	if e.onHeartbeat == nil || heartbeatInterval <= 0 {
-		runErr = <-wait
+		completed = <-wait
 	} else {
 		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
 		for {
 			select {
-			case runErr = <-wait:
+			case completed = <-wait:
 				goto finished
 			case <-ticker.C:
 				select {
-				case runErr = <-wait:
+				case completed = <-wait:
 					goto finished
 				default:
 					e.onHeartbeat(packageName, taskName, time.Since(started))
@@ -287,15 +297,13 @@ func (e *Executor) runCommand(command, dir, packageName, taskName string, heartb
 	}
 
 finished:
-	exitCode = 0
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
+	if completed.err != nil {
+		var commandFailure *toolchain.CommandError
+		if errors.As(completed.err, &commandFailure) {
+			return outBuf.String(), errBuf.String(), completed.result.ExitCode, nil
+		}
 	}
-	if runErr != nil && exitCode == 0 {
-		exitCode = 1
-	}
-
-	return outBuf.String(), errBuf.String(), exitCode, nil
+	return outBuf.String(), errBuf.String(), completed.result.ExitCode, completed.err
 }
 
 // storeOutputs walks output glob patterns, stores each file in ObjectStore,

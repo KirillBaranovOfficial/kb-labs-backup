@@ -110,6 +110,24 @@ func TestCheckCLIRejectsReviewerCategoryMismatch(t *testing.T) {
 	}
 	moduleDir := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), ".."))
 	workspaceRoot := filepath.Clean(filepath.Join(moduleDir, "../.."))
+	cfg, err := config.LoadFile(filepath.Join(workspaceRoot, "devkit.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.New(workspaceRoot, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packageName string
+	for _, pkg := range ws.Packages {
+		if pkg.Category == "ts-lib" {
+			packageName = pkg.Name
+			break
+		}
+	}
+	if packageName == "" {
+		t.Fatal("workspace has no package in the ts-lib category")
+	}
 	tempDir := t.TempDir()
 	binary := filepath.Join(tempDir, "kb-devkit")
 	build := exec.Command("go", "build", "-o", binary, ".")
@@ -119,7 +137,7 @@ func TestCheckCLIRejectsReviewerCategoryMismatch(t *testing.T) {
 		t.Fatalf("build kb-devkit: %v\n%s", err, output)
 	}
 
-	command := exec.Command(binary, "check", "--package", "@kb-labs/viewer/core", "--only", "cli-naming", "--json")
+	command := exec.Command(binary, "check", "--package", packageName, "--only", "cli-naming", "--json")
 	command.Dir = workspaceRoot
 	command.Env = isolatedCheckEnv(t, tempDir)
 	output, err := command.CombinedOutput()
@@ -399,5 +417,27 @@ func TestCheckExecutionFailureIsTypedAndActionable(t *testing.T) {
 		"b": {Issues: []checks.Issue{{Check: "adapter-manifest", CheckFailure: true, Cause: "exit 2"}}},
 	})) != 2 {
 		t.Fatal("checkExecutionFailures dropped a crashed check")
+	}
+}
+
+// case: S-179.27
+func TestExternalToolTimeoutDiagnosticSurvivesCheckFailureAggregation(t *testing.T) {
+	diagnostic, err := diag.FromCatalog("KB_TOOLCHAIN_EXTERNAL_TIMEOUT", map[string]string{
+		"tool": "fixture", "argsSummary": "check", "elapsed": "30m", "stderrTail": "", "nextCommand": "kb-devkit check --only slow-check",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issues := map[string]checks.PackageResult{
+		"workspace": {Issues: []checks.Issue{{Check: "slow-check", CheckFailure: true, Cause: "tool timeout", FailureDiagnostic: diagnostic}}},
+	}
+	failures := checkExecutionFailures(issues)
+	if len(failures) != 1 || failures[0].Diagnostic != diagnostic {
+		t.Fatalf("check failures = %#v, want preserved toolchain diagnostic", failures)
+	}
+	err = externalCheckFailureError(failures, issues)
+	var got *diag.Diag
+	if !errors.As(err, &got) || got.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" {
+		t.Fatalf("aggregated timeout = %#v, want KB_TOOLCHAIN_EXTERNAL_TIMEOUT", err)
 	}
 }

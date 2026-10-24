@@ -747,6 +747,53 @@ def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
     return journey
 
 
+def verify_package_manager_failure_diagnostic(*, launcher: str, stable_index: Path,
+                                              platform_root: Path, registry: str,
+                                              run_command: CommandRunner) -> None:
+    """Prove an installed apply exposes the failing package manager's exit and stderr."""
+    failure_root = platform_root.parent / "pc001-pnpm-failure-root"
+    request_path = platform_root.parent / "pc001-pnpm-failure-request.json"
+    fake_bin = platform_root.parent / "pc001-pnpm-failure-bin"
+    stderr = "x149-pnpm-fixture: registry unavailable"
+
+    def assert_failure_diagnostic() -> None:
+        plan = _json_command(
+            run_command,
+            [launcher, "plan", "--json", "--index", str(stable_index), "--platform-root", str(failure_root),
+             "--service-profile", "default", "--scenario", "commit", "--registry", registry],
+            "PC-001 package-manager failure plan",
+        ).get("plan", {})
+        request = plan.get("request")
+        if not isinstance(request, dict) or request.get("platformRoot") != str(failure_root):
+            raise RuntimeError("package-manager failure plan omitted its isolated install request")
+        request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
+        fake_bin.mkdir(mode=0o700, exist_ok=True)
+        fake_corepack = fake_bin / "corepack"
+        fake_corepack.write_text(f"#!/bin/sh\nprintf '%s\\n' '{stderr}' >&2\nexit 47\n", encoding="utf-8")
+        fake_corepack.chmod(0o700)
+        failure_env = dict(os.environ)
+        failure_env["PATH"] = str(fake_bin) + os.pathsep + failure_env.get("PATH", "")
+        result = run_command(
+            [launcher, "apply", "--json", "--index", str(stable_index), "--input", str(request_path),
+             "--platform-root", str(failure_root), "--registry", registry],
+            env=failure_env,
+        )
+        _, error = _diagnostic(result, "PC-001 package-manager failure")
+        details = error.get("details", error.get("meta", {}))
+        if (error.get("code") != "KB_INSTALL_APPLY_FAILED" or not isinstance(details, dict)
+                or details.get("packageManagerExitCode") != "47"
+                or details.get("packageManagerStderrTail") != stderr):
+            raise RuntimeError(f"package-manager failure omitted its exit code or stderr tail: {error}")
+        log_path = details.get("logPath")
+        diagnostic_path = details.get("diagnosticPath")
+        if (not isinstance(log_path, str) or not Path(log_path).is_file()
+                or stderr not in Path(log_path).read_text(encoding="utf-8")
+                or not isinstance(diagnostic_path, str) or not Path(diagnostic_path).is_file()):
+            raise RuntimeError("package-manager failure omitted its complete installer log or diagnostic dossier")
+
+    assert_failure_diagnostic()
+
+
 def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandRunner,
                      *, input_text: str | None = None) -> CompletedProcess:
     """Run the CLI installed for the requested root, independent of PATH shim ownership."""
@@ -1733,6 +1780,11 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey.step_guard = installer_primary_host_guard(platform_root, launcher, run_command)
     journey.step("compare installed candidate bytes with sealed provenance", "platform.install",
                  lambda: verify_installed_candidate_provenance(installed_root), cases=["PC-001.19"])
+    journey.step("report package-manager stderr when exact-artifact apply fails", "platform.install",
+                 lambda: verify_package_manager_failure_diagnostic(
+                     launcher=launcher, stable_index=stable_index, platform_root=platform_root,
+                     registry=registry, run_command=run_command),
+                 cases=["PC-001.2"])
     journey.step("refuse candidate-derived package bytes that disagree with provenance", "platform.install",
                  lambda: run_candidate_provenance_mismatch_step(
                      launcher=launcher, candidate_index=stable_index, installed_root=installed_root,

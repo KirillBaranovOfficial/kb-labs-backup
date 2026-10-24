@@ -4,21 +4,26 @@
 package toolchain
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/proc/child"
 )
 
 //go:generate node generate-node-policy.mjs
-
-const (
-	SupportedPnpmMajor = 11
-	SupportedPnpm      = "11.4.0"
-)
 
 type Status struct{ NodeVersion, PnpmVersion string }
 
@@ -69,11 +74,208 @@ func Version(binary string) (string, error) {
 	if strings.TrimSpace(binary) == "" {
 		return "", nil
 	}
-	out, err := exec.Command(binary, "--version").Output() // #nosec G204 -- binary is selected by the launcher
+	out, err := Run(context.Background(), Invocation{Tool: binary, Executable: binary, Args: []string{"--version"}, Operation: OperationVersionProbe})
 	if err != nil {
 		return "", fmt.Errorf("read version from %s: %w", binary, err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(out.Stdout), nil
+}
+
+// Operation selects the centrally-owned stall limit for an external operation.
+type Operation uint8
+
+const (
+	OperationVersionProbe Operation = iota
+	OperationPackageManager
+	OperationWorkspaceTask
+)
+
+func (o Operation) timeout() time.Duration {
+	switch o {
+	case OperationVersionProbe:
+		return 10 * time.Second
+	case OperationPackageManager:
+		return 15 * time.Minute
+	case OperationWorkspaceTask:
+		return 30 * time.Minute
+	default:
+		return 30 * time.Minute
+	}
+}
+
+type Invocation struct {
+	Tool, Executable string
+	Args, Env        []string
+	Dir              string
+	Operation        Operation
+	Stdout, Stderr   io.Writer
+	Stdin            io.Reader
+}
+
+type Result struct {
+	Stdout, Stderr string
+	ExitCode       int
+	Elapsed        time.Duration
+}
+
+type CommandError struct {
+	ExitCode   int
+	StderrTail string
+	Err        error
+}
+
+func (e *CommandError) Error() string { return e.Err.Error() }
+func (e *CommandError) Unwrap() error { return e.Err }
+
+type TimeoutBound string
+
+const (
+	BoundOperation TimeoutBound = "operation"
+	BoundCaller    TimeoutBound = "caller"
+)
+
+type TimeoutError struct {
+	Bound   TimeoutBound
+	Budget  time.Duration
+	Elapsed time.Duration
+}
+
+func (e *TimeoutError) Error() string {
+	return fmt.Sprintf("external command exceeded its %s execution budget of %s", e.Bound, e.Budget.Round(time.Millisecond))
+}
+
+var outerHome = func() string {
+	current, err := user.Current()
+	if err == nil {
+		return current.HomeDir
+	}
+	home, _ := os.UserHomeDir()
+	return home
+}()
+var outerCorepackHome = func() string {
+	if root := os.Getenv("COREPACK_HOME"); root != "" {
+		return root
+	}
+	if runtime.GOOS == "windows" && os.Getenv("LOCALAPPDATA") != "" {
+		return filepath.Join(os.Getenv("LOCALAPPDATA"), "node", "corepack")
+	}
+	return filepath.Join(outerHome, ".cache", "node", "corepack")
+}()
+
+var pnpmResolution sync.Once
+var resolvedPnpmNode, resolvedPnpmScript string
+var resolvedPnpmError error
+
+// PnpmExecutable resolves only the exact workspace-pinned pnpm from the
+// outer user's Corepack cache. It never invokes Corepack or downloads packages.
+func PnpmExecutable() (node, pnpmScript string, err error) {
+	pnpmResolution.Do(func() {
+		resolvedPnpmNode, resolvedPnpmScript, resolvedPnpmError = resolvePnpmAt(outerCorepackHome)
+	})
+	return resolvedPnpmNode, resolvedPnpmScript, resolvedPnpmError
+}
+
+func resolvePnpmAt(cacheRoot string) (node, script string, err error) {
+	script = filepath.Join(cacheRoot, "v1", "pnpm", SupportedPnpm, "bin", "pnpm.cjs")
+	if _, err = os.Stat(script); err != nil {
+		diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_PNPM_UNAVAILABLE", map[string]string{"version": SupportedPnpm, "nextCommand": "corepack install"})
+		if diagErr != nil {
+			return "", "", diagErr
+		}
+		return "", "", diagnostic
+	}
+	node, err = exec.LookPath("node")
+	if err != nil {
+		return "", "", fmt.Errorf("locate Node.js to run cached pnpm: %w", err)
+	}
+	return node, script, nil
+}
+
+// Run executes an external tool with the operation's shared timeout and emits
+// catalogued diagnostics on stalls, including the bounded stderr tail.
+func Run(ctx context.Context, invocation Invocation) (Result, error) {
+	return run(ctx, invocation, invocation.Operation.timeout())
+}
+
+func run(ctx context.Context, invocation Invocation, operationTimeout time.Duration) (Result, error) {
+	started := time.Now()
+	callerDeadline, hasCallerDeadline := ctx.Deadline()
+	operationDeadline := started.Add(operationTimeout)
+	callerBound := hasCallerDeadline && callerDeadline.Before(operationDeadline)
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
+	command := exec.Command(invocation.Executable, invocation.Args...)
+	command.Dir = invocation.Dir
+	command.Stdin = invocation.Stdin
+	if invocation.Env != nil {
+		command.Env = invocation.Env
+	}
+	var stdout bytes.Buffer
+	var stderr tailBuffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if invocation.Stdout != nil {
+		command.Stdout = io.MultiWriter(&stdout, invocation.Stdout)
+	}
+	if invocation.Stderr != nil {
+		command.Stderr = io.MultiWriter(&stderr, invocation.Stderr)
+	}
+	err := child.Run(ctx, command)
+	result := Result{Stdout: stdout.String(), Stderr: stderr.String(), Elapsed: time.Since(started)}
+	if err == nil {
+		return result, nil
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if callerBound {
+			return result, &TimeoutError{Bound: BoundCaller, Budget: callerDeadline.Sub(started), Elapsed: result.Elapsed}
+		}
+		values := map[string]string{
+			"tool":        diag.RedactText(invocation.Tool),
+			"argsSummary": summarizeArgs(invocation.Args),
+			"elapsed":     result.Elapsed.Round(time.Millisecond).String(),
+			"stderrTail":  diag.RedactText(strings.TrimRight(result.Stderr, "\r\n")),
+			"nextCommand": nextCommand(invocation),
+		}
+		diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_EXTERNAL_TIMEOUT", values, diag.WithMeta(map[string]any{
+			"tool": values["tool"], "argsSummary": values["argsSummary"], "elapsed": values["elapsed"], "stderrTail": values["stderrTail"], "nextCommand": values["nextCommand"],
+		}))
+		if diagErr != nil {
+			return result, diagErr
+		}
+		return result, diagnostic
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		result.ExitCode = exit.ExitCode()
+	}
+	return result, &CommandError{ExitCode: result.ExitCode, StderrTail: diag.RedactText(strings.TrimRight(result.Stderr, "\r\n")), Err: err}
+}
+
+const stderrTailLimit = 4096
+
+type tailBuffer struct{ data []byte }
+
+func (b *tailBuffer) Write(data []byte) (int, error) {
+	b.data = append(b.data, data...)
+	if len(b.data) > stderrTailLimit {
+		b.data = append([]byte(nil), b.data[len(b.data)-stderrTailLimit:]...)
+	}
+	return len(data), nil
+}
+func (b *tailBuffer) String() string {
+	return strings.ToValidUTF8(string(b.data), "�")
+}
+func summarizeArgs(args []string) string { return diag.RedactText(strings.Join(args, " ")) }
+func nextCommand(invocation Invocation) string {
+	parts := append([]string{invocation.Executable}, invocation.Args...)
+	quoted := make([]string, len(parts))
+	for index, part := range parts {
+		quoted[index] = "'" + strings.ReplaceAll(part, "'", "'\\''") + "'"
+	}
+	command := strings.Join(quoted, " ")
+	if invocation.Dir != "" {
+		command = "cd '" + strings.ReplaceAll(invocation.Dir, "'", "'\\''") + "' && " + command
+	}
+	return diag.RedactText(command)
 }
 
 func ValidateNode(version string) error {

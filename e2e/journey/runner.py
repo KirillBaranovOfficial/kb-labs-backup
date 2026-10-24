@@ -1821,8 +1821,11 @@ def _main(*, update_variant_runner=None):
                 store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
                                     "root-isolation installer password")
             return run(args, env=installer_env, timeout=1200)[0]
-        def installer_command_for_fixture(args: list[str], *, input: str | None = None):
-            return installer_command(args, env=env, secret=installer_secret, input=input)
+        fixture_env = env
+        def installer_command_for_fixture(args: list[str], *, input: str | None = None,
+                                          env: Mapping[str, str] | None = None):
+            return installer_command(args, env=env if env is not None else fixture_env,
+                                     secret=installer_secret, input=input)
         fixture_groups = ISOLATED_FIXTURE_GROUPS
         fixture_group_keys = {group: f"isolated-fixture:{group.__name__}" for group in fixture_groups}
         selected_groups = tuple(group for group in fixture_groups

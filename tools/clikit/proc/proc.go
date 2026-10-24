@@ -18,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/kb-labs/clikit/proc/child"
 )
 
 const (
@@ -901,5 +903,5 @@ func commandText(command []string) string { return strings.Join(command, " ") }
 
 func configureCommand(cmd *exec.Cmd, runID, stateDir, scratch string) {
 	cmd.Env = append(filteredEnv(cmd.Env), runEnv+"="+runID, resourceStateEnv+"="+stateDir, "KB_RUNNER_SCRATCH="+scratch, "TMPDIR="+scratch, "TMP="+scratch, "TEMP="+scratch)
-	configureCommandPlatform(cmd)
+	child.ConfigureCommand(cmd)
 }

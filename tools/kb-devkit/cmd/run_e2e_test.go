@@ -200,7 +200,7 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 	assertCounts(success.Data.Summary, 3, 0, 3, 0, 0, 0)
 }
 
-// case: S-179.23
+// case: S-179.23, S-261.6
 func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing.T) {
 	root := t.TempDir()
 	writeRunFixture(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)

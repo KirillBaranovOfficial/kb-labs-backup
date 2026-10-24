@@ -11,6 +11,10 @@ func commandFailure(command string) error {
 }
 
 func taskFailure(result engine.TaskResult, data any) error {
+	if result.Diagnostic != nil {
+		result.Diagnostic.Data = data
+		return result.Diagnostic
+	}
 	code := "KB_DEVKIT_TASK_FAILED"
 	meta := map[string]any{
 		"package": result.Package,

@@ -263,11 +263,17 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 }
 
 type externalCheckFailure struct {
-	Check string
-	Cause string
+	Check      string
+	Cause      string
+	Diagnostic *diag.Diag
 }
 
 func externalCheckFailureError(failures []externalCheckFailure, results map[string]checks.PackageResult) error {
+	for _, failure := range failures {
+		if failure.Diagnostic != nil {
+			return failure.Diagnostic
+		}
+	}
 	checks := make(map[string]bool, len(failures))
 	causes := make([]string, 0, len(failures))
 	for _, failure := range failures {
@@ -281,14 +287,16 @@ func externalCheckFailureError(failures []externalCheckFailure, results map[stri
 }
 
 func checkExecutionFailures(results map[string]checks.PackageResult) []externalCheckFailure {
-	failures := make(map[string]map[string]struct{})
+	failures := make(map[string]map[string]*diag.Diag)
 	for _, result := range results {
 		for _, issue := range result.Issues {
 			if issue.CheckFailure {
 				if failures[issue.Check] == nil {
-					failures[issue.Check] = make(map[string]struct{})
+					failures[issue.Check] = make(map[string]*diag.Diag)
 				}
-				failures[issue.Check][issue.Cause] = struct{}{}
+				if diagnostic, exists := failures[issue.Check][issue.Cause]; !exists || diagnostic == nil {
+					failures[issue.Check][issue.Cause] = issue.FailureDiagnostic
+				}
 			}
 		}
 	}
@@ -305,7 +313,7 @@ func checkExecutionFailures(results map[string]checks.PackageResult) []externalC
 		}
 		sort.Strings(causes)
 		for _, cause := range causes {
-			result = append(result, externalCheckFailure{Check: checkName, Cause: cause})
+			result = append(result, externalCheckFailure{Check: checkName, Cause: cause, Diagnostic: failures[checkName][cause]})
 		}
 	}
 	return result

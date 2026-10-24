@@ -1,16 +1,17 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/cache"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
@@ -739,25 +740,21 @@ func collectChangedFiles(wsRoot, strategy, command string) ([]string, error) {
 
 // gitChangedFiles runs `git diff --name-only HEAD` in dir and returns absolute paths.
 func gitChangedFiles(wsRoot, dir string) ([]string, error) {
-	cmd := exec.Command("git", "diff", "--name-only", "HEAD")
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	result, err := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "git", Executable: "git", Args: []string{"diff", "--name-only", "HEAD"}, Dir: dir, Operation: toolchain.OperationVersionProbe})
+	out := []byte(result.Stdout)
 	if err != nil {
 		// Also try staged files (for fresh repos with no HEAD)
-		cmd2 := exec.Command("git", "diff", "--name-only", "--cached")
-		cmd2.Dir = dir
-		out2, err2 := cmd2.Output()
+		result2, err2 := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "git", Executable: "git", Args: []string{"diff", "--name-only", "--cached"}, Dir: dir, Operation: toolchain.OperationVersionProbe})
 		if err2 != nil {
 			return nil, err // return original error
 		}
-		out = out2
+		out = []byte(result2.Stdout)
 	}
 
 	// Also include unstaged changes
-	cmd3 := exec.Command("git", "diff", "--name-only")
-	cmd3.Dir = dir
-	if out3, err3 := cmd3.Output(); err3 == nil {
-		out = append(out, out3...)
+	result3, err3 := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "git", Executable: "git", Args: []string{"diff", "--name-only"}, Dir: dir, Operation: toolchain.OperationVersionProbe})
+	if err3 == nil {
+		out = append(out, result3.Stdout...)
 	}
 
 	return parseFileList(wsRoot, dir, out), nil
@@ -789,13 +786,11 @@ func commandChangedFiles(wsRoot, command string) ([]string, error) {
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("empty command")
 	}
-	cmd := exec.Command(parts[0], parts[1:]...)
-	cmd.Dir = wsRoot
-	out, err := cmd.Output()
+	result, err := toolchain.Run(context.Background(), toolchain.Invocation{Tool: parts[0], Executable: parts[0], Args: parts[1:], Dir: wsRoot, Operation: toolchain.OperationWorkspaceTask})
 	if err != nil {
 		return nil, fmt.Errorf("command %q failed: %w", command, err)
 	}
-	return parseFileList(wsRoot, wsRoot, out), nil
+	return parseFileList(wsRoot, wsRoot, []byte(result.Stdout)), nil
 }
 
 // readSubmoduleRoots parses .gitmodules to find submodule absolute paths.
