@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/proc/child"
 	"io"
 	"net"
 	"net/http"
@@ -305,8 +306,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}
 	r.stderr = &tailBuffer{limit: startupStderrLimit}
 	cmd.Stdout, cmd.Stderr = logFile, io.MultiWriter(logFile, r.stderr)
-	configureHostProcess(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := child.Start(cmd, child.ProcessGroup); err != nil {
 		_ = logFile.Close()
 		return Info{}, r.startFailed(err, nil)
 	}

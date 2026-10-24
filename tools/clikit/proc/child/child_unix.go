@@ -5,18 +5,31 @@ package child
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
 	"time"
 )
 
-func configureCommand(command *exec.Cmd) {
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+func configureCommand(command *exec.Cmd, mode Mode) error {
+	attributes := &syscall.SysProcAttr{}
+	switch mode {
+	case ProcessGroup:
+		attributes.Setpgid = true
+	case Detached:
+		attributes.Setsid = true
+	default:
+		return fmt.Errorf("start child: unknown mode %d", mode)
+	}
+	command.SysProcAttr = attributes
+	return nil
 }
 
 func runCommand(ctx context.Context, command *exec.Cmd, waitDelay time.Duration) error {
-	configureCommand(command)
+	if err := configureCommand(command, ProcessGroup); err != nil {
+		return err
+	}
 	command.WaitDelay = waitDelay
 	if err := command.Start(); err != nil {
 		return err
@@ -37,13 +50,31 @@ func runCommand(ctx context.Context, command *exec.Cmd, waitDelay time.Duration)
 	return errors.Join(err, terminateGroup(command))
 }
 
-func terminateGroup(command *exec.Cmd) error {
-	if command.Process == nil {
-		return os.ErrProcessDone
+func terminateTree(pid int) error {
+	if pid <= 0 {
+		return fmt.Errorf("terminate child tree: invalid pid %d", pid)
 	}
-	err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	err := syscall.Kill(-pid, syscall.SIGTERM)
 	if errors.Is(err, syscall.ESRCH) {
 		return nil
 	}
 	return err
+}
+
+func killTree(pid int) error {
+	if pid <= 0 {
+		return fmt.Errorf("kill child tree: invalid pid %d", pid)
+	}
+	err := syscall.Kill(-pid, syscall.SIGKILL)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return err
+}
+
+func terminateGroup(command *exec.Cmd) error {
+	if command.Process == nil {
+		return os.ErrProcessDone
+	}
+	return killTree(command.Process.Pid)
 }

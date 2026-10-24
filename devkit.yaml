@@ -772,6 +772,11 @@ checks:
   timeout_ms: 2400000
 
 custom_checks:
+  - name: process-launcher-owner
+    run: go -C tools/kb-devkit run ./cmd/process-launcher-check
+    on: [check]
+    scope: workspace
+
   - name: new-tests
     run: node scripts/checks/new-tests.mjs
     on: [check]
