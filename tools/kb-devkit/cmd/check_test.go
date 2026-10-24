@@ -83,7 +83,7 @@ func TestCheckCLIRejectsReviewerCategoryMismatch(t *testing.T) {
 		t.Fatalf("build kb-devkit: %v\n%s", err, output)
 	}
 
-	command := exec.Command(binary, "check", "--package", "@kb-labs/viewer/core", "--only", "cli-naming", "--json")
+	command := exec.Command(binary, "check", "--package", "@kb-labs/core-platform", "--only", "cli-naming", "--json")
 	command.Dir = workspaceRoot
 	command.Env = isolatedCheckEnv(t, tempDir)
 	output, err := command.CombinedOutput()

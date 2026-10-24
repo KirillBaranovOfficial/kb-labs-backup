@@ -38,6 +38,25 @@ func TestResolveTaskDefResolvesMatchingVariantAndDefaultCache(t *testing.T) {
 	}
 }
 
+func TestBuildDAGRejectsPackageTaskWithMissingScript(t *testing.T) {
+	root := t.TempDir()
+	writeRootWorkspace(t, root)
+	pkg := newPkg(t, root, "e2e/mcp", "@kb-labs/e2e-mcp", `{"name":"@kb-labs/e2e-mcp","scripts":{"e2e":"playwright test"}}`)
+	pkg.Category = "e2e-suite"
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{pkg}}
+	cfg := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{
+		"test": {{Categories: []string{"e2e-suite"}, Command: "pnpm run test"}},
+	}}
+
+	_, err := buildDAG(ws.Packages, []string{"test"}, cfg, ws)
+	if err == nil {
+		t.Fatal("buildDAG accepted pnpm run test without a package test script")
+	}
+	if got, want := err.Error(), `DevKit task "test" for package "@kb-labs/e2e-mcp" invokes missing package script "test"; declare it in package.json or remove the task assignment, then rerun kb-devkit run test --packages @kb-labs/e2e-mcp`; got != want {
+		t.Fatalf("buildDAG error = %q, want %q", got, want)
+	}
+}
+
 func TestBuildDAGAndAffectedPackages(t *testing.T) {
 	root := t.TempDir()
 	writeRootWorkspace(t, root)

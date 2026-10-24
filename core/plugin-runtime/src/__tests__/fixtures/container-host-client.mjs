@@ -1,4 +1,4 @@
-import { DockerEnvironmentAdapter } from '../../../../../adapters/environment-docker/dist/index.js';
+import { DockerEnvironmentAdapter } from '@kb-labs/adapters-environment-docker';
 import { createStdioChannel } from '@kb-labs/core-ipc';
 
 const image = process.env.KB_CONTAINER_TEST_IMAGE;

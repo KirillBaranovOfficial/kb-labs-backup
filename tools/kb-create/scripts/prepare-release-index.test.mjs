@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPlatformReleaseConfig, releaseArtifactPackageNames } from './platform-release-config.mjs';
-import { invokePackageProvenanceOwner } from '../../../e2e/platform/package-provenance.mjs';
-import { isPlatformPackage } from '../../../core/plugin-runtime/src/platform-resolve/platform-package.js';
+import { invokePackageProvenanceOwner } from './package-provenance.mjs';
+import { isPlatformPackage } from '@kb-labs/plugin-runtime';
 
 const script = new URL('./prepare-release-index.mjs', import.meta.url);
 const temporaryRoots = new Set();

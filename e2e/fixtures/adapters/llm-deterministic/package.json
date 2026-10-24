@@ -16,7 +16,7 @@
   },
   "scripts": {
     "build": "node ./build.mjs",
-    "test": "node --test"
+    "test": "node --test index.test.js"
   },
   "license": "UNLICENSED"
 }

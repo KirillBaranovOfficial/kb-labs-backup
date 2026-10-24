@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import test, { after } from 'node:test';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
-import { readPlatformReleaseConfig, releaseArtifactPackageNames } from '../../tools/kb-create/scripts/platform-release-config.mjs';
+import { readPlatformReleaseConfig, releaseArtifactPackageNames } from 'kb-create/scripts/platform-release-config.mjs';
 
 const platformMembers = readPlatformReleaseConfig(fileURLToPath(new URL('../../tools/kb-create/config/platform-release.jsonc', import.meta.url))).platformMembers;
 
@@ -59,7 +59,7 @@ test('candidate version changes when packed package content changes', () => {
     const changed = join(root, 'changed');
     seedReleasePackages(root, first, registryManifest);
     seedReleasePackages(root, changed, registryManifest);
-    const changedTarball = join(changed, packageFilename('@kb-labs/commit', '3.0.0'));
+    const changedTarball = join(changed, packageFilename('@kb-labs/core-runtime', '3.0.0'));
     const unpack = join(root, 'unpack');
     mkdirSync(unpack);
     execFileSync('tar', ['-xzf', changedTarball, '-C', unpack]);
@@ -84,7 +84,7 @@ test('candidate version is idempotent when unchanged dist bytes are repacked wit
     const repacked = join(root, 'repacked');
     seedReleasePackages(root, first, registryManifest);
     seedReleasePackages(root, repacked, registryManifest);
-    const filename = packageFilename('@kb-labs/commit', '3.0.0');
+    const filename = packageFilename('@kb-labs/core-runtime', '3.0.0');
     const archive = join(repacked, filename);
     const unpack = join(root, 'unpack');
     mkdirSync(unpack);
@@ -144,8 +144,8 @@ test('release-index Docker stage copies the package preparation helper', () => {
   const platformDirectory = dirname(fileURLToPath(import.meta.url));
   const dockerfile = readFileSync(join(platformDirectory, 'Dockerfile'), 'utf8');
   assert.match(dockerfile, /COPY e2e\/platform\/journey-update-packages\.mjs \/src\/journey-update-packages\.mjs/);
-  assert.match(dockerfile, /COPY e2e\/platform\/package-provenance\.mjs \/src\/package-provenance\.mjs/);
-  assert.match(dockerfile, /COPY tools\/kb-create\/scripts\/platform-release-config\.mjs \/tools\/kb-create\/scripts\/platform-release-config\.mjs/);
+  assert.match(dockerfile, /COPY tools\/kb-create\/scripts\/package-provenance\.mjs \/src\/node_modules\/kb-create\/scripts\/package-provenance\.mjs/);
+  assert.match(dockerfile, /COPY tools\/kb-create\/scripts\/platform-release-config\.mjs \/src\/kb-create\/scripts\/platform-release-config\.mjs/);
 });
 
 test('builds a versioned failing service artifact for restart health recovery', () => {
@@ -224,7 +224,7 @@ test('refuses a staged requirement when its package is absent from the release m
 });
 
 
-test('release package set follows the manifest when a plugin is removed or added', () => {
+test('plugin registry changes do not alter the shipped platform package set', () => {
   const root = mkdtempSync(join(tmpdir(), 'journey-update-manifest-mutation-'));
   try {
     const withoutCommit = structuredClone(registryManifest);
@@ -240,7 +240,7 @@ test('release package set follows the manifest when a plugin is removed or added
     });
     const droppedNames = JSON.parse(readFileSync(join(droppedUpdate, 'manifest.json'), 'utf8')).map(item => item.name);
     assert.equal(withoutNames.includes('@kb-labs/commit'), false);
-    assert.equal(droppedNames.includes('@kb-labs/commit'), false);
+    assert.deepEqual(droppedNames.sort(), withoutNames.sort());
     assert.ok(droppedNames.every(name => withoutNames.includes(name)));
 
     const withNewPlugin = structuredClone(withoutCommit);
@@ -255,9 +255,9 @@ test('release package set follows the manifest when a plugin is removed or added
       platformMembers,
     });
     const addedEntries = JSON.parse(readFileSync(join(addedUpdate, 'manifest.json'), 'utf8'));
-    assert.equal(withNames.includes('@kb-labs/new-first-party'), true);
-    assert.equal(addedEntries.find(item => item.name === '@kb-labs/new-first-party')?.version, '3.0.2');
-    assert.equal(addedEntries.some(item => item.name === '@kb-labs/commit'), false);
+    assert.equal(withNames.includes('@kb-labs/new-first-party'), false);
+    assert.equal(addedEntries.some(item => item.name === '@kb-labs/new-first-party'), false);
+    assert.deepEqual(addedEntries.map(item => item.name).sort(), withoutNames.sort());
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

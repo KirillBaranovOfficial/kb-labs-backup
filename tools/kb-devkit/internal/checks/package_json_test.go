@@ -39,8 +39,8 @@ func TestRegistryRulesForGoAndRegister(t *testing.T) {
 	}
 
 	goRules := registry.RulesFor(config.Preset{Language: "go"})
-	if len(goRules) != 1 || goRules[0].Name() != "structure" {
-		t.Fatalf("RulesFor(go) = %#v, want only structure", goRules)
+	if len(goRules) != 2 || goRules[0].Name() != "structure" || goRules[1].Name() != "deps" {
+		t.Fatalf("RulesFor(go) = %#v, want structure and deps", goRules)
 	}
 
 	if len(registry.All()) != len(tsRules) {
