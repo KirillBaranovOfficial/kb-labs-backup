@@ -17,6 +17,7 @@ import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import {
   GATEWAY_SERVICE_NETWORK,
   AdapterConfigError,
+  catalogEnvironmentVariables,
   resolveServiceListenAddress,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
@@ -420,7 +421,7 @@ export async function createHostConfig(
           });
         },
       });
-      const hostControlCredential = process.env.KB_HOST_CONTROL_TOKEN;
+      const hostControlCredential = process.env[catalogEnvironmentVariables.KB_HOST_CONTROL_TOKEN];
       const activeWorkControl = hostControlCredential
         ? await startHostActiveWorkControl(hostControlCredential, ctx.activeWork, manager)
         : undefined;

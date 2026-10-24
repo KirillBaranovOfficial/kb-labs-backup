@@ -2,12 +2,14 @@ package checks
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
@@ -24,6 +26,7 @@ type externalRule struct {
 	workspaceRoot string
 	checkConfig   config.CheckPackConfig
 	graphTasks    []string
+	timeout       time.Duration
 }
 
 type externalInput struct {
@@ -163,7 +166,14 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 		return externalCheckOutput{}, fmt.Errorf("marshal external check input for %s: %w", r.name, err)
 	}
 
-	cmd := exec.Command("sh", "-c", command)
+	ctx := context.Background()
+	cancel := func() {}
+	if r.timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, r.timeout)
+	}
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	setProcessGroup(cmd)
 	cmd.Dir = r.workspaceRoot
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Env = append(os.Environ(),
@@ -183,6 +193,9 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return externalCheckOutput{}, fmt.Errorf("external check exceeded its configured %s execution budget: %w", r.timeout, ctx.Err())
+	}
 
 	var parsed externalCheckOutput
 	if strings.TrimSpace(stdout.String()) != "" {
@@ -199,6 +212,9 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 }
 
 func safeExternalCause(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return err.Error()
+	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		return fmt.Sprintf("external command exited with status %d", exitErr.ExitCode())

@@ -1,5 +1,5 @@
 import { createErrorEnvelope, getCatalogEntry, isErrorCode, toErrorEnvelope, type ErrorCode, type ErrorEnvelope } from '../error-envelope/index.js';
-import type { CatalogErrorCode } from '../error-envelope/error-codes.generated.js';
+import type { CatalogDetailsFor } from '../error-envelope/error-codes.generated.js';
 import { createUxFailureResult, type UxFailureResult } from '../ux-result/index.js';
 
 export interface HttpFailureOptions {
@@ -74,10 +74,13 @@ function validationDetails(payload: unknown): Record<string, string> | undefined
   return undefined;
 }
 
+type FallbackErrorCode = ReturnType<typeof fallbackCodeForStatus>;
+type FallbackErrorDetails = CatalogDetailsFor[FallbackErrorCode];
+
 function createFallbackError(
-  code: CatalogErrorCode,
+  code: FallbackErrorCode,
   limitBytes?: number,
-  details?: Record<string, string>,
+  details?: FallbackErrorDetails,
 ): ErrorEnvelope {
   if (code === 'KB_RUNTIME_INPUT_INVALID') {
     return createErrorEnvelope(code, details ? { details } : {});
@@ -114,7 +117,7 @@ function formatByteLimit(limitBytes: number): string {
   return `${size} ${units[unitIndex]}`;
 }
 
-function fallbackCodeForStatus(statusCode: number): CatalogErrorCode {
+function fallbackCodeForStatus(statusCode: number) {
   return statusCode === 401 ? 'KB_AUTH_REQUIRED'
     : statusCode === 403 ? 'KB_AUTH_FORBIDDEN'
       : statusCode === 400 ? 'KB_RUNTIME_INPUT_INVALID'

@@ -170,5 +170,6 @@ export interface ErrorCatalogEntry {
 
 export interface ErrorCatalog {
   version: 1;
+  environmentVariables: string[];
   codes: ErrorCatalogEntry[];
 }

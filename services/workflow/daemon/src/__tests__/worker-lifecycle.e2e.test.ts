@@ -4,7 +4,7 @@ import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { StateStore, WorkflowEngine, WorkflowOperationResult } from '@kb-labs/workflow-engine';
 import type { JobRun, StepRun, StepSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
 import { EnvSecretProvider } from '@kb-labs/workflow-engine';
-import { createWorkflowExecutionBackendFixture } from './execution-backend-fixture.js';
+import { createWorkflowExecutionBackendFixture } from '../../test-fixtures/execution-backend-fixture.js';
 
 // Mock SandboxRunner — worker tests verify orchestration, not plugin resolution.
 // SandboxRunner is tested separately in workflow-runtime.

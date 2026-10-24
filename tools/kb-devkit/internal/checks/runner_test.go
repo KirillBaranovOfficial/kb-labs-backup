@@ -3,11 +3,47 @@ package checks
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
+
+// case: S-179.27
+func TestRunAllReportsPerCheckProgress(t *testing.T) {
+	root := t.TempDir()
+	pkgDir := filepath.Join(root, "packages", "demo")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePackageJSON(t, pkgDir, `{"name":"@acme/demo"}`)
+	cfg := &config.DevkitConfig{Presets: map[string]config.Preset{"demo": {Language: "typescript"}}}
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{{Name: "@acme/demo", Dir: pkgDir, RelPath: "packages/demo", Category: "demo", Preset: "demo", Language: "typescript"}}}
+	var mu sync.Mutex
+	var events []ProgressEvent
+	RunAll(ws, cfg, Default(), nil, func(event ProgressEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) == 0 {
+		t.Fatal("progress events = none, want each executed rule to report start and completion")
+	}
+	started, completed := false, false
+	for _, event := range events {
+		if event.Package != "@acme/demo" || event.Check == "" {
+			t.Fatalf("progress event = %#v, want package and check identity", event)
+		}
+		started = started || event.Running
+		completed = completed || !event.Running
+	}
+	if !started || !completed {
+		t.Fatalf("progress events = %#v, want running and completed states", events)
+	}
+}
 
 type fakeRule struct {
 	name   string
@@ -60,7 +96,7 @@ func TestRunAllAppliesOnlyFilterAndMergesCircularResults(t *testing.T) {
 		},
 	}
 
-	results := RunAll(ws, cfg, registry, []string{"selected", "circular"})
+	results := RunAll(ws, cfg, registry, []string{"selected", "circular"}, nil)
 
 	for _, pkg := range []workspace.Package{pkgA, pkgB} {
 		result, ok := results[pkg.Name]
@@ -93,7 +129,7 @@ func TestRunAllSkipsPackageWhenPresetResolutionFails(t *testing.T) {
 		},
 	}
 
-	results := RunAll(ws, cfg, &Registry{}, nil)
+	results := RunAll(ws, cfg, &Registry{}, nil, nil)
 	result := results["@kb/missing"]
 	if !result.Skipped {
 		t.Fatalf("Skipped = false, want true: %#v", result)

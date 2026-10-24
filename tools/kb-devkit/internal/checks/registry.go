@@ -2,6 +2,7 @@ package checks
 
 import (
 	"sort"
+	"time"
 
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
@@ -58,6 +59,7 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 			workspaceRoot: workspaceRoot,
 			checkConfig:   packCfg,
 			graphTasks:    graphTaskNames(cfg.Tasks),
+			timeout:       time.Duration(cfg.Checks.TimeoutMS) * time.Millisecond,
 		})
 	}
 	return r

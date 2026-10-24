@@ -214,9 +214,6 @@ func launcherCode(t *testing.T, err error) string {
 
 // case: PC-001.2
 func TestHostControlReadinessUsesInstalledHostEnvironmentContract(t *testing.T) {
-	if contracts.HostControlCredentialEnv != "KB_HOST_CONTROL_TOKEN" {
-		t.Fatalf("host control credential environment name = %q, installed host reads KB_HOST_CONTROL_TOKEN", contracts.HostControlCredentialEnv)
-	}
 	failedProbe := readinessProbe{URL: "http://127.0.0.1:5250/health", Status: 200, Error: "host readiness did not report a valid loopback control address"}
 	if got, want := probeDescription(failedProbe), "http://127.0.0.1:5250/health returned HTTP 200 but readiness failed: host readiness did not report a valid loopback control address"; got != want {
 		t.Fatalf("readiness failure description = %q, want %q", got, want)

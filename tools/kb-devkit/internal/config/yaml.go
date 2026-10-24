@@ -40,7 +40,14 @@ func (o *yamlOrderedCategories) UnmarshalYAML(value *yaml.Node) error {
 
 func loadYAML(path string) (*DevkitConfig, error) {
 	visited := make(map[string]bool)
-	return loadYAMLResolved(path, visited)
+	cfg, err := loadYAMLResolved(path, visited)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Checks.TimeoutMS == 0 {
+		cfg.Checks.TimeoutMS = DefaultCheckTimeoutMS
+	}
+	return cfg, nil
 }
 
 // yamlConfig mirrors DevkitConfig for YAML tag parsing.
@@ -229,7 +236,8 @@ type yamlCustomCheck struct {
 }
 
 type yamlChecks struct {
-	Packages map[string]yamlCheckPack `yaml:"packages"`
+	TimeoutMS *int                     `yaml:"timeout_ms"`
+	Packages  map[string]yamlCheckPack `yaml:"packages"`
 }
 
 type yamlCheckPack struct {
@@ -327,6 +335,9 @@ func parseYAMLBytes(data []byte) (*DevkitConfig, error) {
 		return nil, err
 	}
 	cfg := mapYAML(raw)
+	if raw.Checks.TimeoutMS != nil && *raw.Checks.TimeoutMS <= 0 {
+		return nil, fmt.Errorf("checks.timeout_ms must be a positive integer, got %d", *raw.Checks.TimeoutMS)
+	}
 	for _, check := range cfg.Custom {
 		if check.Scope != "" && check.Scope != "package" && check.Scope != "workspace" {
 			return nil, fmt.Errorf("custom check %q has unsupported scope %q (expected package or workspace)", check.Name, check.Scope)
@@ -455,6 +466,9 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 		for k, v := range raw.Checks.Packages {
 			cfg.Checks.Packages[k] = CheckPackConfig{Enabled: v.Enabled, Config: v.Config}
 		}
+	}
+	if raw.Checks.TimeoutMS != nil {
+		cfg.Checks.TimeoutMS = *raw.Checks.TimeoutMS
 	}
 
 	return cfg

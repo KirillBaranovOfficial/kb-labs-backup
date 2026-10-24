@@ -8,7 +8,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockLogger } from '@kb-labs/shared-testing';
-import { createWorkflowExecutionBackendFixture } from './execution-backend-fixture.js';
+import { createWorkflowExecutionBackendFixture } from '../../test-fixtures/execution-backend-fixture.js';
 
 const mockRunnerExecute = vi.fn();
 vi.mock('@kb-labs/workflow-runtime', async (importOriginal) => {

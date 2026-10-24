@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { createErrorEnvelope, serializeError } from '@kb-labs/core-platform';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
 import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
-import { mountRoutes } from '../route-mounter.js';
-import type { ExecutionBackend, ExecutionResult } from '../../types.js';
+import { mountRoutes } from '../../src/http/route-mounter.js';
+import type { ExecutionBackend, ExecutionResult } from '../../src/types.js';
 
 function backendReturning(result: ExecutionResult): ExecutionBackend {
   return createNormalizedExecutionBackend({

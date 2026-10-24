@@ -15,6 +15,8 @@ for (const entry of catalog.codes) {
   }
 }
 const entries = [...catalog.codes].sort((left, right) => left.code < right.code ? -1 : left.code > right.code ? 1 : 0);
+if (!Array.isArray(catalog.environmentVariables)) throw new Error('environmentVariables must be declared as an array');
+const environmentVariables = [...catalog.environmentVariables].sort();
 const codes = [...new Set(entries.map(({ code }) => code))];
 const templateParameterMetadata = entries.map((entry) => {
   const templates = [entry.message, entry.hint, entry.hintWithoutCorrelationId].filter(Boolean);
@@ -99,6 +101,10 @@ const output = [
   'export interface CatalogDetailsFor {',
   ...detailParameters,
   '}',
+  '',
+  'export const catalogEnvironmentVariables = {',
+  ...environmentVariables.map((name) => `  ${JSON.stringify(name)}: ${JSON.stringify(name)},`),
+  '} as const;',
   '',
   'export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {',
   ...templateParameterMetadata.map(({ code, requiredNames }) => `  ${JSON.stringify(code)}: ${JSON.stringify(requiredNames)},`),

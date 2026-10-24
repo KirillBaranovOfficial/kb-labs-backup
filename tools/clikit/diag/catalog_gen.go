@@ -273,3 +273,49 @@ var catalogEntries = map[string]CatalogEntry{
 	"WORKER_TREE_UNVERIFIED":                        {Code: "WORKER_TREE_UNVERIFIED", HTTPStatus: 500, Area: "plugin", Stage: "run", Severity: "error", Retryable: true, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "The worker process tree could not be verified after termination.", Hint: "Run `kb health` to inspect worker pool health and unverified process trees.", TemplateParameters: nil, RequiredTemplateParameters: nil, StructuredDetailFields: nil, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
 	"WORKER_UNAVAILABLE":                            {Code: "WORKER_UNAVAILABLE", HTTPStatus: 503, Area: "plugin", Stage: "run", Severity: "error", Retryable: true, ProcessExitClass: ProcessExitClass("operation-failure"), Message: "No worker is available and worker startup is failing.", Hint: "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after workers recover.", TemplateParameters: []string{"failureCode"}, RequiredTemplateParameters: []string{"failureCode"}, StructuredDetailFields: []string{"failedAt", "failureAttempt", "failureMessage", "retryInMs"}, RequiredStructuredDetailFields: nil, StructuredDetailSchemas: nil, RuntimeTemplateParameters: nil},
 }
+
+const (
+	KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO = "KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO"
+	KB_CREATE_PROCESS_IDENTITY                    = "KB_CREATE_PROCESS_IDENTITY"
+	KB_DEPLOY_BASE_REF                            = "KB_DEPLOY_BASE_REF"
+	KB_DEVKIT_FAIL_LINES                          = "KB_DEVKIT_FAIL_LINES"
+	KB_DEV_INSTANCE                               = "KB_DEV_INSTANCE"
+	KB_DEV_PROJECT_ID                             = "KB_DEV_PROJECT_ID"
+	KB_DEV_PROJECT_ROOT                           = "KB_DEV_PROJECT_ROOT"
+	KB_DEV_RUNTIME_DIR                            = "KB_DEV_RUNTIME_DIR"
+	KB_DEV_SERVICE                                = "KB_DEV_SERVICE"
+	KB_ENV_HOME                                   = "KB_ENV_HOME"
+	KB_ENV_OFFSET                                 = "KB_ENV_OFFSET"
+	KB_ENV_SHELL                                  = "KB_ENV_SHELL"
+	KB_HOME                                       = "KB_HOME"
+	KB_HOST_CONTROL_TOKEN                         = "KB_HOST_CONTROL_TOKEN"
+	KB_NET_OFFSET                                 = "KB_NET_OFFSET"
+	KB_PLATFORM_ROOT                              = "KB_PLATFORM_ROOT"
+	KB_PROJECT_ROOT                               = "KB_PROJECT_ROOT"
+	KB_SOCKET_HASH                                = "KB_SOCKET_HASH"
+	KB_SOCKET_PATH                                = "KB_SOCKET_PATH"
+)
+
+func CatalogEnvironmentVariableNames() []string {
+	return []string{
+		KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO,
+		KB_CREATE_PROCESS_IDENTITY,
+		KB_DEPLOY_BASE_REF,
+		KB_DEVKIT_FAIL_LINES,
+		KB_DEV_INSTANCE,
+		KB_DEV_PROJECT_ID,
+		KB_DEV_PROJECT_ROOT,
+		KB_DEV_RUNTIME_DIR,
+		KB_DEV_SERVICE,
+		KB_ENV_HOME,
+		KB_ENV_OFFSET,
+		KB_ENV_SHELL,
+		KB_HOME,
+		KB_HOST_CONTROL_TOKEN,
+		KB_NET_OFFSET,
+		KB_PLATFORM_ROOT,
+		KB_PROJECT_ROOT,
+		KB_SOCKET_HASH,
+		KB_SOCKET_PATH,
+	}
+}

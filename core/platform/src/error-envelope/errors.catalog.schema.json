@@ -4,10 +4,16 @@
   "title": "KB Labs error catalog",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "codes"],
+  "required": ["version", "environmentVariables", "codes"],
   "properties": {
     "$schema": { "type": "string" },
     "version": { "const": 1 },
+    "environmentVariables": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Environment variable names shared by generated platform and Go contracts. Each name is emitted as a language constant."
+    },
     "codes": {
       "type": "array",
       "items": {

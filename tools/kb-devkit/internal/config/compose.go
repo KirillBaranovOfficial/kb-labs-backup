@@ -50,6 +50,9 @@ func mergeConfigs(base, child *DevkitConfig) *DevkitConfig {
 	if child.Reporting.Verbose {
 		out.Reporting.Verbose = true
 	}
+	if child.Checks.TimeoutMS > 0 {
+		out.Checks.TimeoutMS = child.Checks.TimeoutMS
+	}
 
 	if len(child.Presets) > 0 {
 		if out.Presets == nil {
