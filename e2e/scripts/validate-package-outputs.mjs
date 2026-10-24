@@ -174,8 +174,10 @@ export async function inspectPackedFixture(sourceDirectory) {
     execFileSync('tar', ['-xzf', archive, '-C', temporaryDirectory]);
     const packageJson = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
     let discovery;
+    let platform;
     try {
       discovery = await import('../../core/discovery/dist/index.js');
+      platform = await import('../../core/platform/dist/index.js');
     } catch (error) {
       return { packageName: basename(packageRoot), kind: 'unknown', failures: [
         `product discovery could not be loaded from the workspace build: ${error.message}; ` +
@@ -185,15 +187,6 @@ export async function inspectPackedFixture(sourceDirectory) {
     const diagnostics = new discovery.DiagnosticCollector();
     const loaded = await discovery.loadManifestFile(packageRoot, diagnostics);
     if (loaded.kind !== 'manifest') {
-      let platform;
-      try {
-        platform = await import('../../core/platform/dist/index.js');
-      } catch (error) {
-        return { packageName: packageJson.name, kind: 'unknown', failures: [
-          `product adapter loader could not be loaded from the workspace build: ${error.message}; ` +
-          'build it with: corepack pnpm -r --filter "@kb-labs/core-platform..." --workspace-concurrency=2 build',
-        ] };
-      }
       const adapter = await platform.loadAdapterManifest({ packageRoot });
       if (adapter.kind === 'adapter') {
         return { packageName: packageJson.name, kind: 'adapter', adapterManifest: adapter.manifest, failures: [] };
@@ -210,7 +203,7 @@ export async function inspectPackedFixture(sourceDirectory) {
     }
     const failures = [];
     for (const command of loaded.loaded.manifest.cli?.commands ?? []) {
-      const handler = discovery.resolveCliHandlerPath(packageRoot, command.handler);
+      const handler = platform.resolveCliHandlerPath(packageRoot, command.handler);
       if (!existsSync(handler)) failures.push(`${packageJson.name}: product discovery cannot resolve handler ${command.handler} to ${handler}`);
     }
     return { packageName: packageJson.name, kind: 'plugin', failures };
