@@ -33,10 +33,9 @@ class JourneyTeardownTests(unittest.TestCase):
                 "    state['calls'].append(['ps', args[:-3]])\n"
                 "    state_path.write_text(json.dumps(state))\n"
                 "    print('\\n'.join(state['containers']))\n"
-                "elif args[-3:] == ['down', '--volumes', '--remove-orphans']:\n"
-                "    state['calls'].append(['down', args[:-3]])\n"
+                "elif args[-2:] == ['down', '--remove-orphans']:\n"
+                "    state['calls'].append(['down', args[:-2]])\n"
                 "    state['containers'] = []\n"
-                "    state['volumes'] = []\n"
                 "    state_path.write_text(json.dumps(state))\n"
                 "else:\n"
                 "    raise SystemExit(f'unmodeled Docker command: {args!r}')\n",
@@ -71,7 +70,7 @@ class JourneyTeardownTests(unittest.TestCase):
             self.assertEqual(state["calls"][0][1], state["calls"][1][1],
                              "outcome ps and teardown down used different owner arguments")
             self.assertEqual(state["containers"], [])
-            self.assertEqual(state["volumes"], [])
+            self.assertEqual(state["volumes"], ["journey-data"])
 
 
 if __name__ == "__main__":

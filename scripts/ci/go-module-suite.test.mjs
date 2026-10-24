@@ -184,13 +184,13 @@ test('reusable installer workflow runs a native macOS install from the candidate
 
 // case: S-261.2
 test('native macOS smoke entry installs the candidate and runs the installed CLI', () => {
-  const commands = nativeInstallCommands({ workspace: '/workspace', tempRoot: '/tmp/native', platformRoot: '/tmp/platform' });
+  const commands = nativeInstallCommands({ workspace: '/workspace', tempRoot: '/tmp/native', platformRoot: '/tmp/platform', registryUrl: 'http://127.0.0.1:49183' });
   assert.deepEqual(commands.map(({ command, args, cwd }) => [command, args, cwd]), [
     ['make', ['build', 'BINARY=/tmp/native/kb-create'], '/workspace/tools/kb-create'],
     ['/tmp/native/kb-create', [
       'install', '--json', '--index', '/workspace/.journey/release/journey-candidate/release-index.json',
       '--platform-root', '/tmp/platform', '--project-root', '/workspace', '--scenario', 'explore',
-      '--scenario-answers', '{"access.mode":"local"}', '--registry', 'http://127.0.0.1:4873',
+      '--scenario-answers', '{"access.mode":"local"}', '--registry', 'http://127.0.0.1:49183',
     ], '/workspace'],
     ['/tmp/platform/node_modules/.bin/kb', ['--version'], '/workspace'],
     ['/tmp/platform/node_modules/.bin/kb', ['doctor', '--json'], '/workspace'],
@@ -206,13 +206,21 @@ test('shared candidate services start, publish, and clean up the native origin a
   mkdirSync(bin);
   const pids = path.join(fixture, 'service-pids');
   const publish = path.join(fixture, 'publish-call');
-  for (const command of ['python3', 'npx']) {
+  for (const command of ['python3']) {
     writeFileSync(path.join(bin, command), '#!/bin/sh\nprintf "%s\\n" "$$" >> "$SERVICE_PIDS"\nexec sleep 3600\n', { mode: 0o755 });
   }
   writeFileSync(path.join(bin, 'curl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(path.join(bin, 'sudo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  writeFileSync(path.join(bin, 'docker'), '#!/bin/sh\n'
+    + 'case "$*" in\n'
+    + "  *'compose version') exit 0 ;;\n"
+    + "  *' run --rm --no-deps --entrypoint sh verdaccio -s -- /verdaccio/storage') cat >/dev/null; exit 0 ;;\n"
+    + "  *' up -d --wait verdaccio') exit 0 ;;\n"
+    + "  *' port verdaccio 4873') printf '127.0.0.1:49183\\n'; exit 0 ;;\n"
+    + "  *' stop verdaccio') exit 0 ;;\n"
+    + 'esac\nexit 97\n', { mode: 0o755 });
   writeFileSync(path.join(bin, 'sh'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$PUBLISH_CALL"\nexit 0\n', { mode: 0o755 });
-  const result = spawnSync('/bin/bash', ['-e', '-c', 'source "$1"; trap "journey_stop_host_services" EXIT; journey_start_host_services; journey_stop_host_services; trap - EXIT', 'candidate-services-test', path.join(root, 'e2e/journey/candidate-services.sh')], {
+  const result = spawnSync('/bin/bash', ['-e', '-c', 'source "$1"; source "$2"; journey_compose_init "$KB_JOURNEY_WORKSPACE_SOURCE"; trap "journey_stop_host_services" EXIT; journey_start_host_services; journey_stop_host_services; trap - EXIT', 'candidate-services-test', path.join(root, 'e2e/journey/compose-owner.sh'), path.join(root, 'e2e/journey/candidate-services.sh')], {
     cwd: root,
     encoding: 'utf8',
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: fixture, SERVICE_PIDS: pids, PUBLISH_CALL: publish, KB_JOURNEY_WORKSPACE_SOURCE: root },
