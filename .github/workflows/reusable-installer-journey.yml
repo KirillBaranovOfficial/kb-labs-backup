@@ -37,7 +37,7 @@ jobs:
       - name: Build kb-devkit
         run: make build -C tools/kb-devkit
       - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+        run: e2e/journey/install-workspace-dependencies.sh
       - name: Build affected workspace packages
         run: ./tools/kb-devkit/kb-devkit run build --affected
       - name: Verify packed SDK consumer contract
@@ -156,7 +156,7 @@ jobs:
       - name: Build the case coverage CLI
         run: |
           make build -C tools/kb-devkit
-          pnpm install --frozen-lockfile
+          e2e/journey/install-workspace-dependencies.sh
           ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa
       - name: Enforce local and secured release case coverage
         run: |
