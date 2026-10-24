@@ -26,21 +26,15 @@ workspace:
       language: typescript
       preset: e2e-suite
 
-    # Candidate-pack extras live outside pnpm's workspace because they are
-    # installed only by the isolated journey registry. Devkit still discovers
-    # and builds them through this category so a clean release build owns their
-    # generated manifests.
-    e2e-pack-adapter:
+    # Candidate-pack extras are package fixtures, not production libraries.
+    # They need valid package identities for packing but do not carry a
+    # publishable Node library's scripts, tsconfig, tsup, lint, or source layout.
+    fixture:
       match:
         - "e2e/fixtures/adapters/*"
-      language: javascript
-      preset: node-lib
-
-    e2e-pack-plugin:
-      match:
         - "e2e/journey/fixtures/*"
       language: javascript
-      preset: node-lib
+      preset: candidate-fixture
 
     # Infrastructure E2E suites — one package per domain, each runs `playwright
     # test`. Subject is the platform/gateway/services layer, not a single plugin.
@@ -250,6 +244,14 @@ presets:
       check_links: true
       check_circular: true
       check_version_consistency: true
+
+  # Candidate fixtures only require the manifest identity consumed by packers.
+  candidate-fixture:
+    language: javascript
+    package_json:
+      required_fields:
+        - name
+        - version
 
   # The execution backend constructor is a runtime-owned capability.
   runtime-core:
@@ -547,18 +549,8 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [e2e-pack-adapter]
+    - categories: [fixture]
       command: node ../../../scripts/build-pack-extra.mjs
-      inputs:
-        - "manifest.js"
-        - "src/**"
-        - "package.json"
-      outputs:
-        - "dist/**"
-      cache: false
-
-    - categories: [e2e-pack-plugin]
-      command: node ../../../../e2e/scripts/build-pack-extra.mjs
       inputs:
         - "manifest.js"
         - "src/**"
@@ -817,6 +809,9 @@ tasks:
 # Each entry runs for packages matching its `categories` filter, or once at
 # workspace scope. External checks receive the check context on stdin and emit
 # the issue shape defined by tools/kb-devkit/internal/checks/types.go.
+
+checks:
+  timeout_ms: 2400000
 
 custom_checks:
   - name: new-tests

@@ -63,7 +63,7 @@ Exits with code 1 if any errors are found, blocking the commit.`,
 		wsFiltered.Packages = filteredPkgs
 
 		registry := checks.Build(cfg, ws.Root, "gate")
-		results := checks.RunAll(&wsFiltered, cfg, registry, nil)
+		results := checks.RunAll(&wsFiltered, cfg, registry, nil, nil)
 
 		// Count errors.
 		errorCount := 0

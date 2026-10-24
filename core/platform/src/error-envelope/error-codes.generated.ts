@@ -803,6 +803,28 @@ export interface CatalogDetailsFor {
   "WORKER_UNAVAILABLE": { "failureCode": string; "failedAt"?: string; "failureAttempt"?: string; "failureMessage"?: string; "retryInMs"?: string };
 }
 
+export const catalogEnvironmentVariables = {
+  "KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO": "KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO",
+  "KB_CREATE_PROCESS_IDENTITY": "KB_CREATE_PROCESS_IDENTITY",
+  "KB_DEPLOY_BASE_REF": "KB_DEPLOY_BASE_REF",
+  "KB_DEVKIT_FAIL_LINES": "KB_DEVKIT_FAIL_LINES",
+  "KB_DEV_INSTANCE": "KB_DEV_INSTANCE",
+  "KB_DEV_PROJECT_ID": "KB_DEV_PROJECT_ID",
+  "KB_DEV_PROJECT_ROOT": "KB_DEV_PROJECT_ROOT",
+  "KB_DEV_RUNTIME_DIR": "KB_DEV_RUNTIME_DIR",
+  "KB_DEV_SERVICE": "KB_DEV_SERVICE",
+  "KB_ENV_HOME": "KB_ENV_HOME",
+  "KB_ENV_OFFSET": "KB_ENV_OFFSET",
+  "KB_ENV_SHELL": "KB_ENV_SHELL",
+  "KB_HOME": "KB_HOME",
+  "KB_HOST_CONTROL_TOKEN": "KB_HOST_CONTROL_TOKEN",
+  "KB_NET_OFFSET": "KB_NET_OFFSET",
+  "KB_PLATFORM_ROOT": "KB_PLATFORM_ROOT",
+  "KB_PROJECT_ROOT": "KB_PROJECT_ROOT",
+  "KB_SOCKET_HASH": "KB_SOCKET_HASH",
+  "KB_SOCKET_PATH": "KB_SOCKET_PATH",
+} as const;
+
 export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": ["acquireTimeoutMs"],
   "KB_ADAPTER_CREDENTIALS_MISSING": ["command","credential","path","service"],

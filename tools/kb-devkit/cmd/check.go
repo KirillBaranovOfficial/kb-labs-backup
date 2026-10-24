@@ -6,6 +6,8 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/kb-labs/devkit/internal/config"
@@ -43,7 +45,17 @@ Use --package to check a single package.`,
 		if checkPackage != "" {
 			ws.Packages = ws.FilterByName([]string{checkPackage})
 		}
-		results := checks.RunAll(ws, cfg, registry, checkOnly)
+		progressWriter := clikitcommand.FromCommand(cmd).ErrorWriter()
+		var progressMu sync.Mutex
+		results := checks.RunAll(ws, cfg, registry, checkOnly, func(event checks.ProgressEvent) {
+			progressMu.Lock()
+			defer progressMu.Unlock()
+			state := "DONE"
+			if event.Running {
+				state = "RUN"
+			}
+			fmt.Fprintf(progressWriter, "[%s] %s:%s elapsed %s\n", state, event.Package, event.Check, event.Elapsed.Round(time.Second))
+		})
 		packagesChecked := checkedPackageCount(results)
 		if failures := checkExecutionFailures(results); len(failures) > 0 {
 			return externalCheckFailureError(failures, results)

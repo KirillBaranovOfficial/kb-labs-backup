@@ -2,10 +2,19 @@ package checks
 
 import (
 	"sync"
+	"time"
 
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
+
+// ProgressEvent describes one rule invocation while a package check is running.
+type ProgressEvent struct {
+	Package string
+	Check   string
+	Elapsed time.Duration
+	Running bool
+}
 
 // PackageResult holds all issues for a single package.
 type PackageResult struct {
@@ -17,7 +26,7 @@ type PackageResult struct {
 
 // RunAll runs all rules from the registry against all packages in parallel.
 // Circular detection runs once on the full graph and is merged in.
-func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registry, only []string) map[string]PackageResult {
+func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registry, only []string, progress func(ProgressEvent)) map[string]PackageResult {
 	onlySet := make(map[string]bool, len(only))
 	for _, name := range only {
 		onlySet[name] = true
@@ -38,7 +47,9 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 	workspaceRules := registry.WorkspaceRules(only)
 	for _, rule := range workspaceRules {
 		external := rule.(*externalRule)
-		workspaceIssues = append(workspaceIssues, external.CheckWorkspace(ws)...)
+		workspaceIssues = append(workspaceIssues, runRule(rule, workspace.Package{Name: "workspace"}, progress, func() []Issue {
+			return external.CheckWorkspace(ws)
+		})...)
 	}
 	if len(workspaceRules) > 0 {
 		results["workspace"] = PackageResult{
@@ -74,7 +85,9 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 
 			var issues []Issue
 			for _, rule := range rules {
-				issues = append(issues, rule.Check(pkg, preset)...)
+				issues = append(issues, runRule(rule, pkg, progress, func() []Issue {
+					return rule.Check(pkg, preset)
+				})...)
 			}
 
 			// Merge circular results.
@@ -92,4 +105,38 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 
 	wg.Wait()
 	return results
+}
+
+func runRule(rule Rule, pkg workspace.Package, progress func(ProgressEvent), check func() []Issue) []Issue {
+	started := time.Now()
+	report := func(running bool) {
+		if progress != nil {
+			progress(ProgressEvent{Package: pkg.Name, Check: rule.Name(), Elapsed: time.Since(started), Running: running})
+		}
+	}
+	report(true)
+	stop := make(chan struct{})
+	monitorDone := make(chan struct{})
+	if progress != nil {
+		go func() {
+			defer close(monitorDone)
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					report(true)
+				case <-stop:
+					return
+				}
+			}
+		}()
+	}
+	issues := check()
+	if progress != nil {
+		close(stop)
+		<-monitorDone
+	}
+	report(false)
+	return issues
 }
