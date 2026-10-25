@@ -7,8 +7,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -133,6 +136,242 @@ func TestPressureHysteresis(t *testing.T) {
 	}
 	if state.blocks(false, now.Add(11*time.Second)) {
 		t.Fatal("pressure hold remained after ten normal seconds")
+	}
+}
+
+// case: S-237.69
+func TestGovernorHardPressureUsesSwapMemoryAndDiskSignals(t *testing.T) {
+	normal := HostResourceSnapshot{PhysicalMemory: 1000, AvailableMemory: 500, MemoryAvailableKnown: true, Pressure: "normal", PressureAvailable: true}
+	if got := governorHardPressure(normal, HostResourceSnapshot{}, 500, 100); got != "" {
+		t.Fatalf("normal host decision = %q", got)
+	}
+	if got := governorHardPressure(HostResourceSnapshot{Pressure: "memory critical", PressureAvailable: true}, normal, 500, 100); got == "" {
+		t.Fatal("critical memory pressure did not trigger pacing")
+	}
+	if got := governorHardPressure(HostResourceSnapshot{SwapOuts: 11, SwapOutsKnown: true}, HostResourceSnapshot{SwapOuts: 10, SwapOutsKnown: true}, 500, 100); got == "" {
+		t.Fatal("growing swapouts did not trigger pacing")
+	}
+	if got := governorHardPressure(normal, HostResourceSnapshot{}, 99, 100); got == "" {
+		t.Fatal("free disk below the floor did not trigger pacing")
+	}
+}
+
+// case: S-237.67
+func TestGovernorAdmissionWaitsOnlyForHeavyCostOnHostPressure(t *testing.T) {
+	sample := HostResourceSnapshot{Pressure: "memory warn", PressureAvailable: true, LoadAvailable: true, MemoryAvailableKnown: true}
+	if got := governorAdmissionReason(CostLight, sample, 1000, 100); got != "" {
+		t.Fatalf("light admission was blocked: %q", got)
+	}
+	if got := governorAdmissionReason(CostHeavy, sample, 1000, 100); got == "" {
+		t.Fatal("heavy admission did not wait on elevated pressure")
+	}
+	if got := governorAdmissionReason(CostHeavy, HostResourceSnapshot{}, 99, 100); got == "" {
+		t.Fatal("heavy admission did not wait below disk floor")
+	}
+}
+
+// case: S-237.67
+func TestSecondHeavyAdmissionWaitsWithVisibleHostPressureReason(t *testing.T) {
+	state := t.TempDir()
+	identity, alive, err := ProcessIdentity(os.Getpid())
+	if err != nil || !alive {
+		t.Fatalf("inspect test process: alive=%t err=%v", alive, err)
+	}
+	first := record{RunID: "first-heavy", Tag: "first-heavy", StateDir: state, PID: os.Getpid(), StartedAt: identity,
+		Status: StatusRunning, CostClass: CostHeavy, Priority: 10, QueueOrder: 1, EnqueuedAt: time.Now().Add(-time.Minute)}
+	if err := writeRecordAtomic(first); err != nil {
+		t.Fatal(err)
+	}
+	pressure := mutableHostResourceSource{sample: HostResourceSnapshot{Pressure: "memory warn", PressureAvailable: true, LoadAvailable: true,
+		MemoryAvailableKnown: true, PhysicalMemory: 1 << 30, AvailableMemory: 1 << 29, LogicalCPUs: 4}}
+	cfg := Config{StateDir: state, Tag: "second-heavy", Command: []string{"/bin/true"}, CostClass: CostHeavy, Priority: 10}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- reserveAdmission(ctx, cfg, "second-heavy", os.Getpid(), identity, &pressure) }()
+	deadline := time.Now().Add(3 * time.Second)
+	var waiting record
+	for time.Now().Before(deadline) {
+		waiting, err = readAdmissionRecord(state, "second-heavy")
+		if err == nil && waiting.Status == StatusBlocked {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if waiting.Status != StatusBlocked || !strings.Contains(waiting.WaitReason, "host pressure") {
+		cancel()
+		<-result
+		t.Fatalf("second heavy run did not expose pressure wait: %+v, err=%v", waiting, err)
+	}
+	cancel()
+	if err := <-result; err == nil {
+		t.Fatal("cancelled pressure wait returned success")
+	}
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil || !strings.Contains(string(data), `"type":"blocked"`) || !strings.Contains(string(data), `"reason":"host pressure`) {
+		t.Fatalf("pressure wait event missing reason: %s err=%v", data, err)
+	}
+}
+
+// case: S-237.68
+func TestGovernorSelectsLowestPriorityHeavyRun(t *testing.T) {
+	records := []record{
+		{RunID: "light", CostClass: CostLight, Status: StatusRunning, Priority: -1, EnqueuedAt: time.Unix(1, 0)},
+		{RunID: "low", CostClass: CostHeavy, Status: StatusRunning, Priority: 1, QueueOrder: 1, EnqueuedAt: time.Unix(3, 0)},
+		{RunID: "high", CostClass: CostHeavy, Status: StatusRunning, Priority: 10, QueueOrder: 2, EnqueuedAt: time.Unix(2, 0)},
+	}
+	got := lowestPriorityHeavy(records)
+	if got == nil || got.RunID != "low" {
+		t.Fatalf("lowest priority run = %+v, want priority 1 heavy run", got)
+	}
+}
+
+// case: S-237.69
+func TestGovernorPausesLowestPriorityRunAndResumesAfterDiskFloorRestored(t *testing.T) {
+	state := t.TempDir()
+	owned := make([]*exec.Cmd, 0, 2)
+	var processes []Process
+	records := make([]record, 0, 2)
+	for index, priority := range []int{1, 10} {
+		pidPath := filepath.Join(state, fmt.Sprintf("child-%d.pid", index))
+		cmd := exec.Command("/bin/sh", "-c", `sleep 30 & echo $! > "$1"; wait`, "governor-fixture", pidPath)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		owned = append(owned, cmd)
+		identity, alive, err := ProcessIdentity(cmd.Process.Pid)
+		if err != nil || !alive {
+			t.Fatalf("inspect shell identity: alive=%t err=%v", alive, err)
+		}
+		var childPID int
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			data, readErr := os.ReadFile(pidPath)
+			if readErr == nil {
+				childPID, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+				if childPID > 0 {
+					break
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if childPID <= 0 {
+			t.Fatalf("shell %d did not report its child PID", cmd.Process.Pid)
+		}
+		childIdentity, childAlive, err := ProcessIdentity(childPID)
+		if err != nil || !childAlive {
+			t.Fatalf("inspect child identity: alive=%t err=%v", childAlive, err)
+		}
+		root := Process{PID: cmd.Process.Pid, PPID: os.Getpid(), Identity: identity}
+		child := Process{PID: childPID, PPID: cmd.Process.Pid, Identity: childIdentity}
+		processes = append(processes, root, child)
+		rec := record{RunID: fmt.Sprintf("heavy-%d", index), Tag: fmt.Sprintf("heavy-%d", index), StateDir: state,
+			PID: cmd.Process.Pid, StartedAt: identity, Status: StatusRunning, CostClass: CostHeavy, Priority: priority,
+			MinFree: 100, StartedAtTime: time.Now().Add(-time.Minute), Observed: []Process{child}}
+		records = append(records, rec)
+		if err := writeRecordAtomic(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, cmd := range owned {
+			_ = cmd.Process.Signal(syscall.SIGCONT)
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	procSource := ownedProcessTreeSource{processes: processes}
+	pressure := mutableHostResourceSource{sample: HostResourceSnapshot{PhysicalMemory: 1 << 30, AvailableMemory: 1 << 29, MemoryAvailableKnown: true,
+		Pressure: "normal", PressureAvailable: true, LoadAvailable: true, LogicalCPUs: 4, FreeDiskKnown: true, FreeDiskBytes: 0}}
+	if err := reconcileHostGovernorWithProcessSource(state, &pressure, procSource); err != nil {
+		t.Fatalf("pause under fake pressure: %v", err)
+	}
+	paused, err := readRecordLocked(state, records[0].RunID)
+	if err != nil || paused.Status != StatusPaused {
+		t.Fatalf("priority 1 record = %+v, err=%v", paused, err)
+	}
+	listing := List(state)
+	if listing.Error != nil {
+		t.Fatalf("list governor state as ps JSON: %v", listing.Error)
+	}
+	psJSON, err := json.Marshal(listing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("ps --json governor snapshot: %s", psJSON)
+	var lowPriorityRun *RunInfo
+	for index := range listing.Runs {
+		if listing.Runs[index].RunID == records[0].RunID {
+			lowPriorityRun = &listing.Runs[index]
+			break
+		}
+	}
+	if lowPriorityRun == nil || !lowPriorityRun.Paused || lowPriorityRun.WaitReason == "" || listing.GovernorDecision != "paused heavy-0" {
+		t.Fatalf("ps listing did not expose paused run and pressure decision: %+v", listing)
+	}
+	higher, err := readRecordLocked(state, records[1].RunID)
+	if err != nil || higher.Status != StatusRunning {
+		t.Fatalf("priority 10 record = %+v, err=%v", higher, err)
+	}
+	pressure.sample.FreeDiskBytes = 1000
+	if err := reconcileHostGovernorWithProcessSource(state, &pressure, procSource); err != nil {
+		t.Fatalf("observe restored disk floor: %v", err)
+	}
+	higher, err = readRecordLocked(state, records[1].RunID)
+	if err != nil || higher.Status != StatusRunning {
+		t.Fatalf("governor paused another run during recovery: %+v, err=%v", higher, err)
+	}
+	gov, err := readGovernorState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gov.Decision != "recovering" {
+		t.Fatalf("governor recovery decision = %q, want recovering", gov.Decision)
+	}
+	gov.Hold.NormalAt = time.Now().Add(-pressureNormalDuration - time.Second)
+	if err := writeGovernorState(state, gov); err != nil {
+		t.Fatal(err)
+	}
+	paused, err = readRecordLocked(state, records[0].RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused.PausedAt = time.Now().Add(-time.Second)
+	if err := writeRecordAtomic(paused); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileHostGovernorWithProcessSource(state, &pressure, procSource); err != nil {
+		t.Fatalf("resume after disk floor restores: %v", err)
+	}
+	resumed, err := readRecordLocked(state, records[0].RunID)
+	if err != nil || resumed.Status != StatusRunning || resumed.PausedMS < 900 {
+		t.Fatalf("resumed record = %+v, err=%v", resumed, err)
+	}
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	var pausedEvent, resumedEvent Event
+	for scanner.Scan() {
+		var event Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.RunID != records[0].RunID {
+			continue
+		}
+		if event.Type == EventPaused {
+			pausedEvent = event
+		}
+		if event.Type == EventResumed {
+			resumedEvent = event
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if pausedEvent.Type != EventPaused || !strings.Contains(pausedEvent.Reason, "free disk") || pausedEvent.DiskFreeBytes != 0 || pausedEvent.DiskNeedBytes != 100 || resumedEvent.Type != EventResumed || resumedEvent.DurationMS < 900 {
+		t.Fatalf("pause/resume events missing pressure reason or duration: paused=%+v resumed=%+v", pausedEvent, resumedEvent)
 	}
 }
 

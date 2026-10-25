@@ -27,6 +27,21 @@ type quotaUsage struct {
 	DiskBytes   uint64
 }
 
+type CostClass string
+
+const (
+	CostLight CostClass = "light"
+	CostHeavy CostClass = "heavy"
+)
+
+func ParseCostClass(value string) (CostClass, error) {
+	class := CostClass(value)
+	if class != CostLight && class != CostHeavy {
+		return "", fmt.Errorf("cost must be light or heavy")
+	}
+	return class, nil
+}
+
 type hostQuota struct {
 	MemoryBytes uint64
 	CPUs        int
@@ -34,20 +49,26 @@ type hostQuota struct {
 }
 
 type HostResourceSnapshot struct {
-	PhysicalMemory       uint64
-	AvailableMemory      uint64
-	MemoryAvailableKnown bool
-	PressureAvailable    bool
-	LoadAvailable        bool
-	LogicalCPUs          int
-	Pressure             string
-	Load1                float64
-	CPUPressure          float64
-	Swap                 string
-	Unavailable          map[string]string
-	CgroupMemory         uint64
-	CgroupCPUs           int
-	CgroupCPUsKnown      bool
+	PhysicalMemory       uint64            `json:"physical_memory_bytes"`
+	AvailableMemory      uint64            `json:"available_memory_bytes"`
+	MemoryAvailableKnown bool              `json:"memory_available_known"`
+	PressureAvailable    bool              `json:"pressure_available"`
+	LoadAvailable        bool              `json:"load_available"`
+	LogicalCPUs          int               `json:"logical_cpus"`
+	Pressure             string            `json:"pressure"`
+	Load1                float64           `json:"load_1m"`
+	CPUPressure          float64           `json:"cpu_pressure_percent"`
+	Swap                 string            `json:"swap,omitempty"`
+	SwapUsedBytes        uint64            `json:"swap_used_bytes"`
+	SwapTotalBytes       uint64            `json:"swap_total_bytes"`
+	SwapOuts             uint64            `json:"swap_outs"`
+	SwapOutsKnown        bool              `json:"swap_outs_known"`
+	FreeDiskBytes        uint64            `json:"free_disk_bytes"`
+	FreeDiskKnown        bool              `json:"free_disk_known"`
+	Unavailable          map[string]string `json:"unavailable,omitempty"`
+	CgroupMemory         uint64            `json:"cgroup_memory_bytes,omitempty"`
+	CgroupCPUs           int               `json:"cgroup_cpus,omitempty"`
+	CgroupCPUsKnown      bool              `json:"cgroup_cpus_known,omitempty"`
 }
 
 func hostResourceNotice(sample HostResourceSnapshot) string {
@@ -221,27 +242,32 @@ func SetQuota(stateDir, memory, cpus, minFree string) error {
 }
 
 type pressureState struct {
-	ElevatedAt time.Time `json:"elevated_at,omitempty"`
-	NormalAt   time.Time `json:"normal_at,omitempty"`
-	Level      string    `json:"level,omitempty"`
+	ElevatedAt    time.Time `json:"elevated_at,omitempty"`
+	NormalAt      time.Time `json:"normal_at,omitempty"`
+	Level         string    `json:"level,omitempty"`
+	SwapOuts      uint64    `json:"swap_outs,omitempty"`
+	SwapOutsKnown bool      `json:"swap_outs_known,omitempty"`
+	SwapUsedBytes uint64    `json:"swap_used_bytes,omitempty"`
 }
 
 func isElevatedPressure(sample HostResourceSnapshot) bool {
 	if sample.Pressure == "memory warn" || sample.Pressure == "memory critical" || sample.Pressure == "memory psi elevated" {
 		return true
 	}
-	if sample.PhysicalMemory > 0 && sample.AvailableMemory < sample.PhysicalMemory*lowAvailableMemoryFraction/100 {
+	if sample.PhysicalMemory > 0 && sample.MemoryAvailableKnown && sample.AvailableMemory < sample.PhysicalMemory*lowAvailableMemoryFraction/100 {
 		return true
 	}
-	return sample.LogicalCPUs > 0 && sample.Load1 > highLoadPerLogicalCPU*float64(sample.LogicalCPUs)
+	return sample.LogicalCPUs > 0 && sample.LoadAvailable && sample.Load1 > highLoadPerLogicalCPU*float64(sample.LogicalCPUs) || sample.CPUPressure >= pressurePSIThreshold
 }
 
 func pressureWaitReason(sample HostResourceSnapshot) string {
 	switch {
 	case sample.Pressure == "memory warn" || sample.Pressure == "memory critical" || sample.Pressure == "memory psi elevated":
 		return "host pressure (" + sample.Pressure + ")"
-	case sample.PhysicalMemory > 0 && sample.AvailableMemory < sample.PhysicalMemory*lowAvailableMemoryFraction/100:
+	case sample.PhysicalMemory > 0 && sample.MemoryAvailableKnown && sample.AvailableMemory < sample.PhysicalMemory*lowAvailableMemoryFraction/100:
 		return "host pressure (available memory below 10% of physical)"
+	case sample.CPUPressure >= pressurePSIThreshold:
+		return fmt.Sprintf("host pressure (CPU PSI %.2f%% above %.2f%%)", sample.CPUPressure, pressurePSIThreshold)
 	case sample.LogicalCPUs > 0 && sample.Load1 > highLoadPerLogicalCPU*float64(sample.LogicalCPUs):
 		return fmt.Sprintf("host pressure (load %.2f above %.1f per logical CPU)", sample.Load1, highLoadPerLogicalCPU)
 	default:
@@ -250,7 +276,7 @@ func pressureWaitReason(sample HostResourceSnapshot) string {
 }
 
 func pressureSignalsAvailable(sample HostResourceSnapshot) bool {
-	return sample.PressureAvailable && sample.LoadAvailable && sample.MemoryAvailableKnown
+	return sample.PressureAvailable || sample.LoadAvailable || sample.SwapOutsKnown
 }
 
 func (s *pressureState) blocks(elevated bool, now time.Time) bool {

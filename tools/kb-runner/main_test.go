@@ -114,6 +114,52 @@ func TestRootHelpSpellingsReturnUsageSuccessfully(t *testing.T) {
 	}
 }
 
+// case: S-237.70
+func TestPSJSONIncludesHostDecisionAndRunMeasurements(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := buildRunnerBinary(t)
+	run, err := proc.Start(context.Background(), proc.Config{
+		HelperPath: runner, StateDir: state, Tag: "json-measurement", CostKey: "json-measurement", CostClass: proc.CostLight,
+		Stall: time.Hour, StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
+		Command: []string{"/bin/sleep", "30"},
+	})
+	if err != nil {
+		t.Fatalf("start JSON measurement fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := run.Kill(); err != nil {
+			t.Logf("stop JSON measurement fixture: %v", err)
+		}
+		if err := run.Wait(); err != nil {
+			t.Logf("wait for JSON measurement fixture: %v", err)
+		}
+	})
+	var stdout, stderr bytes.Buffer
+	status := executeInvocation("kb-runner", []string{"ps", "--state", state, "--json"}, &stdout, &stderr)
+	if status.Code() != 0 {
+		t.Fatalf("ps --json exit=%d stdout=%s stderr=%s", status.Code(), stdout.String(), stderr.String())
+	}
+	var listing struct {
+		Runs             []map[string]json.RawMessage `json:"runs"`
+		Host             json.RawMessage              `json:"host"`
+		GovernorDecision string                       `json:"governor_decision"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &listing); err != nil {
+		t.Fatalf("decode ps JSON: %v: %s", err, stdout.String())
+	}
+	if len(listing.Runs) != 1 || len(listing.Host) == 0 || listing.GovernorDecision == "" {
+		t.Fatalf("ps JSON omitted runs, host, or governor decision: %s", stdout.String())
+	}
+	for _, field := range []string{"average_cpu", "peak_rss_bytes", "cost_class", "paused"} {
+		if _, exists := listing.Runs[0][field]; !exists {
+			t.Fatalf("ps JSON run omitted %q: %s", field, stdout.String())
+		}
+	}
+}
+
 // case: S-237.54
 func TestBuiltRunnerHelpAndUnknownCommandHintAreRunnable(t *testing.T) {
 	runner := buildRunnerBinary(t)
