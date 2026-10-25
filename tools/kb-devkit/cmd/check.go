@@ -58,7 +58,7 @@ Use --package to check a single package.`,
 		})
 		packagesChecked := checkedPackageCount(results)
 		if failures := checkExecutionFailures(results); len(failures) > 0 {
-			return externalCheckFailureError(failures, results)
+			return externalCheckFailureError(cmd, failures, results)
 		}
 
 		if jsonMode {
@@ -263,27 +263,71 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 }
 
 type externalCheckFailure struct {
-	Check      string
-	Cause      string
-	Diagnostic *diag.Diag
+	Check        string     `json:"check"`
+	Cause        string     `json:"cause"`
+	ExitCode     int        `json:"exitCode"`
+	StderrTail   string     `json:"stderrTail"`
+	RerunCommand string     `json:"rerunCommand,omitempty"`
+	Diagnostic   *diag.Diag `json:"-"`
 }
 
-func externalCheckFailureError(failures []externalCheckFailure, results map[string]checks.PackageResult) error {
-	for _, failure := range failures {
+func externalCheckFailureError(cmd *cobra.Command, failures []externalCheckFailure, results map[string]checks.PackageResult) error {
+	diagnostics := make([]*diag.Diag, 0, len(failures))
+	reportedFailures := make([]externalCheckFailure, len(failures))
+	for index, failure := range failures {
+		reportedFailures[index] = failure
 		if failure.Diagnostic != nil {
-			return failure.Diagnostic
+			diagnostics = append(diagnostics, failure.Diagnostic)
+			continue
 		}
+		onlyFlag := cmd.Flag("only")
+		jsonFlag := cmd.Flag("json")
+		if onlyFlag == nil || jsonFlag == nil {
+			return fmt.Errorf("cannot construct check rerun command: registered --only or --json flag is missing")
+		}
+		nextCommand := fmt.Sprintf("%s --%s %s --%s", cmd.CommandPath(), onlyFlag.Name, shellQuoteArgument(failure.Check), jsonFlag.Name)
+		reportedFailures[index].RerunCommand = nextCommand
+		exitCode := fmt.Sprint(failure.ExitCode)
+		stderrTail := failure.StderrTail
+		if failure.ExitCode == 0 && stderrTail == "" {
+			exitCode = "unavailable (check ended before an exit status was reported)"
+			stderrTail = "(no stderr output captured)"
+		} else if stderrTail == "" {
+			stderrTail = "(no stderr output)"
+		}
+		diagnostic, err := diag.FromCatalog("KB_DEVKIT_CHECK_EXECUTION_FAILED", map[string]string{
+			"check":       failure.Check,
+			"exitCode":    exitCode,
+			"stderrTail":  stderrTail,
+			"nextCommand": nextCommand,
+		})
+		if err != nil {
+			return err
+		}
+		diagnostic.Cause = diag.RedactText(fmt.Sprintf("%s: %s; stderr tail: %s", failure.Check, failure.Cause, stderrTail))
+		diagnostics = append(diagnostics, diagnostic)
 	}
-	checks := make(map[string]bool, len(failures))
-	causes := make([]string, 0, len(failures))
-	for _, failure := range failures {
-		checks[failure.Check] = true
-		causes = append(causes, fmt.Sprintf("%s: %s", failure.Check, failure.Cause))
+	if len(diagnostics) == 1 {
+		diagnostics[0].Data = map[string]any{"checks": reportedFailures, "packages": results}
+		return diagnostics[0]
 	}
-	checkNames := sortedKeys(checks)
-	return diag.New("KB_DEVKIT_CHECK_EXECUTION_FAILED", "",
-		diag.WithMeta(map[string]any{"check": strings.Join(checkNames, ", ")}),
-		diag.WithCause(strings.Join(causes, "; ")), diag.WithData(map[string]any{"checks": failures, "packages": results}))
+	messages := make([]string, len(diagnostics))
+	hints := make([]string, len(diagnostics))
+	causes := make([]string, len(failures))
+	for index, diagnostic := range diagnostics {
+		messages[index] = diagnostic.Message
+		hints[index] = diagnostic.Hint
+		causes[index] = fmt.Sprintf("%s: %s", failures[index].Check, diagnostic.Cause)
+	}
+	return diag.New("KB_DEVKIT_CHECK_EXECUTION_FAILED", strings.Join(messages, "\n"),
+		diag.WithMeta(diagnostics[0].Meta),
+		diag.WithHint(strings.Join(hints, "\n")),
+		diag.WithCause(strings.Join(causes, "\n")),
+		diag.WithData(map[string]any{"checks": reportedFailures, "packages": results}))
+}
+
+func shellQuoteArgument(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func checkExecutionFailures(results map[string]checks.PackageResult) []externalCheckFailure {
@@ -313,7 +357,17 @@ func checkExecutionFailures(results map[string]checks.PackageResult) []externalC
 		}
 		sort.Strings(causes)
 		for _, cause := range causes {
-			result = append(result, externalCheckFailure{Check: checkName, Cause: cause, Diagnostic: failures[checkName][cause]})
+			var exitCode int
+			var stderrTail string
+			for _, packageResult := range results {
+				for _, issue := range packageResult.Issues {
+					if issue.Check == checkName && issue.Cause == cause {
+						exitCode = issue.FailureExitCode
+						stderrTail = issue.FailureStderrTail
+					}
+				}
+			}
+			result = append(result, externalCheckFailure{Check: checkName, Cause: cause, ExitCode: exitCode, StderrTail: stderrTail, Diagnostic: failures[checkName][cause]})
 		}
 	}
 	return result

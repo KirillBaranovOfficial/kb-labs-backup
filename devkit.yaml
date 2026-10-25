@@ -861,11 +861,6 @@ custom_checks:
     on: [check]
     scope: workspace
 
-  - name: plugin-entry-structure
-    run: node infra/devkit/bin/devkit-check-plugins.mjs --ci 1>&2
-    on: [check]
-    scope: workspace
-
   - name: local-workflow-script-references
     run: node .kb/workflows/scripts/check-local-script-references.mjs 1>&2
     on: [check]

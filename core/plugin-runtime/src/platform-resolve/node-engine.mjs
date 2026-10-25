@@ -2,19 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-const nodePolicyPattern = /^(0|[1-9]\d*)\.x$/;
-
-export function parseNodeEnginePolicy(value) {
-  if (typeof value !== 'string') {
-    throw new Error('The platform must declare engines.node as MAJOR.x.');
-  }
-  const match = nodePolicyPattern.exec(value);
-  if (!match) {
-    throw new Error(`Unsupported Node.js engine declaration "${value}"; use exactly MAJOR.x.`);
-  }
-  return { requiredMajor: Number(match[1]) };
-}
+import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '@kb-labs/plugin-contracts/node-engine-policy';
 
 export function nodeVersionSupported(requiredMajor, actualVersion) {
   const actualMajor = parseNodeMajor(actualVersion);
@@ -36,17 +24,7 @@ export function readNodeEnginePolicy(packageManifest) {
   if (parsed.name !== '@kb-labs/plugin-runtime') {
     throw new Error(`Runtime engine manifest ${packageManifest} declares ${JSON.stringify(parsed.name)}.`);
   }
-  return parseNodeEnginePolicy(parsed.engines?.node);
-}
-
-export function readNodeEngineDeclaration(packageManifest) {
-  const parsed = readManifest(packageManifest);
-  const policy = parsed.engines?.node;
-  if (policy === undefined) return undefined;
-  if (typeof policy !== 'string') {
-    throw new Error(`Node.js engine declaration in ${packageManifest} must be a string.`);
-  }
-  return policy;
+  return parseNodeEnginePolicy(parsed.engines?.node, 'platform');
 }
 
 function readManifest(packageManifest) {
@@ -74,7 +52,7 @@ export function runtimePackageManifest(moduleURL) {
 
 export function selectNodeExecutable(rootManifest, environment = process.env) {
   const declaration = readNodeEngineDeclaration(rootManifest);
-  const { requiredMajor } = parseNodeEnginePolicy(declaration);
+  const { requiredMajor } = parseNodeEnginePolicy(declaration, 'platform');
   const candidates = new Set((environment.PATH ?? '').split(delimiter).map((directory) => join(directory || '.', 'node')));
   const rejected = [];
   for (const candidate of candidates) {
@@ -100,7 +78,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   } else if (process.argv[2] === '--required-major') {
     try {
       const declaration = readNodeEngineDeclaration(process.argv[3]);
-      process.stdout.write(`${parseNodeEnginePolicy(declaration).requiredMajor}\n`);
+      process.stdout.write(`${parseNodeEnginePolicy(declaration, 'platform').requiredMajor}\n`);
     } catch (error) {
       process.stderr.write(`${error.message}\n`);
       process.exitCode = 2;

@@ -118,6 +118,8 @@ func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issu
 		Cause:             safeExternalCause(err),
 		File:              pkg.Dir,
 		FailureDiagnostic: externalDiagnostic(err),
+		FailureExitCode:   externalExitCode(err),
+		FailureStderrTail: externalStderrTail(err),
 	}}
 }
 
@@ -143,7 +145,7 @@ func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 	if len(out.Issues) > 0 {
 		return out.Issues
 	}
-	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root, FailureDiagnostic: externalDiagnostic(err)}}
+	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root, FailureDiagnostic: externalDiagnostic(err), FailureExitCode: externalExitCode(err), FailureStderrTail: externalStderrTail(err)}}
 }
 
 func (r *externalRule) Apply(pkg workspace.Package, issues []Issue, dryRun bool) error {
@@ -231,6 +233,22 @@ func externalDiagnostic(err error) *diag.Diag {
 		return diagnostic
 	}
 	return nil
+}
+
+func externalExitCode(err error) int {
+	var commandErr *toolchain.CommandError
+	if errors.As(err, &commandErr) {
+		return commandErr.ExitCode
+	}
+	return 0
+}
+
+func externalStderrTail(err error) string {
+	var commandErr *toolchain.CommandError
+	if errors.As(err, &commandErr) {
+		return commandErr.StderrTail
+	}
+	return ""
 }
 
 func modeForCommand(issues []Issue) string {

@@ -8,6 +8,7 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'project-service-path': 'src/project-service-path.ts',
+    'node-engine-policy': 'src/node-engine-policy.ts',
   },
   external: ['@kb-labs/core-contracts'],
 })
