@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 
-from test_environment import isolated_environment
+from test_environment import isolated_environment, require_compose_command
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -117,12 +117,10 @@ if (!configResult.ok || !lockResult.valid) {
         return rendered
 
     def test_default_compose_configuration_does_not_require_registry_lane_inputs(self):
+        compose_command = require_compose_command(self)
         with tempfile.TemporaryDirectory(prefix="journey-compose-default-") as temp:
-            compose_command = ["docker", "compose"] if shutil.which("docker") and subprocess.run(
-                ["docker", "compose", "version"], capture_output=True, check=False,
-            ).returncode == 0 else ["docker-compose"]
             env = isolated_environment(
-                Path(temp) / "home", Path(temp) / "bin", required_tools=tuple(compose_command),
+                Path(temp) / "home", Path(temp) / "bin", required_tools=(compose_command[0],),
                 overrides={
                     "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
                     "KB_JOURNEY_GIT_REVISION": "test-revision",
@@ -138,12 +136,10 @@ if (!configResult.ok || !lockResult.valid) {
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_internal_network_setting_renders_an_offline_journey_network(self):
-        compose_command = ["docker", "compose"] if shutil.which("docker") and subprocess.run(
-            ["docker", "compose", "version"], capture_output=True, check=False,
-        ).returncode == 0 else ["docker-compose"]
+        compose_command = require_compose_command(self)
         with tempfile.TemporaryDirectory(prefix="journey-compose-offline-") as temp:
             env = isolated_environment(
-                Path(temp) / "home", Path(temp) / "bin", required_tools=tuple(compose_command),
+                Path(temp) / "home", Path(temp) / "bin", required_tools=(compose_command[0],),
                 overrides={
                     "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
                     "KB_JOURNEY_GIT_REVISION": "test-revision",
