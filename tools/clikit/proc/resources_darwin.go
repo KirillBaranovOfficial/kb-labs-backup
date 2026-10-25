@@ -64,7 +64,9 @@ func (darwinHostResourceSource) Snapshot() HostResourceSnapshot {
 	if err != nil || len(swap) < 24 {
 		result.Unavailable["vm.swapusage"] = fmt.Sprintf("read swap usage: %v", err)
 	} else {
-		result.Swap = fmt.Sprintf("used=%d total=%d", binary.NativeEndian.Uint64(swap[8:16]), binary.NativeEndian.Uint64(swap[:8]))
+		result.SwapTotalBytes = binary.NativeEndian.Uint64(swap[:8])
+		result.SwapUsedBytes = binary.NativeEndian.Uint64(swap[16:24])
+		result.Swap = fmt.Sprintf("used=%d total=%d", result.SwapUsedBytes, result.SwapTotalBytes)
 	}
 	if result.LogicalCPUs == 0 {
 		result.Unavailable["hw.logicalcpu"] = "returned zero"

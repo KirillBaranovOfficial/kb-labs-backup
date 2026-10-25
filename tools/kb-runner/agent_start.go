@@ -66,6 +66,9 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	waitGate := fs.String("wait-gate", "", "wait for this shared batch gate")
 	holdGate := fs.String("hold-gate", "", "hold this batch gate while the job runs")
 	minFree := fs.String("min-free", "", "minimum free disk bytes required for admission")
+	cost := fs.String("cost", "light", "expected resource cost class: light or heavy")
+	costKey := fs.String("cost-key", "", "key used to learn completed run resource costs")
+	priority := fs.Int("priority", 0, "run priority; lower values are paused first under hard pressure")
 	stall := fs.Duration("stall", 30*time.Minute, "fail the job after this no-output interval")
 	fiveHour := fs.Float64("five-hour-threshold", 95, "quota admission threshold")
 	week := fs.Float64("week-threshold", 98, "weekly quota admission threshold")
@@ -77,6 +80,10 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	}
 	if *stream == "" || *workdir == "" || *promptFile == "" {
 		return 2, fmt.Errorf("%s agent start: --stream, --workdir, and --prompt-file are required; next: %s agent --help", root.Name(), root.InvocationCommand())
+	}
+	costClass, err := proc.ParseCostClass(*cost)
+	if err != nil {
+		return 2, fmt.Errorf("%s agent start: %w; next: %s agent start --help", root.Name(), err, root.InvocationCommand())
 	}
 	if *slotGroup == "" {
 		*slotGroup = *vendor
@@ -121,7 +128,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		stderrPath := filepath.Join(*state, "jobs", id+".stderr.log")
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, Command: append([]string{helper}, argsForWorker...)})
+		run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, Command: append([]string{helper}, argsForWorker...)})
 		if err != nil {
 			return failAgentJob(store, id, PhaseAdmission, ReasonSetup, root, finalPath, fmt.Errorf("agent process admission failed: %w", err))
 		}

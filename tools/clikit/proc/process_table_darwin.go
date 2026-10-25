@@ -39,18 +39,46 @@ func darwinProcessSnapshot(runID string) ([]Process, error) {
 			continue
 		}
 		started := time.Unix(info.Proc.P_starttime.Sec, int64(info.Proc.P_starttime.Usec)*1000)
-		var rss, cpuNS C.uint64_t
-		metricsAvailable := C.kb_proc_metrics(C.pid_t(info.Proc.P_pid), &rss, &cpuNS) != 0
 		processes = append(processes, Process{
 			PID: int(info.Proc.P_pid), PPID: int(info.Eproc.Ppid),
 			Command:   darwinCommandName(info.Proc.P_comm[:]),
 			StartedAt: started, ElapsedMS: max(int64(0), time.Since(started).Milliseconds()),
 			Identity: formatStart(&info), uid: info.Eproc.Ucred.Uid,
-			RSSBytes: uint64(rss), CPUSeconds: float64(cpuNS) / 1e9, MetricsAvailable: metricsAvailable,
 		})
 	}
 	candidates := processInspectionCandidates(processes, syscall.Getpid(), uint32(unix.Getuid()))
-	return applyProcessMarkers(processes, candidates, runID, inspectProcessMarker), nil
+	return applyCachedProcessMarkers(processes, candidates, runID, hostProcessMarkerCache, inspectProcessMarker), nil
+}
+
+func (osProcessSource) Metrics(tree []Process) ([]Process, error) {
+	return darwinProcessMetrics(tree)
+}
+
+func darwinProcessMetrics(tree []Process) ([]Process, error) {
+	out := append([]Process(nil), tree...)
+	var failures []error
+	for index := range out {
+		if out[index].Unverified {
+			continue
+		}
+		info, err := unix.SysctlKinfoProc("kern.proc.pid", out[index].PID)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("inspect process %d for metrics: %w", out[index].PID, err))
+			continue
+		}
+		if formatStart(info) != out[index].Identity {
+			continue
+		}
+		var rss, cpuNS C.uint64_t
+		if C.kb_proc_metrics(C.pid_t(out[index].PID), &rss, &cpuNS) == 0 {
+			failures = append(failures, fmt.Errorf("read resource metrics for process %d", out[index].PID))
+			continue
+		}
+		out[index].RSSBytes = uint64(rss)
+		out[index].CPUSeconds = float64(cpuNS) / 1e9
+		out[index].MetricsAvailable = true
+	}
+	return out, errors.Join(failures...)
 }
 
 func darwinCommandName(comm []byte) string {
@@ -60,18 +88,25 @@ func darwinCommandName(comm []byte) string {
 	return string(comm)
 }
 
-func inspectProcessMarker(pid int, runID string) (bool, bool, error) {
+// kern.procargs2 exposes the current exec image's argv and environment. execve
+// can replace the environment without changing PID or process start time, so
+// the cache captures it at the first non-ancestral observation. A process
+// already seen in ancestry remains owned by persisted identity history if a
+// later exec removes the marker; an unrelated process first seen without a
+// marker is not retroactively adopted if its later exec adds one.
+func inspectProcessMarker(pid int) (string, bool, error) {
 	args, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil {
 		if processGone(err) {
-			return false, false, err
+			return "", false, err
 		}
-		return false, true, nil
+		return "", true, nil
 	}
-	if bytes.Contains(args, []byte(runEnv+"="+runID)) {
-		return true, false, nil
+	_, position, err := parseProcargs2(args)
+	if err != nil {
+		return "", true, err
 	}
-	return false, !procargs2HasEnvironment(args), nil
+	return processMarkerValue(args[position:]), false, nil
 }
 
 func procargs2Arguments(data []byte) ([]string, error) {

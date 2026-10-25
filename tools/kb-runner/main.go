@@ -189,6 +189,8 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	holdGate := fs.String("hold-gate", "", "hold this named gate for the command tree lifetime")
 	minFree := fs.String("min-free", "", "minimum free bytes on the state filesystem")
 	costKey := fs.String("cost-key", "", "key used to learn completed run resource costs")
+	cost := fs.String("cost", "light", "expected resource cost class: light or heavy")
+	priority := fs.Int("priority", 0, "run priority; lower values are paused first under hard pressure")
 	memory := fs.String("mem", "", "declared memory reservation, for example 2G")
 	cpus := fs.String("cpus", "", "minimum or minimum..maximum CPU cores")
 	disk := fs.String("disk", "", "declared disk growth reservation, for example 3G")
@@ -209,8 +211,11 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	if *tag == "" || *state == "" || *stall <= 0 || *stdoutPath == "" || *stderrPath == "" {
 		return 2, fmt.Errorf("%s run: --tag, --state, positive --stall, --stdout, and --stderr are required; next: %s run --help", root.Name(), root.InvocationCommand())
 	}
+	costClass, err := proc.ParseCostClass(*cost)
+	if err != nil {
+		return 2, fmt.Errorf("%s run: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
+	}
 	var minFreeBytes uint64
-	var err error
 	if *minFree == "" {
 		minFreeBytes = 0
 	} else {
@@ -246,7 +251,7 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 		return 1, fmt.Errorf("kb-runner run: locate keeper executable: %w", err)
 	}
 	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
-	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
+	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("%s run: %w\nInspect state directory access before retrying:\nnext: ls -ld %s\nnext: %s", root.Name(), err, shellQuote(*state), shellJoin(os.Args))
 	}
@@ -384,6 +389,7 @@ func (values *pathListFlag) Set(value string) error {
 func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
 	state := fs.String("state", "", "directory containing run records")
+	jsonOutput := fs.Bool("json", false, "write run and host resource state as JSON")
 	leftovers := fs.Bool("leftovers", false, "list every uncleaned owned resource")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
@@ -413,6 +419,12 @@ func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	listing := proc.List(*state)
 	if listing.Error != nil {
 		return 1, fmt.Errorf("%s ps: read run state: %w\nnext: ls -ld %s", root.Name(), listing.Error, shellQuote(*state))
+	}
+	if *jsonOutput {
+		if err := json.NewEncoder(output).Encode(listing); err != nil {
+			return 1, fmt.Errorf("%s ps: write JSON: %w", root.Name(), err)
+		}
+		return 0, nil
 	}
 	if len(listing.Runs) == 0 {
 		if _, err := fmt.Fprintln(output, "No supervised runs."); err != nil {
