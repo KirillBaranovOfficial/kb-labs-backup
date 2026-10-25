@@ -12,13 +12,13 @@ export default defineCommand({
       const [id] = input.argv;
       const { reason, json } = input.flags;
       if (!id || !reason?.trim()) {
-        return validationError('id and --reason are required', 'Usage: kb steward commitment drop <id> --reason=...');
+        return validationError('id and --reason are required', 'Usage: kb steward commitment remove <id> --reason=...');
       }
 
       try {
         const commitment = await commitmentDrop({ id, reason });
         if (!commitment) {
-          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment drop --help` to review the failure and next steps." } };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment remove --help` to review the failure and next steps." } };
         }
         if (json) {return commitment;}
         else {ctx.ui?.info?.(`Dropped: "${commitment.text}" (${reason})`);}

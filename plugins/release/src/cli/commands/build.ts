@@ -96,7 +96,7 @@ export default defineCommand({
               // generation on NODE_ENV !== 'production' (see
               // createStudioRemoteConfig in studio/plugin-tools) — a dev-only
               // convenience so the Studio host can hot-pick-up types, of no
-              // value to a release build that only needs compiled JS. Its
+              // value to a release build run that only needs compiled JS. Its
               // background TS worker is a reproducible source of indefinite
               // native-threadpool hangs under concurrent rspack invocations
               // (observed: multiple `rspack build --config
@@ -136,7 +136,7 @@ export default defineCommand({
             error: {
               code: 'KB_RUNTIME_COMMAND_FAILED',
               message: `Release build failed for ${failed.length} package(s).`,
-              hint: 'Inspect the failed packages and their build output, resolve the errors, then rerun `kb release build`.',
+              hint: 'Inspect the failed packages and their build output, resolve the errors, then rerun `kb release build run`.',
               diagnostics: failed.map((name) => ({
                 code: 'RELEASE_PACKAGE_BUILD_FAILED',
                 severity: 'error' as const,

@@ -70,7 +70,7 @@ export type CommitFlags = typeof commitFlags.infer;
  *
  * @example
  * ```bash
- * kb commit generate --scope="@kb-labs/cli" --json
+ * kb commit plan create --scope="@kb-labs/cli" --json
  * ```
  */
 export const generateFlags = defineFlags({

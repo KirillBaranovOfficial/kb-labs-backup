@@ -332,7 +332,7 @@ async function _runPipeline(ctx: {
   // 8. Publish (before git — see module comment).
   // Prepare-only mode (skipPublish) never calls the publisher — it produces
   // a synthetic "nothing published yet" result and falls straight through to
-  // git commit/tag. A separate CI job (`kb release promote`), triggered by
+  // git commit/tag. A separate CI job (`kb release stable publish`), triggered by
   // the tag this run pushes, does the actual npm publish. See
   // plugins/release/docs/adr/0001-*.
   progress('publishing', dryRun ? 'Simulating publish (dry-run)...' : skipPublish ? 'Skipping publish (prepare-only)...' : 'Publishing packages...');
@@ -405,7 +405,7 @@ async function _runPipeline(ctx: {
   // what the registry served back, catching publish-time corruption distinct
   // from pre-publish source issues. Canary skips this — it never goes through
   // a Verdaccio pre-promote gate. skipPublish skips it too — nothing landed
-  // on any registry this run; `kb release promote` verifies its own publish.
+  // on any registry this run; `kb release stable publish` verifies its own publish.
   if (!dryRun && !skipPublish && channel === 'stable') {
     progress('verifying', 'Verifying published artifacts against the registry...');
     const registryVerifyResults = await verifyAgainstRegistry(packagesToPublish, {

@@ -101,7 +101,7 @@ export function resolveStagingRegistry(opts: Pick<PreflightOptions, 'stagingRegi
  * Tool-generated state lives under `.kb/` directories (locks, plans, caches,
  * candidate bundles) and is routinely modified on a working checkout. It is
  * reported as a warning but never blocks. Any other dirty or untracked path
- * still blocks: `release git` would commit unrelated source edits.
+ * still blocks: `release git commit` would commit unrelated source edits.
  */
 function isToolGeneratedPath(path: string): boolean {
   const p = path.trim().replace(/^"|"$/g, '');

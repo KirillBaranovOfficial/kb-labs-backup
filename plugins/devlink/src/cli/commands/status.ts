@@ -112,7 +112,7 @@ export default defineCommand<unknown, StatusInput, StatusResult>({
         } else {
           sections.push({
             header: 'Fix',
-            items: ['Run: kb devlink switch --mode=local --install'],
+            items: ['Run: kb devlink mode set --mode=local --install'],
           });
         }
 

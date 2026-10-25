@@ -7,7 +7,7 @@ function apiHint(err: ClickUpApiError): string {
   switch (err.status) {
     case 401: return 'CLICKUP_API_KEY is invalid or expired — check the token in your environment';
     case 403: return 'You don\'t have permission for this action in ClickUp — check workspace access';
-    case 404: return 'Resource not found — verify the ID is correct (use `kb clickup workspace` to browse IDs)';
+    case 404: return 'Resource not found — verify the ID is correct (use `kb clickup workspace show` to browse IDs)';
     case 429: return 'ClickUp rate limit reached — wait a moment and retry';
     default:  return 'Unexpected ClickUp API error';
   }

@@ -40,11 +40,12 @@ export const manifest: ManifestV3 = {
   cli: {
     groupMeta: [
       { path: 'infra', describe: 'Infrastructure provisioning commands' },
+      { path: 'infra workspace', describe: 'Workspace materialization' },
       { path: 'infra snapshot', describe: 'Workspace and environment snapshot management' },
     ],
     commands: [
       {
-        path: 'infra prepare',
+        path: 'infra workspace create',
         operationType: 'execute' as const,
         describe: 'Materialize workspace, optional environment, and optional snapshot.',
         handler: './cli/commands/prepare-infra.js#default',
@@ -59,7 +60,7 @@ export const manifest: ManifestV3 = {
         }),
       },
       {
-        path: 'infra snapshot capture',
+        path: 'infra snapshot create',
         operationType: 'execute' as const,
         describe: 'Capture snapshot for workspace/environment.',
         handler: './cli/commands/capture-snapshot.js#default',
@@ -71,7 +72,7 @@ export const manifest: ManifestV3 = {
         }),
       },
       {
-        path: 'infra snapshot restore',
+        path: 'infra snapshot rollback',
         operationType: 'execute' as const,
         describe: 'Restore snapshot to workspace/environment target.',
         handler: './cli/commands/restore-snapshot.js#default',

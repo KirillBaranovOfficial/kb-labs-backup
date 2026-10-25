@@ -72,13 +72,13 @@ export const manifest = {
     groupMeta: [{ path: 'mind', describe: 'Mind — RAG index & search' }],
     commands: [
       {
-        path: 'mind index',
+        path: 'mind index update',
         category: 'Index',
         operationType: 'mutate' as const,
         describe: 'Build or refresh a Mind index from source files.',
         handler: './cli/commands/index.js#default',
         flags: defineCommandFlags(indexFlags.schema),
-        examples: ['kb mind index', 'kb mind index --index code --scope src/'],
+        examples: ['kb mind index update', 'kb mind index update --index code --scope src/'],
       },
       {
         path: 'mind search',
@@ -105,34 +105,34 @@ export const manifest = {
         ],
       },
       {
-        path: 'mind explore',
+        path: 'mind map show',
         category: 'Query',
         operationType: 'read' as const,
         describe: 'Task-orientation map — where to start and how involved a task looks.',
         handler: './cli/commands/explore.js#default',
         flags: defineCommandFlags(exploreFlags.schema),
         examples: [
-          'kb mind explore --task "add rate limiting to the gateway" --index code',
-          'kb mind explore --task "where is auth handled" --format json',
+          'kb mind map show --task "add rate limiting to the gateway" --index code',
+          'kb mind map show --task "where is auth handled" --format json',
         ],
       },
       {
-        path: 'mind reindex',
+        path: 'mind index create',
         category: 'Index',
         operationType: 'mutate' as const,
         describe: 'Rebuild an index from source files.',
         handler: './cli/commands/reindex.js#default',
         flags: defineCommandFlags(reindexFlags.schema),
-        examples: ['kb mind reindex --index code --full'],
+        examples: ['kb mind index create --index code --full'],
       },
       {
-        path: 'mind drop',
+        path: 'mind index delete',
         category: 'Index',
         operationType: 'mutate' as const,
         describe: 'Drop an entire index (all vectors + manifest).',
         handler: './cli/commands/drop.js#default',
         flags: defineCommandFlags(dropFlags.schema),
-        examples: ['kb mind drop --index kbrt --yes'],
+        examples: ['kb mind index delete --index kbrt --yes'],
       },
       {
         path: 'mind sync add',
@@ -171,15 +171,15 @@ export const manifest = {
         examples: ['kb mind sync list --index code'],
       },
       {
-        // Leaf must be unique across the group tree: `mind status` already
-        // uses leaf `status`, so the sync variant uses `health`.
-        path: 'mind sync health',
+        // `mind status` owns the plugin-wide status view; the sync-scoped one
+        // keeps its own noun (`health`) under `mind sync`.
+        path: 'mind sync health show',
         category: 'Sync',
         operationType: 'read' as const,
         describe: 'Show sync health for an index.',
         handler: './cli/commands/sync-status.js#default',
         flags: defineCommandFlags(syncListFlags.schema),
-        examples: ['kb mind sync health --index code'],
+        examples: ['kb mind sync health show --index code'],
       },
       {
         path: 'mind status',

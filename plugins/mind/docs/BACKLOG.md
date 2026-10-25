@@ -52,7 +52,7 @@ corpus — the opposite held.** Two honest takeaways:
 ### Validation finding — grep-vs-mind on a real proprietary repo (2026-06-03, post-fix)
 
 Head-to-head on **a private ~140-file C# domain module** (NDA — indexed in place
-via `mind index --root`, nothing copied into this repo), 14 hand-built queries:
+via `mind index update --root`, nothing copied into this repo), 14 hand-built queries:
 6 keyword-style (query reuses the file's naming) + 8 semantic (concept described
 without the identifier word). hit@5, Mind `/search` vs a literal grep baseline.
 

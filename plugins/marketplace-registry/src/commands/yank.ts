@@ -17,7 +17,7 @@ export default defineCommand<unknown, CLIInput<YankFlags>, unknown>({
       const t0 = Date.now();
 
       if (!pkg || !version) {
-        return validationError('Package spec and version are required', 'Usage: kb hub yank kb:handle/name <version>');
+        return validationError('Package spec and version are required', 'Usage: kb hub version remove kb:handle/name <version>');
       }
 
       if (!pkg.startsWith('kb:')) {

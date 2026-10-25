@@ -46,7 +46,7 @@ const mockManifests: PluginsRegistryResponse = {
               ],
             },
             {
-              path: 'mind index',
+              path: 'mind index update',
               describe: 'Build RAG index',
               handler: './dist/commands/rag-index.js',
               flags: [
@@ -106,7 +106,7 @@ export class MockPluginsSource implements PluginsDataSource {
         `1. **mind search** - Query the RAG index\n` +
         `   - Required: --text (query text)\n` +
         `   - Optional: --agent (use agent mode)\n\n` +
-        `2. **mind index** - Build RAG index\n` +
+        `2. **mind index update** - Build RAG index\n` +
         `   - Optional: --scope (default: 'default')\n\n` +
         `Use these commands to perform semantic code search across your codebase.`;
     } else if (question.includes('rest') || question.includes('api') || question.includes('endpoint')) {
@@ -119,7 +119,7 @@ export class MockPluginsSource implements PluginsDataSource {
     } else {
       answer = `This is the Mind RAG Plugin (v0.1.0) - a semantic code search and RAG system.\n\n` +
         `Key features:\n` +
-        `- 2 CLI commands (mind search, mind index)\n` +
+        `- 2 CLI commands (mind search, mind index update)\n` +
         `- 1 REST API endpoint (/search)\n` +
         `- AI-powered semantic search\n` +
         `- Read-only file system access\n` +

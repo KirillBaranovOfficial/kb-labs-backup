@@ -165,7 +165,7 @@ export default defineCommand({
             error: {
               code: 'KB_RUNTIME_COMMAND_FAILED',
               message: `Failed to update ${failedUpdates.length} package version(s).`,
-              hint: 'Review the failed package updates, resolve the reported issues, then rerun `kb release version`.',
+              hint: 'Review the failed package updates, resolve the reported issues, then rerun `kb release version update`.',
               diagnostics: failedUpdates.map((update) => ({
                 code: 'RELEASE_PACKAGE_VERSION_UPDATE_FAILED',
                 severity: 'error' as const,

@@ -68,7 +68,7 @@ export interface WorkflowEngineOptions {
   secretProvider: SecretProvider
   /** Platform analytics adapter (OPTIONAL) */
   analytics?: IAnalytics
-  /** Platform snapshot manager (OPTIONAL - for infra snapshot restore in replay) */
+  /** Platform snapshot manager (OPTIONAL - for infra snapshot rollback in replay) */
   snapshotManager?: ISnapshotManager
   /** Workspace root (monorepo root) - used for plugin execution context */
   workspaceRoot?: string

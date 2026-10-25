@@ -77,7 +77,7 @@ export async function listMessages(config: AccountConfig, opts: ListMessagesOpti
 
   return withImap(config, async client => {
     await client.mailboxOpen(folder).catch(() => {
-      throw new InboxError('IMAP_MAILBOX_NOT_FOUND', `Folder "${folder}" not found. Use kb inbox folders to list available folders.`);
+      throw new InboxError('IMAP_MAILBOX_NOT_FOUND', `Folder "${folder}" not found. Use kb inbox folder list to list available folders.`);
     });
 
     // Build search criteria

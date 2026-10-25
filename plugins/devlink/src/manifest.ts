@@ -18,7 +18,7 @@ const pluginPermissions = combinePermissions()
     cache: [DEVLINK_CACHE_PREFIX],
   })
   .withQuotas({
-    timeoutMs: 1800000, // 30 min — switch --install runs pnpm install in 29 sub-repos
+    timeoutMs: 1800000, // 30 min — mode set --install runs pnpm install in 29 sub-repos
     memoryMb: 512,
   })
   .build();
@@ -45,7 +45,7 @@ export const manifest = {
     ],
     commands: [
       {
-        path: 'devlink switch',
+        path: 'devlink mode set',
         category: 'Mode',
         describe: 'Switch deps between local link: and npm (CI/CD) mode',
         operationType: 'mutate' as const,
@@ -57,7 +57,7 @@ export const manifest = {
 
         flags: defineCommandFlags(switchFlags),
 
-        examples: generateExamples('devlink switch', 'kb', [
+        examples: generateExamples('devlink mode set', 'kb', [
           { description: 'Switch to npm mode (CI/CD)', flags: { mode: 'npm' } },
           { description: 'Switch to local mode (development)', flags: { mode: 'local' } },
           { description: 'Preview changes without applying', flags: { mode: 'local', 'dry-run': true } },
@@ -94,7 +94,7 @@ export const manifest = {
         operationType: 'read' as const,
         longDescription:
           'Shows all dependency changes that would be made without applying them. ' +
-          'Useful for reviewing before running switch.',
+          'Useful for reviewing before running mode set.',
 
         handler: './cli/commands/plan.js#default',
 
@@ -109,7 +109,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'devlink freeze',
+        path: 'devlink lock create',
         category: 'State',
         describe: 'Freeze current dependency state to lock file',
         operationType: 'mutate' as const,
@@ -121,7 +121,7 @@ export const manifest = {
 
         flags: defineCommandFlags(freezeFlags),
 
-        examples: generateExamples('devlink freeze', 'kb', [
+        examples: generateExamples('devlink lock create', 'kb', [
           { description: 'Freeze current state', flags: {} },
           { description: 'JSON output', flags: { json: true } },
         ]),
@@ -129,19 +129,19 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'devlink undo',
+        path: 'devlink rollback',
         category: 'State',
         describe: 'Restore previous dependency state from last backup',
         operationType: 'mutate' as const,
         longDescription:
-          'Restores package.json files from the most recent backup created by switch. ' +
+          'Restores package.json files from the most recent backup created by mode set. ' +
           'Run pnpm install after undoing.',
 
         handler: './cli/commands/undo.js#default',
 
         flags: defineCommandFlags(undoFlags),
 
-        examples: generateExamples('devlink undo', 'kb', [
+        examples: generateExamples('devlink rollback', 'kb', [
           { description: 'Undo last switch', flags: {} },
           { description: 'JSON output', flags: { json: true } },
         ]),
@@ -149,7 +149,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'devlink backups',
+        path: 'devlink backup list',
         category: 'State',
         describe: 'List and restore backups',
         operationType: 'read' as const,
@@ -160,7 +160,7 @@ export const manifest = {
 
         flags: defineCommandFlags(backupsFlags),
 
-        examples: generateExamples('devlink backups', 'kb', [
+        examples: generateExamples('devlink backup list', 'kb', [
           { description: 'List all backups', flags: {} },
           { description: 'JSON output', flags: { json: true } },
           { description: 'Restore specific backup', flags: { restore: '<backup-id>' } },

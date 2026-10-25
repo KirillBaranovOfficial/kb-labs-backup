@@ -64,7 +64,7 @@ export default defineCommand<unknown, CLIInput<ContextFlags>, unknown>({
       const pkg = packageMap.get(pkgName);
       if (!pkg) {
 
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Package not found: ${pkgName}`, hint: 'Check the package name, then rerun `kb quality context --package <name>`.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Package not found: ${pkgName}`, hint: 'Check the package name, then rerun `kb quality context show --package <name>`.' } };
       }
 
       // Workspace deps (efferent)

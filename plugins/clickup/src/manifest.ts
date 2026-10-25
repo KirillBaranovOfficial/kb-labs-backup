@@ -28,12 +28,13 @@ export const manifest = {
       { path: 'clickup task comments',  describe: 'Task comment operations' },
       { path: 'clickup list',           describe: 'List operations' },
       { path: 'clickup space',          describe: 'Space operations' },
+      { path: 'clickup status',         describe: 'Status operations' },
       { path: 'clickup folder',         describe: 'Folder operations' },
     ],
     commands: [
       // ── Workspace ────────────────────────────────────────────────────────────
       {
-        path: 'clickup workspace',
+        path: 'clickup workspace show',
         category: 'Workspace',
         operationType: 'read' as const,
         describe: 'Show full workspace hierarchy (spaces → folders → lists)',
@@ -43,9 +44,9 @@ export const manifest = {
           { name: 'full', type: 'boolean', description: 'Output full raw JSON (requires --json)' },
         ],
         examples: [
-          'kb clickup workspace',
-          'kb clickup workspace --json',
-          'kb clickup workspace --json --full',
+          'kb clickup workspace show',
+          'kb clickup workspace show --json',
+          'kb clickup workspace show --json --full',
         ],
       },
 
@@ -326,7 +327,7 @@ export const manifest = {
 
       // ── List ─────────────────────────────────────────────────────────────────
       {
-        path: 'clickup list tasks',
+        path: 'clickup task list',
         category: 'Lists',
         operationType: 'read' as const,
         describe: 'List tasks in a specific list',
@@ -341,12 +342,12 @@ export const manifest = {
           { name: 'full',     type: 'boolean', description: 'Output full raw JSON (requires --json)' },
         ],
         examples: [
-          'kb clickup list tasks listId123',
-          'kb clickup list tasks listId123 --status "open" --json',
+          'kb clickup task list listId123',
+          'kb clickup task list listId123 --status "open" --json',
         ],
       },
       {
-        path: 'clickup list statuses',
+        path: 'clickup status list',
         category: 'Lists',
         operationType: 'read' as const,
         describe: 'List available statuses for a list',
@@ -356,8 +357,8 @@ export const manifest = {
           { name: 'full', type: 'boolean', description: 'Output full raw JSON (requires --json)' },
         ],
         examples: [
-          'kb clickup list statuses listId123',
-          'kb clickup list statuses listId123 --json',
+          'kb clickup status list listId123',
+          'kb clickup status list listId123 --json',
         ],
       },
     ],

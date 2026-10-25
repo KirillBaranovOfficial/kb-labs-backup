@@ -77,7 +77,7 @@ export const RELEASE_ROUTES = {
   /** GET /history/:scope/:id/plan - Get specific release plan */
   HISTORY_PLAN: '/history/:scope/:id/plan',
 
-  /** GET /history/:scope/:id/changelog - Get specific release changelog */
+  /** GET /history/:scope/:id/changelog - Get specific release changelog show */
   HISTORY_CHANGELOG: '/history/:scope/:id/changelog',
 
   // === Git Timeline ===

@@ -189,7 +189,7 @@ export default defineCommand({
         }
         return {
           ok: false,
-          error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit plan could not be applied. Review the Git errors above, resolve them, then rerun `kb commit apply`.', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' },
+          error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit plan could not be applied. Review the Git errors above, resolve them, then rerun `kb commit plan apply`.', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' },
         };
       }
 

@@ -18,7 +18,7 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<ThreadFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        return validationError('uid is required', 'Usage: kb inbox thread <uid>');
+        return validationError('uid is required', 'Usage: kb inbox thread show <uid>');
       }
 
       const uid = parseInt(rawUid, 10);

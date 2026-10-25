@@ -222,7 +222,7 @@ export interface CustomCheckConfig {
   undeclaredImportAllowlist?: string[];
   /**
    * Keep the check in config but do not run it, unless it is requested
-   * explicitly with `kb release checks --only <id>`. Used for the legacy
+   * explicitly with `kb release checks run --only <id>`. Used for the legacy
    * per-package `pack-install-per-package` debugging check.
    */
   disabled?: boolean;
@@ -486,7 +486,7 @@ export interface PipelineOptions {
    * Prepare-only mode: run checks/build/verify/version-bump/changelog and
    * commit+tag git, but never call the publisher. No npm credentials are
    * required. Intended for a local/CI "prepare" step whose git tag is the
-   * trigger for a separate CI job that runs `kb release promote` to do the
+   * trigger for a separate CI job that runs `kb release stable publish` to do the
    * actual npm publish. See plugins/release/docs/adr/0001-*.
    */
   skipPublish?: boolean;

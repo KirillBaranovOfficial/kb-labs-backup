@@ -5,6 +5,8 @@ const pluginPermissions = combinePermissions()
   .withEnv(['KB_GATEWAY_URL', 'KB_REGISTRY_URL', 'KB_REGISTRY_AUTHOR_HANDLE'])
   .build();
 
+const JSON_FLAG = [{ name: 'json', type: 'boolean', description: 'Emit JSON instead of text' }] as const;
+
 export const manifest = {
   schema: 'kb.plugin/3' as const,
   id: '@kb-labs/marketplace-registry',
@@ -27,30 +29,34 @@ export const manifest = {
         operationType: 'mutate' as const,
         describe: 'Publish plugin to KB Labs Registry',
         handler: './commands/publish.js#default',
+        flags: JSON_FLAG,
         permissions: pluginPermissions,
       },
       {
-        path: 'hub share',
+        path: 'hub access add',
         category: 'Registry',
         operationType: 'mutate' as const,
         describe: 'Share a private plugin (--with or --link)',
         handler: './commands/share.js#default',
+        flags: JSON_FLAG,
         permissions: pluginPermissions,
       },
       {
-        path: 'hub yank',
+        path: 'hub version remove',
         category: 'Registry',
         operationType: 'mutate' as const,
-        describe: 'Yank a specific version',
+        describe: 'Remove a specific version (soft-remove — tarball stays, fresh installs blocked)',
         handler: './commands/yank.js#default',
+        flags: JSON_FLAG,
         permissions: pluginPermissions,
       },
       {
-        path: 'hub deprecate',
+        path: 'hub disable',
         category: 'Registry',
         operationType: 'mutate' as const,
-        describe: 'Deprecate a package',
+        describe: 'Disable a package (deprecate — fresh installs blocked)',
         handler: './commands/deprecate.js#default',
+        flags: JSON_FLAG,
         permissions: pluginPermissions,
       },
     ],

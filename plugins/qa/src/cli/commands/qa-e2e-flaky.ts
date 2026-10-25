@@ -43,7 +43,7 @@ async function runIngest(
     // empty snapshot into history; it would silently dilute the flip-rate
     // window with a run that carried no real signal.
 
-    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No flaky-report.json files were found under ${dir}.`, hint: 'Create or locate a flaky report, then rerun `kb qa e2e flaky --ingest --dir <dir>`.' } };
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No flaky-report.json files were found under ${dir}.`, hint: 'Create or locate a flaky report, then rerun `kb qa e2e flaky list --ingest --dir <dir>`.' } };
   }
 
   const git = await captureGit(ctx.api.shell, cwd);
@@ -90,7 +90,7 @@ export default defineCommand<unknown, CLIInput<QaE2eFlakyFlags>, unknown>({
       // than one implicitly winning.
       if (flags.sync) {
         const synced = await runSync(ctx, cwd);
-        if (!synced) {return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Flaky report sync failed.', hint: 'Check the configured CI repository and credentials, then rerun `kb qa e2e flaky --sync`.' } };}
+        if (!synced) {return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Flaky report sync failed.', hint: 'Check the configured CI repository and credentials, then rerun `kb qa e2e flaky list --sync`.' } };}
       }
 
       if (flags.ingest) {
@@ -104,7 +104,7 @@ export default defineCommand<unknown, CLIInput<QaE2eFlakyFlags>, unknown>({
         const timeline = buildCaseTimeline(history.slice(-window), flags.case);
         if (!timeline) {
 
-          return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No history was found for case "${flags.case}".`, hint: 'Run `kb qa e2e flaky --agent` to list known cases, then rerun with a valid --case.' } };
+          return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No history was found for case "${flags.case}".`, hint: 'Run `kb qa e2e flaky list --agent` to list known cases, then rerun with a valid --case.' } };
         }
         if (json) {
           return timeline;

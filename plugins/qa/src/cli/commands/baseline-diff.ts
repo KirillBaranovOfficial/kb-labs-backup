@@ -36,7 +36,7 @@ export default defineCommand<unknown, CLIInput<BaselineDiffFlags>, unknown>({
 
       if (!latestCheck || !latestStats) {
 
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No QA check or stats snapshots were found.', hint: 'Run `kb qa check` and `kb qa stats`, then rerun `kb qa baseline diff`.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No QA check or stats snapshots were found.', hint: 'Run `kb qa check run` and `kb qa stats show`, then rerun `kb qa baseline diff`.' } };
       }
 
       const diff = compareWithBaseline(latestCheck.raw, latestStats.raw, baseline);

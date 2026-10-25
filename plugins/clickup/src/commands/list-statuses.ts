@@ -12,7 +12,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<ListStatusesFlags>) {
       const [listId] = input.argv;
       if (!listId) {
-        return validationError('List ID is required', 'Usage: kb clickup list statuses <listId>  (get IDs via `kb clickup workspace`)');
+        return validationError('List ID is required', 'Usage: kb clickup status list <listId>  (get IDs via `kb clickup workspace show`)');
       }
 
       try {

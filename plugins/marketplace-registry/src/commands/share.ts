@@ -26,7 +26,7 @@ export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult | u
       const t0 = Date.now();
 
       if (!pkg) {
-        return validationError('Package spec is required', 'Usage: kb hub share kb:handle/name [--with handle | --link]');
+        return validationError('Package spec is required', 'Usage: kb hub access add kb:handle/name [--with handle | --link]');
       }
 
       if (!flags.with && !flags.link) {

@@ -132,7 +132,7 @@ export function HistoryTab() {
         {snapshots.length === 0 ? (
           <UIAlert variant="info" showIcon icon={<UIIcon name="InfoCircleOutlined" />}
             message="No snapshots yet"
-            description='Run "kb quality snapshot" or click "Save Snapshot" to start tracking trends.' />
+            description='Run "kb quality snapshot create" or click "Save Snapshot" to start tracking trends.' />
         ) : (
           <UITable<QualitySnapshot>
             dataSource={snapshots.slice().reverse()}
