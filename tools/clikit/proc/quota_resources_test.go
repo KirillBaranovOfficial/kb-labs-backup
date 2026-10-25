@@ -634,13 +634,13 @@ func TestLearnedEstimateNeverLowersDeclaredCost(t *testing.T) {
 // case: S-237.32
 func TestLearnedEstimateUsesMaximumOfLatestFiveCompletedRuns(t *testing.T) {
 	records := []record{
-		{CostKey: "build", Status: StatusDead, QueueOrder: 1, PeakRSSBytes: 100, AverageCPU: 4},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 2, PeakRSSBytes: 10, AverageCPU: 1},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 3, PeakRSSBytes: 20, AverageCPU: 2},
-		{CostKey: "other", Status: StatusDead, QueueOrder: 4, PeakRSSBytes: 200, AverageCPU: 8},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 5, PeakRSSBytes: 30, AverageCPU: 3},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 6, PeakRSSBytes: 40, AverageCPU: 1},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 7, PeakRSSBytes: 50, AverageCPU: 2},
+		{CostKey: "build", Status: StatusCompleted, QueueOrder: 1, PeakRSSBytes: 100, AverageCPU: 4},
+		{CostKey: "build", Status: StatusCompleted, QueueOrder: 2, PeakRSSBytes: 10, AverageCPU: 1},
+		{CostKey: "build", Status: StatusCompleted, QueueOrder: 3, PeakRSSBytes: 20, AverageCPU: 2},
+		{CostKey: "other", Status: StatusCompleted, QueueOrder: 4, PeakRSSBytes: 200, AverageCPU: 8},
+		{CostKey: "build", Status: StatusCompleted, QueueOrder: 5, PeakRSSBytes: 30, AverageCPU: 3},
+		{CostKey: "build", Status: StatusCompleted, QueueOrder: 6, PeakRSSBytes: 40, AverageCPU: 1},
+		{CostKey: "build", Status: StatusCompleted, QueueOrder: 7, PeakRSSBytes: 50, AverageCPU: 2},
 	}
 	got := learnedUsage(records, "build")
 	if got.MemoryBytes != 50 || got.MinCPUs != 2 {
@@ -865,7 +865,7 @@ func TestRecordedResourceObservationEmitsOneOverBudgetEvent(t *testing.T) {
 
 // case: S-237.33
 func TestPartialMeasurementNeverEntersCompleteLearningHistory(t *testing.T) {
-	records := []record{{CostKey: "build", Status: StatusDead, PeakRSSBytes: 12, AverageCPU: 1, MeasurementPartial: true}}
+	records := []record{{CostKey: "build", Status: StatusCompleted, PeakRSSBytes: 12, AverageCPU: 1, MeasurementPartial: true}}
 	if learned := learnedUsage(records, "build"); learned.MemoryBytes != 0 {
 		t.Fatalf("partial observation learned as complete: %+v", learned)
 	}
