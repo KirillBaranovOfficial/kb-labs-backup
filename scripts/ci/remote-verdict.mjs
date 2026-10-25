@@ -8,8 +8,13 @@ export function parseVerdict(value, expectedSha) {
       throw new Error('Remote verdict contains an invalid job result');
     }
     if (!Array.isArray(job.failures) || typeof job.logTail !== 'string') throw new Error(`Remote verdict job ${job.name} is missing diagnostics`);
+    if (job.failures.some((failure) => !failure || typeof failure.name !== 'string' || !failure.name || typeof failure.message !== 'string' || !failure.message)) {
+      throw new Error(`Remote verdict job ${job.name} contains an unnamed failure`);
+    }
+    if (job.status === 'fail' && job.failures.length === 0) throw new Error(`Remote verdict job ${job.name} failed without naming a failure`);
   }
   if (value.status === 'pass' && value.jobs.some((job) => job.status !== 'pass')) throw new Error('A passing verdict cannot contain a non-passing job');
+  if (Buffer.byteLength(JSON.stringify(value)) > 64_000) throw new Error('Remote verdict diagnostics exceed the 64 KB limit');
   return value;
 }
 

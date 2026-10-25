@@ -4,19 +4,21 @@ import { globSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { goTestFailures } from './remote-stage-results.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const registryReader = path.join(workspaceRoot, 'scripts/read-go-binary-registry.mjs');
 
 function usage() {
-  return 'Usage: node scripts/ci/go-module-suite.mjs [--registry <devkit.yaml>] [--root <workspace>] [--go <go-command>] [--module <path> ...]';
+  return 'Usage: node scripts/ci/go-module-suite.mjs [--registry <devkit.yaml>] [--root <workspace>] [--go <go-command>] [--json] [--module <path> ...]';
 }
 
 function parseArgs(args) {
-  const options = { root: workspaceRoot, go: 'go', modules: [] };
+  const options = { root: workspaceRoot, go: 'go', modules: [], json: false };
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
     if (flag === '--help') return { help: true };
+    if (flag === '--json') { options.json = true; continue; }
     if (!['--registry', '--root', '--go', '--module'].includes(flag) || !args[index + 1]) {
       throw new Error(`${usage()}\nInvalid or incomplete argument: ${flag}`);
     }
@@ -190,7 +192,7 @@ function tmpdirRerunCommand(tmpdir) {
   return `Rerun with: TMPDIR=${shellQuote(tmpdir)} ${invocation}`;
 }
 
-function runSuite({ root = workspaceRoot, registry, go = 'go', modules = [] } = {}) {
+function runSuite({ root = workspaceRoot, registry, go = 'go', modules = [], json = false } = {}) {
   const registryPath = registry ?? path.join(root, 'devkit.yaml');
   const discovered = discoverModules(root, registryPath);
   const selected = modules.length ? discovered.filter((module) => modules.includes(module)) : discovered;
@@ -204,6 +206,7 @@ function runSuite({ root = workspaceRoot, registry, go = 'go', modules = [] } = 
   );
   const temporaryRoots = [];
   const homes = [];
+  const failures = [];
   let failed = false;
   try {
     const plans = [
@@ -230,22 +233,27 @@ function runSuite({ root = workspaceRoot, registry, go = 'go', modules = [] } = 
       const label = `${module} [TMPDIR ${variant}]`;
       try {
         const packages = goPackages(go, moduleDir, env);
-        const test = run(go, ['test', ...packages], { cwd: moduleDir, env });
+        const test = run(go, ['test', ...(json ? ['-json'] : []), ...packages], { cwd: moduleDir, env });
         if (test.status !== 0) {
           failed = true;
-          process.stderr.write(`${label}: FAIL\n${test.stdout}${test.stderr}`);
+          const testFailures = json ? goTestFailures(test.stdout) : [];
+          if (testFailures.length) failures.push(...testFailures);
+          else failures.push({ name: `${module} [TMPDIR ${variant}]`, message: (test.stderr || test.stdout || `go test exited ${test.status}`).trim() });
+          if (!json) process.stderr.write(`${label}: FAIL\n${test.stdout}${test.stderr}`);
         } else {
-          process.stdout.write(`${label}: PASS (${packages.length} packages)\n`);
+          if (!json) process.stdout.write(`${label}: PASS (${packages.length} packages)\n`);
         }
       } catch (error) {
         failed = true;
-        process.stderr.write(`${label}: FAIL — ${error.message}\n`);
+        failures.push({ name: `${module} [TMPDIR ${variant}]`, message: error.message });
+        if (!json) process.stderr.write(`${label}: FAIL — ${error.message}\n`);
       }
     }
   } finally {
     for (const home of homes) rmSync(home, { recursive: true, force: true });
     for (const { directory } of temporaryRoots) rmSync(directory, { recursive: true, force: true });
   }
+  if (json) process.stdout.write(`${JSON.stringify({ ok: !failed, failures })}\n`);
   return failed ? 1 : 0;
 }
 
