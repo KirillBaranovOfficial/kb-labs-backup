@@ -374,17 +374,21 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 	}
 	state := filepath.Join(dir, "state")
 	pidFile := filepath.Join(dir, "pids")
+	releaseFile := filepath.Join(dir, "release")
 	var pids []int
 	identities := make(map[int]string)
 	run, err := Start(context.Background(), Config{
 		HelperPath: helper, StateDir: state, Tag: "darwin-procargs", Stall: 250 * time.Millisecond,
 		StdoutPath: filepath.Join(dir, "stdout"), StderrPath: filepath.Join(dir, "stderr"),
-		Command: []string{helper, "probe-detached", pidFile, "4"},
+		Command: []string{helper, "probe-detached", pidFile, releaseFile},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		if err := os.WriteFile(releaseFile, nil, 0o600); err != nil {
+			t.Logf("release test-owned detached process fixtures: %v", err)
+		}
 		_ = run.Kill()
 		_ = run.Wait()
 		for _, pid := range pids {
@@ -434,7 +438,7 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if len(pids) != 2 {
-		t.Fatalf("detached shell and sleep PIDs were not recorded: %v", pids)
+		t.Fatalf("detached fixture PIDs were not recorded: %v", pids)
 	}
 	runner := filepath.Join(dir, "kb-runner")
 	buildRunner := exec.Command("go", "build", "-o", runner, ".")
@@ -484,9 +488,17 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 		}
 		listedInPS := false
 		for _, line := range strings.Split(string(output), "\n") {
-			if strings.Contains(line, "\t"+strconv.Itoa(pid)+"\t") || strings.Contains(line, "─ "+strconv.Itoa(pid)+" ") {
-				listedInPS = true
-				if strings.Contains(line, "unverified") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			listedPID, parseErr := strconv.Atoi(fields[1])
+			if parseErr != nil || listedPID != pid {
+				continue
+			}
+			listedInPS = true
+			for _, field := range fields[2:] {
+				if field == "unverified" {
 					t.Fatalf("ps marked proven marker/history PID %d unverified: %s", pid, line)
 				}
 			}
