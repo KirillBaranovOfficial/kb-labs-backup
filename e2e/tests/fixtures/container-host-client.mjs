@@ -44,7 +44,7 @@ await channel.send({
   payload: {
     requestId: runId,
     descriptor,
-    handlerPath: '/workspace/core/plugin-runtime/src/__tests__/fixtures/container-hanging-handler.mjs',
+    handlerPath: '/workspace/e2e/tests/fixtures/container-hanging-handler.mjs',
     input: {},
     cwd: '/workspace',
     strictFilesystemPermissions: false,
