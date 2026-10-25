@@ -22,6 +22,7 @@ import (
 	"github.com/kb-labs/clikit/proc/child"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
+	"github.com/kb-labs/create/v2/internal/tempdirguard"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -135,6 +136,13 @@ func TestStartFailureRejectsUndeclaredEvidence(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	// Re-exec helper children (process_identity_exec_test.go) either replace
+	// their image with syscall.Exec or exit from inside the test, so the
+	// cleanup below never runs in them; they never use the fake host.
+	if os.Getenv("KB_PROCESS_IDENTITY_EXEC_PHASE") != "" {
+		os.Exit(m.Run())
+	}
+	checkLeakedTempEntries := tempdirguard.Own("kb-create-fakehost-")
 	dir, err := os.MkdirTemp("", "kb-create-fakehost-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -161,6 +169,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stdout, "process audit %s: none\n", fakeHostBinary)
 	}
 	os.RemoveAll(dir)
+	if leaked := checkLeakedTempEntries(); len(leaked) > 0 {
+		fmt.Fprintf(os.Stderr, "host tests left their own temp entries in %s: %v; entries with this prefix must be removed by the suite that created them\n", os.TempDir(), leaked)
+		code = 1
+	}
 	os.Exit(code)
 }
 
