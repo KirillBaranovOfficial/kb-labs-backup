@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// case: S-237.68
+// case: S-237.70
 func TestGovernorStopsAndContinuesOwnedChildTree(t *testing.T) {
 	if outputPath := os.Getenv("KB_CLIPROC_GOVERNOR_TICKER"); outputPath != "" {
 		file, err := os.OpenFile(outputPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
