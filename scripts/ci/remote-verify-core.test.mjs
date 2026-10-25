@@ -35,6 +35,16 @@ function assertMinimumRemoteSpacing(times, minimumMs = 30_000) {
   }
 }
 
+function assertCause(cause, expected) {
+  assert.ok(cause && typeof cause === 'object', 'terminal verdict is missing its structured cause');
+  for (const field of ['operation', 'command', 'attempts', 'startedAtMs', 'endedAtMs', 'elapsedMs', 'lastError']) {
+    assert.ok(Object.hasOwn(cause, field), `cause is missing ${field}`);
+  }
+  for (const [field, value] of Object.entries(expected)) assert.equal(cause[field], value, `cause.${field}`);
+  assert.ok(cause.elapsedMs >= 0);
+  assert.ok(cause.lastError.length <= 1_000);
+}
+
 // case: S-262.6
 test('a transient GitHub poll failure retries and the recovered run can pass', async () => {
   const h = harness({ listRuns: (() => { let calls = 0; return async (_repo, branch) => { calls += 1; if (calls === 1) throw new RemoteOperationError('GitHub API request failed', { retryable: true }); return [run({ head_branch: branch })]; }; })() });
@@ -49,6 +59,7 @@ test('persistent GitHub failures exhaust the outage budget and classify as outag
   const h = harness({ listRuns: async () => { throw new RemoteOperationError('transport unavailable', { retryable: true }); } });
   const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: { ...h.policy, timeoutMs: 600_000, outageBudgetMs: 300_000 } });
   assert.equal(verdict.status, 'outage');
+  assertCause(verdict.cause, { operation: 'run_lookup', command: `repos/owner/repo/actions/runs?branch=verify%2Fstream%2F19700101T000000Z-${sha}&event=push&per_page=100`, attempts: 5, lastError: 'transport unavailable' });
   assert.equal(h.calls.deletes.length, 1);
   assertMinimumRemoteSpacing(h.calls.remoteTimes);
   for (let index = 1; index < h.calls.ghTimes.length; index += 1) {
@@ -62,13 +73,24 @@ test('an empty run queue at the overall deadline classifies as timeout', async (
   h.policy.timeoutMs = 2500;
   const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
   assert.equal(verdict.status, 'timeout');
+  assertCause(verdict.cause, { operation: 'run_lookup', command: `repos/owner/repo/actions/runs?branch=verify%2Fstream%2F19700101T000000Z-${sha}&event=push&per_page=100`, attempts: 0, lastError: 'Remote verification deadline expired' });
+});
+
+test('a rejected push is a fail verdict with its exact operation cause, not an outage', async () => {
+  const h = harness();
+  h.executors.git.pushRef = async () => { throw new RemoteOperationError('remote rejected: protected branch', { retryable: false }); };
+  const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'fail');
+  assertCause(verdict.cause, { operation: 'push_ref', command: `git push backup ${sha}:refs/heads/verify/stream/19700101T000000Z-${sha}`, attempts: 1, lastError: 'remote rejected: protected branch' });
+  assert.equal(h.calls.lists, 0);
 });
 
 // case: S-262.6
 test('a GitHub run conclusion of timed_out classifies as timeout', async () => {
-  const h = harness({ listRuns: async () => [run({ conclusion: 'timed_out' })] });
+  const h = harness({ listRuns: async (_repo, branch) => [run({ head_branch: branch, conclusion: 'timed_out' })] });
   const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
   assert.equal(verdict.status, 'timeout');
+  assertCause(verdict.cause, { operation: 'workflow_result', command: 'repos/owner/repo/actions/runs/17', attempts: 1, lastError: 'GitHub Actions run 17 concluded timed_out' });
 });
 
 // case: S-262.6
@@ -110,6 +132,7 @@ test('persistent ref cleanup failure is retried and remains a non-fatal diagnost
   assert.ok(deletes > 1);
   assertMinimumRemoteSpacing(h.calls.remoteTimes);
   assert.match(verdict.diagnostics.join('\n'), /scheduled sweep/);
+  assertCause(verdict.cause, { operation: 'delete_ref', attempts: 3, lastError: 'git transport reset' });
 });
 
 // case: S-262.6
@@ -171,6 +194,7 @@ test('an artifact SHA mismatch cannot produce a passing verdict', async () => {
   const h = harness({ downloadVerdict: async () => ({ ...pass, sha: 'b'.repeat(40) }) });
   const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
   assert.equal(verdict.status, 'fail');
+  assertCause(verdict.cause, { operation: 'artifact_validation', command: 'remote-verdict artifact for run 17' });
   assert.match(verdict.diagnostics.join('\n'), /SHA mismatch/);
 });
 
@@ -184,6 +208,7 @@ test('a failed run fetches its artifact once and spaces both diagnostics calls',
   });
   const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
   assert.equal(verdict.status, 'fail');
+  assertCause(verdict.cause, { operation: 'workflow_result', command: 'repos/owner/repo/actions/runs/17' });
   assert.equal(h.calls.artifacts, 1);
   assert.deepEqual(verdict.jobs[0].failures, ['test example']);
   assert.equal(verdict.jobs[0].logTail, 'bounded failure log');

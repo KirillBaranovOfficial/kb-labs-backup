@@ -9,12 +9,15 @@ test('records the active profile stage and signal before saving the verdict', ()
   let saved;
   const active = {
     name: 'journey-unit-suite',
+    command: 'python3 scripts/ci/run-unittest-suite.py',
     startedAt: 120,
     recorded: false,
     child: { kill(signal) { killedWith = signal; } },
   };
   const stage = interruptActiveStage('SIGTERM', active, stages, () => {
-    saved = parseVerdict({ schemaVersion: 1, sha: 'a'.repeat(40), status: 'fail', jobs: stages }, 'a'.repeat(40));
+    const endedAtMs = Date.now();
+    const cause = { operation: active.name, command: active.command, attempts: 1, startedAtMs: endedAtMs - 55, endedAtMs, elapsedMs: 55, lastError: `${active.name} terminated by signal SIGTERM` };
+    saved = parseVerdict({ schemaVersion: 1, sha: 'a'.repeat(40), status: 'fail', jobs: stages, cause }, 'a'.repeat(40));
   }, 175);
 
   assert.equal(killedWith, 'SIGTERM');

@@ -7,6 +7,7 @@ import { load } from 'js-yaml';
 import { parseVerdict, repositoryFromRemote, selectVerificationRun, terminalVerdict } from './remote-verdict.mjs';
 
 const good = { schemaVersion: 1, sha: 'abc123', status: 'pass', jobs: [{ name: 'build', status: 'pass', failures: [], logTail: '' }] };
+const cause = { operation: 'push_ref', command: 'git push backup sha:refs/heads/verify/stream', attempts: 1, startedAtMs: 10, endedAtMs: 15, elapsedMs: 5, lastError: 'remote rejected' };
 
 test('accepts a verdict only for the requested SHA', () => {
   assert.equal(parseVerdict(good, 'abc123'), good);
@@ -14,11 +15,11 @@ test('accepts a verdict only for the requested SHA', () => {
 });
 
 test('rejects pass when any job failed', () => {
-  assert.throws(() => parseVerdict({ ...good, jobs: [{ name: 'build', status: 'fail', failures: [{ name: 'pkg › test', message: 'TS failed' }], logTail: 'TS failed' }] }, 'abc123'), /non-passing job/);
+  assert.throws(() => parseVerdict({ ...good, cause, jobs: [{ name: 'build', status: 'fail', failures: [{ name: 'pkg › test', message: 'TS failed' }], logTail: 'TS failed' }] }, 'abc123'), /non-passing job/);
 });
 
 test('rejects a failing stage without a named failure unit', () => {
-  assert.throws(() => parseVerdict({ ...good, status: 'fail', jobs: [{ name: 'tests', status: 'fail', failures: [], logTail: '' }] }, 'abc123'), /failed without naming a failure/);
+  assert.throws(() => parseVerdict({ ...good, status: 'fail', cause, jobs: [{ name: 'tests', status: 'fail', failures: [], logTail: '' }] }, 'abc123'), /failed without naming a failure/);
 });
 
 test('rejects verdicts above the diagnostic size limit', () => {
@@ -26,10 +27,14 @@ test('rejects verdicts above the diagnostic size limit', () => {
   assert.throws(() => parseVerdict(oversized, 'abc123'), /64 KB limit/);
 });
 
-test('classifies bounded wait expiry and API outages distinctly', () => {
-  assert.equal(terminalVerdict('abc123', 'timeout', 'run wait expired').status, 'timeout');
-  assert.equal(terminalVerdict('abc123', 'outage', 'GitHub API unavailable').status, 'outage');
-  assert.throws(() => terminalVerdict('abc123', 'pass', 'unexpected'), /Invalid terminal/);
+test('every terminal failure class carries validated operation cause fields', () => {
+  for (const status of ['fail', 'timeout', 'outage']) {
+    const verdict = terminalVerdict('abc123', status, cause, `${status} result`);
+    assert.equal(verdict.status, status);
+    assert.equal(parseVerdict(verdict, 'abc123').cause, cause);
+  }
+  assert.throws(() => parseVerdict({ ...good, status: 'fail' }, 'abc123'), /missing its structured cause/);
+  assert.throws(() => terminalVerdict('abc123', 'pass', cause, 'unexpected'), /Invalid terminal/);
 });
 
 test('derives the repository from the configured SSH alias and HTTPS remotes', () => {
