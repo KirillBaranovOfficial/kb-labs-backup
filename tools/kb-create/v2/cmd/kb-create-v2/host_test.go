@@ -26,6 +26,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/internal/tempdirguard"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -326,6 +327,7 @@ func hostSupervisorHelperBinary(t *testing.T) string {
 }
 
 func TestMain(m *testing.M) {
+	checkLeakedTempEntries := tempdirguard.Own("kb-create-cli-")
 	code := m.Run()
 	if buildDir != "" {
 		for _, binary := range []string{filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost"), filepath.Join(buildDir, "kb-create-supervisor.test")} {
@@ -350,6 +352,10 @@ func TestMain(m *testing.M) {
 	}
 	if buildDir != "" {
 		os.RemoveAll(buildDir)
+	}
+	if leaked := checkLeakedTempEntries(); len(leaked) > 0 {
+		fmt.Fprintf(os.Stderr, "kb-create-v2 tests left their own temp entries in %s: %v; entries with this prefix must be removed by the suite that created them\n", os.TempDir(), leaked)
+		code = 1
 	}
 	os.Exit(code)
 }
