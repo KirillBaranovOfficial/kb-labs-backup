@@ -3,7 +3,7 @@
  * throwaway consumer project and confirms it can actually be imported.
  *
  * Exists as its own command so `check-pack-install.sh` (the bash release
- * gate) and `release stage` (the CI publish path) share ONE verification
+ * gate) and `release artifact create` (the CI publish path) share ONE verification
  * implementation instead of the gate re-shelling to `npm install` on its
  * own and getting npm's swallowed, useless error message back (npm's CLI
  * catches the exact EUNSUPPORTEDPROTOCOL failure this exists to catch as an

@@ -25,7 +25,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<FolderCreateFlags>) {
       const { space, name, json, full } = input.flags;
       if (!space) {
-        return validationError('--space is required', 'Use `kb clickup workspace` to find the space ID');
+        return validationError('--space is required', 'Use `kb clickup workspace show` to find the space ID');
       }
       if (!name) {
         return validationError('--name is required');

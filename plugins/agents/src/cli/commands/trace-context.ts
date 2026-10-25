@@ -5,9 +5,9 @@
  * what was truncated, what was dropped, and what the LLM responded.
  *
  * Usage:
- *   pnpm kb agent trace context --task-id=<id>
- *   pnpm kb agent trace context --task-id=<id> --iteration=3
- *   pnpm kb agent trace context --task-id=<id> --json
+ *   pnpm kb agent trace context show --task-id=<id>
+ *   pnpm kb agent trace context show --task-id=<id> --iteration=3
+ *   pnpm kb agent trace context show --task-id=<id> --json
  */
 
 import { defineCommand, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';

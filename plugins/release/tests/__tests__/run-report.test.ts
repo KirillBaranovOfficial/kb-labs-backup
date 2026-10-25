@@ -174,7 +174,7 @@ describe('buildReleaseRunReport', () => {
   it('attaches envelope-compatible errors with resume action', () => {
     const f = report.failures.find(x => x.package === '@kb-labs/sdk')!;
     expect(f.error).toMatchObject({ code: 'KB_RELEASE_REGISTRY_UNREACHABLE', area: 'release', stage: 'preflight', retryable: true });
-    expect(f.resumeCommand).toBe('pnpm kb release checks --flow platform');
+    expect(f.resumeCommand).toBe('pnpm kb release checks run --flow platform');
     expect(f.error.actions?.[0]?.command).toBe(f.resumeCommand);
   });
 
@@ -204,7 +204,7 @@ describe('renderRunReportMarkdown', () => {
     expect(md).toContain('| checks | failed | 2.5s | - |');
     expect(md).toContain('**environment**');
     expect(md).toContain('KB_RELEASE_REGISTRY_UNREACHABLE');
-    expect(md).toContain('`pnpm kb release checks --flow platform`');
+    expect(md).toContain('`pnpm kb release checks run --flow platform`');
   });
 
   it('renders a clean report without a failures section', () => {

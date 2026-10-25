@@ -51,7 +51,7 @@ export const manifest = {
         })
         .examples(['kb inbox get 42', 'kb inbox get 42 --attachments --json', 'kb inbox get 42 --folder Sent --account work']),
 
-      cmd('inbox thread', './commands/mail-thread.js#default', 'Get full email thread by uid')
+      cmd('inbox thread show', './commands/mail-thread.js#default', 'Get full email thread by uid')
         .read()
         .flags({
           folder:  { type: 'string',  description: 'Folder (default: INBOX)' },
@@ -59,7 +59,7 @@ export const manifest = {
           json:    { type: 'boolean', description: 'Output JSON' },
           full:    { type: 'boolean', description: 'Full JSON (requires --json)' },
         })
-        .examples(['kb inbox thread 42', 'kb inbox thread 42 --json']),
+        .examples(['kb inbox thread show 42', 'kb inbox thread show 42 --json']),
 
       cmd('inbox search', './commands/mail-search.js#default', 'Search emails by from, subject, body, or text')
         .read()
@@ -97,7 +97,7 @@ export const manifest = {
           'kb inbox send --to user@example.com --subject "Report" --body "..." --account work --json',
         ]),
 
-      cmd('inbox reply', './commands/mail-reply.js#default', 'Reply to an email by uid (preserves thread)')
+      cmd('inbox thread send', './commands/mail-reply.js#default', 'Reply to an email by uid (preserves thread)')
         .mutate()
         .flags({
           body:    { type: 'string',  description: 'Reply body (required)' },
@@ -105,9 +105,9 @@ export const manifest = {
           account: { type: 'string',  description: 'Account name or index' },
           json:    { type: 'boolean', description: 'Output JSON' },
         })
-        .examples(['kb inbox reply 42 --body "Thanks, will do"', 'kb inbox reply 42 --body "On it" --account work --json']),
+        .examples(['kb inbox thread send 42 --body "Thanks, will do"', 'kb inbox thread send 42 --body "On it" --account work --json']),
 
-      cmd('inbox move', './commands/mail-move.js#default', 'Move an email to a folder')
+      cmd('inbox message update', './commands/mail-move.js#default', 'Move an email to a folder')
         .mutate()
         .flags({
           folder:  { type: 'string',  description: 'Destination folder (required)' },
@@ -115,9 +115,9 @@ export const manifest = {
           account: { type: 'string',  description: 'Account name or index' },
           json:    { type: 'boolean', description: 'Output JSON' },
         })
-        .examples(['kb inbox move 42 --folder Work', 'kb inbox move 42 --folder Archive --from Sent --json']),
+        .examples(['kb inbox message update 42 --folder Work', 'kb inbox message update 42 --folder Archive --from Sent --json']),
 
-      cmd('inbox mark', './commands/mail-mark.js#default', 'Mark an email as read, unread, spam, or flagged')
+      cmd('inbox message set', './commands/mail-mark.js#default', 'Mark an email as read, unread, spam, or flagged')
         .mutate()
         .flags({
           read:      { type: 'boolean', description: 'Mark as read' },
@@ -129,7 +129,7 @@ export const manifest = {
           account:   { type: 'string',  description: 'Account name or index' },
           json:      { type: 'boolean', description: 'Output JSON' },
         })
-        .examples(['kb inbox mark 42 --read', 'kb inbox mark 42 --spam', 'kb inbox mark 42 --flagged --json']),
+        .examples(['kb inbox message set 42 --read', 'kb inbox message set 42 --spam', 'kb inbox message set 42 --flagged --json']),
 
       cmd('inbox delete', './commands/mail-delete.js#default', 'Delete an email (moves to Trash)')
         .mutate()
@@ -140,24 +140,22 @@ export const manifest = {
         })
         .examples(['kb inbox delete 42', 'kb inbox delete 42 --folder Spam --json']),
 
-      cmd('inbox folders', './commands/mail-folders.js#default', 'List available folders/mailboxes')
+      cmd('inbox folder list', './commands/mail-folders.js#default', 'List available folders/mailboxes')
         .read()
         .flags({
           account: { type: 'string',  description: 'Account name or index' },
           json:    { type: 'boolean', description: 'Output JSON' },
         })
-        .examples(['kb inbox folders', 'kb inbox folders --account work --json']),
+        .examples(['kb inbox folder list', 'kb inbox folder list --account work --json']),
 
-      cmd('inbox accounts', './commands/mail-accounts.js#default', 'List configured email accounts')
+      cmd('inbox account list', './commands/mail-accounts.js#default', 'List configured email accounts')
         .read()
         .category('Config')
         .flags({
           json: { type: 'boolean', description: 'Output JSON' },
         })
-        .examples(['kb inbox accounts', 'kb inbox accounts --json']),
+        .examples(['kb inbox account list', 'kb inbox account list --json']),
     ]),
-
-    group({ path: 'inbox mail', describe: 'Mail operations', category: 'Mail' }, []),
   ),
 
   rest: {

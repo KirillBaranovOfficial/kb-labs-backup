@@ -80,9 +80,9 @@ export const pluginContractsManifest = {
       },
       produces: ["commit.plan.json", "commit.status.json"],
       examples: [
-        "kb commit generate",
-        "kb commit generate --json",
-        "kb commit generate --scope src/**",
+        "kb commit plan create",
+        "kb commit plan create --json",
+        "kb commit plan create --scope src/**",
       ],
     },
     "commit:apply": {
@@ -97,7 +97,7 @@ export const pluginContractsManifest = {
         format: "zod",
       },
       produces: [],
-      examples: ["kb commit apply", "kb commit apply --force"],
+      examples: ["kb commit plan apply", "kb commit plan apply --force"],
     },
     "commit:push": {
       id: "commit:push",
@@ -111,7 +111,7 @@ export const pluginContractsManifest = {
         format: "zod",
       },
       produces: [],
-      examples: ["kb commit push", "kb commit push --force"],
+      examples: ["kb commit publish", "kb commit publish --force"],
     },
     "commit:open": {
       id: "commit:open",
@@ -125,7 +125,7 @@ export const pluginContractsManifest = {
         format: "zod",
       },
       produces: [],
-      examples: ["kb commit open", "kb commit open --json"],
+      examples: ["kb commit plan show", "kb commit plan show --json"],
     },
     "commit:reset": {
       id: "commit:reset",
@@ -135,7 +135,7 @@ export const pluginContractsManifest = {
         format: "zod",
       },
       produces: [],
-      examples: ["kb commit reset"],
+      examples: ["kb commit plan delete"],
     },
   },
 } as const satisfies PluginContracts;

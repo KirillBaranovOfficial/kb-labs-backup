@@ -241,7 +241,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const productError = createProductErrorEnvelope({
       code: 'COMMIT_PLAN_INVALID',
       message: 'The commit plan is invalid.',
-      hint: 'Run `kb commit generate` and inspect the proposed plan.',
+      hint: 'Run `kb commit plan create` and inspect the proposed plan.',
       details: { reason: 'empty' },
       retryable: false,
     });
@@ -250,7 +250,7 @@ describe('executeCommandV3 plugin command result output', () => {
 
     await executeCommandV3({
       binaryName: 'kb',
-      pluginId: '@kb-labs/commit', pluginVersion: '1.0.0', commandPath: 'commit open',
+      pluginId: '@kb-labs/commit', pluginVersion: '1.0.0', commandPath: 'commit plan show',
       handlerPath: 'dist/commands/open.js', argv: [], flags: { json: true },
       ui: { ...noopUI, json }, platform: {} as unknown as PlatformServices, platformContainer,
     });

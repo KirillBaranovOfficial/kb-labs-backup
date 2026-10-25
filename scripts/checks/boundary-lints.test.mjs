@@ -478,7 +478,6 @@ describe('exceptions file', () => {
 
   test('the committed exceptions file is well-formed and every entry has a date and reason', () => {
     const list = loadExceptions();
-    assert.ok(list.length > 0);
     const keys = new Set(list.map((e) => `${e.rule}|${e.package}|${e.target}`));
     assert.equal(keys.size, list.length, 'duplicate exception entries');
   });

@@ -47,12 +47,12 @@ describe('normalizePluginHandlerFailure', () => {
     const executionEnvelope = createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
       correlationId: 'module-load-correlation',
       details: {
-        plugin: '@kb-labs/commit', command: 'commit reset', failureReason: 'failed unexpectedly',
+        plugin: '@kb-labs/commit', command: 'commit plan delete', failureReason: 'failed unexpectedly',
       },
     });
 
     const envelope = normalizePluginHandlerFailure(executionEnvelope, {
-      pluginId: '@kb-labs/commit', command: 'commit reset', correlationId: 'module-load-correlation',
+      pluginId: '@kb-labs/commit', command: 'commit plan delete', correlationId: 'module-load-correlation',
       pluginVersion: '2.122.1', serializedError, executionEnvelope,
       logger: loggerFor(records), logContext,
     });
@@ -61,7 +61,7 @@ describe('normalizePluginHandlerFailure', () => {
       code: 'KB_PLUGIN_LOAD_FAILED',
       correlationId: 'module-load-correlation',
       details: {
-        plugin: '@kb-labs/commit', command: 'commit reset',
+        plugin: '@kb-labs/commit', command: 'commit plan delete',
         specifier: '@kb-labs/shared-command-kit',
       },
     });
@@ -275,7 +275,7 @@ describe('normalizePluginHandlerFailure', () => {
   });
 
   it.each([
-    { pluginId: '@kb-labs/commit', command: 'commit open', hint: { key: 'errors.commit.open', params: { path: 'plan.json' } } },
+    { pluginId: '@kb-labs/commit', command: 'commit plan show', hint: { key: 'errors.commit.open', params: { path: 'plan.json' } } },
     { pluginId: '@kb-labs/workflow', command: 'workflow defs list', hint: undefined },
     { pluginId: '@kb-labs/review', command: 'review run', hint: { message: 'Review failed', interpolation: { file: 'src/a.ts' } } },
   ])('keeps malformed hints attributable through the shared SDK failure helper for $command', ({ pluginId, command, hint }) => {

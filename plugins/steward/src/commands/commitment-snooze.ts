@@ -13,13 +13,13 @@ export default defineCommand({
       const [id] = input.argv;
       const { until, reason, json } = input.flags;
       if (!id || !until?.trim()) {
-        return validationError('id and --until are required', 'Usage: kb steward commitment snooze <id> --until=...');
+        return validationError('id and --until are required', 'Usage: kb steward commitment reminder update <id> --until=...');
       }
 
       try {
         const commitment = await commitmentSnooze({ id, until: parseDate(until), reason });
         if (!commitment) {
-          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment snooze --help` to review the failure and next steps." } };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment reminder update --help` to review the failure and next steps." } };
         }
         if (json) {return commitment;}
         else {ctx.ui?.info?.(`Snoozed "${commitment.text}" until ${until}`);}

@@ -3,7 +3,7 @@
 // Publish-time preparation for the V2 release contract. This script owns the
 // adapter from staged package manifests to the V2 index; the launcher only
 // consumes the sealed result. It deliberately reads the exact tarballs from
-// release stage instead of rebuilding or resolving npm tags.
+// release artifact create instead of rebuilding or resolving npm tags.
 
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';

@@ -612,7 +612,7 @@ describe('installed platform adapter defaults', () => {
     await rm(path.join(versionRoot, '.kb', 'v2', 'receipt.json'));
     const pluginEnv = { ...env };
     delete pluginEnv.KB_GATEWAY_URL;
-    const pluginCommand = spawnSync(process.execPath, [cliPath, 'commit', 'reset', '--json'], {
+    const pluginCommand = spawnSync(process.execPath, [cliPath, 'commit', 'plan', 'delete', '--json'], {
       cwd: projectRoot, env: pluginEnv, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
     });
     expect(pluginCommand.status, pluginCommand.stderr || pluginCommand.stdout).toBe(0);

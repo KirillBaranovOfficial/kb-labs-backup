@@ -98,7 +98,7 @@ export default defineCommand({
             error: {
               code: 'KB_RUNTIME_COMMAND_FAILED',
               message: `Package verification failed with ${issues.length} issue(s).`,
-              hint: 'Review the listed package verification issues, resolve them, then rerun `kb release pack`.',
+              hint: 'Review the listed package verification issues, resolve them, then rerun `kb release pack validate`.',
               diagnostics: results.flatMap((result) => result.issues.map((issue) => ({
                 code: 'RELEASE_PACKAGE_VERIFY_FAILED',
                 severity: 'error' as const,

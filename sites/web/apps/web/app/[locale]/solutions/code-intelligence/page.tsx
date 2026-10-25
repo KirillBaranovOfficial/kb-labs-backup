@@ -41,7 +41,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 // ── Content ───────────────────────────────────────────────────────────────────
 
 // i18n-ignore
-const INDEX_OUTPUT = `$ kb mind index
+const INDEX_OUTPUT = `$ kb mind index update
 
   ✓  Index updated in 22s (incremental)
 

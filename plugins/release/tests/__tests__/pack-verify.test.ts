@@ -446,7 +446,7 @@ describe('runReleaseChecks with builtin pack checks', () => {
     const dir = pkgDir('@w/nostage');
     const results = await runReleaseChecks([{ id: 'pack-static', builtin: 'pack-static', runIn: 'perPackage' }], { repoRoot: root, packagePaths: [dir], shell });
     expect(results[0]?.ok).toBe(false);
-    expect(results[0]?.details?.stderr).toContain('release stage plan');
+    expect(results[0]?.details?.stderr).toContain('release candidate publish');
   });
 });
 

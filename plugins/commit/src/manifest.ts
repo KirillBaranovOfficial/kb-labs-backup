@@ -29,7 +29,6 @@ import {
   applyFlags,
   pushFlags,
   jsonOnlyFlags,
-  emptyFlags,
 } from './cli/commands/flags';
 
 /**
@@ -155,6 +154,10 @@ export const manifest = {
         path: 'commit',
         describe: 'AI-powered conventional commit generation.',
       },
+      {
+        path: 'commit plan',
+        describe: 'Commit plan management.',
+      },
     ],
     commands: [
       // Main command: commit (default flow)
@@ -182,7 +185,7 @@ export const manifest = {
 
       // commit:generate - Generate commit plan
       {
-        path: 'commit generate',
+        path: 'commit plan create',
         category: 'Pipeline',
         describe: 'Generate commit plan from git changes.',
         operationType: 'execute' as const,
@@ -195,15 +198,15 @@ export const manifest = {
         flags: defineCommandFlags(generateFlags),
 
         examples: [
-          'kb commit generate',
-          'kb commit generate --json',
-          'kb commit generate --scope "packages/**"',
+          'kb commit plan create',
+          'kb commit plan create --json',
+          'kb commit plan create --scope "packages/**"',
         ],
       },
 
       // commit:apply - Apply commit plan
       {
-        path: 'commit apply',
+        path: 'commit plan apply',
         category: 'Pipeline',
         describe: 'Apply current commit plan (create local commits).',
         operationType: 'mutate' as const,
@@ -216,14 +219,14 @@ export const manifest = {
         flags: defineCommandFlags(applyFlags),
 
         examples: [
-          'kb commit apply',
-          'kb commit apply --force',
+          'kb commit plan apply',
+          'kb commit plan apply --force',
         ],
       },
 
       // commit:push - Push commits
       {
-        path: 'commit push',
+        path: 'commit publish',
         category: 'Pipeline',
         describe: 'Push commits to remote repository.',
         operationType: 'execute' as const,
@@ -236,13 +239,13 @@ export const manifest = {
         flags: defineCommandFlags(pushFlags),
 
         examples: [
-          'kb commit push',
+          'kb commit publish',
         ],
       },
 
       // commit:open - Show current plan
       {
-        path: 'commit open',
+        path: 'commit plan show',
         category: 'Plan',
         describe: 'Show current commit plan.',
         operationType: 'read' as const,
@@ -253,14 +256,14 @@ export const manifest = {
         flags: defineCommandFlags(jsonOnlyFlags),
 
         examples: [
-          'kb commit open',
-          'kb commit open --json',
+          'kb commit plan show',
+          'kb commit plan show --json',
         ],
       },
 
       // commit:reset - Clear current plan
       {
-        path: 'commit reset',
+        path: 'commit plan delete',
         category: 'Plan',
         describe: 'Clear current commit plan.',
         operationType: 'mutate' as const,
@@ -268,10 +271,10 @@ export const manifest = {
 
         handler: './cli/commands/reset.js#default',
 
-        flags: defineCommandFlags(emptyFlags),
+        flags: defineCommandFlags(jsonOnlyFlags),
 
         examples: [
-          'kb commit reset',
+          'kb commit plan delete',
         ],
       },
     ],

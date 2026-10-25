@@ -22,16 +22,16 @@ jobs:
         run: pnpm kb release plan --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --json
 
       - name: Checks
-        run: pnpm kb release checks --scope ${{ inputs.scope }} --json
+        run: pnpm kb release checks run --scope ${{ inputs.scope }} --json
 
       - name: Pack verify
-        run: pnpm kb release pack --scope ${{ inputs.scope }} --json
+        run: pnpm kb release pack validate --scope ${{ inputs.scope }} --json
 
       - name: Changelog preview
-        run: pnpm kb release changelog --scope ${{ inputs.scope }}
+        run: pnpm kb release changelog show --scope ${{ inputs.scope }}
 
       - name: Version preview
-        run: pnpm kb release version --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --dry-run --json
+        run: pnpm kb release version update --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --dry-run --json
 
       - name: Git preview
-        run: pnpm kb release git --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --dry-run --json
+        run: pnpm kb release git commit --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --dry-run --json

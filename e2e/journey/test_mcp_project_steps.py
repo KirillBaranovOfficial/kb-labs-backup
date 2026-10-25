@@ -145,7 +145,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
     def test_project_catalog_isolation_rejects_fake_failure_then_proves_project_scoped_tool(self):
         journey = Journey("local", "project-catalog-isolation")
         with patch("service_runner.request_mcp", side_effect=[
-            (500, {}, {}), (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
+            (500, {}, {}), (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_plan_apply"}]}}, {}),
         ]):
             journey.step("project catalog isolation", "mcp",
                          lambda: project_plugin_catalog_isolation("prj_a", "prj_b", "token"),
@@ -156,7 +156,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         journey = Journey("local", "project-catalog-isolation")
         responses = [
-            (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
+            (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_plan_apply"}]}}, {}),
             (200, {"result": {"tools": [{"name": "kb-labs-workflow__workflow_run"}]}}, {}),
         ]
         with patch("service_runner.request_mcp", side_effect=responses):
@@ -185,7 +185,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         }}
         responses = [
             (401, auth_error, {}),
-            (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
+            (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_plan_apply"}]}}, {}),
             (401, auth_error, {}),
             (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
         ]
@@ -520,14 +520,14 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             self.assertIn("omitted selected project tools", local_auth("prj_a"))
 
     def test_commit_tool_schema_checks_the_manifest_argument_type(self):
-        tools = [{"name": "kb-labs-commit__commit_apply", "inputSchema": {
+        tools = [{"name": "kb-labs-commit__commit_plan_apply", "inputSchema": {
             "type": "object", "properties": {"force": {"type": "boolean"}, "json": {"type": "boolean"}},
         }}]
         with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             self.assertIsNone(commit_tool_schema("prj_a", "token"))
 
     def test_commit_tool_schema_reports_a_missing_or_wrong_schema(self):
-        tools = [{"name": "kb-labs-commit__commit_apply", "inputSchema": {"type": "object", "properties": {}}}]
+        tools = [{"name": "kb-labs-commit__commit_plan_apply", "inputSchema": {"type": "object", "properties": {}}}]
         with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             self.assertIn("force and json", commit_tool_schema("prj_a", "token"))
 
@@ -546,7 +546,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
              patch("mcp_project_steps.run_command", return_value=history) as git_log:
             self.assertIsNone(apply_commit_plan("prj_a", "token", "/tmp/project-a"))
         payload = request.call_args.kwargs["payload"]
-        self.assertEqual(payload["params"]["name"], "kb-labs-commit__commit_apply")
+        self.assertEqual(payload["params"]["name"], "kb-labs-commit__commit_plan_apply")
         self.assertEqual(payload["params"]["arguments"], {})
         self.assertEqual(git_log.call_args.args[0][-1], "--all")
 

@@ -77,7 +77,7 @@ export function classifyFailure(signals: FailureSignals): FailureVerdict {
       code: 'KB_RELEASE_CHECK_FAILED',
       rule: 'workspace-protocol',
       rootCause: `Packed manifest still contains a workspace-only dependency protocol (${detail}).`,
-      hint: 'Internal dependencies must be rewritten to concrete versions before packing. Re-run `kb release stage` (dependency rewrite), then re-run checks; if it persists, fix the package.json or the rewrite step.',
+      hint: 'Internal dependencies must be rewritten to concrete versions before packing. Re-run `kb release artifact create` (dependency rewrite), then re-run checks; if it persists, fix the package.json or the rewrite step.',
       timedOut,
     };
   }

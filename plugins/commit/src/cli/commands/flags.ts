@@ -101,9 +101,3 @@ export const jsonOnlyFlags = {
 
 export type JsonOnlyFlags = typeof jsonOnlyFlags;
 
-/**
- * Empty flags for commands that take no arguments
- */
-export const emptyFlags = {} as const;
-
-export type EmptyFlags = typeof emptyFlags;

@@ -63,10 +63,10 @@ HTTP.
 
 ```bash
 kb hub publish                  # publish current plugin to registry
-kb hub share --with user123     # share private plugin with a user
-kb hub share --link             # generate shareable link
-kb hub yank --version 1.2.3    # yank a broken version
-kb hub deprecate --message "Use @kb-labs/new-plugin instead"
+kb hub access add --with user123     # share private plugin with a user
+kb hub access add --link             # generate shareable link
+kb hub version remove --version 1.2.3    # yank a broken version
+kb hub disable --message "Use @kb-labs/new-plugin instead"
 ```
 
 **Full command reference**
@@ -74,9 +74,9 @@ kb hub deprecate --message "Use @kb-labs/new-plugin instead"
 | Command | Description |
 |---------|-------------|
 | `kb hub publish` | Publish plugin to KB Labs Registry |
-| `kb hub share` | Share a private plugin |
-| `kb hub yank` | Yank a specific version |
-| `kb hub deprecate` | Deprecate a package |
+| `kb hub access add` | Share a private plugin |
+| `kb hub version remove` | Yank a specific version |
+| `kb hub disable` | Deprecate a package |
 
 ---
 

@@ -135,7 +135,7 @@ export default defineCommand({
       };
       return isValid
         ? result
-        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release verification failed', hint: "Run `kb release verify --help` to review its inputs and recovery steps, then retry." } };
+        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release verification failed', hint: "Run `kb release validate --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

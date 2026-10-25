@@ -25,11 +25,11 @@ Not a path an agent can complete — the promote step needs an interactive npm O
 
 Compared to the agent's `stage`/`deliver` CI path: this re-packs from source at publish time instead of shipping one pre-verified tarball, and doesn't verify post-publish against real npm — fine for a one-off local release or registry sanity-check, but `stage`+`deliver` is the more rigorous path for anything that matters.
 
-**Constraint:** `config.registry` (the `release` key in `.kb/kb.config.json`) is config-only — no `--registry` CLI override for `release run`. It controls where a `channel: stable` run publishes (normally Verdaccio here). `kb release promote` *does* accept a `--registry` override (defaults to `config.publish.npmRegistry`) since it's a separate, later step.
+**Constraint:** `config.registry` (the `release` key in `.kb/kb.config.json`) is config-only — no `--registry` CLI override for `release run`. It controls where a `channel: stable` run publishes (normally Verdaccio here). `kb release stable publish` *does* accept a `--registry` override (defaults to `config.publish.npmRegistry`) since it's a separate, later step.
 
 ### Verdaccio setup (one-time)
 
-Separate from the checked-in `verdaccio` kb-dev service (`.kb/devservices.dev.yaml` + `.kb/verdaccio/config.yaml`) that `release-prepare.yml`'s "Stage internal deps to Verdaccio" step brings up automatically for the `pack-install` Checks gate — that one is zero-config and ephemeral (planned versions only, for the duration of one Checks run). The manual setup below is for this section's separate use case: an actual local `channel: stable` release publish. You can reuse the same checked-in config/container for this too (`./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset 0`) instead of steps 1-2 below — it already allows anonymous publish — but you still need step 3 (npmrc auth token) since this path shells out to `pnpm`/`npm publish` directly rather than through `release stage plan`'s own token handling.
+Separate from the checked-in `verdaccio` kb-dev service (`.kb/devservices.dev.yaml` + `.kb/verdaccio/config.yaml`) that `release-prepare.yml`'s "Stage internal deps to Verdaccio" step brings up automatically for the `pack-install` Checks gate — that one is zero-config and ephemeral (planned versions only, for the duration of one Checks run). The manual setup below is for this section's separate use case: an actual local `channel: stable` release publish. You can reuse the same checked-in config/container for this too (`./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset 0`) instead of steps 1-2 below — it already allows anonymous publish — but you still need step 3 (npmrc auth token) since this path shells out to `pnpm`/`npm publish` directly rather than through `release candidate publish`'s own token handling.
 
 ```bash
 # 1. Start Verdaccio
@@ -89,11 +89,11 @@ npm install @kb-labs/core-platform --registry http://localhost:4873
 unset NPM_TOKEN NODE_AUTH_TOKEN
 
 # 3. Promote exactly what step 1 committed — no re-bump, no rebuild, no re-plan.
-pnpm kb release promote --scope @kb-labs/sdk
+pnpm kb release stable publish --scope @kb-labs/sdk
 
 # --tag/--registry override config.publish.stableTag/npmRegistry for
 # one-off or emergency promotes:
-pnpm kb release promote --scope @kb-labs/sdk --tag next
+pnpm kb release stable publish --scope @kb-labs/sdk --tag next
 ```
 
 Promote is idempotent — safe to rerun after a partial failure (already-published versions count as success).

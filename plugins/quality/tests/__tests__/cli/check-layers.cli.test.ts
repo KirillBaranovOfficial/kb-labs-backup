@@ -55,7 +55,7 @@ describe('quality:check-layers', () => {
       ok: false,
       error: {
         code: 'KB_RUNTIME_COMMAND_FAILED',
-        hint: 'Review the reported imports, then rerun `kb quality check layers`.',
+        hint: 'Review the reported imports, then rerun `kb quality check layers run`.',
         diagnostics: [{
           code: 'KB_QUALITY_LAYERING_VIOLATION',
           severity: 'error',

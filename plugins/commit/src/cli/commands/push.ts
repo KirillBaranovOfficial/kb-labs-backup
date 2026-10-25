@@ -73,7 +73,7 @@ export default defineCommand({
         });
       }
 
-      return result.success ? output : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit push failed', hint: 'Review the push output, then rerun `kb commit push`.' } };
+      return result.success ? output : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit push failed', hint: 'Review the push output, then rerun `kb commit publish`.' } };
     },
   },
 });

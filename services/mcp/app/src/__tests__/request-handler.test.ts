@@ -146,7 +146,7 @@ describe('resolveVisibleTools', () => {
   // case: S-045.4
   it('does not reuse a tokenless catalog from another project runtime', async () => {
     const projectA = makeRegistry([cmd('workflow run', 'execute')]);
-    const projectB = makeRegistry([cmd('commit apply', 'execute')]);
+    const projectB = makeRegistry([cmd('commit plan apply', 'execute')]);
     const toolsA = await resolveVisibleTools({
       permits: allow, authHeader: null, cacheScope: '/projects/a', registry: projectA, cache,
     });

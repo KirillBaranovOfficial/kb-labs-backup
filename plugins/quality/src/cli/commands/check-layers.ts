@@ -42,7 +42,7 @@ export default defineCommand<unknown, CLIInput<CheckLayersFlags>, unknown>({
         error: {
           code: 'KB_RUNTIME_COMMAND_FAILED',
           message: `${filtered.totalViolations} layering violation(s) found in ${filtered.affectedPackages.length} package(s).`,
-          hint: 'Review the reported imports, then rerun `kb quality check layers`.',
+          hint: 'Review the reported imports, then rerun `kb quality check layers run`.',
           diagnostics: filtered.violations.map((violation) => ({
             code: 'KB_QUALITY_LAYERING_VIOLATION',
             severity: 'error',

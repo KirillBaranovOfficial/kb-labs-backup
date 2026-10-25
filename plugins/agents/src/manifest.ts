@@ -157,7 +157,7 @@ export const manifest = {
       },
       // Trace debugging commands (AI-friendly)
       {
-        path: 'agent trace stats',
+        path: 'agent trace stats show',
         category: 'Trace',
         describe: 'Show trace statistics: tokens, cost, timing',
         operationType: 'read' as const,
@@ -174,12 +174,12 @@ export const manifest = {
         }),
 
         examples: [
-          'kb agent trace stats --task-id=task-2026-01-29',
-          'kb agent trace stats --task-id=task-123 --json',
+          'kb agent trace stats show --task-id=task-2026-01-29',
+          'kb agent trace stats show --task-id=task-123 --json',
         ],
       },
       {
-        path: 'agent trace filter',
+        path: 'agent trace list',
         category: 'Trace',
         describe: 'Filter trace events by type for debugging',
         operationType: 'read' as const,
@@ -197,12 +197,12 @@ export const manifest = {
         }),
 
         examples: [
-          'kb agent trace filter --task-id=task-123 --type=llm:call',
-          'kb agent trace filter --task-id=task-123 --type=error:captured --json',
+          'kb agent trace list --task-id=task-123 --type=llm:call',
+          'kb agent trace list --task-id=task-123 --type=error:captured --json',
         ],
       },
       {
-        path: 'agent trace iteration',
+        path: 'agent trace iteration show',
         category: 'Trace',
         describe: 'View all events for a specific iteration',
         operationType: 'read' as const,
@@ -220,12 +220,12 @@ export const manifest = {
         }),
 
         examples: [
-          'kb agent trace iteration --task-id=task-123 --iteration=3',
-          'kb agent trace iteration --task-id=task-123 --iteration=5 --json',
+          'kb agent trace iteration show --task-id=task-123 --iteration=3',
+          'kb agent trace iteration show --task-id=task-123 --iteration=5 --json',
         ],
       },
       {
-        path: 'agent trace context',
+        path: 'agent trace context show',
         category: 'Trace',
         describe: 'Inspect context window and truncations per iteration',
         operationType: 'read' as const,
@@ -243,13 +243,13 @@ export const manifest = {
         }),
 
         examples: [
-          'kb agent trace context --task-id=task-123',
-          'kb agent trace context --task-id=task-123 --iteration=3',
-          'kb agent trace context --task-id=task-123 --json',
+          'kb agent trace context show --task-id=task-123',
+          'kb agent trace context show --task-id=task-123 --iteration=3',
+          'kb agent trace context show --task-id=task-123 --json',
         ],
       },
       {
-        path: 'agent trace diagnose',
+        path: 'agent trace doctor',
         category: 'Trace',
         describe: 'Diagnose what went wrong in an agent run',
         operationType: 'analyze' as const,
@@ -267,12 +267,12 @@ export const manifest = {
         }),
 
         examples: [
-          'kb agent trace diagnose --task-id=task-123',
-          'kb agent trace diagnose --task-id=task-123 --json',
+          'kb agent trace doctor --task-id=task-123',
+          'kb agent trace doctor --task-id=task-123 --json',
         ],
       },
       {
-        path: 'agent quality report',
+        path: 'agent quality report show',
         category: 'Quality',
         describe: 'Show quality control report for recent agent runs',
         operationType: 'analyze' as const,
@@ -291,15 +291,15 @@ export const manifest = {
         }),
 
         examples: [
-          'kb agent quality report',
-          'kb agent quality report --days=7',
-          'kb agent quality report --session-id=session-123',
-          'kb agent quality report --days=3 --json',
+          'kb agent quality report show',
+          'kb agent quality report show --days=7',
+          'kb agent quality report show --session-id=session-123',
+          'kb agent quality report show --days=3 --json',
         ],
       },
       // File change history commands
       {
-        path: 'agent history',
+        path: 'agent history list',
         category: 'History',
         describe: 'Show file change history for agent sessions',
         operationType: 'read' as const,
@@ -317,10 +317,10 @@ export const manifest = {
         }),
 
         examples: [
-          'kb agent history',
-          'kb agent history --session-id=session-123',
-          'kb agent history --file=src/index.ts',
-          'kb agent history --agent-id=agent-abc --json',
+          'kb agent history list',
+          'kb agent history list --session-id=session-123',
+          'kb agent history list --file=src/index.ts',
+          'kb agent history list --agent-id=agent-abc --json',
         ],
       },
       {

@@ -31,7 +31,7 @@ export default defineCommand({
         return validationError('--name is required');
       }
       if (!folder && !space) {
-        return validationError('--folder or --space is required', 'Use `kb clickup workspace` to find IDs');
+        return validationError('--folder or --space is required', 'Use `kb clickup workspace show` to find IDs');
       }
 
       try {

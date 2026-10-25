@@ -1,5 +1,5 @@
 /**
- * `explore` wire contract (CLI `mind explore` / REST `POST /explore`).
+ * `explore` wire contract (CLI `mind map show` / REST `POST /explore`).
  *
  * Task-orientation: given a task, return the relevant files (ranked, grounded by
  * retrieval) plus an LLM-synthesized orientation — "where to start / how

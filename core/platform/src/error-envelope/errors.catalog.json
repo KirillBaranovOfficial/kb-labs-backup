@@ -2220,7 +2220,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Building the release candidate failed.",
-      "hint": "Fix the candidate build error shown in the report, then rerun release checks.",
+      "hint": "Fix the candidate build error shown in the report, then rerun `kb release checks run`.",
       "httpStatus": 500
     },
     {
@@ -2231,7 +2231,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "A release check failed.",
-      "hint": "Resolve the failed release check shown in the report, then rerun `kb release checks`.",
+      "hint": "Resolve the failed release check shown in the report, then rerun `kb release checks run`.",
       "structuredDetailFields": [
         "check",
         "package",
@@ -2248,7 +2248,7 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "A release check timed out.",
-      "hint": "Inspect the check output and runner resources, then rerun `kb release checks`.",
+      "hint": "Inspect the check output and runner resources, then rerun `kb release checks run`.",
       "structuredDetailFields": [
         "check",
         "package",

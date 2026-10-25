@@ -764,7 +764,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                     raise RuntimeError(f"could not configure platform data path {option}")
 
             baseline = _repository_tree(project_a)
-            for command in (["adapter", "list", "--json"], ["commit", "reset", "--json"]):
+            for command in (["adapter", "list", "--json"], ["commit", "plan", "delete", "--json"]):
                 result = cli(list(command), project_a)
                 payload = _json(result, list(command))
                 if result.returncode != 0 or payload.get("ok") is not True:
@@ -952,7 +952,7 @@ def _assert_missing_llm(runner: CommandRunner, env: dict[str, str], project: Pat
     original_file = target.read_bytes()
     try:
         target.write_bytes(original_file + b"\n<!-- adapter-default-case -->\n")
-        command = ["commit", "generate", "--json"]
+        command = ["commit", "plan", "create", "--json"]
         result = runner(kb_command(command), cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
         payload = _json(result, command)
         error = payload.get("error")
@@ -974,7 +974,7 @@ def _assert_missing_openai_key(runner: CommandRunner, env: dict[str, str], proje
     llm = next((row for row in rows if isinstance(row, dict) and row.get("slot") == "llm"), None)
     if not isinstance(llm, dict) or llm.get("implementation") != "@kb-labs/adapters-openai" or llm.get("credentialsStatus") != "missing":
         raise RuntimeError("adapter list does not report the implicit OpenAI provider's missing credentials")
-    command = ["commit", "generate", "--json"]
+    command = ["commit", "plan", "create", "--json"]
     result = runner(kb_command([ *command]), cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
     if result.returncode == 0:
         raise RuntimeError("bound OpenAI LLM unexpectedly generated a commit plan without an API key")

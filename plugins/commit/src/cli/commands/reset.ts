@@ -9,6 +9,7 @@ import { clearPlan, hasPlan } from '../../core/index.js';
 import type { ResetOutput } from '../../contracts/index.js';
 
 type ResetInput = {
+  json?: boolean;
   scope?: string;
 };
 
@@ -55,7 +56,7 @@ export default defineCommand({
         sections: [{
           items: [
             'Status: ✅ Cleared successfully',
-            'Action: Run `kb commit:generate` to create a new plan',
+            'Action: Run `kb commit plan create` to create a new plan',
           ],
         }],
       });

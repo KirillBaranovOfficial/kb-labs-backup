@@ -329,7 +329,7 @@ describe('diag --command', () => {
 
   it('reports when the shared discovered command is missing from the dispatch registry', async () => {
     const reg = await getRegistryMock();
-    reg.resolve.mockReturnValue({ type: 'not-found', input: ['commit', 'open'], suggestions: [] });
+    reg.resolve.mockReturnValue({ type: 'not-found', input: ['commit', 'plan', 'show'], suggestions: [] });
     const { discoverManifestsDetailed } = await import('../../registry/discover.js');
     await setDiscoveryResult([{
         packageName: '@kb-labs/commit',
@@ -337,12 +337,12 @@ describe('diag --command', () => {
         pkgRoot: '/project/.kb/plugins/commit',
         source: 'linked',
         scope: 'project',
-        manifests: [{ _synthetic: false, group: 'commit', segments: ['commit', 'open'], id: 'open', describe: 'Open a change', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
+        manifests: [{ _synthetic: false, group: 'commit', segments: ['commit', 'plan', 'show'], id: 'show', describe: 'Show current plan', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
       }]);
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
-    await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'commit open' });
+    await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'commit plan show' });
 
     const result = readData<{ status: string; stages: Array<{ code: string }> }>(jsonSpy);
     expect(result.status).toBe('unhealthy');

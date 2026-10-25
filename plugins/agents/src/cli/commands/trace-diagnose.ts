@@ -5,8 +5,8 @@
  * tool failures, loop detection, LLM reasoning, and quality indicators.
  *
  * Usage:
- *   pnpm kb agent trace diagnose --task-id=<id>
- *   pnpm kb agent trace diagnose --task-id=<id> --json
+ *   pnpm kb agent trace doctor --task-id=<id>
+ *   pnpm kb agent trace doctor --task-id=<id> --json
  */
 
 import { defineCommand, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';

@@ -213,7 +213,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
 
         def project_plugin_commands() -> str | None:
             commands = ((projects[0], ("qa", "cases", "list", "--help"), "@kb-labs/qa"),
-                        (projects[1], ("commit", "open", "--help"), "@kb-labs/commit"))
+                        (projects[1], ("commit", "plan", "show", "--help"), "@kb-labs/commit"))
             for project, args, package in commands:
                 result = run(project, *args, step_id="S-043.6")
                 if result.returncode != 0:

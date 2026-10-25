@@ -7,10 +7,10 @@ permissions. Imports only `@kb-labs/sdk`.
 ## CLI
 
 ```bash
-kb mind index   [--index <id>] [--scope <glob>] [--root <path>] [--full]
+kb mind index update   [--index <id>] [--scope <glob>] [--root <path>] [--full]
 kb mind search  --text "<query>" [--index <id>] [--snippet none|line|full] [--format json]
 kb mind ask     --text "<question>" [--index <id>] [--mode instant|auto|thinking] [--agent]
-kb mind explore --task "<task>" [--index <id>]        # task-orientation file map
+kb mind map show --task "<task>" [--index <id>]        # task-orientation file map
 kb mind sync add|update|delete <paths…> [--index <id>]
 kb mind status [--index <id>]
 ```

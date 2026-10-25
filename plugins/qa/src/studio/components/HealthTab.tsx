@@ -49,7 +49,7 @@ export function HealthTab() {
         variant="info"
         showIcon
         message="No health data"
-        description="Run 'kb qa stats' to collect health data."
+        description="Run 'kb qa stats show' to collect health data."
         style={{ marginBottom: token.marginLG }}
       />
     );

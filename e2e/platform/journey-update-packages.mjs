@@ -28,7 +28,7 @@ export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest
   return `${baseVersion}-cand.${digest}`;
 }
 
-// Build a release stage for a journey-only platform version from an existing
+// Build a release artifact set for a journey-only platform version from an existing
 // stage: every selected release artifact is reused unchanged except its
 // package version, which advances to the requested update version. The target
 // holds the same manifest.json the

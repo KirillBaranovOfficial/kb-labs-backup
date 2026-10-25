@@ -48,7 +48,7 @@ export function diagnose(
                 file: pkgPath,
                 dep: depName,
                 message: `${depName}: link:${depValue.slice(5)} → target does not exist`,
-                fix: 'Run devlink switch --mode=local to recalculate paths',
+                fix: 'Run devlink mode set --mode=local to recalculate paths',
               });
             }
           }
@@ -64,7 +64,7 @@ export function diagnose(
                 file: pkgPath,
                 dep: depName,
                 message: `${depName}: workspace:* crosses sub-repo boundary (${consumerMono.name} → ${depMonorepo})`,
-                fix: 'Run devlink switch --mode=local to convert to link:',
+                fix: 'Run devlink mode set --mode=local to convert to link:',
               });
             }
           }
@@ -106,7 +106,7 @@ function checkStaleLockfile(mono: MonorepoInfo, issues: DiagnosticIssue[]): void
           severity: 'warning',
           file: lockPath,
           message: `${mono.name}: pnpm-lock.yaml is older than ${pkgPath}`,
-          fix: 'Delete lockfile and run pnpm install, or use devlink switch --install',
+          fix: 'Delete lockfile and run pnpm install, or use devlink mode set --install',
         });
         return; // One warning per repo is enough
       }
