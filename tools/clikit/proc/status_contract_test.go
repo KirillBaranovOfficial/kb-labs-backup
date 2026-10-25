@@ -12,8 +12,7 @@ import (
 	"time"
 )
 
-// case: S-237.71
-// case: S-237.3
+// case: S-237.73, S-237.3
 func TestExitStatusAndPSStartedAtContract(t *testing.T) {
 	zero, seven := 0, 7
 	if got := exitStatus(&zero, "", ""); got != StatusCompleted {
@@ -49,7 +48,7 @@ func TestExitStatusAndPSStartedAtContract(t *testing.T) {
 	}
 }
 
-// case: S-237.71
+// case: S-237.73
 func TestActivityWriterTeesOutputToFileAndTerminal(t *testing.T) {
 	dir := t.TempDir()
 	file, err := os.Create(filepath.Join(dir, "child.out"))
@@ -78,7 +77,7 @@ func TestActivityWriterTeesOutputToFileAndTerminal(t *testing.T) {
 	}
 }
 
-// case: S-237.71
+// case: S-237.73
 func TestCompletedRecordAndExitEventShareOutcomeStatus(t *testing.T) {
 	state := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {

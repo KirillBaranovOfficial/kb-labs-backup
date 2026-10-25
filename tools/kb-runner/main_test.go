@@ -171,7 +171,7 @@ func TestPSJSONIncludesHostDecisionAndRunMeasurements(t *testing.T) {
 	}
 }
 
-// case: S-237.71
+// case: S-237.73
 func TestPSJSONReportsCompletedRunContract(t *testing.T) {
 	state := t.TempDir()
 	runner := buildRunnerBinary(t)
