@@ -8,11 +8,12 @@ import { fileURLToPath } from 'node:url';
 import {
   checkFailures,
   boundFailureUnits,
-  failedWithoutUnit,
   goTestFailures,
   journeyFailures,
   vitestFailures,
 } from './remote-stage-results.mjs';
+import * as stageResults from './remote-stage-results.mjs';
+import { assertStageAdaptersMatchProfile, stageAdapters } from './remote-profile-stage-adapters.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -80,7 +81,70 @@ presets:
   assert.ok(failures.length > 0);
   assert.ok(failures.some((failure) => failure.name.includes('@fixture/fail')));
   assert.ok(!failures.some((failure) => failure.name.includes('@fixture/pass')));
-  assert.deepEqual(checkFailures({ results: [] }), []);
+  assert.deepEqual(checkFailures({ data: { results: [] } }), []);
+});
+
+// case: S-262.6
+test('decodes check execution failures with their check and package from kb-devkit JSON', (t) => {
+  const dir = fixture(t, 'x173-devkit-check-failure-');
+  mkdirSync(path.join(dir, 'packages', 'fail'), { recursive: true });
+  writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'fixture-workspace', private: true }));
+  writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+  writeFileSync(path.join(dir, 'devkit.yaml'), `
+schemaVersion: 2
+workspace:
+  packageManager: pnpm
+  categories:
+    fixtures:
+      match: ["packages/*"]
+      preset: fixture
+presets:
+  fixture:
+    language: typescript
+custom_checks:
+  - name: fixture-check
+    run: 'echo fixture check execution failure >&2; exit 23'
+    categories: [fixtures]
+`);
+  writeFileSync(path.join(dir, 'packages/fail/package.json'), JSON.stringify({ name: '@fixture/check-fail', version: '1.0.0' }));
+  const result = run(path.join(root, 'tools/kb-devkit/kb-devkit'), ['--config', path.join(dir, 'devkit.yaml'), 'check', '--json'], { cwd: dir });
+  assert.equal(result.status, 1, result.stdout);
+  const report = JSON.parse(result.stdout);
+  const failures = checkFailures(report);
+  assert.ok(failures.length > 0, JSON.stringify(report));
+  assert.ok(failures.some(({ name, message }) => name.includes('fixture-check') && name.includes('@fixture/check-fail') && message.includes('status 23')));
+});
+
+// case: S-262.6
+test('decodes failed build package, task, and output tail from kb-devkit run --json', (t) => {
+  const dir = fixture(t, 'x173-devkit-build-failure-');
+  mkdirSync(path.join(dir, 'packages', 'fail'), { recursive: true });
+  writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'fixture-workspace', private: true }));
+  writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+  writeFileSync(path.join(dir, 'devkit.yaml'), `
+schemaVersion: 2
+workspace:
+  packageManager: pnpm
+  categories:
+    fixtures:
+      match: ["packages/*"]
+      preset: fixture
+presets:
+  fixture:
+    language: typescript
+tasks:
+  build:
+    - categories: [fixtures]
+      command: "sh -c 'echo fixture build output tail >&2; exit 17'"
+`);
+  writeFileSync(path.join(dir, 'packages/fail/package.json'), JSON.stringify({ name: '@fixture/build-fail', version: '1.0.0' }));
+  const result = run(path.join(root, 'tools/kb-devkit/kb-devkit'), ['--config', path.join(dir, 'devkit.yaml'), 'run', 'build', '--json'], { cwd: dir });
+  assert.equal(result.status, 1, result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(typeof stageResults.runFailures, 'function', 'runFailures must decode kb-devkit run --json output');
+  const failures = stageResults.runFailures(report);
+  assert.ok(failures.length > 0, JSON.stringify(report));
+  assert.ok(failures.some(({ name, message }) => name.includes('@fixture/build-fail') && name.includes('build') && message.includes('fixture build output tail')));
 });
 
 // case: S-262.6
@@ -130,9 +194,15 @@ test('bounds each failure message and total serialized diagnostics', () => {
   assert.ok(Buffer.byteLength(JSON.stringify(bounded)) <= 8_000);
 });
 
-test('names a failed stage when structured output contains no failure units', () => {
-  assert.deepEqual(failedWithoutUnit('kb-devkit-check'), [{
-    name: 'kb-devkit-check: stage failed without naming a failure',
-    message: 'stage failed without naming a failure',
-  }]);
+test('rejects nonzero stage results when the adapter names no failure unit', () => {
+  assert.equal(typeof stageResults.requireFailureUnits, 'function', 'the adapter must enforce named failures');
+  assert.throws(() => stageResults.requireFailureUnits('full-build', []), /nonzero full-build stage produced no named failure unit/);
+});
+
+// case: S-262.6
+test('the structured adapters cover exactly the stages selected by the verification profile', () => {
+  const profile = JSON.parse(readFileSync(path.join(root, 'scripts/ci/verification-profile.json'), 'utf8'));
+  assert.doesNotThrow(() => assertStageAdaptersMatchProfile(profile.stages));
+  assert.ok(profile.stages.every((name) => Array.isArray(stageAdapters[name].command) && typeof stageAdapters[name].failures === 'function'));
+  assert.throws(() => assertStageAdaptersMatchProfile(profile.stages.slice(1)), /must match exactly/);
 });
