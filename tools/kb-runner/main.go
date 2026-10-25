@@ -391,6 +391,9 @@ func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	if *state == "" {
 		return 2, fmt.Errorf("%s ps: --state is required; next: %s ps --help", root.Name(), root.InvocationCommand())
 	}
+	if err := reconcileJobsForState(*state); err != nil {
+		return 1, fmt.Errorf("%s ps: reconcile agent jobs: %w; next: %s status --state %s --json", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
+	}
 	if *leftovers {
 		entries, err := proc.Leftovers(*state)
 		if err != nil {
@@ -483,6 +486,9 @@ func eventsCommand(root runnerRoot, args []string, output io.Writer) (int, error
 	filters, err := proc.ParseEventFilter(*filter)
 	if err != nil {
 		return 2, fmt.Errorf("%s events: %w; next: %s events --help", root.Name(), err, root.InvocationCommand())
+	}
+	if err := reconcileJobsForState(*state); err != nil {
+		return 1, fmt.Errorf("%s events: reconcile agent jobs: %w; next: %s status --state %s --json", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 	}
 	if err := proc.Events(ctx, *state, *follow, filters, *offset, output); err != nil && !errors.Is(err, context.Canceled) {
 		return 1, fmt.Errorf("%s events: %w\nnext: ls -l %s", root.Name(), err, shellQuote(filepath.Join(*state, "events.jsonl")))

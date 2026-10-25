@@ -87,6 +87,9 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 			return 1, err
 		}
 		store := newJobStore(*state)
+		if _, err := store.List(); err != nil {
+			return 1, fmt.Errorf("agent start: reconcile prior jobs before admission: %w", err)
+		}
 		finalPath := *message
 		if finalPath == "" {
 			finalPath = filepath.Join(*state, "jobs", id+".last.md")
@@ -159,6 +162,20 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	finalPath := *message
 	if finalPath == "" {
 		finalPath = filepath.Join(*state, "jobs", id+".last.md")
+	}
+	workerIdentity, workerAlive, identityErr := proc.ProcessIdentity(os.Getpid())
+	if identityErr != nil {
+		return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("inspect agent worker identity: %w", identityErr))
+	}
+	if !workerAlive {
+		return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, errors.New("agent worker process identity is not live"))
+	}
+	if err := store.Update(id, func(job *Job) error {
+		job.WorkerPID = os.Getpid()
+		job.WorkerStartedAt = workerIdentity
+		return nil
+	}); err != nil {
+		return 1, fmt.Errorf("record agent worker identity: %w", err)
 	}
 	phases := []struct {
 		phase   JobPhase
