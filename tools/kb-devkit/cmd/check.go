@@ -324,10 +324,19 @@ func validateCheckSelection(ws *workspace.Workspace, cfg *config.DevkitConfig, r
 	for _, rule := range registry.All() {
 		known[rule.Name()] = true
 	}
+	if checks.CircularEnabled(cfg) {
+		known["circular"] = true
+	}
 	for _, name := range only {
 		if !known[name] {
 			return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("Unknown check %q in --only.", name),
 				diag.WithHint(fmt.Sprintf("Choose a check from: %s.", strings.Join(sortedKeys(known), ", "))))
+		}
+	}
+	for _, name := range only {
+		if name == "circular" && packageName != "" {
+			return diag.New("KB_RUNTIME_INPUT_INVALID", "The circular check analyzes the full workspace graph and cannot be limited to one package.",
+				diag.WithHint("Rerun without --package: kb-devkit check --only circular"))
 		}
 	}
 	pkgs := ws.Packages
@@ -347,6 +356,9 @@ func validateCheckSelection(ws *workspace.Workspace, cfg *config.DevkitConfig, r
 		count += len(registry.ApplicableRulesFor(pkg, preset, only))
 	}
 	count += len(registry.WorkspaceRules(only))
+	if len(only) == 1 && only[0] == "circular" && checks.CircularEnabled(cfg) {
+		count++
+	}
 	if count == 0 {
 		if packageName != "" && len(pkgs) == 1 {
 			pkg := pkgs[0]
@@ -382,6 +394,9 @@ func selectedCheckCounts(ws *workspace.Workspace, cfg *config.DevkitConfig, regi
 	}
 	if workspaceRules := len(registry.WorkspaceRules(only)); workspaceRules > 0 {
 		counts["workspace"] = workspaceRules
+	}
+	if len(only) == 1 && only[0] == "circular" && checks.CircularEnabled(cfg) {
+		counts["circular"] = 1
 	}
 	return counts
 }
