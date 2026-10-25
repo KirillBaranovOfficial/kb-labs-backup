@@ -25,7 +25,6 @@ import (
 
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc/child"
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -1036,23 +1035,15 @@ func startSecuredProjectRegistrationGateway(t *testing.T) string {
 	}
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
-	if err := child.Start(command, child.ProcessGroup); err != nil {
-		cancel()
-		t.Fatalf("start secured Gateway fixture: %v", err)
-	}
+	startTestProcessGroup(t, command)
 	t.Cleanup(func() {
 		cancel()
-		if command.ProcessState == nil {
-			_ = child.KillTree(command.Process.Pid)
-		}
-		_ = command.Wait()
 		if stderr.Len() > 0 {
 			t.Logf("secured Gateway fixture stderr: %s", stderr.String())
 		}
 	})
 	line, err := bufio.NewReader(stdout).ReadString('\n')
 	if err != nil {
-		_ = command.Wait()
 		if missing := missingSecuredGatewayFixtureModule(stderr.String()); missing != "" {
 			t.Fatalf("secured Gateway fixture could not load built input %s; run `%s`", missing, securedGatewayFixtureBuildCommand)
 		}
