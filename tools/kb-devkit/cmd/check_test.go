@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -290,6 +291,148 @@ custom_checks:
 	}
 }
 
+// case: S-179.30
+func TestCheckCLIExternalFailureReportsExitCodeStderrAndRerunCommand(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate check test source")
+	}
+	moduleDir := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), ".."))
+	tempDir := t.TempDir()
+	fixtureRoot := filepath.Join(tempDir, "workspace")
+	pkgDir := filepath.Join(fixtureRoot, "packages", "demo")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"@acme/demo"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config := `schemaVersion: 2
+workspace:
+  discovery: ["packages/*"]
+  categories:
+    demo:
+      match: ["packages/*"]
+      language: javascript
+      preset: demo
+presets:
+  demo:
+    language: javascript
+checks:
+  timeout_ms: 5000
+custom_checks:
+  - name: stderr-check
+    run: "printf 'fixture stderr detail\\n' >&2; printf 'stderr-check\\n' >> rerun.log; exit 1"
+    on: [check]
+    scope: workspace
+  - name: stderr-check-two
+    run: "printf 'second stderr detail\\n' >&2; printf 'stderr-check-two\\n' >> rerun.log; exit 2"
+    on: [check]
+    scope: workspace
+  - name: 'audit check; touch injected #'
+    run: "printf 'audit check; touch injected #\\n' >> rerun.log; exit 3"
+    on: [check]
+    scope: workspace
+`
+	configPath := filepath.Join(fixtureRoot, "devkit.yaml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	binary := filepath.Join(tempDir, "kb-devkit")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = moduleDir
+	build.Env = isolatedCheckEnv(t, tempDir)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build kb-devkit: %v\\n%s", err, output)
+	}
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(binary, filepath.Join(binDir, "kb-devkit")); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(binary, "check", "--only", "stderr-check,stderr-check-two,audit check; touch injected #", "--json")
+	command.Dir = fixtureRoot
+	command.Env = isolatedCheckEnv(t, tempDir)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	output, err := command.Output()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() == 0 {
+		t.Fatalf("command exit = %v, want nonzero; stdout: %s; stderr: %s", err, output, stderr.String())
+	}
+	var response struct {
+		Data struct {
+			Checks []struct {
+				Check        string `json:"check"`
+				ExitCode     int    `json:"exitCode"`
+				StderrTail   string `json:"stderrTail"`
+				RerunCommand string `json:"rerunCommand"`
+			} `json:"checks"`
+		} `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Cause   string `json:"cause"`
+			Hint    string `json:"hint"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		t.Fatalf("decode command response: %v; stdout: %s", err, output)
+	}
+	if response.Error.Code != "KB_DEVKIT_CHECK_EXECUTION_FAILED" {
+		t.Fatalf("diagnostic code = %q, want KB_DEVKIT_CHECK_EXECUTION_FAILED", response.Error.Code)
+	}
+	expectedFailures := map[string]struct {
+		exitCode   int
+		stderrTail string
+	}{
+		"stderr-check":                  {exitCode: 1, stderrTail: "fixture stderr detail"},
+		"stderr-check-two":              {exitCode: 2, stderrTail: "second stderr detail"},
+		"audit check; touch injected #": {exitCode: 3, stderrTail: ""},
+	}
+	if len(response.Data.Checks) != len(expectedFailures) {
+		t.Fatalf("failure records = %#v, want all configured failures; stdout: %s", response.Data.Checks, output)
+	}
+	for _, check := range response.Data.Checks {
+		want, exists := expectedFailures[check.Check]
+		if !exists || check.ExitCode != want.exitCode || check.StderrTail != want.stderrTail {
+			t.Fatalf("failure record = %#v, want check, process status, and stderr from the fixture", check)
+		}
+		if check.RerunCommand == "" {
+			t.Fatalf("failure record %#v has no runnable suggestion", check)
+		}
+		if !strings.Contains(response.Error.Hint, check.RerunCommand) {
+			t.Fatalf("rendered hint %q does not contain structured rerun command %q", response.Error.Hint, check.RerunCommand)
+		}
+		if err := os.WriteFile(filepath.Join(fixtureRoot, "rerun.log"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Join(fixtureRoot, "injected")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		rerun := exec.Command("sh", "-c", check.RerunCommand)
+		rerun.Dir = fixtureRoot
+		rerun.Env = append(isolatedCheckEnv(t, tempDir), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		rerunOutput, rerunErr := rerun.CombinedOutput()
+		if rerunErr == nil {
+			t.Fatalf("suggested command %q succeeded, want the fixture check failure", check.RerunCommand)
+		}
+		observed, readErr := os.ReadFile(filepath.Join(fixtureRoot, "rerun.log"))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if strings.TrimSpace(string(observed)) != check.Check {
+			t.Fatalf("suggested command %q ran %q, want only %s; output: %s", check.RerunCommand, observed, check.Check, rerunOutput)
+		}
+		if _, err := os.Stat(filepath.Join(fixtureRoot, "injected")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("suggested command %q interpreted shell metacharacters in the check name; injected file stat error: %v", check.RerunCommand, err)
+		}
+	}
+}
+
 func isolatedCheckEnv(t *testing.T, home string) []string {
 	t.Helper()
 	env := make([]string, 0, len(os.Environ())+1)
@@ -394,24 +537,35 @@ func TestCheckFailureEnvelopeUsesStandardsViolationCodeAndData(t *testing.T) {
 
 // case: S-179.30
 func TestCheckExecutionFailureIsTypedAndActionable(t *testing.T) {
-	failures := []externalCheckFailure{{Check: "adapter-manifest", Cause: "external command exited with status 1"}}
-	err := externalCheckFailureError(failures, nil)
+	failures := []externalCheckFailure{{Check: "adapter-manifest", Cause: "external command exited with status 1", ExitCode: 1, StderrTail: "fixture detail"}}
+	err := externalCheckFailureError(checkCmd, failures, nil)
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != "KB_DEVKIT_CHECK_EXECUTION_FAILED" {
 		t.Fatalf("error = %#v, want typed external-check failure", err)
 	}
-	if failure.Hint == "" || failure.Cause != "adapter-manifest: external command exited with status 1" {
+	if !strings.Contains(failure.Cause, "adapter-manifest") || !strings.Contains(failure.Cause, "fixture detail") {
 		t.Fatalf("failure = %#v, want safe cause and rerun hint", failure)
+	}
+	expectedDiagnostic, err := diag.FromCatalog("KB_DEVKIT_CHECK_EXECUTION_FAILED", map[string]string{
+		"check": "adapter-manifest", "exitCode": "1", "stderrTail": "fixture detail",
+		"nextCommand": "kb-devkit check --only " + shellQuoteArgument("adapter-manifest") + " --json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failure.Hint != expectedDiagnostic.Hint {
+		t.Fatalf("hint = %q, want catalog-rendered hint %q", failure.Hint, expectedDiagnostic.Hint)
 	}
 	envelope, err := diag.ToEnvelope(failure)
 	if err != nil {
 		t.Fatalf("ToEnvelope() error = %v, want catalogued check detail", err)
 	}
-	if envelope.Message != "Workspace check adapter-manifest could not complete." {
-		t.Fatalf("envelope message = %q, want the failing check name", envelope.Message)
+	expectedEnvelope, err := diag.ToEnvelope(expectedDiagnostic)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if envelope.Hint != "Rerun this check alone with `kb-devkit check --only adapter-manifest`, then correct the check's execution problem." {
-		t.Fatalf("envelope hint = %q, want catalogued next command", envelope.Hint)
+	if envelope.Message != expectedEnvelope.Message || envelope.Hint != expectedEnvelope.Hint {
+		t.Fatalf("envelope = %#v, want catalog-rendered message and hint %#v", envelope, expectedEnvelope)
 	}
 	if len(checkExecutionFailures(map[string]checks.PackageResult{
 		"a": {Issues: []checks.Issue{{Check: "browser-node-builtins", CheckFailure: true, Cause: "exit 1"}}},
@@ -436,7 +590,7 @@ func TestExternalToolTimeoutDiagnosticSurvivesCheckFailureAggregation(t *testing
 	if len(failures) != 1 || failures[0].Diagnostic != diagnostic {
 		t.Fatalf("check failures = %#v, want preserved toolchain diagnostic", failures)
 	}
-	err = externalCheckFailureError(failures, issues)
+	err = externalCheckFailureError(checkCmd, failures, issues)
 	var got *diag.Diag
 	if !errors.As(err, &got) || got.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" {
 		t.Fatalf("aggregated timeout = %#v, want KB_TOOLCHAIN_EXTERNAL_TIMEOUT", err)

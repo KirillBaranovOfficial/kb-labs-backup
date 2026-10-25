@@ -42,8 +42,10 @@ class HostBashTests(unittest.TestCase):
                 f"#!{sys.executable}\nimport os, sys\n"
                 "if sys.argv[1:2] == ['e2e/journey/container_outcomes.py'] and '--write-log-name' in sys.argv:\n"
                 "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
-                "if sys.argv[1:] == ['" + str(repo) + "/e2e/journey/journey_resources.py', '--toolchain-image']:\n"
-                "    print('kb-journey-runner-toolchain:test')\n    print('dev.kblabs.journey.toolchain')\n"
+                "if sys.argv[1:2] == ['-c']:\n"
+                "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+                "if sys.argv[1:] == ['" + str(repo) + "/e2e/journey/journey_resources.py', '--toolchain-contract']:\n"
+                "    print(json.dumps({'imageReference': 'kb-journey-runner-toolchain:test', 'imageLabel': 'dev.kblabs.journey.toolchain', 'imageArgument': 'KB_JOURNEY_TOOLCHAIN_IMAGE'}))\n"
                 "raise SystemExit(0)\n",
             )
             self._write_stub(bin_dir / "git", "#!/bin/sh\nprintf 'test-revision\\n'\n")

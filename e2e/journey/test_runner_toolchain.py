@@ -41,6 +41,13 @@ def runner_toolchain_image(*, dockerfile: Path | None = None,
     return derive(dockerfile=dockerfile, playwright_version_input=playwright_version_input)
 
 
+def runner_toolchain_contract(*, dockerfile: Path | None = None,
+                              playwright_version_input: Path | None = None):
+    sys.path.insert(0, str(JOURNEY_DIR))
+    from journey_resources import runner_toolchain_contract as derive
+    return derive(dockerfile=dockerfile, playwright_version_input=playwright_version_input)
+
+
 def compose_command() -> list[str]:
     """Resolve the local Compose v2 command, mirroring compose-owner.sh."""
     if shutil.which("docker") and subprocess.run(
@@ -83,6 +90,15 @@ class RunnerToolchainTagTests(unittest.TestCase):
         self.assertIn("playwright install --with-deps chromium", stage)
         self.assertNotIn("COPY docs/qa/scenarios", stage,
                          "per-run runner COPYs must stay outside the toolchain stage")
+
+    def test_runner_from_consumes_the_derived_toolchain_contract(self):
+        contract = runner_toolchain_contract(playwright_version_input=self.version_input)
+        instructions = [line.split() for line in RUNNER_DOCKERFILE.read_text(encoding="utf-8").splitlines()
+                        if line.startswith("FROM ")]
+        runner_base = instructions[-1][1]
+        self.assertIn(runner_base, (f"${{{contract['imageArgument']}}}", f"${contract['imageArgument']}"))
+        self.assertEqual(contract["imageReference"],
+                         runner_toolchain_image(playwright_version_input=self.version_input))
 
     def test_each_toolchain_input_changes_the_tag(self):
         baseline = runner_toolchain_image(playwright_version_input=self.version_input)
@@ -180,12 +196,13 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
         self.assertLess(ensure_line, compose_build_line)
 
     def test_compose_build_arg_carries_the_derived_toolchain_image(self):
+        contract = runner_toolchain_contract(playwright_version_input=self.version_input)
         with temporary_directory(prefix="journey-toolchain-compose-") as temporary:
             root = Path(temporary)
             version_input = root / "studio-playwright-version"
             version_input.write_text(STAGED_PLAYWRIGHT_VERSION, encoding="utf-8")
-            expected = runner_toolchain_image(playwright_version_input=version_input)
-            env = self._compose_environment(root, {"KB_JOURNEY_TOOLCHAIN_IMAGE": expected})
+            expected = contract["imageReference"]
+            env = self._compose_environment(root, {contract["imageArgument"]: expected})
             compose = subprocess.run(
                 [*compose_command(), "-f", "e2e/docker-compose.yml", "-f",
                  "e2e/journey/docker-compose.yml", "config", "--format", "json"],
@@ -194,7 +211,7 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
             )
         self.assertEqual(compose.returncode, 0, compose.stderr)
         rendered = json.loads(compose.stdout)
-        self.assertEqual(rendered["services"]["runner"]["build"]["args"]["KB_JOURNEY_TOOLCHAIN_IMAGE"],
+        self.assertEqual(rendered["services"]["runner"]["build"]["args"][contract["imageArgument"]],
                          expected)
 
     def test_compose_without_the_derivation_falls_back_to_a_named_sentinel(self):
