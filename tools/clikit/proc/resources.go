@@ -181,7 +181,7 @@ func RegisterResource(stateDir, runID string, resource Resource) error {
 		if err != nil {
 			return fmt.Errorf("resource owner run %q is unavailable: %w", runID, err)
 		}
-		if rec.Status != StatusRunning && rec.Status != StatusStalled && rec.Status != StatusStarting {
+		if rec.Status != StatusRunning && rec.Status != StatusStalled && rec.Status != StatusStarting && rec.Status != StatusPaused {
 			return fmt.Errorf("run %q is not active; resources can only be owned during a running command", runID)
 		}
 		if resource.ID == "" {
@@ -228,7 +228,7 @@ func CreateOwnedPath(stateDir, runID, path string, pathType OwnedPathType) error
 		if err != nil {
 			return fmt.Errorf("resource owner run %q is unavailable: %w", runID, err)
 		}
-		if rec.Status != StatusRunning && rec.Status != StatusStalled && rec.Status != StatusStarting {
+		if rec.Status != StatusRunning && rec.Status != StatusStalled && rec.Status != StatusStarting && rec.Status != StatusPaused {
 			return fmt.Errorf("run %q is not active; resources can only be owned during a running command", runID)
 		}
 		absolute, err := filepath.Abs(path)

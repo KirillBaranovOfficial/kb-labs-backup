@@ -28,6 +28,12 @@ func (s linuxHostResourceSource) Snapshot() HostResourceSnapshot {
 	} else if err := parseLinuxMemInfo(string(mem), &result); err != nil {
 		result.Unavailable["memory"] = err.Error()
 	}
+	vmstat, vmErr := read("proc/vmstat")
+	if vmErr != nil {
+		result.Unavailable["swapouts"] = vmErr.Error()
+	} else if err := parseLinuxVMStat(string(vmstat), &result); err != nil {
+		result.Unavailable["swapouts"] = err.Error()
+	}
 	load, err := read("proc/loadavg")
 	if err != nil {
 		result.Unavailable["load"] = err.Error()
@@ -86,13 +92,35 @@ func parseLinuxMemInfo(data string, result *HostResourceSnapshot) error {
 		case "MemAvailable":
 			result.AvailableMemory = value * 1024
 			hasAvailable = true
+		case "SwapTotal":
+			result.SwapTotalBytes = value * 1024
+		case "SwapFree":
+			result.SwapUsedBytes = value * 1024
 		}
 	}
 	if !hasTotal || !hasAvailable {
 		return fmt.Errorf("/proc/meminfo has no usable MemTotal or MemAvailable entry")
 	}
 	result.MemoryAvailableKnown = true
+	if result.SwapTotalBytes > 0 {
+		result.SwapUsedBytes = result.SwapTotalBytes - min(result.SwapTotalBytes, result.SwapUsedBytes)
+	}
 	return nil
+}
+
+func parseLinuxVMStat(data string, result *HostResourceSnapshot) error {
+	for _, line := range strings.Split(data, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "pswpout" {
+			value, err := strconv.ParseUint(fields[1], 10, 64)
+			if err != nil {
+				return fmt.Errorf("parse /proc/vmstat pswpout: %w", err)
+			}
+			result.SwapOuts, result.SwapOutsKnown = value, true
+			return nil
+		}
+	}
+	return fmt.Errorf("/proc/vmstat has no pswpout counter")
 }
 
 func parseLinuxLoad(data string, result *HostResourceSnapshot) error {

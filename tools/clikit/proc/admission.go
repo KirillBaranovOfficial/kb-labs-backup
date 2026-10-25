@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,7 +94,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 			Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusQueued,
 			SlotGroup: cfg.SlotGroup, Slots: cfg.Slots, QueueOrder: order,
 			EnqueuedAt: time.Now().UTC(), WaitGate: cfg.WaitGate, HoldGate: cfg.HoldGate, MinFree: cfg.MinFree,
-			CostKey: cfg.CostKey, MemoryBytes: cost.MemoryBytes, CPUsMin: cost.MinCPUs, CPUsMax: cfg.CPUsMax, DiskBytes: cost.DiskBytes,
+			CostKey: cfg.CostKey, CostClass: cfg.CostClass, Priority: cfg.Priority, MemoryBytes: cost.MemoryBytes, CPUsMin: cost.MinCPUs, CPUsMax: cfg.CPUsMax, DiskBytes: cost.DiskBytes,
 		}
 		if err := writeRecordAtomic(rec); err != nil {
 			return fmt.Errorf("proc: record queued run: %w", err)
@@ -135,7 +136,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 				}
 				usedCPUs := 0
 				for _, other := range others {
-					if other.RunID != rec.RunID && (other.Status == StatusStarting || other.Status == StatusRunning || other.Status == StatusStalled) {
+					if other.RunID != rec.RunID && (other.Status == StatusStarting || other.Status == StatusRunning || other.Status == StatusStalled || other.Status == StatusPaused) {
 						usedCPUs += max(other.CPUsMin, other.GrantedCPUs)
 					}
 				}
@@ -210,7 +211,7 @@ func reportIdleQueueLocked(stateDir string, now time.Time) error {
 	}
 	active := false
 	for _, rec := range records {
-		if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled {
+		if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled || rec.Status == StatusPaused {
 			active = true
 			break
 		}
@@ -259,7 +260,7 @@ func admissionStateLocked(stateDir string, candidate record, source HostResource
 			if rec.RunID == candidate.RunID || rec.SlotGroup != candidate.SlotGroup {
 				continue
 			}
-			if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled {
+			if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled || rec.Status == StatusPaused {
 				active++
 			}
 			if (rec.Status == StatusQueued || rec.Status == StatusBlocked) && rec.QueueOrder < candidate.QueueOrder {
@@ -307,7 +308,7 @@ func admissionStateLocked(stateDir string, candidate record, source HostResource
 		if (rec.Status == StatusQueued || rec.Status == StatusBlocked) && rec.QueueOrder < candidate.QueueOrder && admissionResourcesOverlap(candidate, rec, quota.MinFree) {
 			queuedBefore++
 		}
-		if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled {
+		if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled || rec.Status == StatusPaused {
 			activeUsage.MemoryBytes += rec.MemoryBytes
 			activeUsage.MinCPUs += max(rec.CPUsMin, rec.GrantedCPUs)
 			activeUsage.DiskBytes += rec.DiskBytes
@@ -322,8 +323,17 @@ func admissionStateLocked(stateDir string, candidate record, source HostResource
 		return admissionDecision{Reason: reason, Status: StatusBlocked, Position: position}, nil
 	}
 	minFree := max(candidate.MinFree, quota.MinFree)
+	if candidate.CostClass == CostHeavy && minFree > 0 {
+		freeForGovernor, err := hostFreeDiskBytes(stateDir, source)
+		if err != nil {
+			return admissionDecision{}, err
+		}
+		if reason := governorAdmissionReason(candidate.CostClass, source.Snapshot(), freeForGovernor, minFree); reason != "" {
+			return admissionDecision{Reason: reason, Status: StatusBlocked, Position: position}, nil
+		}
+	}
 	if candidate.DiskBytes > 0 || minFree > 0 {
-		free, err := freeDiskBytes(stateDir)
+		free, err := hostFreeDiskBytes(stateDir, source)
 		if err != nil {
 			return admissionDecision{}, err
 		}
@@ -382,13 +392,21 @@ func admissionPressureLocked(stateDir string, candidate record, source HostResou
 	}
 	pressureKnown := pressureSignalsAvailable(sample)
 	elevated := isElevatedPressure(sample)
+	swapGrowing := sample.SwapOutsKnown && hold.SwapOutsKnown && sample.SwapOuts > hold.SwapOuts
+	swapUsedGrowing := sample.SwapUsedBytes > hold.SwapUsedBytes && hold.SwapUsedBytes > 0
 	previousLevel := hold.Level
-	blocked := pressureKnown && hold.blocks(elevated, time.Now())
+	blocked := pressureKnown && hold.blocks(elevated || swapGrowing || swapUsedGrowing, time.Now())
 	if pressureKnown {
 		hold.Level = sample.Pressure
 		if elevated {
 			hold.Level = pressureWaitReason(sample)
+		} else if swapGrowing {
+			hold.Level = fmt.Sprintf("host pressure (swapouts increased from %d to %d)", hold.SwapOuts, sample.SwapOuts)
+		} else if swapUsedGrowing {
+			hold.Level = fmt.Sprintf("host pressure (swap used increased from %s to %s)", FormatResourceBytes(hold.SwapUsedBytes), FormatResourceBytes(sample.SwapUsedBytes))
 		}
+		hold.SwapOuts, hold.SwapOutsKnown = sample.SwapOuts, sample.SwapOutsKnown
+		hold.SwapUsedBytes = sample.SwapUsedBytes
 		data, err := json.Marshal(hold)
 		if err != nil {
 			return "", err
@@ -406,6 +424,12 @@ func admissionPressureLocked(stateDir string, candidate record, source HostResou
 		}
 	}
 	if blocked {
+		if swapGrowing && !elevated {
+			return fmt.Sprintf("host pressure (swapouts increased to %d)", sample.SwapOuts), nil
+		}
+		if swapUsedGrowing && !elevated {
+			return fmt.Sprintf("host pressure (swap used increased to %s)", FormatResourceBytes(sample.SwapUsedBytes)), nil
+		}
 		return pressureWaitReason(sample), nil
 	}
 	return "", nil
@@ -691,7 +715,7 @@ func pruneStateLocked(stateDir string) error {
 			continue
 		}
 		switch rec.Status {
-		case StatusRunning, StatusStalled, StatusStarting:
+		case StatusRunning, StatusStalled, StatusStarting, StatusPaused:
 			if err := markLostLocked(stateDir, rec); err != nil {
 				return fmt.Errorf("prune run %s: %w", rec.RunID, err)
 			}
@@ -752,7 +776,7 @@ func recordObservedKeeperLoss(stateDir, runID string) error {
 }
 
 func markLostLocked(stateDir string, rec record) error {
-	if rec.Status != StatusStarting && rec.Status != StatusRunning && rec.Status != StatusStalled {
+	if rec.Status != StatusStarting && rec.Status != StatusRunning && rec.Status != StatusStalled && rec.Status != StatusPaused {
 		return nil
 	}
 	identity, alive, err := inspectIdentity(rec.PID)
@@ -889,8 +913,19 @@ func updateRecord(stateDir, runID string, update func(*record) error) error {
 		if err != nil {
 			return err
 		}
+		original := rec
+		original.Command = append([]string(nil), rec.Command...)
+		original.Observed = append([]Process(nil), rec.Observed...)
+		original.Keep = append([]string(nil), rec.Keep...)
+		if rec.ExitCode != nil {
+			code := *rec.ExitCode
+			original.ExitCode = &code
+		}
 		if err := update(&rec); err != nil {
 			return err
+		}
+		if reflect.DeepEqual(rec, original) {
+			return nil
 		}
 		return writeRecordAtomic(rec)
 	})
