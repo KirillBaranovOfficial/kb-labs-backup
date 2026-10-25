@@ -1,10 +1,13 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { DockerEnvironmentAdapter } from './index.js';
+import { DockerEnvironmentAdapter } from '@kb-labs/adapters-environment-docker';
 
 const dockerImage = process.env.KB_CONTAINER_TEST_IMAGE ?? 'node:20-alpine';
+const testDirectory = fileURLToPath(new URL('.', import.meta.url));
+const repositoryRoot = resolve(testDirectory, '../../..');
 const dockerInfo = spawnSync('docker', ['info'], { encoding: 'utf8' });
 const dockerImageCheck = dockerInfo.status === 0
   ? spawnSync('docker', ['image', 'inspect', dockerImage], { encoding: 'utf8' })
@@ -76,7 +79,7 @@ describe('Docker execution policy integration', () => {
       'node', '-e', "process.stdout.write('ready\\n'); process.stdin.resume(); process.stdin.on('end', () => process.exit(0));",
     ]);
     const started = await adapter.start(environmentId, {
-      workspacePath: process.cwd(),
+      workspacePath: repositoryRoot,
       executionPolicy: {
         mounts: [{ path: '.', access: 'read-only' }],
         environment: { KB_CONTAINER_PUBLIC: 'visible' },
@@ -123,7 +126,7 @@ describe('Docker execution policy integration', () => {
     const runId = `network-none-${process.pid}-${Date.now()}`;
     const { adapter, environmentId } = await reserveOwner(runId, runtimeCommand);
     const started = await adapter.start(environmentId, {
-      workspacePath: process.cwd(),
+      workspacePath: repositoryRoot,
       executionPolicy: { mounts: [], environment: {} },
     });
     await expect(adapter.getExecutionStream(environmentId).completion).resolves.toEqual({ code: 23, signal: null });
@@ -135,10 +138,9 @@ describe('Docker execution policy integration', () => {
   it('exits and removes the container when the host-side client process dies', async ({ skip }) => {
     if (!dockerAvailable) skip(`Docker is unavailable: ${dockerSkipReason}`);
     const runId = `host-death-${process.pid}-${Date.now()}`;
-    const repositoryRoot = resolve(process.cwd(), '../..');
     runIds.add(runId);
-    const client = spawn(process.execPath, [resolve(process.cwd(), '../../core/plugin-runtime/src/__tests__/fixtures/container-host-client.mjs')], {
-      cwd: process.cwd(),
+    const client = spawn(process.execPath, [resolve(testDirectory, '../fixtures/container-host-client.mjs')], {
+      cwd: repositoryRoot,
       env: { ...process.env, KB_CONTAINER_TEST_IMAGE: dockerImage, KB_CONTAINER_TEST_RUN_ID: runId, KB_CONTAINER_TEST_WORKSPACE: repositoryRoot },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
