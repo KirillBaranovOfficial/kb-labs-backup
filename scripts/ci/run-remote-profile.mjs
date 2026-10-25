@@ -3,8 +3,8 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { parseVerdict } from './remote-verdict.mjs';
-import { requireFailureUnits } from './remote-stage-results.mjs';
 import { assertStageAdaptersMatchProfile, stageAdapters } from './remote-profile-stage-adapters.mjs';
+import { runProfileStages } from './remote-profile-execution.mjs';
 import { interruptActiveStage } from './remote-profile-signals.mjs';
 import { stageFinishedLine, stageStartedLine } from './remote-profile-progress.mjs';
 
@@ -21,14 +21,6 @@ assertStageAdaptersMatchProfile(profile.stages);
 let verifiedSha;
 let active;
 let receivedSignal;
-
-function adapterFailure(name, result, error) {
-  const stderrTail = result.stderr.trimEnd().split(/\r?\n/).slice(-20).join('\n');
-  return [{
-    name: `${name} result adapter`,
-    message: [error.message, stderrTail].filter(Boolean).join('\n').slice(0, 4_000),
-  }];
-}
 
 function saveVerdict() {
   const failedStage = stages.find((stage) => stage.status === 'fail');
@@ -62,50 +54,38 @@ if (checkout.status !== 0) throw new Error(checkout.stderr.trim());
 verifiedSha = checkout.stdout.trim();
 if (verifiedSha !== expectedSha) throw new Error(`Checkout SHA mismatch: expected ${expectedSha}, received ${verifiedSha}`);
 
-for (const name of profile.stages) {
-  if (receivedSignal) break;
-  const adapter = stageAdapters[name];
-  const [command, ...args] = adapter.command;
-  const startedAt = performance.now();
-  const startedAtMs = Date.now();
-  process.stdout.write(stageStartedLine(name, [command, ...args].join(' ')));
-  const result = await runStage(name, command, args, process.env, startedAt);
-  const durationMs = Math.round(performance.now() - startedAt);
-  const log = [result.stdout, result.stderr].filter(Boolean).join('\n');
-  appendFileSync(logFile, `\n## ${name}\n${log}\n`);
-  const recordedBySignal = active?.recorded ?? false;
-  if (!active?.recorded) {
-    let failures = [];
-    if (result.code !== 0) {
-      try {
-        failures = requireFailureUnits(name, adapter.failures(result));
-      } catch (error) {
-        failures = adapterFailure(name, result, error);
-      }
-    }
-    if (result.signal) failures.unshift({ name: `${name} signal`, message: `${name} terminated by signal ${result.signal}` });
-    stages.push({
-      name,
-      command: [command, ...args].join(' '),
+await runProfileStages({
+  stageNames: profile.stages,
+  adapters: stageAdapters,
+  stages,
+  shouldStop: () => Boolean(receivedSignal),
+  execute: async (name, adapter) => {
+    const [command, ...args] = adapter.command;
+    const startedAt = performance.now();
+    const startedAtMs = Date.now();
+    process.stdout.write(stageStartedLine(name, [command, ...args].join(' ')));
+    const result = await runStage(name, command, args, process.env, startedAt);
+    const durationMs = Math.round(performance.now() - startedAt);
+    const log = [result.stdout, result.stderr].filter(Boolean).join('\n');
+    appendFileSync(logFile, `\n## ${name}\n${log}\n`);
+    return {
+      ...result,
       startedAtMs,
       endedAtMs: Date.now(),
-      status: result.code === 0 ? 'pass' : 'fail',
-      failures: boundFailureUnits(failures),
-      logTail: boundFailureUnits(failures).map((failure) => `${failure.name}\n${failure.message}`).join('\n\n').slice(0, 1_000),
-      exitCode: result.code,
-      signal: result.signal ?? null,
       durationMs,
-    });
-  }
-  active = undefined;
-  const stage = stages.at(-1);
-  if (stage?.name === name) {
-    if (stage.durationMs !== durationMs && !stage.signal) stage.durationMs = durationMs;
-    if (!recordedBySignal) process.stdout.write(stageFinishedLine(name, stage));
-    saveVerdict();
-  }
-  if (receivedSignal) break;
-}
+      recordedBySignal: active?.recorded ?? false,
+    };
+  },
+  onStage: (stage, recordedStages, result, recordedBySignal) => {
+    active = undefined;
+    const recordedStage = recordedBySignal ? recordedStages.at(-1) : stage;
+    if (recordedStage?.name === stage.name) {
+      if (recordedStage.durationMs !== result.durationMs && !recordedStage.signal) recordedStage.durationMs = result.durationMs;
+      if (!recordedBySignal) process.stdout.write(stageFinishedLine(stage.name, recordedStage));
+      saveVerdict();
+    }
+  },
+});
 
 const verdict = saveVerdict();
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\nRemote verification: **${verdict.status}** for \`${verifiedSha}\`.\n`);
