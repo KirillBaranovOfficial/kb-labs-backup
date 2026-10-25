@@ -14,6 +14,8 @@ import {
 } from './remote-stage-results.mjs';
 import * as stageResults from './remote-stage-results.mjs';
 import { assertStageAdaptersMatchProfile, stageAdapters } from './remote-profile-stage-adapters.mjs';
+import { runProfileStages } from './remote-profile-execution.mjs';
+import { parseVerdict } from './remote-verdict.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -142,9 +144,54 @@ tasks:
   assert.equal(result.status, 1, result.stdout);
   const report = JSON.parse(result.stdout);
   assert.equal(typeof stageResults.runFailures, 'function', 'runFailures must decode kb-devkit run --json output');
-  const failures = stageResults.runFailures(report);
+  const failures = stageAdapters['full-build'].failures({ stdout: result.stdout });
   assert.ok(failures.length > 0, JSON.stringify(report));
   assert.ok(failures.some(({ name, message }) => name.includes('@fixture/build-fail') && name.includes('build') && message.includes('fixture build output tail')));
+});
+
+// case: S-262.6
+test('an adapter exception becomes a named stage failure and the full verdict records later stages', async () => {
+  const executed = [];
+  const jobs = await runProfileStages({
+    stageNames: ['full-build', 'kb-devkit-check'],
+    adapters: {
+      'full-build': {
+        command: ['kb-devkit', 'run', 'build', '--json'],
+        failures: () => { throw new Error('injected decoder exception'); },
+      },
+      'kb-devkit-check': {
+        command: ['kb-devkit', 'check', '--json'],
+        failures: () => [],
+      },
+    },
+    execute: async (name) => {
+      executed.push(name);
+      return { code: name === 'full-build' ? 1 : 0, stdout: '', stderr: '' };
+    },
+  });
+  const startedAtMs = 1_000;
+  const verdict = parseVerdict({
+    schemaVersion: 1,
+    sha: 'a'.repeat(40),
+    status: 'fail',
+    jobs,
+    cause: {
+      operation: jobs[0].name,
+      command: jobs[0].command,
+      attempts: 1,
+      startedAtMs,
+      endedAtMs: startedAtMs + 1,
+      elapsedMs: 1,
+      lastError: jobs[0].failures[0].message,
+    },
+  }, 'a'.repeat(40));
+  assert.deepEqual(executed, ['full-build', 'kb-devkit-check']);
+  assert.deepEqual(verdict.jobs.map(({ name, status }) => [name, status]), [
+    ['full-build', 'fail'],
+    ['kb-devkit-check', 'pass'],
+  ]);
+  assert.equal(verdict.jobs[0].failures[0].name, 'full-build result adapter');
+  assert.match(verdict.jobs[0].failures[0].message, /injected decoder exception/);
 });
 
 // case: S-262.6
