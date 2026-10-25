@@ -1,0 +1,86 @@
+name: Remote agent verification
+
+on:
+  push:
+    branches: ['verify/**']
+  schedule:
+    - cron: '17 4 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-create/go.sum
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Build kb-devkit
+        run: make build
+        working-directory: tools/kb-devkit
+      - name: Run shared verification profile
+        id: profile
+        run: node scripts/ci/run-remote-profile.mjs "$GITHUB_SHA"
+      - name: Upload commit-bound verdict
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-verdict
+          path: verdict.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload bounded diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-verification-log
+          path: ${{ runner.temp }}/remote-verification.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  sweep-verify-refs:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Delete verification refs older than three days
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cutoff=$(date -u -d '3 days ago' +%s)
+          gh api --paginate "repos/$GH_REPO/git/matching-refs/heads/verify/" --jq '.[].ref' |
+          while IFS= read -r full_ref; do
+            branch=${full_ref#refs/heads/}
+            suffix=${branch##*/}
+            created=${suffix%%-*}
+            [[ "$created" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || continue
+            created_epoch=$(date -u -d "${created:0:8} ${created:9:6} UTC" +%s)
+            if [ "$created_epoch" -lt "$cutoff" ]; then
+              encoded=$(printf '%s' "$branch" | sed 's#/#%2F#g')
+              gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$encoded"
+            fi
+          done
