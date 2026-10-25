@@ -12,7 +12,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -171,6 +170,7 @@ type RunInfo struct {
 	QueuePosition      int       `json:"queue_position,omitempty"`
 	WaitReason         string    `json:"wait_reason,omitempty"`
 	ElapsedMS          int64     `json:"elapsed_ms,omitempty"`
+	StallMS            int64     `json:"stall_ms,omitempty"`
 	ExitCode           *int      `json:"exit_code,omitempty"`
 	Signal             string    `json:"signal,omitempty"`
 	Error              string    `json:"error,omitempty"`
@@ -313,7 +313,7 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 	if cfg.HelperPath == "" || cfg.StateDir == "" || cfg.Tag == "" || cfg.Stall <= 0 || cfg.StdoutPath == "" || cfg.StderrPath == "" || len(cfg.Command) == 0 {
 		return nil, errors.New("proc: helper path, state directory, tag, positive stall duration, output paths, and command are required")
 	}
-	if err := os.MkdirAll(filepath.Join(cfg.StateDir, "runs"), 0o700); err != nil {
+	if err := os.MkdirAll(liveRecordsDir(cfg.StateDir), 0o700); err != nil {
 		return nil, fmt.Errorf("proc: create state directory: %w", err)
 	}
 	runID, err := newID()
@@ -539,7 +539,7 @@ func List(stateDir string) Listing {
 		info := RunInfo{
 			RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: rec.StartedAt,
 			Status: status, Command: rec.Command, SlotGroup: rec.SlotGroup,
-			QueuePosition: position, WaitReason: rec.WaitReason, ElapsedMS: elapsed,
+			QueuePosition: position, WaitReason: rec.WaitReason, ElapsedMS: elapsed, StallMS: rec.StallMS,
 			ExitCode: rec.ExitCode, Signal: rec.Signal, DurationMS: rec.DurationMS,
 			Error: rec.Error, CostKey: rec.CostKey, MemoryBytes: rec.MemoryBytes, CPUsMin: rec.CPUsMin, CPUsMax: rec.CPUsMax,
 			DiskBytes: rec.DiskBytes, GrantedCPUs: rec.GrantedCPUs, PeakRSSBytes: rec.PeakRSSBytes, AverageCPU: rec.AverageCPU,

@@ -71,7 +71,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 	if cfg.HoldGate != "" && cfg.WaitGate == cfg.HoldGate {
 		return errors.New("proc: a run cannot wait on the gate it holds")
 	}
-	if err := os.MkdirAll(filepath.Join(cfg.StateDir, "runs"), 0o700); err != nil {
+	if err := os.MkdirAll(liveRecordsDir(cfg.StateDir), 0o700); err != nil {
 		return fmt.Errorf("proc: create run registry: %w", err)
 	}
 	if err := withStateLock(cfg.StateDir, func() error {
@@ -491,7 +491,7 @@ func nextQueueOrderLocked(stateDir string) (uint64, error) {
 // admission path reads exactly this set, so its cost never grows with
 // finished history.
 func readLiveRecordsLocked(stateDir string) ([]record, error) {
-	paths, err := filepath.Glob(filepath.Join(stateDir, "runs", "*.json"))
+	paths, err := filepath.Glob(filepath.Join(liveRecordsDir(stateDir), "*.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -502,11 +502,11 @@ func readLiveRecordsLocked(stateDir string) ([]record, error) {
 // records win over a same-ID live file, which only coexists with them inside
 // the retirement window between writeRecordAtomic's write and removal.
 func readAllRecordsLocked(stateDir string) ([]record, error) {
-	paths, err := filepath.Glob(filepath.Join(stateDir, "runs", "*.json"))
+	paths, err := filepath.Glob(filepath.Join(liveRecordsDir(stateDir), "*.json"))
 	if err != nil {
 		return nil, err
 	}
-	finishedPaths, err := filepath.Glob(filepath.Join(stateDir, "runs", "finished", "*.json"))
+	finishedPaths, err := filepath.Glob(filepath.Join(finishedRecordsDir(stateDir), "*.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -556,6 +556,16 @@ func recordPath(stateDir, runID string, terminal bool) string {
 		return filepath.Join(stateDir, "runs", "finished", runID+".json")
 	}
 	return filepath.Join(stateDir, "runs", runID+".json")
+}
+
+// liveRecordsDir and finishedRecordsDir derive the record directories from
+// recordPath so record placement keeps exactly one composer.
+func liveRecordsDir(stateDir string) string {
+	return filepath.Dir(recordPath(stateDir, "", false))
+}
+
+func finishedRecordsDir(stateDir string) string {
+	return filepath.Dir(recordPath(stateDir, "", true))
 }
 
 func readRecordLocked(stateDir, runID string) (record, error) {
@@ -652,7 +662,7 @@ func readGateLocked(stateDir, name string) (gateRecord, bool, error) {
 }
 
 func pruneStateLocked(stateDir string) error {
-	paths, err := filepath.Glob(filepath.Join(stateDir, "runs", "*.json"))
+	paths, err := filepath.Glob(filepath.Join(liveRecordsDir(stateDir), "*.json"))
 	if err != nil {
 		return err
 	}
@@ -682,7 +692,7 @@ func pruneStateLocked(stateDir string) error {
 			// finished set so per-tick admission and wait paths never rescan
 			// it. Older state directories and interrupted transitions are the
 			// inputs that violate the invariant; renaming preserves the bytes.
-			if err := os.MkdirAll(filepath.Join(stateDir, "runs", "finished"), 0o700); err != nil {
+			if err := os.MkdirAll(finishedRecordsDir(stateDir), 0o700); err != nil {
 				return err
 			}
 			if err := os.Rename(path, recordPath(stateDir, rec.RunID, true)); err != nil {
@@ -851,7 +861,7 @@ func cleanupAdmission(stateDir, runID, reason string) {
 				event := eventFor(rec, EventTeardown)
 				event.Reason = reason
 				event.Error = pathErr.Error()
-				if removeErr := os.Remove(filepath.Join(stateDir, "runs", runID+".json")); removeErr != nil && !os.IsNotExist(removeErr) {
+				if removeErr := os.Remove(recordPath(stateDir, runID, false)); removeErr != nil && !os.IsNotExist(removeErr) {
 					return errors.Join(pathErr, removeErr)
 				}
 				return appendEvent(stateDir, event)
@@ -873,7 +883,7 @@ func cleanupAdmission(stateDir, runID, reason string) {
 			}
 		}
 		if scratchErr == nil {
-			if err := os.Remove(filepath.Join(stateDir, "runs", runID+".json")); err != nil && !os.IsNotExist(err) {
+			if err := os.Remove(recordPath(stateDir, runID, false)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}

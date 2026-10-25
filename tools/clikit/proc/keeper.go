@@ -56,7 +56,7 @@ func runKeeper(cfg keeperConfig) int {
 		writeReadyError(ready, err)
 		return 1
 	}
-	if err := os.MkdirAll(filepath.Join(cfg.StateDir, "runs"), 0o700); err != nil {
+	if err := os.MkdirAll(liveRecordsDir(cfg.StateDir), 0o700); err != nil {
 		writeReadyError(ready, err)
 		return 1
 	}
@@ -65,7 +65,9 @@ func runKeeper(cfg keeperConfig) int {
 		writeReadyError(ready, err)
 		return 1
 	}
-	runDirectory := filepath.Join(cfg.StateDir, "runs", cfg.RunID)
+	// The run directory is the resource ledger's parent: the ledger owner
+	// places it, and the keeper only creates and owns the directory itself.
+	runDirectory := filepath.Dir(ledgerPath(cfg.StateDir, cfg.RunID))
 	runDirectoryIdentity, runDirectoryOwned, err := createOwnedDirectory(runDirectory, unixScratchDirectoryOps{})
 	if err != nil {
 		var cleanupErr error
