@@ -41,7 +41,17 @@ function stageFailures(name, result) {
 }
 
 function saveVerdict() {
-  const verdict = parseVerdict({ schemaVersion: 1, sha: verifiedSha, status: stages.every((stage) => stage.status === 'pass') ? 'pass' : 'fail', jobs: stages }, expectedSha);
+  const failedStage = stages.find((stage) => stage.status === 'fail');
+  const cause = failedStage ? {
+    operation: failedStage.name,
+    command: failedStage.command,
+    attempts: 1,
+    startedAtMs: failedStage.startedAtMs,
+    endedAtMs: failedStage.endedAtMs,
+    elapsedMs: failedStage.endedAtMs - failedStage.startedAtMs,
+    lastError: failedStage.failures[0]?.message.slice(0, 1_000) ?? `${failedStage.name} exited with status ${failedStage.exitCode}`,
+  } : undefined;
+  const verdict = parseVerdict({ schemaVersion: 1, sha: verifiedSha, status: failedStage ? 'fail' : 'pass', jobs: stages, ...(cause ? { cause } : {}) }, expectedSha);
   writeFileSync(verdictPath, `${JSON.stringify(verdict, null, 2)}\n`);
   return verdict;
 }
@@ -67,6 +77,7 @@ for (const name of profile.stages) {
   const [command, ...args] = commands[name] ?? [];
   if (!command) throw new Error(`No command is registered for profile stage ${name}`);
   const startedAt = performance.now();
+  const startedAtMs = Date.now();
   process.stdout.write(stageStartedLine(name, [command, ...args].join(' ')));
   const result = await runStage(name, command, args, process.env, startedAt);
   const durationMs = Math.round(performance.now() - startedAt);
@@ -79,6 +90,9 @@ for (const name of profile.stages) {
     if (result.signal) failures.unshift({ name: `${name} signal`, message: `${name} terminated by signal ${result.signal}` });
     stages.push({
       name,
+      command: [command, ...args].join(' '),
+      startedAtMs,
+      endedAtMs: Date.now(),
       status: result.code === 0 ? 'pass' : 'fail',
       failures: boundFailureUnits(failures),
       logTail: boundFailureUnits(failures).map((failure) => `${failure.name}\n${failure.message}`).join('\n\n').slice(0, 1_000),
@@ -105,7 +119,7 @@ process.exitCode = receivedSignal ? (receivedSignal === 'SIGTERM' ? 143 : 130) :
 function runStage(name, command, args, env, startedAt) {
   return new Promise((resolve) => {
     const child = spawn(command, args, { env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
-    active = { child, name, startedAt, recorded: false };
+    active = { child, name, command: [command, ...args].join(' '), startedAt, startedAtMs: Date.now(), recorded: false };
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });

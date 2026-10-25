@@ -3,8 +3,13 @@ export function interruptActiveStage(signal, active, stages, saveVerdict, now) {
   signalStageProcessTree(active.child, signal);
   const durationMs = Math.round(now - active.startedAt);
   const message = `${active.name} terminated by signal ${signal}`;
+  const endedAtMs = Date.now();
+  const startedAtMs = endedAtMs - durationMs;
   const stage = {
     name: active.name,
+    command: active.command,
+    startedAtMs,
+    endedAtMs,
     status: 'fail',
     failures: [{ name: `${active.name} signal`, message }],
     logTail: message,
