@@ -3,7 +3,8 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { parseVerdict } from './remote-verdict.mjs';
-import { boundFailureUnits, checkFailures, failedWithoutUnit, journeyFailures } from './remote-stage-results.mjs';
+import { requireFailureUnits } from './remote-stage-results.mjs';
+import { assertStageAdaptersMatchProfile, stageAdapters } from './remote-profile-stage-adapters.mjs';
 import { interruptActiveStage } from './remote-profile-signals.mjs';
 import { stageFinishedLine, stageStartedLine } from './remote-profile-progress.mjs';
 
@@ -16,28 +17,17 @@ const outputName = local ? `local-verification-${expectedSha}.json` : 'verdict.j
 const verdictPath = `${outputDir}/${outputName}`;
 const logFile = process.env.GITHUB_STEP_SUMMARY ? `${process.env.RUNNER_TEMP}/remote-verification.log` : `reports/local-verification-${expectedSha}.log`;
 const stages = [];
-const commands = {
-  'full-build': ['./tools/kb-devkit/kb-devkit', 'run', 'build'],
-  'affected-unit-tests': ['node', 'scripts/ci/run-affected-unit-tests.mjs'],
-  'kb-devkit-check': ['./tools/kb-devkit/kb-devkit', 'check', '--json'],
-  'kb-create-go-suite': ['node', 'scripts/ci/go-module-suite.mjs', '--json', '--module', 'tools/kb-create'],
-  'journey-unit-suite': ['python3', 'scripts/ci/run-unittest-suite.py'],
-};
+assertStageAdaptersMatchProfile(profile.stages);
 let verifiedSha;
 let active;
 let receivedSignal;
 
-function stageFailures(name, result) {
-  if (result.code === 0) return [];
-  try {
-    if (name === 'kb-devkit-check') return checkFailures(JSON.parse(result.stdout));
-    if (name === 'kb-create-go-suite') return boundFailureUnits(JSON.parse(result.stdout).failures ?? []);
-    if (name === 'journey-unit-suite') return journeyFailures(JSON.parse(result.stdout));
-    if (name === 'affected-unit-tests') return boundFailureUnits(JSON.parse(result.stdout).failures ?? []);
-  } catch {
-    return failedWithoutUnit(name);
-  }
-  return failedWithoutUnit(name);
+function adapterFailure(name, result, error) {
+  const stderrTail = result.stderr.trimEnd().split(/\r?\n/).slice(-20).join('\n');
+  return [{
+    name: `${name} result adapter`,
+    message: [error.message, stderrTail].filter(Boolean).join('\n').slice(0, 4_000),
+  }];
 }
 
 function saveVerdict() {
@@ -74,8 +64,8 @@ if (verifiedSha !== expectedSha) throw new Error(`Checkout SHA mismatch: expecte
 
 for (const name of profile.stages) {
   if (receivedSignal) break;
-  const [command, ...args] = commands[name] ?? [];
-  if (!command) throw new Error(`No command is registered for profile stage ${name}`);
+  const adapter = stageAdapters[name];
+  const [command, ...args] = adapter.command;
   const startedAt = performance.now();
   const startedAtMs = Date.now();
   process.stdout.write(stageStartedLine(name, [command, ...args].join(' ')));
@@ -85,8 +75,14 @@ for (const name of profile.stages) {
   appendFileSync(logFile, `\n## ${name}\n${log}\n`);
   const recordedBySignal = active?.recorded ?? false;
   if (!active?.recorded) {
-    const failures = stageFailures(name, result);
-    if (result.code !== 0 && failures.length === 0) failures.push(...failedWithoutUnit(name));
+    let failures = [];
+    if (result.code !== 0) {
+      try {
+        failures = requireFailureUnits(name, adapter.failures(result));
+      } catch (error) {
+        failures = adapterFailure(name, result, error);
+      }
+    }
     if (result.signal) failures.unshift({ name: `${name} signal`, message: `${name} terminated by signal ${result.signal}` });
     stages.push({
       name,

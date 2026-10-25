@@ -39,13 +39,43 @@ export function vitestFailures(report, packageName) {
 
 export function checkFailures(report) {
   const failures = [];
-  for (const result of report.results ?? report.data?.results ?? []) {
+  for (const result of report.data?.results ?? []) {
     for (const issue of result.issues ?? []) {
       if (issue.severity !== 'error') continue;
       failures.push(failureUnit(`${issue.check} · ${result.package}`, issue.message));
     }
   }
+  for (const [packageName, result] of Object.entries(report.data?.packages ?? {})) {
+    for (const issue of result.Issues ?? []) {
+      if (issue.checkFailure !== true) continue;
+      failures.push(failureUnit(
+        `${issue.check} · ${packageName}`,
+        [issue.message, issue.cause].filter(Boolean).join('\n'),
+      ));
+    }
+  }
   return boundFailureUnits(failures);
+}
+
+export function runFailures(report) {
+  const failures = [];
+  for (const result of report.data?.results ?? []) {
+    if (result.OK !== false || result.Cached === true) continue;
+    const name = `${result.Package} · ${result.Task}`;
+    if (!result.Package || !result.Task) throw new Error('kb-devkit run --json returned a failed task without its package or task name');
+    const output = [result.Stdout, result.Stderr].filter(Boolean).join('\n').trimEnd();
+    const tail = output.split(/\r?\n/).slice(-50).join('\n');
+    const message = [result.Error, tail].filter(Boolean).join('\n');
+    failures.push(failureUnit(name, message.length > MAX_UNIT_MESSAGE ? message.slice(-MAX_UNIT_MESSAGE) : message));
+  }
+  return boundFailureUnits(failures);
+}
+
+export function requireFailureUnits(stageName, failures) {
+  if (failures.length === 0 || failures.some(({ name }) => !String(name).trim())) {
+    throw new Error(`nonzero ${stageName} stage produced no named failure unit`);
+  }
+  return failures;
 }
 
 export function goTestFailures(jsonLines) {
@@ -67,11 +97,6 @@ export function journeyFailures(result) {
     ...(result.failures ?? []).map((failure) => ({ name: failure.testId, message: failure.traceback })),
     ...(result.errors ?? []).map(({ testId, traceback }) => ({ name: testId, message: traceback })),
   ]);
-}
-
-export function failedWithoutUnit(stageName) {
-  const message = 'stage failed without naming a failure';
-  return [failureUnit(`${stageName}: ${message}`, message)];
 }
 
 export { MAX_FAILURES_BYTES, MAX_UNIT_MESSAGE };
