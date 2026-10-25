@@ -158,6 +158,97 @@ func TestPSJSONIncludesHostDecisionAndRunMeasurements(t *testing.T) {
 			t.Fatalf("ps JSON run omitted %q: %s", field, stdout.String())
 		}
 	}
+	var startedAt string
+	if err := json.Unmarshal(listing.Runs[0]["started_at"], &startedAt); err != nil {
+		t.Fatalf("ps JSON started_at is not a timestamp string: %s", stdout.String())
+	}
+	if _, err := time.Parse(time.RFC3339Nano, startedAt); err != nil {
+		t.Fatalf("ps JSON started_at is not an RFC3339Nano timestamp: %s", stdout.String())
+	}
+	var identity string
+	if err := json.Unmarshal(listing.Runs[0]["identity"], &identity); err != nil || identity == "" {
+		t.Fatalf("ps JSON omitted process identity: %s", stdout.String())
+	}
+}
+
+// case: S-237.71
+func TestPSJSONReportsCompletedRunContract(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunnerBinary(t)
+	stdoutPath := filepath.Join(state, "stdout.log")
+	command := exec.Command(runner, "run", "--tag", "costprobe", "--state", state, "--stall", "1m",
+		"--stdout", stdoutPath, "--stderr", filepath.Join(state, "stderr.log"), "--", "/bin/echo", "ok")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run successful command: %v\n%s", err, output)
+	}
+	if got := string(output); got != "ok\nrun costprobe completed\n" {
+		t.Fatalf("terminal output = %q, want child output and completion line", got)
+	}
+	if data, err := os.ReadFile(stdoutPath); err != nil || string(data) != "ok\n" {
+		t.Fatalf("stdout file = %q, err=%v", data, err)
+	}
+	ps := exec.Command(runner, "ps", "--json", "--state", state)
+	jsonOutput, err := ps.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ps --json failed: %v\n%s", err, jsonOutput)
+	}
+	var listing struct {
+		Runs []json.RawMessage `json:"runs"`
+	}
+	if err := json.Unmarshal(jsonOutput, &listing); err != nil {
+		t.Fatalf("decode ps --json output: %v\n%s", err, jsonOutput)
+	}
+	if len(listing.Runs) != 1 {
+		t.Fatalf("ps --json returned %d runs, want 1: %s", len(listing.Runs), jsonOutput)
+	}
+	var run proc.RunInfo
+	if err := json.Unmarshal(listing.Runs[0], &run); err != nil {
+		t.Fatalf("decode completed run: %v", err)
+	}
+	if run.Status != proc.StatusCompleted || run.ExitCode == nil || *run.ExitCode != 0 {
+		t.Fatalf("ps --json outcome = status %q, exit code %v; want completed with code 0", run.Status, run.ExitCode)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(listing.Runs[0], &fields); err != nil {
+		t.Fatalf("decode completed run fields: %v", err)
+	}
+	var startedAt string
+	if err := json.Unmarshal(fields["started_at"], &startedAt); err != nil {
+		t.Fatalf("ps --json started_at is not a timestamp string: %s", listing.Runs[0])
+	}
+	if _, err := time.Parse(time.RFC3339Nano, startedAt); err != nil || !strings.HasSuffix(startedAt, "Z") {
+		t.Fatalf("ps --json started_at = %q, want RFC3339Nano UTC; err=%v", startedAt, err)
+	}
+	if run.Identity == "" {
+		t.Fatal("ps --json omitted process identity")
+	}
+	events, err := os.Open(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("open event stream: %v", err)
+	}
+	defer events.Close()
+	scanner := bufio.NewScanner(events)
+	exitEvents := 0
+	for scanner.Scan() {
+		var event proc.Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatalf("decode lifecycle event: %v: %s", err, scanner.Text())
+		}
+		if event.Type != proc.EventExit {
+			continue
+		}
+		exitEvents++
+		if event.Status != run.Status || event.ExitCode == nil || *event.ExitCode != *run.ExitCode {
+			t.Fatalf("exit event outcome = status %q, exit code %v; ps outcome = status %q, exit code %v", event.Status, event.ExitCode, run.Status, run.ExitCode)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read lifecycle events: %v", err)
+	}
+	if exitEvents != 1 {
+		t.Fatalf("exit event count = %d, want 1", exitEvents)
+	}
 }
 
 // case: S-237.54
@@ -516,6 +607,8 @@ func TestWaitRendererCoversEveryRunStatus(t *testing.T) {
 		{proc.StatusBlocked, false},
 		{proc.StatusStalled, false},
 		{proc.StatusStarting, false},
+		{proc.StatusCompleted, true},
+		{proc.StatusFailed, true},
 		{proc.StatusDead, true},
 		{proc.StatusLost, true},
 		{proc.StatusDirty, true},
@@ -532,8 +625,11 @@ func TestWaitRendererCoversEveryRunStatus(t *testing.T) {
 			t.Errorf("%s.Terminal() = %t, want %t", status, got, entry.terminal)
 		}
 		run := proc.RunInfo{Status: status, Tag: "runner", DurationMS: 12, Error: "scratch path /tmp/run/scratch cleanup failed"}
-		if status == proc.StatusDead {
+		if status == proc.StatusCompleted || status == proc.StatusDead {
 			run.ExitCode = &zero
+		} else if status == proc.StatusFailed {
+			failure := 7
+			run.ExitCode = &failure
 		}
 		var output bytes.Buffer
 		code, err := renderWaitOutcome(run, state, &output, "kb-runner")
@@ -562,9 +658,13 @@ func TestWaitRendererCoversEveryRunStatus(t *testing.T) {
 					}
 				}
 			}
-		case proc.StatusDead:
+		case proc.StatusCompleted, proc.StatusDead:
 			if code != 0 || err != nil || !strings.Contains(output.String(), "run runner exited after 12ms") {
 				t.Errorf("dead outcome = code %d error %v output %q", code, err, output.String())
+			}
+		case proc.StatusFailed:
+			if code != 7 || err != nil || !strings.Contains(output.String(), "run runner exited after 12ms") {
+				t.Errorf("failed outcome = code %d error %v output %q", code, err, output.String())
 			}
 		case proc.StatusLost:
 			if code == 0 || err == nil {
@@ -635,7 +735,7 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool)
 		for _, child := range run.Tree {
 			killOwnedProcess(child.PID, child.Identity)
 		}
-		killOwnedProcess(run.PID, run.StartedAt)
+		killOwnedProcess(run.PID, run.Identity)
 		_ = runCommand.Process.Kill()
 		_ = runCommand.Wait()
 	})
@@ -700,7 +800,7 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool)
 			t.Fatal(err)
 		}
 	}
-	killOwnedProcess(run.PID, run.StartedAt)
+	killOwnedProcess(run.PID, run.Identity)
 	terminalDeadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(terminalDeadline) {
 		listing := proc.List(state)

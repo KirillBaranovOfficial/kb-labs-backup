@@ -312,8 +312,8 @@ func TestWaitLatestTagSelectsNewestTerminalRun(t *testing.T) {
 	firstCode, latestCode := 0, 7
 	base := time.Now().Add(-time.Minute)
 	for _, rec := range []record{
-		{RunID: "first", Tag: "agent:stream:first", LatestTag: "stream", StateDir: state, Status: StatusDead, EnqueuedAt: base, ExitCode: &firstCode},
-		{RunID: "latest", Tag: "resume:stream:latest", LatestTag: "stream", StateDir: state, Status: StatusDead, EnqueuedAt: base.Add(time.Second), ExitCode: &latestCode},
+		{RunID: "first", Tag: "agent:stream:first", LatestTag: "stream", StateDir: state, Status: StatusCompleted, EnqueuedAt: base, ExitCode: &firstCode},
+		{RunID: "latest", Tag: "resume:stream:latest", LatestTag: "stream", StateDir: state, Status: StatusFailed, EnqueuedAt: base.Add(time.Second), ExitCode: &latestCode},
 	} {
 		if err := writeRecordAtomic(rec); err != nil {
 			t.Fatal(err)

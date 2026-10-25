@@ -32,7 +32,7 @@ func seedFinishedRecords(t *testing.T, state string, count int) {
 	for index := 0; index < count; index++ {
 		code := 0
 		rec := record{
-			RunID: fmt.Sprintf("finished-%05d", index), Tag: "history", Status: StatusDead,
+			RunID: fmt.Sprintf("finished-%05d", index), Tag: "history", Status: StatusCompleted,
 			QueueOrder: uint64(index + 1), StateDir: state, Command: command,
 			ExitCode: &code, EnqueuedAt: time.Now().UTC().Add(-time.Duration(count-index) * time.Second),
 		}
@@ -131,7 +131,7 @@ func TestLegacyTerminalRecordsRetireFromLiveSet(t *testing.T) {
 	}
 	code := 0
 	legacy := record{
-		RunID: "legacy-finished", Tag: "legacy", Status: StatusDead, QueueOrder: 1,
+		RunID: "legacy-finished", Tag: "legacy", Status: StatusCompleted, QueueOrder: 1,
 		StateDir: state, Command: []string{"/bin/true"}, ExitCode: &code,
 	}
 	legacyBytes, err := json.Marshal(legacy)
@@ -177,7 +177,7 @@ func TestLegacyTerminalRecordsRetireFromLiveSet(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 1 || all[0].RunID != legacy.RunID || all[0].Status != StatusDead {
+	if len(all) != 1 || all[0].RunID != legacy.RunID || all[0].Status != StatusCompleted {
 		t.Fatalf("finished history no longer lists through the registry: %+v", all)
 	}
 }
@@ -205,7 +205,7 @@ func TestTerminalTransitionRetiresRecordAndKeepsItVisible(t *testing.T) {
 	}
 	if err := updateRecord(state, "completing", func(rec *record) error {
 		code := 0
-		rec.Status, rec.ExitCode = StatusDead, &code
+		rec.Status, rec.ExitCode = exitStatus(&code, "", ""), &code
 		return nil
 	}); err != nil {
 		t.Fatalf("complete record: %v", err)
@@ -214,7 +214,7 @@ func TestTerminalTransitionRetiresRecordAndKeepsItVisible(t *testing.T) {
 		t.Fatalf("completed record still sits in the live set: stat=%v", err)
 	}
 	rec, err := readRecordLocked(state, "completing")
-	if err != nil || rec.Status != StatusDead || rec.ExitCode == nil || *rec.ExitCode != 0 {
+	if err != nil || rec.Status != StatusCompleted || rec.ExitCode == nil || *rec.ExitCode != 0 {
 		t.Fatalf("completed record = %+v, err=%v", rec, err)
 	}
 	waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -223,7 +223,7 @@ func TestTerminalTransitionRetiresRecordAndKeepsItVisible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wait for completed run: %v", err)
 	}
-	if info.Status != StatusDead || info.ExitCode == nil || *info.ExitCode != 0 {
+	if info.Status != StatusCompleted || info.ExitCode == nil || *info.ExitCode != 0 {
 		t.Fatalf("waited run info = %+v", info)
 	}
 }
@@ -290,7 +290,7 @@ func TestWaitRunCostIsIndependentOfFinishedHistory(t *testing.T) {
 	}
 	if err := updateRecord(state, "waited", func(rec *record) error {
 		code := 7
-		rec.Status, rec.ExitCode = StatusDead, &code
+		rec.Status, rec.ExitCode = StatusFailed, &code
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -300,8 +300,8 @@ func TestWaitRunCostIsIndependentOfFinishedHistory(t *testing.T) {
 		if outcome.err != nil {
 			t.Fatalf("wait for completed run: %v", outcome.err)
 		}
-		if outcome.info.Status != StatusDead || outcome.info.ExitCode == nil || *outcome.info.ExitCode != 7 {
-			t.Fatalf("waited run info = %+v, want dead with exit 7", outcome.info)
+		if outcome.info.Status != StatusFailed || outcome.info.ExitCode == nil || *outcome.info.ExitCode != 7 {
+			t.Fatalf("waited run info = %+v, want failed with exit 7", outcome.info)
 		}
 	case <-time.After(5 * time.Second):
 		cancel()
@@ -335,7 +335,7 @@ func TestWaitRunReturnsRunThatFinishesBetweenPolls(t *testing.T) {
 			return err
 		}
 		return writeRecordAtomic(record{
-			RunID: "between-polls", Tag: "late", Status: StatusDead, QueueOrder: order,
+			RunID: "between-polls", Tag: "late", Status: StatusCompleted, QueueOrder: order,
 			StateDir: state, ExitCode: &code, Command: []string{"/bin/true"},
 		})
 	}); err != nil {
@@ -347,8 +347,8 @@ func TestWaitRunReturnsRunThatFinishesBetweenPolls(t *testing.T) {
 			t.Fatalf("wait for between-polls run: %v", err)
 		}
 		info := <-done
-		if info.Status != StatusDead || info.ExitCode == nil || *info.ExitCode != 0 {
-			t.Fatalf("between-polls run info = %+v, want dead with exit 0", info)
+		if info.Status != StatusCompleted || info.ExitCode == nil || *info.ExitCode != 0 {
+			t.Fatalf("between-polls run info = %+v, want completed with exit 0", info)
 		}
 	case <-time.After(5 * time.Second):
 		cancel()
@@ -365,7 +365,7 @@ func TestFinishedRecordIsTheTruthOverStaleLiveLeftover(t *testing.T) {
 	deadPID := deadProcessPID(t)
 	code := 0
 	finished := record{
-		RunID: "crashed", Tag: "crashed", Status: StatusDead, QueueOrder: 1,
+		RunID: "crashed", Tag: "crashed", Status: StatusCompleted, QueueOrder: 1,
 		StateDir: state, PID: deadPID, StartedAt: "0:1", ExitCode: &code, Command: []string{"/bin/true"},
 	}
 	if err := writeRecordAtomic(finished); err != nil {
@@ -399,8 +399,8 @@ func TestFinishedRecordIsTheTruthOverStaleLiveLeftover(t *testing.T) {
 	if err := json.Unmarshal(afterBytes, &survived); err != nil {
 		t.Fatal(err)
 	}
-	if survived.Status != StatusDead || survived.ExitCode == nil || *survived.ExitCode != 0 {
-		t.Fatalf("finished record after prune = %+v, want dead with exit 0", survived)
+	if survived.Status != StatusCompleted || survived.ExitCode == nil || *survived.ExitCode != 0 {
+		t.Fatalf("finished record after prune = %+v, want completed with exit 0", survived)
 	}
 }
 

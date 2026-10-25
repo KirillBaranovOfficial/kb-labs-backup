@@ -180,8 +180,8 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	latestTag := fs.String("latest-tag", "", "stable stream key used to resolve the newest run record")
 	state := fs.String("state", "", "directory for run records and events")
 	stall := fs.Duration("stall", 0, "report no-output intervals at this duration")
-	stdoutPath := fs.String("stdout", "", "tee stdout to this file")
-	stderrPath := fs.String("stderr", "", "tee stderr to this file")
+	stdoutPath := fs.String("stdout", "", "tee command stdout to this file and the terminal")
+	stderrPath := fs.String("stderr", "", "tee command stderr to this file and the terminal")
 	stdinPath := fs.String("stdin", "", "read command stdin from this file")
 	slotGroup := fs.String("slot-group", "", "serialize starts within this capacity group")
 	slots := fs.Int("slots", 0, "maximum live runs allowed in the slot group")
@@ -265,6 +265,13 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 			return code, supervisedCommandFailure(root, *state, code)
 		}
 		return 1, keeperWaitFailure(root, *state, err)
+	}
+	completed, err := proc.WaitTag(context.Background(), *state, *tag)
+	if err != nil {
+		return 1, keeperWaitFailure(root, *state, err)
+	}
+	if completed.Status != proc.StatusCompleted {
+		return renderWaitOutcome(completed, *state, stdout, root.Invocation())
 	}
 	if _, err := fmt.Fprintf(stdout, "run %s completed\n", *tag); err != nil {
 		return 1, fmt.Errorf("%s: write completion output: %w", root.Name(), err)
@@ -604,7 +611,7 @@ func renderWaitOutcome(run proc.RunInfo, state string, stdout io.Writer, executa
 		return 1, waitDiagnosticError{diagnostic: diagnostic}
 	}
 	switch run.Status {
-	case proc.StatusDead:
+	case proc.StatusCompleted, proc.StatusFailed, proc.StatusDead:
 		if _, err := fmt.Fprintf(stdout, "run %s exited after %dms\n", run.Tag, run.DurationMS); err != nil {
 			return 1, fmt.Errorf("kb-runner wait: write output: %w", err)
 		}

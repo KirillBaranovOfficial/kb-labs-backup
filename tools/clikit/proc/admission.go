@@ -441,7 +441,7 @@ func learnedUsage(records []record, key string) quotaUsage {
 	}
 	var history []record
 	for _, rec := range records {
-		if rec.CostKey == key && rec.Status == StatusDead && !rec.MeasurementPartial && rec.PeakRSSBytes > 0 {
+		if rec.CostKey == key && rec.Status == StatusCompleted && !rec.MeasurementPartial && rec.PeakRSSBytes > 0 {
 			history = append(history, rec)
 		}
 	}
@@ -933,8 +933,12 @@ func updateRecord(stateDir, runID string, update func(*record) error) error {
 
 func completeRecord(stateDir, runID string, code *int, signal string, duration time.Duration, final record) error {
 	return updateRecord(stateDir, runID, func(rec *record) error {
-		if !rec.Status.Terminal() {
-			rec.Status = StatusDead
+		if rec.Status != StatusDirty && rec.Status != StatusLost {
+			if final.Status.Terminal() {
+				rec.Status = final.Status
+			} else {
+				rec.Status = exitStatus(code, signal, final.Error)
+			}
 		}
 		rec.ExitCode = code
 		rec.Signal = signal
@@ -986,14 +990,18 @@ func terminalWaitInfo(match *record) (RunInfo, bool) {
 		return RunInfo{}, false
 	}
 	switch match.Status {
-	case StatusDead:
+	case StatusCompleted, StatusFailed, StatusDead:
 		if match.ExitCode != nil || match.Signal != "" {
-			return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, SlotGroup: match.SlotGroup, ExitCode: match.ExitCode, Signal: match.Signal, DurationMS: match.DurationMS}, true
+			return runInfoFromRecord(match), true
 		}
 	case StatusLost, StatusDirty:
-		return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, Error: match.Error, DurationMS: match.DurationMS}, true
+		return runInfoFromRecord(match), true
 	}
 	return RunInfo{}, false
+}
+
+func runInfoFromRecord(rec *record) RunInfo {
+	return RunInfo{RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: runStartedAt(*rec), Identity: rec.StartedAt, Status: rec.Status, Command: rec.Command, SlotGroup: rec.SlotGroup, ExitCode: rec.ExitCode, Signal: rec.Signal, DurationMS: rec.DurationMS, Error: rec.Error}
 }
 
 // waitRun polls a tag until its run reaches a terminal state. The full
