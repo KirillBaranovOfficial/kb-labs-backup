@@ -259,7 +259,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
     mockInitialization();
 
-    await executeCli(["commit", "open"], { cwd, registerBuiltinCommands });
+    await executeCli(["commit", "plan", "show"], { cwd, registerBuiltinCommands });
 
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
     expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({

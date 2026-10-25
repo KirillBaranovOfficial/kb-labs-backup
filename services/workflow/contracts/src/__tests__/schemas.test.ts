@@ -103,10 +103,10 @@ describe('StepSpecSchema', () => {
     it('accepts a command reference with a deeper space-separated path', () => {
       const result = StepSpecSchema.safeParse({
         name: 'Trace stats',
-        uses: 'command:agent trace stats',
+        uses: 'command:agent trace stats show',
       })
       expect(result.success).toBe(true)
-      expect(result.data?.uses).toBe('command:agent trace stats')
+      expect(result.data?.uses).toBe('command:agent trace stats show')
     })
   })
 

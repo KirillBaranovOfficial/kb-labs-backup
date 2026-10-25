@@ -342,7 +342,7 @@ describe('Command Namespace Routing', () => {
     reg.registerManifest(defaultCommand);
     reg.registerManifest(openCommand);
 
-    const result = reg.resolve(['commit', 'open']);
+    const result = reg.resolve(['commit', 'plan', 'show']);
 
     expect(result.type).toBe('command');
     if (result.type === 'command') {

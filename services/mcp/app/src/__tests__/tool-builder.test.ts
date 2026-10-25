@@ -78,7 +78,7 @@ describe('filterTools', () => {
   it('sanitizes scoped npm package names in tool names', () => {
     // Real pluginIds look like "@kb-labs/commit". The @ and / must be stripped
     // so tool names match /^[a-z0-9-]+__[a-z0-9_]+$/ (MCP name constraint).
-    const snap = { manifests: [entry('@kb-labs/commit', [cmd('commit generate', 'read')])] };
+    const snap = { manifests: [entry('@kb-labs/commit', [cmd('commit plan create', 'read')])] };
     const [tool] = filterTools(snap, allow);
     expect(tool!.name).toBe('kb-labs-commit__commit_generate');
     expect(tool!.name).toMatch(/^[a-z0-9-]+__[a-z0-9_]+$/);

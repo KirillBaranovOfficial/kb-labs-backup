@@ -44,7 +44,7 @@ describe('release:build', () => {
   // Regression: Module Federation dts type generation in Studio rspack
   // configs (createStudioRemoteConfig, studio/plugin-tools) is gated on
   // NODE_ENV !== 'production' — a dev-only convenience of no value to a
-  // release build, and a reproducible source of indefinite native-threadpool
+  // release build run, and a reproducible source of indefinite native-threadpool
   // hangs (rspack stuck in __psynch_cvwait) under concurrent builds. The
   // configured `build.script` path must always run with NODE_ENV=production
   // to skip that code path entirely.

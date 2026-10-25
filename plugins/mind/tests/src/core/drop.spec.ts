@@ -4,7 +4,7 @@ import type { MindServices } from '../../../src/core/services';
 import { resolveMindConfig } from '@kb-labs/mind/contracts';
 
 /**
- * Regression: `mind drop` must not report success for a no-op on a missing or
+ * Regression: `mind index delete` must not report success for a no-op on a missing or
  * mis-typed index id (loadManifest returns an empty manifest when absent, which
  * previously made drop print "removed 0 vectors" with exit 0 on the wrong id).
  */
@@ -23,7 +23,7 @@ function servicesWith(manifests: Record<string, unknown>) {
   return { services: { vectorStore, storage } as unknown as MindServices, vectorStore, storage };
 }
 
-describe('mind drop — missing index guard', () => {
+describe('mind index delete — missing index guard', () => {
   it('throws for an index that has no manifest (does not fake success)', async () => {
     const { services, vectorStore, storage } = servicesWith({});
     const mind = createMind(services, resolveMindConfig(undefined));

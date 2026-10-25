@@ -711,7 +711,7 @@ class DispatchRegistryTests(unittest.TestCase):
             sources = {
                 "aliased-spread.ts": (
                     "import { runKbCommand as run } from './kb-command'\n"
-                    "run([...prefix, 'commit', 'open'])\n"
+                    "run([...prefix, 'commit', 'plan', 'show'])\n"
                 ),
                 "template-path.ts": (
                     "import { runKbCommand } from './kb-command'\n"
@@ -732,12 +732,12 @@ class DispatchRegistryTests(unittest.TestCase):
                 "stored-value.ts": (
                     "import { runKbCommand } from './kb-command'\n"
                     "const f = runKbCommand\n"
-                    "f(['commit', 'open'])\n"
+                    "f(['commit', 'plan', 'show'])\n"
                 ),
                 "bridge.ts": "export { runKbCommand as forwarded } from './kb-command'\n",
                 "re-export-use.ts": (
                     "import { forwarded } from './bridge'\n"
-                    "forwarded(['commit', 'open'])\n"
+                    "forwarded(['commit', 'plan', 'show'])\n"
                 ),
                 "namespace.ts": (
                     "import * as k from './kb-command'\n"
@@ -777,14 +777,14 @@ class DispatchRegistryTests(unittest.TestCase):
             )
             source.write_text(
                 "import { runKbCommand } from './kb-command'\n"
-                "runKbCommand(['commit', 'open', '--help'])\n"
+                "runKbCommand(['commit', 'plan', 'show', '--help'])\n"
                 "runKbCommand(['marketplace', 'install', '@kb-labs/commit', '--json'])\n",
                 encoding="utf-8",
             )
             paths, violations = _studio_command_path_sites(fixture)
             self.assertEqual(violations, [])
             self.assertEqual(paths, {
-                "commit open --help": ["e2e/studio/scenario.ts:2 (TypeScript owner call)"],
+                "commit plan show --help": ["e2e/studio/scenario.ts:2 (TypeScript owner call)"],
                 "marketplace install @kb-labs/commit": [
                     "e2e/studio/scenario.ts:3 (TypeScript owner call)"
                 ],
