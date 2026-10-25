@@ -80,6 +80,7 @@ type Event struct {
 	Schema             string               `json:"schema"`
 	At                 time.Time            `json:"at"`
 	Type               EventType            `json:"type"`
+	Status             RunStatus            `json:"status,omitempty"`
 	RunID              string               `json:"run_id"`
 	Tag                string               `json:"tag"`
 	KeeperPID          int                  `json:"keeper_pid"`
@@ -129,22 +130,24 @@ type Run struct {
 type RunStatus string
 
 const (
-	StatusRunning  RunStatus = "running"
-	StatusQueued   RunStatus = "queued"
-	StatusBlocked  RunStatus = "blocked"
-	StatusStalled  RunStatus = "stalled"
-	StatusPaused   RunStatus = "paused"
-	StatusStarting RunStatus = "starting"
-	StatusDead     RunStatus = "dead"
-	StatusLost     RunStatus = "lost"
-	StatusDirty    RunStatus = "dirty"
+	StatusRunning   RunStatus = "running"
+	StatusQueued    RunStatus = "queued"
+	StatusBlocked   RunStatus = "blocked"
+	StatusStalled   RunStatus = "stalled"
+	StatusPaused    RunStatus = "paused"
+	StatusStarting  RunStatus = "starting"
+	StatusCompleted RunStatus = "completed"
+	StatusFailed    RunStatus = "failed"
+	StatusDead      RunStatus = "dead"
+	StatusLost      RunStatus = "lost"
+	StatusDirty     RunStatus = "dirty"
 )
 
 // Terminal reports whether the run has reached an outcome that waiters should
 // observe without continuing to poll.
 func (status RunStatus) Terminal() bool {
 	switch status {
-	case StatusDead, StatusLost, StatusDirty:
+	case StatusCompleted, StatusFailed, StatusDead, StatusLost, StatusDirty:
 		return true
 	case StatusRunning, StatusQueued, StatusBlocked, StatusStalled, StatusStarting, StatusPaused:
 		return false
@@ -168,37 +171,38 @@ type Process struct {
 }
 
 type RunInfo struct {
-	RunID              string    `json:"run_id"`
-	Tag                string    `json:"tag"`
-	PID                int       `json:"pid"`
-	StartedAt          string    `json:"started_at"`
-	Status             RunStatus `json:"status"`
-	Command            []string  `json:"command"`
-	Tree               []Process `json:"tree"`
-	SlotGroup          string    `json:"slot_group,omitempty"`
-	QueuePosition      int       `json:"queue_position,omitempty"`
-	WaitReason         string    `json:"wait_reason,omitempty"`
-	ElapsedMS          int64     `json:"elapsed_ms,omitempty"`
-	ExitCode           *int      `json:"exit_code,omitempty"`
-	Signal             string    `json:"signal,omitempty"`
-	Error              string    `json:"error,omitempty"`
-	CostKey            string    `json:"cost_key,omitempty"`
-	CostClass          CostClass `json:"cost_class"`
-	Priority           int       `json:"priority"`
-	MemoryBytes        uint64    `json:"memory_bytes,omitempty"`
-	CPUsMin            int       `json:"cpus_min,omitempty"`
-	CPUsMax            int       `json:"cpus_max,omitempty"`
-	DiskBytes          uint64    `json:"disk_bytes,omitempty"`
-	GrantedCPUs        int       `json:"granted_cpus,omitempty"`
-	PeakRSSBytes       uint64    `json:"peak_rss_bytes"`
-	AverageCPU         float64   `json:"average_cpu"`
-	Paused             bool      `json:"paused"`
-	PausedMS           int64     `json:"paused_ms,omitempty"`
-	MeasurementPartial bool      `json:"measurement_partial,omitempty"`
-	LimitsAdvisory     string    `json:"limits_advisory,omitempty"`
-	OverBudget         bool      `json:"over_budget,omitempty"`
-	ResourceNotice     string    `json:"resource_notice,omitempty"`
-	DurationMS         int64     `json:"duration_ms,omitempty"`
+	RunID              string     `json:"run_id"`
+	Tag                string     `json:"tag"`
+	PID                int        `json:"pid"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	Identity           string     `json:"identity"`
+	Status             RunStatus  `json:"status"`
+	Command            []string   `json:"command"`
+	Tree               []Process  `json:"tree"`
+	SlotGroup          string     `json:"slot_group,omitempty"`
+	QueuePosition      int        `json:"queue_position,omitempty"`
+	WaitReason         string     `json:"wait_reason,omitempty"`
+	ElapsedMS          int64      `json:"elapsed_ms,omitempty"`
+	ExitCode           *int       `json:"exit_code,omitempty"`
+	Signal             string     `json:"signal,omitempty"`
+	Error              string     `json:"error,omitempty"`
+	CostKey            string     `json:"cost_key,omitempty"`
+	CostClass          CostClass  `json:"cost_class"`
+	Priority           int        `json:"priority"`
+	MemoryBytes        uint64     `json:"memory_bytes,omitempty"`
+	CPUsMin            int        `json:"cpus_min,omitempty"`
+	CPUsMax            int        `json:"cpus_max,omitempty"`
+	DiskBytes          uint64     `json:"disk_bytes,omitempty"`
+	GrantedCPUs        int        `json:"granted_cpus,omitempty"`
+	PeakRSSBytes       uint64     `json:"peak_rss_bytes"`
+	AverageCPU         float64    `json:"average_cpu"`
+	Paused             bool       `json:"paused"`
+	PausedMS           int64      `json:"paused_ms,omitempty"`
+	MeasurementPartial bool       `json:"measurement_partial,omitempty"`
+	LimitsAdvisory     string     `json:"limits_advisory,omitempty"`
+	OverBudget         bool       `json:"over_budget,omitempty"`
+	ResourceNotice     string     `json:"resource_notice,omitempty"`
+	DurationMS         int64      `json:"duration_ms,omitempty"`
 }
 
 type Listing struct {
@@ -586,7 +590,7 @@ func List(stateDir string) Listing {
 			position = queuePosition(rec, records)
 		}
 		info := RunInfo{
-			RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: rec.StartedAt,
+			RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: runStartedAt(rec), Identity: rec.StartedAt,
 			Status: status, Command: rec.Command, SlotGroup: rec.SlotGroup,
 			QueuePosition: position, WaitReason: rec.WaitReason, ElapsedMS: elapsed,
 			ExitCode: rec.ExitCode, Signal: rec.Signal, DurationMS: rec.DurationMS,
@@ -949,7 +953,28 @@ func writeRecord(rec record) error {
 }
 
 func eventFor(rec record, kind EventType) Event {
-	return Event{Schema: EventSchema, At: time.Now().UTC(), Type: kind, RunID: rec.RunID, Tag: rec.Tag, KeeperPID: rec.PID, Command: commandText(rec.Command), CostClass: rec.CostClass, GovernorDecision: "normal", MemoryBytes: rec.MemoryBytes, CPUsMin: rec.CPUsMin, CPUsMax: rec.CPUsMax, DiskBytes: rec.DiskBytes, GrantedCPUs: rec.GrantedCPUs, PeakRSSBytes: rec.PeakRSSBytes, AverageCPU: rec.AverageCPU, MeasurementPartial: rec.MeasurementPartial, LimitsAdvisory: rec.LimitsAdvisory, OverBudget: rec.OverBudget, ResourceNotice: rec.ResourceNotice}
+	return Event{Schema: EventSchema, At: time.Now().UTC(), Type: kind, Status: rec.Status, RunID: rec.RunID, Tag: rec.Tag, KeeperPID: rec.PID, Command: commandText(rec.Command), CostClass: rec.CostClass, GovernorDecision: "normal", MemoryBytes: rec.MemoryBytes, CPUsMin: rec.CPUsMin, CPUsMax: rec.CPUsMax, DiskBytes: rec.DiskBytes, GrantedCPUs: rec.GrantedCPUs, PeakRSSBytes: rec.PeakRSSBytes, AverageCPU: rec.AverageCPU, MeasurementPartial: rec.MeasurementPartial, LimitsAdvisory: rec.LimitsAdvisory, OverBudget: rec.OverBudget, ResourceNotice: rec.ResourceNotice}
+}
+
+func exitStatus(code *int, signal, failure string) RunStatus {
+	if failure != "" {
+		return StatusFailed
+	}
+	if signal != "" {
+		return StatusDead
+	}
+	if code == nil || *code != 0 {
+		return StatusFailed
+	}
+	return StatusCompleted
+}
+
+func runStartedAt(rec record) *time.Time {
+	if rec.StartedAtTime.IsZero() {
+		return nil
+	}
+	value := rec.StartedAtTime.UTC()
+	return &value
 }
 
 func commandText(command []string) string { return strings.Join(command, " ") }

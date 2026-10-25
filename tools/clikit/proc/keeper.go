@@ -450,6 +450,7 @@ func runKeeper(cfg keeperConfig) int {
 			exitEvent.Error = errors.Join(errors.New(exitEvent.Error), eventError).Error()
 		}
 	}
+	exitEvent.Status = exitStatus(code, signal, exitEvent.Error)
 	if err := appendEvent(cfg.StateDir, exitEvent); err != nil {
 		fmt.Fprintln(os.Stderr, "proc: append exit event:", err)
 		eventError = errors.Join(eventError, err)
@@ -458,15 +459,18 @@ func runKeeper(cfg keeperConfig) int {
 		cleanupError = errors.Join(cleanupError, reapErr)
 	}
 	reapEvent := eventFor(rec, EventTeardown)
+	reapEvent.Status = exitEvent.Status
 	reapEvent.DurationMS = exitEvent.DurationMS
 	reapEvent.Reaped = cleanup.Reaped
 	reapEvent.Unverified = cleanup.Unverified
 	reapEvent.Remaining = cleanup.Remaining
+	resourceFailure := false
 	if cleanupError != nil {
 		reapEvent.Error = cleanupError.Error()
 	}
 	reapEvent.Resources = cleanupResources(cfg.StateDir, cfg.RunID)
 	if resourceErr := resourceOutcomesError(reapEvent.Resources); resourceErr != nil {
+		resourceFailure = true
 		cleanupError = errors.Join(cleanupError, resourceErr)
 		if reapEvent.Error == "" {
 			reapEvent.Error = cleanupError.Error()
@@ -479,6 +483,7 @@ func runKeeper(cfg keeperConfig) int {
 		reapEvent.Resources = append(reapEvent.Resources, scratchOutcome)
 	}
 	if scratchErr != nil {
+		reapEvent.Status = StatusDirty
 		err := scratchErr
 		cleanupError = errors.Join(cleanupError, fmt.Errorf("remove run scratch: %w", err))
 		if dirtyErr := markRunDirty(cfg.StateDir, cfg.RunID, "scratch cleanup failed: "+err.Error()); dirtyErr != nil {
@@ -497,17 +502,26 @@ func runKeeper(cfg keeperConfig) int {
 			reapEvent.Error = errors.Join(errors.New(reapEvent.Error), eventError).Error()
 		}
 	}
-	if err := appendEvent(cfg.StateDir, reapEvent); err != nil {
-		fmt.Fprintln(os.Stderr, "proc: append teardown event:", err)
-		eventError = errors.Join(eventError, err)
-	}
 	if err := releaseGate(cfg.StateDir, cfg.RunID, cfg.HoldGate); err != nil {
 		fmt.Fprintln(os.Stderr, "proc: release held gate:", err)
 		cleanupError = errors.Join(cleanupError, err)
 	}
+	finalStatus := exitEvent.Status
+	if resourceFailure || scratchErr != nil {
+		finalStatus = StatusDirty
+	} else if cleanupError != nil || eventError != nil {
+		finalStatus = StatusFailed
+	}
+	rec.Status = finalStatus
+	reapEvent.Status = finalStatus
 	if err := completeRecord(cfg.StateDir, cfg.RunID, code, signal, time.Duration(exitEvent.DurationMS)*time.Millisecond, rec); err != nil {
 		fmt.Fprintln(os.Stderr, "proc: record completed run:", err)
 		cleanupError = errors.Join(cleanupError, err)
+		reapEvent.Status = StatusFailed
+	}
+	if err := appendEvent(cfg.StateDir, reapEvent); err != nil {
+		fmt.Fprintln(os.Stderr, "proc: append teardown event:", err)
+		eventError = errors.Join(eventError, err)
 	}
 	if code != nil && *code != 0 {
 		return *code
