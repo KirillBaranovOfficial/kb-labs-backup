@@ -241,7 +241,7 @@ func TestDarwinCommandNameParsesLiveKinfoRecord(t *testing.T) {
 }
 
 // Requires process-table access to measure another process; run outside the restricted sandbox.
-// case: S-237.66
+// case: S-237.68
 func TestIdleKeeperCPUStaysBelowOnePercent(t *testing.T) {
 	state := t.TempDir()
 	helper := filepath.Join(t.TempDir(), "proc-helper")

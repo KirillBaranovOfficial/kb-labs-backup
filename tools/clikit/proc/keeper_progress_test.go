@@ -39,7 +39,7 @@ func TestSaveProgressDoesNotRewriteUnchangedRecord(t *testing.T) {
 	}
 }
 
-// case: S-237.68
+// case: S-237.70
 func TestStallClockAdvancesAcrossGovernorPause(t *testing.T) {
 	lastOutput := time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
 	pausedAt := lastOutput.Add(2 * time.Second)

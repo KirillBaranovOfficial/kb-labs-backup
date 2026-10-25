@@ -139,7 +139,7 @@ func TestPressureHysteresis(t *testing.T) {
 	}
 }
 
-// case: S-237.69
+// case: S-237.71
 func TestGovernorHardPressureUsesSwapMemoryAndDiskSignals(t *testing.T) {
 	normal := HostResourceSnapshot{PhysicalMemory: 1000, AvailableMemory: 500, MemoryAvailableKnown: true, Pressure: "normal", PressureAvailable: true}
 	if got := governorHardPressure(normal, HostResourceSnapshot{}, 500, 100); got != "" {
@@ -156,7 +156,7 @@ func TestGovernorHardPressureUsesSwapMemoryAndDiskSignals(t *testing.T) {
 	}
 }
 
-// case: S-237.67
+// case: S-237.69
 func TestGovernorAdmissionWaitsOnlyForHeavyCostOnHostPressure(t *testing.T) {
 	sample := HostResourceSnapshot{Pressure: "memory warn", PressureAvailable: true, LoadAvailable: true, MemoryAvailableKnown: true}
 	if got := governorAdmissionReason(CostLight, sample, 1000, 100); got != "" {
@@ -170,7 +170,7 @@ func TestGovernorAdmissionWaitsOnlyForHeavyCostOnHostPressure(t *testing.T) {
 	}
 }
 
-// case: S-237.67
+// case: S-237.69
 func TestSecondHeavyAdmissionWaitsWithVisibleHostPressureReason(t *testing.T) {
 	state := t.TempDir()
 	identity, alive, err := ProcessIdentity(os.Getpid())
@@ -212,7 +212,7 @@ func TestSecondHeavyAdmissionWaitsWithVisibleHostPressureReason(t *testing.T) {
 	}
 }
 
-// case: S-237.68
+// case: S-237.70
 func TestGovernorSelectsLowestPriorityHeavyRun(t *testing.T) {
 	records := []record{
 		{RunID: "light", CostClass: CostLight, Status: StatusRunning, Priority: -1, EnqueuedAt: time.Unix(1, 0)},
@@ -225,7 +225,7 @@ func TestGovernorSelectsLowestPriorityHeavyRun(t *testing.T) {
 	}
 }
 
-// case: S-237.69
+// case: S-237.71
 func TestGovernorPausesLowestPriorityRunAndResumesAfterDiskFloorRestored(t *testing.T) {
 	state := t.TempDir()
 	owned := make([]*exec.Cmd, 0, 2)

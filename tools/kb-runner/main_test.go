@@ -114,7 +114,7 @@ func TestRootHelpSpellingsReturnUsageSuccessfully(t *testing.T) {
 	}
 }
 
-// case: S-237.70
+// case: S-237.72
 func TestPSJSONIncludesHostDecisionAndRunMeasurements(t *testing.T) {
 	state := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
