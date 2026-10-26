@@ -38,12 +38,12 @@ export async function runStage({ stage, packageNames, packages, selectedPackageC
       };
     }
     command = './tools/kb-devkit/kb-devkit';
-    args = ['run', 'build', '--packages', selected.join(',')];
+    args = ['run', 'build', '--packages', selected.join(','), '--json'];
   } else if (stage === profile.packageTestStage) {
     if (!Array.isArray(packageNames) || packageNames.length === 0 || packageNames.some((packageName) => typeof packageName !== 'string' || !packageName)) throw new Error(`${profile.packageTestStage} requires packages selected by kb-devkit affected --json.`);
     if (!Number.isSafeInteger(shard) || shard < 1) throw new Error(`${profile.packageTestStage} requires a positive shard number from the remote verification plan.`);
     command = './tools/kb-devkit/kb-devkit';
-    args = ['run', 'test', '--packages', packageNames.join(','), '--concurrency', '1'];
+    args = ['run', 'test', '--packages', packageNames.join(','), '--concurrency', '1', '--json'];
     name = `${stage}:shard-${shard}`;
   } else {
     [command, args] = commandFor(definition);
@@ -52,18 +52,52 @@ export async function runStage({ stage, packageNames, packages, selectedPackageC
   const result = await runCommand(command, args, { cwd: root });
   const finishedAt = now();
   const log = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join('\n');
+  const taskFailures = devkitTaskFailures(stage, result);
+  const taskLogOutput = taskFailures.map((failure) => {
+    const label = [failure.package, failure.task].filter(Boolean).join(':');
+    return [label, failure.logPath, failure.logTail || failure.error].filter(Boolean).join('\n');
+  }).join('\n\n');
+  const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage;
+  const visibleLog = taskFailures.length ? taskLogOutput : isDevkitStage ? (result.stderr || '') : log;
   return {
     name,
     status: result.status === 0 ? 'pass' : 'fail',
     selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : selectedPackageCount,
-    failures: failingNames(log),
-    logTail: boundedTail(log),
+    failures: [...failingNames(log), ...taskFailures.flatMap((failure) => (failure.logTail || failure.error || '').split(/\r?\n/).filter(Boolean))],
+    taskFailures,
+    logTail: boundedTail(visibleLog),
     startedAt: new Date(startedAt).toISOString(),
     finishedAt: new Date(finishedAt).toISOString(),
     durationMs: Math.max(0, finishedAt - startedAt),
     ...(stage === profile.packageTestStage ? { packages: packageNames } : {}),
     cache: cacheRecord(cache),
   };
+}
+
+function devkitTaskFailures(stage, result) {
+  if ((stage !== profile.buildStage && stage !== profile.packageTestStage) || result.status === 0) return [];
+  let envelope;
+  try {
+    envelope = JSON.parse(result.stdout);
+  } catch (error) {
+    return [{ error: `kb-devkit run --json returned invalid JSON: ${error.message}` }];
+  }
+  const results = envelope?.data?.results;
+  if (envelope?.ok !== false || !Array.isArray(results)) {
+    return [{ error: 'kb-devkit run --json returned no structured task results for a failed stage.' }];
+  }
+  return results.filter((task) => task?.OK === false).map((task) => {
+    const failure = { package: task.Package, task: task.Task, logPath: task.logPath };
+    if (typeof task.logPath !== 'string' || task.logPath.length === 0) {
+      return { ...failure, error: 'failed task result did not include its structured logPath.' };
+    }
+    try {
+      failure.logTail = boundedTail(readFileSync(task.logPath, 'utf8'));
+    } catch (error) {
+      failure.error = `could not read task log: ${error.message}`;
+    }
+    return failure;
+  });
 }
 
 function commandFor(definition) {

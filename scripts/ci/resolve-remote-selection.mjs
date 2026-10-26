@@ -9,9 +9,19 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const profile = process.argv[2];
 const outputPath = process.argv[3];
 const executable = process.argv[4];
-const baseRef = process.env.KB_DEVKIT_BASE_REF;
-if (!['stream', 'candidate'].includes(profile) || !outputPath || !executable || !baseRef) {
-  throw new Error('Usage: KB_DEVKIT_BASE_REF=<workflow base> node scripts/ci/resolve-remote-selection.mjs <stream|candidate> <affected-json-output> <kb-devkit-executable>');
+const defaultBranch = process.env.DEFAULT_BRANCH;
+if (!['stream', 'candidate'].includes(profile) || !outputPath || !executable || (profile === 'stream' && !defaultBranch)) {
+  throw new Error('A supported profile, output path, and kb-devkit executable are required; stream selection also requires DEFAULT_BRANCH.');
+}
+let baseRef;
+if (profile === 'stream') {
+  baseRef = `origin/${defaultBranch}...HEAD`;
+} else {
+  const emptyTree = spawnSync('git', ['hash-object', '-t', 'tree', '--stdin'], { cwd: root, input: '', encoding: 'utf8' });
+  if (emptyTree.error || emptyTree.status !== 0) {
+    throw new Error(`Could not resolve the candidate empty-tree base ref; run git hash-object -t tree --stdin. ${emptyTree.error?.message || emptyTree.stderr}`);
+  }
+  baseRef = emptyTree.stdout.trim();
 }
 
 const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'kb-remote-selection-'));
@@ -29,7 +39,7 @@ try {
   const result = spawnSync(executable, ['--config', configPath, 'affected', '--json'], {
     cwd: root,
     encoding: 'utf8',
-    env: { ...process.env, VERIFICATION_PROFILE: profile, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
+    env: { ...process.env, VERIFICATION_PROFILE: profile, KB_DEVKIT_BASE_REF: baseRef, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
   });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`kb-devkit affected selection failed (exit ${result.status}): ${result.stderr || result.stdout}`);
