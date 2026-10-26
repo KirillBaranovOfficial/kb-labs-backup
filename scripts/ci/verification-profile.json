@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "stages": [
-    "full-build",
-    "affected-unit-tests",
+    "journey-unit-suite",
+    "workspace-build",
+    "workspace-unit-tests",
     "kb-devkit-check",
-    "kb-create-go-suite",
-    "journey-unit-suite"
+    "kb-create-go-suite"
   ]
 }
