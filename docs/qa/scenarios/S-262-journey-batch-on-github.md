@@ -34,3 +34,5 @@ A journey maintainer can run the same product-evidence batch locally or on GitHu
 ## Evidence scope
 
 These rows describe developer-operated batch infrastructure and are checked by hermetic shell/workflow tests. The installed journey batch itself is run by the batch gate; these rows do not claim release coverage.
+
+| S-262.7 | Run `node scripts/ci/run-remote-profile.mjs <full-commit-sha> --profile stream` and then `node scripts/ci/run-remote-profile.mjs <full-commit-sha> --profile candidate`; inspect `verdict.json` after each run | Stream mode runs the affected build graph and stops after the first failed stage; the verdict names the stage and records its elapsed milliseconds. Candidate mode runs the complete build and all registered verification stages despite failures, and its verdict records elapsed milliseconds for every completed stage. Both modes keep the schema version and required job fields accepted by the remote-verdict consumer. Repeating a run with a changed lockfile or Go module input rebuilds dependencies under a cache key derived from that input; an exact cache hit may reuse only immutable matching inputs. |
