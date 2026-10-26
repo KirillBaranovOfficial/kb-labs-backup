@@ -115,6 +115,30 @@ func TestRunAllAppliesOnlyFilterAndMergesCircularResults(t *testing.T) {
 	}
 }
 
+func TestRunAllRunsCircularCheckByItself(t *testing.T) {
+	root := t.TempDir()
+	pkgA := workspace.Package{Name: "@kb/a", Dir: filepath.Join(root, "a"), Preset: "node-lib"}
+	pkgB := workspace.Package{Name: "@kb/b", Dir: filepath.Join(root, "b"), Preset: "node-lib"}
+	writePackageJSON(t, pkgA.Dir, `{"name":"@kb/a","dependencies":{"@kb/b":"workspace:*"}}`)
+	writePackageJSON(t, pkgB.Dir, `{"name":"@kb/b","devDependencies":{"@kb/a":"workspace:*"}}`)
+	cfg := &config.DevkitConfig{
+		Presets: map[string]config.Preset{"node-lib": {Deps: config.DepsRules{CheckCircular: true}}},
+		Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{
+			Name: "libs", Category: config.CategoryConfig{Preset: "node-lib"},
+		}}},
+	}
+	results := RunAll(&workspace.Workspace{Packages: []workspace.Package{pkgA, pkgB}}, cfg, &Registry{}, []string{"circular"}, nil)
+	for _, pkg := range []workspace.Package{pkgA, pkgB} {
+		result, ok := results[pkg.Name]
+		if !ok {
+			t.Fatalf("missing circular result for %s", pkg.Name)
+		}
+		if result.ChecksRun != 1 || len(result.Issues) != 1 || result.Issues[0].Check != "circular" {
+			t.Fatalf("result for %s = %#v, want one circular finding", pkg.Name, result)
+		}
+	}
+}
+
 func TestRunAllSkipsPackageWhenPresetResolutionFails(t *testing.T) {
 	ws := &workspace.Workspace{
 		Packages: []workspace.Package{

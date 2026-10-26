@@ -16,6 +16,12 @@ import (
 	"time"
 )
 
+const (
+	stallCheckInterval     = 200 * time.Millisecond
+	metricSampleInterval   = 5 * time.Second
+	governorSampleInterval = 2 * time.Second
+)
+
 type activityWriter struct {
 	file     *os.File
 	terminal *os.File
@@ -90,7 +96,7 @@ func runKeeper(cfg keeperConfig) int {
 		return 1
 	}
 	cfg.Keep = resolveKeepPaths(scratch, cfg.Keep)
-	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, PID: os.Getpid(), Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusStarting, Scratch: scratch, ScratchDevice: scratchIdentity.Device, ScratchInode: scratchIdentity.Inode, Keep: append([]string(nil), cfg.Keep...)}
+	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, PID: os.Getpid(), Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusStarting, Scratch: scratch, ScratchDevice: scratchIdentity.Device, ScratchInode: scratchIdentity.Inode, Keep: append([]string(nil), cfg.Keep...), CostClass: cfg.CostClass}
 	startedAt, ok, identityErr := ProcessIdentity(os.Getpid())
 	if identityErr != nil {
 		return keeperError(rec, "inspect keeper process identity", identityErr)
@@ -212,7 +218,7 @@ func runKeeper(cfg keeperConfig) int {
 	if err := updateRecord(cfg.StateDir, rec.RunID, func(stored *record) error {
 		rec.SlotGroup, rec.Slots, rec.QueueOrder = stored.SlotGroup, stored.Slots, stored.QueueOrder
 		rec.EnqueuedAt, rec.WaitGate, rec.HoldGate = stored.EnqueuedAt, stored.WaitGate, stored.HoldGate
-		rec.CostKey, rec.MemoryBytes, rec.CPUsMin, rec.CPUsMax, rec.DiskBytes = stored.CostKey, stored.MemoryBytes, stored.CPUsMin, stored.CPUsMax, stored.DiskBytes
+		rec.CostKey, rec.CostClass, rec.MemoryBytes, rec.CPUsMin, rec.CPUsMax, rec.DiskBytes = stored.CostKey, stored.CostClass, stored.MemoryBytes, stored.CPUsMin, stored.CPUsMax, stored.DiskBytes
 		rec.GrantedCPUs, rec.ResourceNotice = stored.GrantedCPUs, stored.ResourceNotice
 		*stored = rec
 		return nil
@@ -263,8 +269,19 @@ func runKeeper(cfg keeperConfig) int {
 	}()
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- cmd.Wait() }()
-	stall := time.NewTicker(100 * time.Millisecond)
+	stall := time.NewTicker(stallCheckInterval)
 	defer stall.Stop()
+	metrics := time.NewTicker(metricSampleInterval)
+	defer metrics.Stop()
+	governor := time.NewTicker(governorSampleInterval)
+	defer governor.Stop()
+	var treeSamples <-chan time.Time
+	var treeTicker *time.Ticker
+	if ancestrySampleInterval > 0 {
+		treeTicker = time.NewTicker(ancestrySampleInterval)
+		treeSamples = treeTicker.C
+		defer treeTicker.Stop()
+	}
 	metricStarted := time.Now()
 	var previousCPU, cpuUsed float64
 	var metricSamples int
@@ -275,6 +292,7 @@ func runKeeper(cfg keeperConfig) int {
 	stallReported := false
 	var parentMonitorError string
 	var cleanupError error = initialSampleError
+	var pausedSince time.Time
 	cleanup := treeCleanup{Reaped: []Process{}, Unverified: []Process{}}
 	var eventError error
 	var outputError error
@@ -305,19 +323,19 @@ func runKeeper(cfg keeperConfig) int {
 			waitErr = <-waitDone
 			commandExitedAt = time.Now().UTC()
 			commandFinished = true
-		case <-stall.C:
-			if ancestrySampleInterval > 0 {
-				observed, observeErr := sampleDescendants(rec, rec.Observed)
-				if observeErr != nil {
-					cleanupError = errors.Join(cleanupError, observeErr)
-					fmt.Fprintln(os.Stderr, "proc: sample descendant tree:", observeErr)
-				}
-				rec.Observed = observed
+		case <-treeSamples:
+			observed, observeErr := sampleDescendants(rec, rec.Observed)
+			if observeErr != nil {
+				cleanupError = errors.Join(cleanupError, observeErr)
+				fmt.Fprintln(os.Stderr, "proc: sample descendant tree:", observeErr)
 			}
-			if err := saveProgress(rec, lastOutput.Load()); err != nil {
-				fmt.Fprintln(os.Stderr, "proc: update run progress:", err)
+			rec.Observed = observed
+		case <-governor.C:
+			if err := reconcileHostGovernor(cfg.StateDir, systemHostResourceSource()); err != nil {
+				fmt.Fprintln(os.Stderr, "proc: reconcile host resource governor:", err)
 				cleanupError = errors.Join(cleanupError, err)
 			}
+		case <-metrics.C:
 			rss, cpu, partial, metricErr := sampleRunMetrics(rec)
 			if metricErr != nil {
 				partial = true
@@ -343,6 +361,35 @@ func runKeeper(cfg keeperConfig) int {
 				eventError = errors.Join(eventError, observationErr)
 			}
 			rec.OverBudget = rec.OverBudget || emitted
+			if err := saveProgress(rec, lastOutput.Load()); err != nil {
+				fmt.Fprintln(os.Stderr, "proc: persist sampled resource use:", err)
+				cleanupError = errors.Join(cleanupError, err)
+			}
+		case <-stall.C:
+			if err := saveProgress(rec, lastOutput.Load()); err != nil {
+				fmt.Fprintln(os.Stderr, "proc: update run progress:", err)
+				cleanupError = errors.Join(cleanupError, err)
+			}
+			var paused bool
+			if err := withStateLock(cfg.StateDir, func() error {
+				stored, readErr := readRecordLocked(cfg.StateDir, rec.RunID)
+				if readErr == nil {
+					paused = stored.Status == StatusPaused
+				}
+				return readErr
+			}); err != nil {
+				cleanupError = errors.Join(cleanupError, err)
+			}
+			if paused {
+				if pausedSince.IsZero() {
+					pausedSince = time.Now()
+				}
+				continue
+			}
+			if !pausedSince.IsZero() {
+				lastOutput.Store(outputTimeAfterPause(lastOutput.Load(), pausedSince, time.Now()))
+				pausedSince = time.Time{}
+			}
 			if !stallReported && time.Since(time.Unix(0, lastOutput.Load())) >= cfg.Stall {
 				e := eventFor(rec, EventStall)
 				leaves, leafErr := ProcessLeavesWithHistory(rec.PID, rec.RunID, rec.Observed)
@@ -403,6 +450,7 @@ func runKeeper(cfg keeperConfig) int {
 			exitEvent.Error = errors.Join(errors.New(exitEvent.Error), eventError).Error()
 		}
 	}
+	exitEvent.Status = exitStatus(code, signal, exitEvent.Error)
 	if err := appendEvent(cfg.StateDir, exitEvent); err != nil {
 		fmt.Fprintln(os.Stderr, "proc: append exit event:", err)
 		eventError = errors.Join(eventError, err)
@@ -411,15 +459,18 @@ func runKeeper(cfg keeperConfig) int {
 		cleanupError = errors.Join(cleanupError, reapErr)
 	}
 	reapEvent := eventFor(rec, EventTeardown)
+	reapEvent.Status = exitEvent.Status
 	reapEvent.DurationMS = exitEvent.DurationMS
 	reapEvent.Reaped = cleanup.Reaped
 	reapEvent.Unverified = cleanup.Unverified
 	reapEvent.Remaining = cleanup.Remaining
+	resourceFailure := false
 	if cleanupError != nil {
 		reapEvent.Error = cleanupError.Error()
 	}
 	reapEvent.Resources = cleanupResources(cfg.StateDir, cfg.RunID)
 	if resourceErr := resourceOutcomesError(reapEvent.Resources); resourceErr != nil {
+		resourceFailure = true
 		cleanupError = errors.Join(cleanupError, resourceErr)
 		if reapEvent.Error == "" {
 			reapEvent.Error = cleanupError.Error()
@@ -432,6 +483,7 @@ func runKeeper(cfg keeperConfig) int {
 		reapEvent.Resources = append(reapEvent.Resources, scratchOutcome)
 	}
 	if scratchErr != nil {
+		reapEvent.Status = StatusDirty
 		err := scratchErr
 		cleanupError = errors.Join(cleanupError, fmt.Errorf("remove run scratch: %w", err))
 		if dirtyErr := markRunDirty(cfg.StateDir, cfg.RunID, "scratch cleanup failed: "+err.Error()); dirtyErr != nil {
@@ -450,17 +502,26 @@ func runKeeper(cfg keeperConfig) int {
 			reapEvent.Error = errors.Join(errors.New(reapEvent.Error), eventError).Error()
 		}
 	}
-	if err := appendEvent(cfg.StateDir, reapEvent); err != nil {
-		fmt.Fprintln(os.Stderr, "proc: append teardown event:", err)
-		eventError = errors.Join(eventError, err)
-	}
 	if err := releaseGate(cfg.StateDir, cfg.RunID, cfg.HoldGate); err != nil {
 		fmt.Fprintln(os.Stderr, "proc: release held gate:", err)
 		cleanupError = errors.Join(cleanupError, err)
 	}
+	finalStatus := exitEvent.Status
+	if resourceFailure || scratchErr != nil {
+		finalStatus = StatusDirty
+	} else if cleanupError != nil || eventError != nil {
+		finalStatus = StatusFailed
+	}
+	rec.Status = finalStatus
+	reapEvent.Status = finalStatus
 	if err := completeRecord(cfg.StateDir, cfg.RunID, code, signal, time.Duration(exitEvent.DurationMS)*time.Millisecond, rec); err != nil {
 		fmt.Fprintln(os.Stderr, "proc: record completed run:", err)
 		cleanupError = errors.Join(cleanupError, err)
+		reapEvent.Status = StatusFailed
+	}
+	if err := appendEvent(cfg.StateDir, reapEvent); err != nil {
+		fmt.Fprintln(os.Stderr, "proc: append teardown event:", err)
+		eventError = errors.Join(eventError, err)
 	}
 	if code != nil && *code != 0 {
 		return *code
@@ -480,12 +541,21 @@ func runKeeper(cfg keeperConfig) int {
 	return 0
 }
 
+func outputTimeAfterPause(lastOutput int64, pausedAt, resumedAt time.Time) int64 {
+	return lastOutput + resumedAt.Sub(pausedAt).Nanoseconds()
+}
+
 func sampleRunMetrics(rec record) (uint64, float64, bool, error) {
 	return sampleRunMetricsWithSource(rec, osProcessSource{})
 }
 
 func sampleRunMetricsWithSource(rec record, source processSource) (uint64, float64, bool, error) {
 	tree, err := processTreeWithHistorySource(source, rec.PID, rec.RunID, rec.Observed)
+	if metricsSource, ok := source.(processMetricsSource); ok {
+		var metricsErr error
+		tree, metricsErr = metricsSource.Metrics(tree)
+		err = errors.Join(err, metricsErr)
+	}
 	var rss uint64
 	var cpu float64
 	partial := false
@@ -612,6 +682,13 @@ func saveProgress(rec record, lastOutput int64) error {
 		status = StatusStalled
 	}
 	return updateRecord(rec.StateDir, rec.RunID, func(stored *record) error {
+		if stored.Status == StatusPaused {
+			stored.LastOutputAt = last
+			stored.Observed = rec.Observed
+			stored.PeakRSSBytes, stored.AverageCPU = rec.PeakRSSBytes, rec.AverageCPU
+			stored.MeasurementPartial, stored.OverBudget = rec.MeasurementPartial, rec.OverBudget
+			return nil
+		}
 		stored.Status = status
 		stored.LastOutputAt = last
 		stored.Observed = rec.Observed

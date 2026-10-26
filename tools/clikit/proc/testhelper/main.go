@@ -157,27 +157,40 @@ func run(args []string) diag.ExitStatus {
 		if err := cmd.Start(); err != nil {
 			return fail(err)
 		}
-		if err := waitForFile(args[1]); err != nil {
+		if err := waitForFileWithin(args[1], time.Minute); err != nil {
 			return fail(err)
 		}
-		time.Sleep(30 * time.Second)
+		if err := waitForFileWithin(args[2], time.Minute); err != nil {
+			return fail(err)
+		}
 	case "probe-intermediate":
 		if len(args) != 3 {
 			return diag.ProcessExitStatus(2)
 		}
-		shell := exec.Command("/bin/sh", "-c", "sleep "+args[2])
-		shell.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		shell.Stdout, shell.Stderr = io.Discard, io.Discard
-		if err := shell.Start(); err != nil {
+		firstPIDFile, secondPIDFile := args[1]+".first", args[1]+".second"
+		for _, pidFile := range []string{firstPIDFile, secondPIDFile} {
+			hold := exec.Command(os.Args[0], "hold", pidFile, args[2])
+			hold.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+			hold.Stdout, hold.Stderr = io.Discard, io.Discard
+			if err := hold.Start(); err != nil {
+				return fail(err)
+			}
+		}
+		if err := waitForFileWithin(firstPIDFile, time.Minute); err != nil {
 			return fail(err)
 		}
-		sleep := exec.Command("/bin/sleep", args[2])
-		sleep.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		sleep.Stdout, sleep.Stderr = io.Discard, io.Discard
-		if err := sleep.Start(); err != nil {
+		if err := waitForFileWithin(secondPIDFile, time.Minute); err != nil {
 			return fail(err)
 		}
-		if err := os.WriteFile(args[1], []byte(fmt.Sprintf("%d\n%d\n", shell.Process.Pid, sleep.Process.Pid)), 0o600); err != nil {
+		first, err := os.ReadFile(firstPIDFile)
+		if err != nil {
+			return fail(err)
+		}
+		second, err := os.ReadFile(secondPIDFile)
+		if err != nil {
+			return fail(err)
+		}
+		if err := os.WriteFile(args[1], append(first, second...), 0o600); err != nil {
 			return fail(err)
 		}
 	case "__keeper":

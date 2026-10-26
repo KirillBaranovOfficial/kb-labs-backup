@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from test_docker_build_inputs import copy_instructions
-from test_environment import isolated_environment
+from test_environment import isolated_environment, require_compose_command
 
 
 JOURNEY_DIR = Path(__file__).resolve().parent
@@ -39,16 +39,6 @@ def runner_toolchain_image(*, dockerfile: Path | None = None,
     sys.path.insert(0, str(JOURNEY_DIR))
     from journey_resources import runner_toolchain_image as derive
     return derive(dockerfile=dockerfile, playwright_version_input=playwright_version_input)
-
-
-def compose_command() -> list[str]:
-    """Resolve the local Compose v2 command, mirroring compose-owner.sh."""
-    if shutil.which("docker") and subprocess.run(
-            ["docker", "compose", "version"], capture_output=True, check=False).returncode == 0:
-        return ["docker", "compose"]
-    if shutil.which("docker-compose"):
-        return ["docker-compose"]
-    raise AssertionError("toolchain Compose tests require Docker Compose v2 on PATH")
 
 
 def mutated_dockerfile(old: str, new: str) -> Path:
@@ -180,14 +170,15 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
         self.assertLess(ensure_line, compose_build_line)
 
     def test_compose_build_arg_carries_the_derived_toolchain_image(self):
+        command = require_compose_command(self)
         with temporary_directory(prefix="journey-toolchain-compose-") as temporary:
             root = Path(temporary)
             version_input = root / "studio-playwright-version"
             version_input.write_text(STAGED_PLAYWRIGHT_VERSION, encoding="utf-8")
             expected = runner_toolchain_image(playwright_version_input=version_input)
-            env = self._compose_environment(root, {"KB_JOURNEY_TOOLCHAIN_IMAGE": expected})
+            env = self._compose_environment(root, command, {"KB_JOURNEY_TOOLCHAIN_IMAGE": expected})
             compose = subprocess.run(
-                [*compose_command(), "-f", "e2e/docker-compose.yml", "-f",
+                [*command, "-f", "e2e/docker-compose.yml", "-f",
                  "e2e/journey/docker-compose.yml", "config", "--format", "json"],
                 cwd=REPOSITORY_ROOT, env=env,
                 text=True, capture_output=True, check=False,
@@ -198,10 +189,11 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
                          expected)
 
     def test_compose_without_the_derivation_falls_back_to_a_named_sentinel(self):
+        command = require_compose_command(self)
         with temporary_directory(prefix="journey-toolchain-compose-") as temporary:
-            env = self._compose_environment(Path(temporary), {})
+            env = self._compose_environment(Path(temporary), command, {})
             compose = subprocess.run(
-                [*compose_command(), "-f", "e2e/docker-compose.yml", "-f",
+                [*command, "-f", "e2e/docker-compose.yml", "-f",
                  "e2e/journey/docker-compose.yml", "config", "--format", "json"],
                 cwd=REPOSITORY_ROOT, env=env,
                 text=True, capture_output=True, check=False,
@@ -211,10 +203,10 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
         self.assertEqual(rendered["services"]["runner"]["build"]["args"]["KB_JOURNEY_TOOLCHAIN_IMAGE"],
                          f"{TOOLCHAIN_IMAGE_REPOSITORY}:requires-e2e-journey-run-sh")
 
-    def _compose_environment(self, root: Path, overrides: dict[str, str]) -> dict[str, str]:
+    def _compose_environment(self, root: Path, command: list[str], overrides: dict[str, str]) -> dict[str, str]:
         return isolated_environment(
             root / "home", root / "bin",
-            required_tools=("docker", "docker-compose"),
+            required_tools=(command[0],),
             overrides={
                 "KB_JOURNEY_WORKSPACE_SOURCE": str(REPOSITORY_ROOT),
                 "KB_JOURNEY_GIT_REVISION": "test-revision",

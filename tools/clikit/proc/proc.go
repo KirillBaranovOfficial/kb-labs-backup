@@ -36,6 +36,8 @@ const (
 	EventBlocked    EventType = "blocked"
 	EventIdle       EventType = "idle"
 	EventPressure   EventType = "pressure"
+	EventPaused     EventType = "paused"
+	EventResumed    EventType = "resumed"
 	EventOverBudget EventType = "over-budget"
 	EventStart      EventType = "start"
 	EventStall      EventType = "stall"
@@ -59,6 +61,8 @@ type Config struct {
 	HoldGate    string
 	MinFree     uint64
 	CostKey     string
+	CostClass   CostClass
+	Priority    int
 	MemoryBytes uint64
 	CPUsMin     int
 	CPUsMax     int
@@ -76,6 +80,7 @@ type Event struct {
 	Schema             string               `json:"schema"`
 	At                 time.Time            `json:"at"`
 	Type               EventType            `json:"type"`
+	Status             RunStatus            `json:"status,omitempty"`
 	RunID              string               `json:"run_id"`
 	Tag                string               `json:"tag"`
 	KeeperPID          int                  `json:"keeper_pid"`
@@ -103,6 +108,9 @@ type Event struct {
 	LimitsAdvisory     string               `json:"limits_advisory,omitempty"`
 	OverBudget         bool                 `json:"over_budget,omitempty"`
 	ResourceNotice     string               `json:"resource_notice,omitempty"`
+	CostClass          CostClass            `json:"cost_class,omitempty"`
+	PausedMS           int64                `json:"paused_ms,omitempty"`
+	GovernorDecision   string               `json:"governor_decision,omitempty"`
 	Pressure           HostResourceSnapshot `json:"pressure,omitempty"`
 	Remaining          []Process            `json:"remaining,omitempty"`
 	Resources          []ResourceOutcome    `json:"resources,omitempty"`
@@ -122,23 +130,26 @@ type Run struct {
 type RunStatus string
 
 const (
-	StatusRunning  RunStatus = "running"
-	StatusQueued   RunStatus = "queued"
-	StatusBlocked  RunStatus = "blocked"
-	StatusStalled  RunStatus = "stalled"
-	StatusStarting RunStatus = "starting"
-	StatusDead     RunStatus = "dead"
-	StatusLost     RunStatus = "lost"
-	StatusDirty    RunStatus = "dirty"
+	StatusRunning   RunStatus = "running"
+	StatusQueued    RunStatus = "queued"
+	StatusBlocked   RunStatus = "blocked"
+	StatusStalled   RunStatus = "stalled"
+	StatusPaused    RunStatus = "paused"
+	StatusStarting  RunStatus = "starting"
+	StatusCompleted RunStatus = "completed"
+	StatusFailed    RunStatus = "failed"
+	StatusDead      RunStatus = "dead"
+	StatusLost      RunStatus = "lost"
+	StatusDirty     RunStatus = "dirty"
 )
 
 // Terminal reports whether the run has reached an outcome that waiters should
 // observe without continuing to poll.
 func (status RunStatus) Terminal() bool {
 	switch status {
-	case StatusDead, StatusLost, StatusDirty:
+	case StatusCompleted, StatusFailed, StatusDead, StatusLost, StatusDirty:
 		return true
-	case StatusRunning, StatusQueued, StatusBlocked, StatusStalled, StatusStarting:
+	case StatusRunning, StatusQueued, StatusBlocked, StatusStalled, StatusStarting, StatusPaused:
 		return false
 	}
 	return false
@@ -160,38 +171,46 @@ type Process struct {
 }
 
 type RunInfo struct {
-	RunID              string    `json:"run_id"`
-	Tag                string    `json:"tag"`
-	PID                int       `json:"pid"`
-	StartedAt          string    `json:"started_at"`
-	Status             RunStatus `json:"status"`
-	Command            []string  `json:"command"`
-	Tree               []Process `json:"tree"`
-	SlotGroup          string    `json:"slot_group,omitempty"`
-	QueuePosition      int       `json:"queue_position,omitempty"`
-	WaitReason         string    `json:"wait_reason,omitempty"`
-	ElapsedMS          int64     `json:"elapsed_ms,omitempty"`
-	ExitCode           *int      `json:"exit_code,omitempty"`
-	Signal             string    `json:"signal,omitempty"`
-	Error              string    `json:"error,omitempty"`
-	CostKey            string    `json:"cost_key,omitempty"`
-	MemoryBytes        uint64    `json:"memory_bytes,omitempty"`
-	CPUsMin            int       `json:"cpus_min,omitempty"`
-	CPUsMax            int       `json:"cpus_max,omitempty"`
-	DiskBytes          uint64    `json:"disk_bytes,omitempty"`
-	GrantedCPUs        int       `json:"granted_cpus,omitempty"`
-	PeakRSSBytes       uint64    `json:"peak_rss_bytes,omitempty"`
-	AverageCPU         float64   `json:"average_cpu,omitempty"`
-	MeasurementPartial bool      `json:"measurement_partial,omitempty"`
-	LimitsAdvisory     string    `json:"limits_advisory,omitempty"`
-	OverBudget         bool      `json:"over_budget,omitempty"`
-	ResourceNotice     string    `json:"resource_notice,omitempty"`
-	DurationMS         int64     `json:"duration_ms,omitempty"`
+	RunID              string     `json:"run_id"`
+	Tag                string     `json:"tag"`
+	PID                int        `json:"pid"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	Identity           string     `json:"identity"`
+	Status             RunStatus  `json:"status"`
+	Command            []string   `json:"command"`
+	Tree               []Process  `json:"tree"`
+	SlotGroup          string     `json:"slot_group,omitempty"`
+	QueuePosition      int        `json:"queue_position,omitempty"`
+	WaitReason         string     `json:"wait_reason,omitempty"`
+	ElapsedMS          int64      `json:"elapsed_ms,omitempty"`
+	ExitCode           *int       `json:"exit_code,omitempty"`
+	Signal             string     `json:"signal,omitempty"`
+	Error              string     `json:"error,omitempty"`
+	CostKey            string     `json:"cost_key,omitempty"`
+	CostClass          CostClass  `json:"cost_class"`
+	Priority           int        `json:"priority"`
+	MemoryBytes        uint64     `json:"memory_bytes,omitempty"`
+	CPUsMin            int        `json:"cpus_min,omitempty"`
+	CPUsMax            int        `json:"cpus_max,omitempty"`
+	DiskBytes          uint64     `json:"disk_bytes,omitempty"`
+	GrantedCPUs        int        `json:"granted_cpus,omitempty"`
+	PeakRSSBytes       uint64     `json:"peak_rss_bytes"`
+	AverageCPU         float64    `json:"average_cpu"`
+	Paused             bool       `json:"paused"`
+	PausedMS           int64      `json:"paused_ms,omitempty"`
+	MeasurementPartial bool       `json:"measurement_partial,omitempty"`
+	LimitsAdvisory     string     `json:"limits_advisory,omitempty"`
+	OverBudget         bool       `json:"over_budget,omitempty"`
+	ResourceNotice     string     `json:"resource_notice,omitempty"`
+	DurationMS         int64      `json:"duration_ms,omitempty"`
 }
 
 type Listing struct {
-	Runs  []RunInfo
-	Error error
+	Runs             []RunInfo            `json:"runs"`
+	Host             HostResourceSnapshot `json:"host"`
+	GovernorDecision string               `json:"governor_decision"`
+	GovernorReason   string               `json:"governor_reason,omitempty"`
+	Error            error                `json:"-"`
 }
 
 type treeCleanup struct {
@@ -207,6 +226,10 @@ type processSource interface {
 	Snapshot(runID string) ([]Process, error)
 	Identity(pid int) (string, bool, error)
 	Signal(pid int, signal syscall.Signal) error
+}
+
+type processMetricsSource interface {
+	Metrics(tree []Process) ([]Process, error)
 }
 
 func inspectIdentity(pid int) (string, bool, error) {
@@ -265,6 +288,8 @@ type record struct {
 	DurationMS         int64     `json:"duration_ms,omitempty"`
 	Observed           []Process `json:"observed,omitempty"`
 	CostKey            string    `json:"cost_key,omitempty"`
+	CostClass          CostClass `json:"cost_class"`
+	Priority           int       `json:"priority,omitempty"`
 	MemoryBytes        uint64    `json:"memory_bytes,omitempty"`
 	CPUsMin            int       `json:"cpus_min,omitempty"`
 	CPUsMax            int       `json:"cpus_max,omitempty"`
@@ -276,6 +301,8 @@ type record struct {
 	LimitsAdvisory     string    `json:"limits_advisory,omitempty"`
 	OverBudget         bool      `json:"over_budget,omitempty"`
 	ResourceNotice     string    `json:"resource_notice,omitempty"`
+	PausedAt           time.Time `json:"paused_at,omitempty"`
+	PausedMS           int64     `json:"paused_ms,omitempty"`
 	Scratch            string    `json:"scratch,omitempty"`
 	ScratchDevice      uint64    `json:"scratch_device,omitempty"`
 	ScratchInode       uint64    `json:"scratch_inode,omitempty"`
@@ -312,6 +339,12 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 	}
 	if cfg.HelperPath == "" || cfg.StateDir == "" || cfg.Tag == "" || cfg.Stall <= 0 || cfg.StdoutPath == "" || cfg.StderrPath == "" || len(cfg.Command) == 0 {
 		return nil, errors.New("proc: helper path, state directory, tag, positive stall duration, output paths, and command are required")
+	}
+	if cfg.CostClass == "" {
+		cfg.CostClass = CostLight
+	}
+	if cfg.CostClass != CostLight && cfg.CostClass != CostHeavy {
+		return nil, errors.New("proc: cost class must be light or heavy")
 	}
 	if err := os.MkdirAll(filepath.Join(cfg.StateDir, "runs"), 0o700); err != nil {
 		return nil, fmt.Errorf("proc: create state directory: %w", err)
@@ -480,7 +513,13 @@ func KeeperMain() int {
 
 // List reads run and queue records under their state lock, then verifies each PID identity.
 func List(stateDir string) Listing {
-	hostResourceNoticeNow := hostResourceNotice(systemHostResourceSource().Snapshot())
+	host := systemHostResourceSource().Snapshot()
+	freeDisk, diskErr := freeDiskBytes(stateDir)
+	if diskErr != nil {
+		return Listing{Error: fmt.Errorf("proc: inspect free disk for governor: %w", diskErr)}
+	}
+	host.FreeDiskBytes, host.FreeDiskKnown = freeDisk, true
+	hostResourceNoticeNow := hostResourceNotice(host)
 	info, err := os.Stat(stateDir)
 	if err != nil {
 		return Listing{Error: fmt.Errorf("proc: inspect state directory: %w", err)}
@@ -499,7 +538,14 @@ func List(stateDir string) Listing {
 	}); err != nil {
 		return Listing{Error: fmt.Errorf("proc: read run registry: %w", err)}
 	}
-	out := Listing{Runs: make([]RunInfo, 0, len(records))}
+	gov, govErr := readGovernorState(stateDir)
+	if govErr != nil {
+		return Listing{Error: fmt.Errorf("proc: read governor state: %w", govErr)}
+	}
+	out := Listing{Runs: make([]RunInfo, 0, len(records)), Host: host, GovernorDecision: gov.Decision, GovernorReason: gov.Reason}
+	if out.GovernorDecision == "" {
+		out.GovernorDecision = "normal"
+	}
 	now := time.Now()
 	for _, rec := range records {
 		status := rec.Status
@@ -518,7 +564,10 @@ func List(stateDir string) Listing {
 			status = rec.Status
 		} else if live && identity == rec.StartedAt {
 			status = StatusRunning
-			if rec.StallMS > 0 && !rec.LastOutputAt.IsZero() && now.Sub(rec.LastOutputAt) >= time.Duration(rec.StallMS)*time.Millisecond {
+			if rec.Status == StatusPaused {
+				status = StatusPaused
+			}
+			if status != StatusPaused && rec.StallMS > 0 && !rec.LastOutputAt.IsZero() && now.Sub(rec.LastOutputAt) >= time.Duration(rec.StallMS)*time.Millisecond {
 				status = StatusStalled
 			}
 		} else {
@@ -530,20 +579,28 @@ func List(stateDir string) Listing {
 				elapsed = now.Sub(rec.EnqueuedAt).Milliseconds()
 			}
 		} else if !status.Terminal() && !rec.StartedAtTime.IsZero() {
-			elapsed = now.Sub(rec.StartedAtTime).Milliseconds()
+			pausedMS := rec.PausedMS
+			if status == StatusPaused && !rec.PausedAt.IsZero() {
+				pausedMS += now.Sub(rec.PausedAt).Milliseconds()
+			}
+			elapsed = now.Sub(rec.StartedAtTime).Milliseconds() - pausedMS
 		}
 		position := 0
 		if status == StatusQueued || status == StatusBlocked {
 			position = queuePosition(rec, records)
 		}
 		info := RunInfo{
-			RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: rec.StartedAt,
+			RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: runStartedAt(rec), Identity: rec.StartedAt,
 			Status: status, Command: rec.Command, SlotGroup: rec.SlotGroup,
 			QueuePosition: position, WaitReason: rec.WaitReason, ElapsedMS: elapsed,
 			ExitCode: rec.ExitCode, Signal: rec.Signal, DurationMS: rec.DurationMS,
-			Error: rec.Error, CostKey: rec.CostKey, MemoryBytes: rec.MemoryBytes, CPUsMin: rec.CPUsMin, CPUsMax: rec.CPUsMax,
+			Error: rec.Error, CostKey: rec.CostKey, CostClass: rec.CostClass, Priority: rec.Priority, MemoryBytes: rec.MemoryBytes, CPUsMin: rec.CPUsMin, CPUsMax: rec.CPUsMax,
 			DiskBytes: rec.DiskBytes, GrantedCPUs: rec.GrantedCPUs, PeakRSSBytes: rec.PeakRSSBytes, AverageCPU: rec.AverageCPU,
 			MeasurementPartial: rec.MeasurementPartial, LimitsAdvisory: rec.LimitsAdvisory, OverBudget: rec.OverBudget, ResourceNotice: hostResourceNoticeNow,
+			Paused: status == StatusPaused, PausedMS: rec.PausedMS,
+		}
+		if status == StatusPaused {
+			info.WaitReason = gov.Reason
 		}
 		if live && identity == rec.StartedAt && status != StatusQueued && status != StatusBlocked {
 			tree, treeErr := ProcessTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
@@ -883,7 +940,7 @@ func writeRecord(rec record) error {
 		if err == nil {
 			rec.SlotGroup, rec.Slots, rec.QueueOrder = queued.SlotGroup, queued.Slots, queued.QueueOrder
 			rec.EnqueuedAt, rec.WaitGate, rec.HoldGate = queued.EnqueuedAt, queued.WaitGate, queued.HoldGate
-			rec.CostKey, rec.MemoryBytes, rec.CPUsMin, rec.CPUsMax, rec.DiskBytes = queued.CostKey, queued.MemoryBytes, queued.CPUsMin, queued.CPUsMax, queued.DiskBytes
+			rec.CostKey, rec.CostClass, rec.MemoryBytes, rec.CPUsMin, rec.CPUsMax, rec.DiskBytes = queued.CostKey, queued.CostClass, queued.MemoryBytes, queued.CPUsMin, queued.CPUsMax, queued.DiskBytes
 			rec.GrantedCPUs, rec.ResourceNotice = queued.GrantedCPUs, queued.ResourceNotice
 		} else if !os.IsNotExist(err) {
 			return err
@@ -896,7 +953,28 @@ func writeRecord(rec record) error {
 }
 
 func eventFor(rec record, kind EventType) Event {
-	return Event{Schema: EventSchema, At: time.Now().UTC(), Type: kind, RunID: rec.RunID, Tag: rec.Tag, KeeperPID: rec.PID, Command: commandText(rec.Command), MemoryBytes: rec.MemoryBytes, CPUsMin: rec.CPUsMin, CPUsMax: rec.CPUsMax, DiskBytes: rec.DiskBytes, GrantedCPUs: rec.GrantedCPUs, PeakRSSBytes: rec.PeakRSSBytes, AverageCPU: rec.AverageCPU, MeasurementPartial: rec.MeasurementPartial, LimitsAdvisory: rec.LimitsAdvisory, OverBudget: rec.OverBudget, ResourceNotice: rec.ResourceNotice}
+	return Event{Schema: EventSchema, At: time.Now().UTC(), Type: kind, Status: rec.Status, RunID: rec.RunID, Tag: rec.Tag, KeeperPID: rec.PID, Command: commandText(rec.Command), CostClass: rec.CostClass, GovernorDecision: "normal", MemoryBytes: rec.MemoryBytes, CPUsMin: rec.CPUsMin, CPUsMax: rec.CPUsMax, DiskBytes: rec.DiskBytes, GrantedCPUs: rec.GrantedCPUs, PeakRSSBytes: rec.PeakRSSBytes, AverageCPU: rec.AverageCPU, MeasurementPartial: rec.MeasurementPartial, LimitsAdvisory: rec.LimitsAdvisory, OverBudget: rec.OverBudget, ResourceNotice: rec.ResourceNotice}
+}
+
+func exitStatus(code *int, signal, failure string) RunStatus {
+	if failure != "" {
+		return StatusFailed
+	}
+	if signal != "" {
+		return StatusDead
+	}
+	if code == nil || *code != 0 {
+		return StatusFailed
+	}
+	return StatusCompleted
+}
+
+func runStartedAt(rec record) *time.Time {
+	if rec.StartedAtTime.IsZero() {
+		return nil
+	}
+	value := rec.StartedAtTime.UTC()
+	return &value
 }
 
 func commandText(command []string) string { return strings.Join(command, " ") }

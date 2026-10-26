@@ -186,7 +186,7 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 		}
 	}
 	listing := proc.List(state)
-	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusDead || len(listing.Runs[0].Tree) != 0 {
+	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusCompleted || len(listing.Runs[0].Tree) != 0 {
 		t.Fatalf("tree remains after normal exit: %+v", listing)
 	}
 	assertEvent(t, state, "exit")
@@ -203,6 +203,38 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 		}
 	}
 	skipOnTeardownObservationFailure(t, state, outputRunID(t, state, "normal"))
+}
+
+func TestSuccessfulRunStatusTimestampEventAndStdoutTee(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	stdoutPath := filepath.Join(state, "stdout.log")
+	command := exec.Command(runner, "run", "--tag", "costprobe", "--state", state, "--stall", "1m",
+		"--stdout", stdoutPath, "--stderr", filepath.Join(state, "stderr.log"), "--", "/bin/echo", "ok")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run successful command: %v\n%s", err, output)
+	}
+	if got := string(output); got != "ok\nrun costprobe completed\n" {
+		t.Fatalf("terminal output = %q, want child output tee and completion line", got)
+	}
+	if data, err := os.ReadFile(stdoutPath); err != nil || string(data) != "ok\n" {
+		t.Fatalf("stdout file = %q, err=%v", data, err)
+	}
+	listing := proc.List(state)
+	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusCompleted {
+		t.Fatalf("successful run listing = %+v", listing)
+	}
+	if listing.Runs[0].StartedAt == nil || listing.Runs[0].StartedAt.IsZero() {
+		t.Fatalf("successful run has no timestamp: %+v", listing.Runs[0])
+	}
+	if listing.Runs[0].Identity == "" {
+		t.Fatalf("successful run has no process identity: %+v", listing.Runs[0])
+	}
+	exit := eventOfType(t, state, proc.EventExit)
+	if exit.Status != proc.StatusCompleted || exit.ExitCode == nil || *exit.ExitCode != 0 {
+		t.Fatalf("exit event = %+v, want completed with code 0", exit)
+	}
 }
 
 // case: S-237.42
@@ -279,7 +311,7 @@ func TestRunScratchRemovesReadOnlyGoModuleContent(t *testing.T) {
 		t.Fatalf("read-only scratch run failed: %v\n%s", err, output)
 	}
 	listing := proc.List(state)
-	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusDead {
+	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusCompleted {
 		t.Fatalf("read-only scratch cleanup status = %+v", listing)
 	}
 }
@@ -1226,7 +1258,7 @@ func forceKillRecordedTree(t *testing.T, state string) {
 				}
 			}
 		}
-		if identity, ok := identityForTest(t, run.PID); ok && identity == run.StartedAt {
+		if identity, ok := identityForTest(t, run.PID); ok && identity == run.Identity {
 			if err := syscall.Kill(run.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 				t.Logf("cleanup test keeper %d: %v", run.PID, err)
 			}

@@ -12,7 +12,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"github.com/kb-labs/clikit/proc"
 )
 
 type JobPhase string
@@ -67,14 +70,17 @@ const (
 )
 
 type JobTerminal struct {
-	State       JobState  `json:"state"`
-	Phase       JobPhase  `json:"phase"`
-	Reason      JobReason `json:"reason,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	Next        string    `json:"next"`
-	MessagePath string    `json:"messagePath,omitempty"`
-	SessionID   string    `json:"sessionId,omitempty"`
-	FinishedAt  time.Time `json:"finishedAt"`
+	State              JobState  `json:"state"`
+	Phase              JobPhase  `json:"phase"`
+	Reason             JobReason `json:"reason,omitempty"`
+	Error              string    `json:"error,omitempty"`
+	Next               string    `json:"next"`
+	MessagePath        string    `json:"messagePath,omitempty"`
+	SessionID          string    `json:"sessionId,omitempty"`
+	TempReclaimedBytes *uint64   `json:"tempReclaimedBytes,omitempty"`
+	TempCleanupError   string    `json:"tempCleanupError,omitempty"`
+	TempCleanupPath    string    `json:"tempCleanupPath,omitempty"`
+	FinishedAt         time.Time `json:"finishedAt"`
 }
 
 // Attempt usage accounting: "recorded" means the attempt's observed token
@@ -95,25 +101,27 @@ type ProviderAttempt struct {
 	Usage      string    `json:"usage"`
 }
 type Job struct {
-	ID           string            `json:"id"`
-	Stream       string            `json:"stream"`
-	Vendor       string            `json:"vendor"`
-	Model        string            `json:"model,omitempty"`
-	State        JobState          `json:"state"`
-	Phase        JobPhase          `json:"phase"`
-	Reason       JobReason         `json:"reason,omitempty"`
-	StartedAt    time.Time         `json:"startedAt"`
-	UpdatedAt    time.Time         `json:"updatedAt"`
-	LastActivity time.Time         `json:"lastActivity,omitempty"`
-	SessionID    string            `json:"sessionId,omitempty"`
-	MessagePath  string            `json:"messagePath,omitempty"`
-	Tokens       uint64            `json:"tokens,omitempty"`
-	InputTokens  uint64            `json:"inputTokens,omitempty"`
-	OutputTokens uint64            `json:"outputTokens,omitempty"`
-	SlotGroup    string            `json:"slotGroup,omitempty"`
-	SlotCeiling  int               `json:"slotCeiling,omitempty"`
-	Attempts     []ProviderAttempt `json:"attempts,omitempty"`
-	Final        *JobTerminal      `json:"terminal,omitempty"`
+	ID              string            `json:"id"`
+	Stream          string            `json:"stream"`
+	Vendor          string            `json:"vendor"`
+	Model           string            `json:"model,omitempty"`
+	State           JobState          `json:"state"`
+	Phase           JobPhase          `json:"phase"`
+	Reason          JobReason         `json:"reason,omitempty"`
+	StartedAt       time.Time         `json:"startedAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
+	LastActivity    time.Time         `json:"lastActivity,omitempty"`
+	SessionID       string            `json:"sessionId,omitempty"`
+	MessagePath     string            `json:"messagePath,omitempty"`
+	Tokens          uint64            `json:"tokens,omitempty"`
+	InputTokens     uint64            `json:"inputTokens,omitempty"`
+	OutputTokens    uint64            `json:"outputTokens,omitempty"`
+	SlotGroup       string            `json:"slotGroup,omitempty"`
+	SlotCeiling     int               `json:"slotCeiling,omitempty"`
+	WorkerPID       int               `json:"workerPid,omitempty"`
+	WorkerStartedAt string            `json:"workerStartedAt,omitempty"`
+	Attempts        []ProviderAttempt `json:"attempts,omitempty"`
+	Final           *JobTerminal      `json:"terminal,omitempty"`
 }
 
 type jobStore struct {
@@ -126,11 +134,39 @@ func (s *jobStore) path(id string) string { return filepath.Join(s.dir, id+".jso
 func (s *jobStore) terminalPath(id string) string {
 	return filepath.Join(s.dir, id+".terminal.json")
 }
+func validateJobID(id string) error {
+	if strings.TrimSpace(id) == "" || id == "." || id == ".." || strings.ContainsAny(id, "/\\") {
+		return errors.New("job ID must be a non-empty filename-safe value")
+	}
+	return nil
+}
+func (s *jobStore) lockJob(id string) (*os.File, error) {
+	if err := validateJobID(id); err != nil {
+		return nil, err
+	}
+	jobDir := filepath.Dir(zcodeJobTemp(AgentRequest{StateDir: filepath.Dir(s.dir), JobID: id}))
+	if err := os.MkdirAll(jobDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create job lock directory: %w", err)
+	}
+	file, err := os.OpenFile(filepath.Join(jobDir, ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open job lock: %w", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		return nil, errors.Join(fmt.Errorf("lock job: %w", err), file.Close())
+	}
+	return file, nil
+}
+func unlockJob(file *os.File) error {
+	unlockErr := syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	closeErr := file.Close()
+	return errors.Join(unlockErr, closeErr)
+}
 func (s *jobStore) Create(job Job) (Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if strings.TrimSpace(job.ID) == "" || strings.ContainsAny(job.ID, "/\\") {
-		return Job{}, errors.New("job ID must be a non-empty filename-safe value")
+	if err := validateJobID(job.ID); err != nil {
+		return Job{}, err
 	}
 	if err := os.MkdirAll(s.dir, 0700); err != nil {
 		return Job{}, err
@@ -161,6 +197,9 @@ func (s *jobStore) Create(job Job) (Job, error) {
 	return job, s.write(job)
 }
 func (s *jobStore) Get(id string) (Job, error) {
+	if err := validateJobID(id); err != nil {
+		return Job{}, err
+	}
 	job, jobErr := readJobFile(s.path(id))
 	terminal, terminalErr := readJobFile(s.terminalPath(id))
 	if jobErr != nil {
@@ -195,6 +234,42 @@ func (s *jobStore) Get(id string) (Job, error) {
 	job.MessagePath = terminal.MessagePath
 	job.Final = terminal.Final
 	return job, nil
+}
+
+func (s *jobStore) reconcileWorker(job Job) (Job, error) {
+	if job.State != JobRunning {
+		return job, nil
+	}
+	if job.WorkerPID <= 0 || job.WorkerStartedAt == "" {
+		return s.markJobLost(job, "worker process identity was not recorded")
+	}
+	identity, alive, err := proc.ProcessIdentity(job.WorkerPID)
+	if err != nil {
+		return Job{}, fmt.Errorf("inspect worker PID %d for job %s: %w", job.WorkerPID, job.ID, err)
+	}
+	if alive && identity == job.WorkerStartedAt {
+		return job, nil
+	}
+	return s.markJobLost(job, fmt.Sprintf("worker PID %d identity %s is no longer live", job.WorkerPID, job.WorkerStartedAt))
+}
+
+func (s *jobStore) markJobLost(job Job, reason string) (Job, error) {
+	if err := s.Terminate(job.ID, JobTerminal{
+		State: JobLost, Phase: job.Phase, Reason: ReasonProcessLost,
+		Error: reason,
+		Next:  s.statusCommand(),
+	}); err != nil {
+		current, readErr := s.Get(job.ID)
+		if readErr == nil && current.Final != nil && current.State.Terminal() {
+			return current, nil
+		}
+		return Job{}, fmt.Errorf("classify lost worker for job %s: %w", job.ID, err)
+	}
+	return s.Get(job.ID)
+}
+
+func (s *jobStore) statusCommand() string {
+	return shellQuote(os.Args[0]) + " status --state " + shellQuote(filepath.Dir(s.dir)) + " --json"
 }
 
 func readJobFile(path string) (Job, error) {
@@ -239,14 +314,31 @@ func (s *jobStore) writeTerminalFallback(id string, terminal JobTerminal) error 
 	}
 	return writeAtomicFile(s.terminalPath(id), b)
 }
-func (s *jobStore) Terminate(id string, terminal JobTerminal) error {
+func (s *jobStore) Terminate(id string, terminal JobTerminal) (returnErr error) {
+	if !terminal.State.Terminal() {
+		return fmt.Errorf("state %q is not terminal", terminal.State)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockJob(id)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := unlockJob(lock); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("unlock job %s: %w", id, err))
+		}
+	}()
 	j, err := s.Get(id)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		reclaimed, found, cleanupErr, cleanupPath := reapJobTemp(s.dir, id)
+		if found {
+			terminal.TempReclaimedBytes = &reclaimed
+		}
+		terminal.TempCleanupError, terminal.TempCleanupPath = cleanupErr, cleanupPath
 		if fallbackErr := s.writeTerminalFallback(id, terminal); fallbackErr != nil {
 			return errors.Join(fmt.Errorf("read job before termination: %w", err), fmt.Errorf("persist fallback terminal record: %w", fallbackErr))
 		}
@@ -255,9 +347,11 @@ func (s *jobStore) Terminate(id string, terminal JobTerminal) error {
 	if j.Final != nil {
 		return fmt.Errorf("job %q already has a terminal record", id)
 	}
-	if !terminal.State.Terminal() {
-		return fmt.Errorf("state %q is not terminal", terminal.State)
+	reclaimed, found, cleanupErr, cleanupPath := reapJobTemp(s.dir, id)
+	if found {
+		terminal.TempReclaimedBytes = &reclaimed
 	}
+	terminal.TempCleanupError, terminal.TempCleanupPath = cleanupErr, cleanupPath
 	terminal.FinishedAt = time.Now().UTC()
 	j.State = terminal.State
 	j.Phase = terminal.Phase
@@ -271,9 +365,18 @@ func (s *jobStore) Terminate(id string, terminal JobTerminal) error {
 	}
 	return nil
 }
-func (s *jobStore) Update(id string, fn func(*Job) error) error {
+func (s *jobStore) Update(id string, fn func(*Job) error) (returnErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockJob(id)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := unlockJob(lock); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("unlock job %s: %w", id, err))
+		}
+	}()
 	j, err := s.Get(id)
 	if err != nil {
 		return err
@@ -315,6 +418,10 @@ func (s *jobStore) List() ([]Job, error) {
 		if e != nil {
 			return nil, e
 		}
+		j, e = s.reconcileWorker(j)
+		if e != nil {
+			return nil, e
+		}
 		out = append(out, j)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -325,6 +432,19 @@ func (s *jobStore) List() ([]Job, error) {
 	})
 	return out, nil
 }
+
+// reconcileJobsForState lets commands that also read the process-run registry
+// classify agent workers when the shared state root is available. Invalid or
+// inaccessible roots are left to that registry's owner to diagnose.
+func reconcileJobsForState(state string) error {
+	info, err := os.Stat(state)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	_, err = newJobStore(state).List()
+	return err
+}
+
 func (s *jobStore) Wait(ids []string, all bool, since string) ([]Job, string, error) {
 	if since != "" {
 		if _, _, ok := strings.Cut(since, ":"); !ok {

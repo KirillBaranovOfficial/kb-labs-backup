@@ -153,16 +153,23 @@ once; in-flight legacy agents are not migrated. The old reap helper remains
 until the post-install inventory passes, then is removed because `kb-runner`
 owns process-tree cleanup. Case: S-237.18.
 
-### D42 — A run with no active resource-costed reservation may start despite low host availability
+### D42 — Host pressure admission follows level and cost class
 
 When no resource-costed run is active, admission does not wait on the memory
 or CPU quota or live available-memory check because no work under this
-admission system can release memory. The run still waits on elevated host
-pressure, and slots, gates, FIFO, and disk admission remain enforced. When
-another resource-costed run is active, memory/CPU quota and live available
-memory both gate admission. If live available memory cannot be read, quota
-admission remains authoritative and the resource notice reports the failed
-signal and OS reason. Cases: S-237.29, S-237.38, S-237.53.
+admission system can release memory. Host-pressure admission is level-aware:
+normal admits both cost classes, memory warn admits light work and holds heavy
+work, and critical pressure holds both. The governor retains its pressure
+hysteresis and light concurrency limits; held work reports the pressure sample,
+current level, and when that level began. An unknown sample preserves the last
+known level for two minutes; once that sample is stale, the effective level is
+unknown, which admits light work and holds heavy work until a known sample
+updates the state. A held unknown-pressure run reports when pressure became
+unknown. Slots, gates, FIFO, and disk admission remain enforced. When another
+resource-costed run is active, memory/CPU quota and live available memory both
+gate admission. If live available memory cannot be read, quota admission remains
+authoritative and the resource notice reports the failed signal and OS reason.
+Cases: S-237.29, S-237.38, S-237.53, S-237.74.
 
 ### D43 — kb-runner cleanup protects against accidents, not deliberate same-user races
 

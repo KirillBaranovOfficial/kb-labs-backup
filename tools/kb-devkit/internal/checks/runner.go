@@ -38,15 +38,12 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 		onlySet[name] = true
 	}
 
-	// Run circular detection once on full workspace.
+	// Run circular detection once on the full workspace graph.
 	var circularResult CircularResult
-	for _, nc := range cfg.Workspace.Categories {
-		preset, err := config.ResolvePreset(nc.Category.Preset, cfg)
-		if err == nil && preset.Deps.CheckCircular {
-			circularResult = DetectCircular(ws.Packages)
-			break
-		}
+	if CircularEnabled(cfg) {
+		circularResult = DetectCircular(ws.Packages)
 	}
+	circularOnly := len(onlySet) == 1 && onlySet["circular"]
 
 	results := make(map[string]PackageResult, len(ws.Packages))
 	workspaceIssues := make([]Issue, 0)
@@ -85,7 +82,7 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 			}
 
 			rules := registry.ApplicableRulesFor(pkg, preset, only)
-			if len(rules) == 0 {
+			if len(rules) == 0 && !circularOnly {
 				return
 			}
 
@@ -104,7 +101,11 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 			}
 
 			mu.Lock()
-			results[pkg.Name] = PackageResult{Package: pkg, Issues: issues, ChecksRun: len(rules)}
+			checksRun := len(rules)
+			if circularOnly {
+				checksRun++
+			}
+			results[pkg.Name] = PackageResult{Package: pkg, Issues: issues, ChecksRun: checksRun}
 			mu.Unlock()
 		}()
 	}
