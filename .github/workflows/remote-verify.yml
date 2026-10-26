@@ -29,9 +29,9 @@ jobs:
       build_dependent_matrix: ${{ steps.plan.outputs.build_dependent_matrix }}
       build_stage: ${{ steps.plan.outputs.build_stage }}
       packages: ${{ steps.plan.outputs.packages }}
+      selected_package_count: ${{ steps.plan.outputs.selected_package_count }}
       max_parallel: ${{ steps.plan.outputs.max_parallel }}
     env:
-      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       GOTOOLCHAIN: local
       VERIFICATION_PROFILE: ${{ github.event.inputs.profile || 'stream' }}
       KB_DEVKIT_BASE_REF: origin/${{ github.event.repository.default_branch }}...HEAD
@@ -64,7 +64,10 @@ jobs:
           if [ "$VERIFICATION_PROFILE" = candidate ]; then
             export KB_DEVKIT_BASE_REF="$(git hash-object -t tree --stdin < /dev/null)"
           fi
-          ./tools/kb-devkit/kb-devkit affected --json > "$RUNNER_TEMP/affected-packages.json"
+          node scripts/ci/resolve-remote-selection.mjs \
+            "$VERIFICATION_PROFILE" \
+            "$RUNNER_TEMP/affected-packages.json" \
+            ./tools/kb-devkit/kb-devkit
           node scripts/ci/remote-verify-plan.mjs \
             "$VERIFICATION_PROFILE" \
             "$RUNNER_TEMP/affected-packages.json" \
@@ -87,6 +90,7 @@ jobs:
     timeout-minutes: 120
     outputs:
       build_dependent_matrix: ${{ needs.prepare.outputs.build_dependent_matrix }}
+      selected_package_count: ${{ needs.prepare.outputs.selected_package_count }}
       max_parallel: ${{ needs.prepare.outputs.max_parallel }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -121,6 +125,7 @@ jobs:
           REMOTE_STAGE: ${{ needs.prepare.outputs.build_stage }}
           REMOTE_STAGE_RESULT: stage-result-build.json
           AFFECTED_PACKAGES: ${{ needs.prepare.outputs.packages }}
+          REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count }}
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
@@ -166,6 +171,7 @@ jobs:
       matrix: ${{ fromJSON(needs.prepare.outputs.independent_matrix) }}
     env:
       REMOTE_STAGE: ${{ matrix.stage }}
+      REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -224,6 +230,7 @@ jobs:
       REMOTE_STAGE: ${{ matrix.stage }}
       REMOTE_PACKAGES: ${{ join(matrix.packages, ',') }}
       REMOTE_SHARD: ${{ matrix.shard || '' }}
+      REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.build.outputs.selected_package_count }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -291,6 +298,7 @@ jobs:
       - name: Aggregate commit-bound verdict
         env:
           REMOTE_TEST_MATRIX: ${{ needs.prepare.outputs.test_matrix }}
+          REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count }}
         run: node scripts/ci/aggregate-remote-verdict.mjs remote-results verdict.json
       - name: Upload commit-bound verdict
         if: always()

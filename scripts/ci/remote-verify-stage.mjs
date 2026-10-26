@@ -19,9 +19,10 @@ function cacheStatus(value) {
   return 'unavailable';
 }
 
-export async function runStage({ stage, packageNames, packages, shard, runCommand, now = Date.now, cache = {} }) {
+export async function runStage({ stage, packageNames, packages, selectedPackageCount, shard, runCommand, now = Date.now, cache = {} }) {
   const definition = stageDefinitions.find((entry) => entry.id === stage);
   if (!definition) throw new Error(`Unknown verification stage ${stage}; use the registered stages in scripts/ci/verification-profile.json.`);
+  if (!Number.isSafeInteger(selectedPackageCount) || selectedPackageCount < 0) throw new Error(`${stage} requires the selected package count from the remote verification plan.`);
   let command;
   let args;
   let name = stage;
@@ -32,6 +33,7 @@ export async function runStage({ stage, packageNames, packages, shard, runComman
       const at = now();
       return {
         name, status: 'pass', failures: [], logTail: 'kb-devkit selected no affected workspace packages; build had no work.',
+        selectedPackageCount: 0,
         startedAt: new Date(at).toISOString(), finishedAt: new Date(at).toISOString(), durationMs: 0, cache: cacheRecord(cache),
       };
     }
@@ -53,6 +55,7 @@ export async function runStage({ stage, packageNames, packages, shard, runComman
   return {
     name,
     status: result.status === 0 ? 'pass' : 'fail',
+    selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : selectedPackageCount,
     failures: failingNames(log),
     logTail: boundedTail(log),
     startedAt: new Date(startedAt).toISOString(),

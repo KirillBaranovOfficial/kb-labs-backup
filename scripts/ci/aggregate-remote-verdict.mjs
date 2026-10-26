@@ -10,12 +10,13 @@ function readJSON(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
-function skippedShard(name) {
-  return { name, status: 'skipped', failures: [], logTail: MISSING_SHARD_LOG };
+function skippedShard(name, selectedPackageCount) {
+  return { name, status: 'skipped', selectedPackageCount, failures: [], logTail: MISSING_SHARD_LOG };
 }
 
-export function aggregateVerdict({ sha, build, matrix, results }) {
-  const jobs = [build ?? { name: profile.buildStage, status: 'fail', failures: ['Build stage did not produce a result artifact.'], logTail: MISSING_SHARD_LOG }];
+export function aggregateVerdict({ sha, build, matrix, results, selectedPackageCount }) {
+  if (!Number.isSafeInteger(selectedPackageCount) || selectedPackageCount < 0) throw new Error('Remote verdict requires the selected package count from the prepare job.');
+  const jobs = [build ?? { name: profile.buildStage, status: 'fail', selectedPackageCount, failures: ['Build stage did not produce a result artifact.'], logTail: MISSING_SHARD_LOG }];
   const byName = new Map();
   for (const result of results) {
     if (byName.has(result.name)) throw new Error(`Duplicate remote shard result ${result.name}.`);
@@ -23,7 +24,11 @@ export function aggregateVerdict({ sha, build, matrix, results }) {
   }
   for (const shard of matrix.include) {
     const name = shard.packages ? `${shard.stage}:shard-${shard.shard}` : shard.stage;
-    jobs.push(byName.get(name) ?? skippedShard(name));
+    const count = shard.packages ? shard.packages.length : selectedPackageCount;
+    jobs.push(byName.get(name) ?? skippedShard(name, count));
+  }
+  for (const job of jobs) {
+    if (!Number.isSafeInteger(job.selectedPackageCount) || job.selectedPackageCount < 0) throw new Error(`Remote verdict stage ${job.name} is missing its selected package count.`);
   }
   const verdict = {
     schemaVersion: 1,
@@ -38,13 +43,14 @@ export function aggregateVerdict({ sha, build, matrix, results }) {
 function main() {
   const [resultsDir, out] = process.argv.slice(2);
   const sha = process.env.GITHUB_SHA;
+  const selectedPackageCount = Number(process.env.REMOTE_SELECTED_PACKAGE_COUNT);
   const rawMatrix = process.env.REMOTE_TEST_MATRIX || '{"include":[]}';
-  if (!resultsDir || !out || !/^[0-9a-f]{40}$/.test(sha ?? '')) throw new Error('Usage: set GITHUB_SHA and REMOTE_TEST_MATRIX, then run node scripts/ci/aggregate-remote-verdict.mjs <results-dir> <output>.');
+  if (!resultsDir || !out || !/^[0-9a-f]{40}$/.test(sha ?? '') || !Number.isSafeInteger(selectedPackageCount) || selectedPackageCount < 0) throw new Error('Usage: set GITHUB_SHA, REMOTE_SELECTED_PACKAGE_COUNT, and REMOTE_TEST_MATRIX, then run node scripts/ci/aggregate-remote-verdict.mjs <results-dir> <output>.');
   const matrix = JSON.parse(rawMatrix);
   const files = existsSync(resultsDir) ? readdirSync(resultsDir).filter((name) => name.endsWith('.json')).map((name) => path.join(resultsDir, name)) : [];
   const results = files.map(readJSON);
   const build = results.find((result) => result.name === profile.buildStage);
-  const verdict = aggregateVerdict({ sha, build, matrix, results: results.filter((result) => result !== build) });
+  const verdict = aggregateVerdict({ sha, build, matrix, results: results.filter((result) => result !== build), selectedPackageCount });
   writeFileSync(out, `${JSON.stringify(verdict, null, 2)}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) {
     const rows = verdict.jobs.map((job) => `| ${job.name} | ${job.status} | ${job.durationMs ?? '—'} ms |`).join('\n');
