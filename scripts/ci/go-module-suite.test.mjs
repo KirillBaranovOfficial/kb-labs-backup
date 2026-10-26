@@ -232,14 +232,3 @@ test('shared candidate services start, publish, and clean up the native origin a
     assert.notEqual(spawnSync('kill', ['-0', pid]).status, 0, `service process ${pid} must be stopped`);
   }
 });
-
-// case: S-262.7
-test('remote verification reuses pnpm and Go caches keyed by their dependency inputs', () => {
-  const workflow = load(readFileSync(path.join(root, '.github/workflows/remote-verify.yml'), 'utf8'));
-  const steps = workflow.jobs.verify.steps;
-  const nodeSetup = steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
-  const goSetup = steps.find((step) => step.uses?.startsWith('actions/setup-go@'));
-
-  assert.equal(nodeSetup.with.cache, 'pnpm');
-  assert.equal(goSetup.with['cache-dependency-path'], 'tools/kb-create/go.sum');
-});

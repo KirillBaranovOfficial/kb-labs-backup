@@ -1,0 +1,62 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+import { createTestMatrix, parseAffectedPackages } from './remote-verify-plan.mjs';
+
+const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
+
+// case: S-262.7
+test('verification profile owns each build and test stage definition exactly once', () => {
+  const stageIds = Object.keys(profile.stages);
+  const references = [profile.buildStage, profile.packageTestStage, ...Object.values(profile.independentTestStages).flat(), ...Object.values(profile.buildDependentTestStages).flat()];
+
+  assert.ok(references.every((stage) => stageIds.includes(stage)));
+  for (const profileName of Object.keys(profile.independentTestStages)) {
+    const assigned = [...profile.independentTestStages[profileName], ...profile.buildDependentTestStages[profileName]];
+    assert.equal(new Set(assigned).size, assigned.length);
+  }
+});
+
+// case: S-262.7
+test('stream matrix uses the kb-devkit package set and registered stream suites', () => {
+  const packages = parseAffectedPackages(JSON.stringify({ ok: true, data: { packages: ['@kb-labs/core', '@kb-labs/cli'] } }));
+  const matrix = createTestMatrix(packages, profile.independentTestStages.stream, profile.buildDependentTestStages.stream, profile.packageTestStage, profile.maxParallel);
+
+  assert.deepEqual(matrix.independent.include, [
+    { stage: 'ci-script-suite' },
+  ]);
+  assert.deepEqual(matrix.dependent.include, [
+    { stage: profile.packageTestStage, shard: 1, packages: ['@kb-labs/core'] },
+    { stage: profile.packageTestStage, shard: 2, packages: ['@kb-labs/cli'] },
+  ]);
+});
+
+// case: S-262.7
+test('candidate profile separates output-dependent suites from independent suites', () => {
+  const matrix = createTestMatrix(['@kb-labs/core'], profile.independentTestStages.candidate, profile.buildDependentTestStages.candidate, profile.packageTestStage, profile.maxParallel);
+
+  assert.deepEqual(matrix.independent.include.map(({ stage }) => stage), profile.independentTestStages.candidate);
+  assert.deepEqual(matrix.dependent.include.map(({ stage }) => stage), [
+    ...profile.buildDependentTestStages.candidate,
+    profile.packageTestStage,
+  ]);
+});
+
+// case: S-262.7
+test('package shards partition the kb-devkit package set once with even package counts', () => {
+  const packages = Array.from({ length: 41 }, (_, index) => `@kb-labs/package-${index}`);
+  const matrix = createTestMatrix(packages, [], [], profile.packageTestStage, profile.maxParallel);
+  const shards = matrix.dependent.include;
+  const assigned = shards.flatMap((shard) => shard.packages);
+  const sizes = shards.map((shard) => shard.packages.length);
+
+  assert.equal(shards.length, profile.maxParallel);
+  assert.deepEqual([...assigned].sort(), [...packages].sort());
+  assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1);
+});
+
+// case: S-262.7
+test('rejects unsuccessful or malformed affected-package output instead of widening the test set', () => {
+  assert.throws(() => parseAffectedPackages(JSON.stringify({ ok: false, error: { message: 'failed' } })), /kb-devkit affected/);
+  assert.throws(() => parseAffectedPackages(JSON.stringify({ ok: true, data: { packages: ['@kb-labs/core', '@kb-labs/core'] } })), /duplicate package/);
+});
