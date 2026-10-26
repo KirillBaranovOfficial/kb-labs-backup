@@ -3,11 +3,13 @@ package engine
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -80,9 +82,75 @@ func TestRunE2ECachesAndRestoresOutputs(t *testing.T) {
 		t.Fatalf("restored output = %q, want %q", data, "hello\n")
 	}
 
-	summary := second.Summary()
+	summary, err := second.Summary()
+	if err != nil {
+		t.Fatalf("second run summary: %v", err)
+	}
 	if summary.Scheduled != 1 || summary.Cached != 1 || summary.Passed != 0 || summary.Failed != 0 || summary.Blocked != 0 || summary.NotAffected != 0 {
 		t.Fatalf("unexpected summary: %+v", summary)
+	}
+}
+
+// case: S-179.42
+func TestRunSummaryRejectsScheduledTasksLeftAfterDependencyTraversal(t *testing.T) {
+	result := RunResult{
+		scheduledTasks: []TaskIdentity{{Package: "@fixture/app", Task: "build"}, {Package: "@fixture/lib", Task: "build"}},
+		Results:        []TaskResult{{Package: "@fixture/app", Task: "build", OK: true}},
+	}
+	_, err := result.Summary()
+	if err == nil {
+		t.Fatal("Summary accepted a scheduled task without a terminal outcome")
+	}
+	var accountingErr *RunAccountingError
+	if !errors.As(err, &accountingErr) || len(accountingErr.UnaccountedTasks) == 0 {
+		t.Fatalf("Summary error = %T %v, want unaccounted scheduled tasks", err, err)
+	}
+}
+
+// case: S-179.42
+func TestRunReportsDependencyCycleBeforeExecutingTasks(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	writePkg(t, filepath.Join(root, "packages", "a"), `{"name":"@fixture/a","dependencies":{"@fixture/b":"workspace:*"}}`)
+	writePkg(t, filepath.Join(root, "packages", "b"), `{"name":"@fixture/b","devDependencies":{"@fixture/c":"workspace:*"}}`)
+	writePkg(t, filepath.Join(root, "packages", "c"), `{"name":"@fixture/c","peerDependencies":{"@fixture/a":"workspace:*"}}`)
+	writeEngineFile(t, filepath.Join(root, "packages", "a", "task.sh"), "touch ran\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "b", "task.sh"), "touch ran\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "c", "task.sh"), "touch ran\n")
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "packages", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {{Command: "sh task.sh", Deps: []string{"^build"}}},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	_, err := Run(ws, cfg, RunOptions{
+		Tasks:     []string{"build"},
+		WSRoot:    root,
+		CacheRoot: filepath.Join(root, ".kb", "devkit-cache"),
+	})
+	if err == nil {
+		t.Fatal("Run succeeded with a workspace dependency cycle")
+	}
+	var cycleErr *TaskCycleError
+	if !errors.As(err, &cycleErr) {
+		t.Fatalf("Run error = %T %v, want TaskCycleError", err, err)
+	}
+	want := []TaskCycleEdge{
+		{From: TaskIdentity{Package: "@fixture/a", Task: "build"}, To: TaskIdentity{Package: "@fixture/b", Task: "build"}, Kind: DependenciesKind},
+		{From: TaskIdentity{Package: "@fixture/b", Task: "build"}, To: TaskIdentity{Package: "@fixture/c", Task: "build"}, Kind: DevDependenciesKind},
+		{From: TaskIdentity{Package: "@fixture/c", Task: "build"}, To: TaskIdentity{Package: "@fixture/a", Task: "build"}, Kind: PeerDependenciesKind},
+	}
+	if !reflect.DeepEqual(cycleErr.Edges, want) {
+		t.Errorf("cycle edges = %+v, want %+v", cycleErr.Edges, want)
+	}
+	if !strings.Contains(err.Error(), cycleErr.CycleDescription()) {
+		t.Errorf("cycle error %q omits its structured cycle %q", err, cycleErr.CycleDescription())
+	}
+	for _, pkg := range []string{"a", "b", "c"} {
+		if _, err := os.Stat(filepath.Join(root, "packages", pkg, "ran")); !os.IsNotExist(err) {
+			t.Errorf("task for @fixture/%s ran before cycle rejection (stat error %v)", pkg, err)
+		}
 	}
 }
 
@@ -314,7 +382,11 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	}
 
 	first := run()
-	if first.OK || first.Summary().Failed != 1 {
+	firstSummary, err := first.Summary()
+	if err != nil {
+		t.Fatalf("first run summary: %v", err)
+	}
+	if first.OK || firstSummary.Failed != 1 {
 		t.Fatalf("first run = %+v, want one failed task", first)
 	}
 
@@ -322,7 +394,7 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	if second.OK || len(second.Results) != 1 || second.Results[0].Cached {
 		t.Fatalf("second run = %+v, want a fresh failed execution", second)
 	}
-	if summary := second.Summary(); summary.Scheduled != 1 || summary.Passed != 0 || summary.Failed != 1 || summary.Cached != 0 || summary.Blocked != 0 || summary.NotAffected != 0 {
+	if summary, err := second.Summary(); err != nil || summary.Scheduled != 1 || summary.Passed != 0 || summary.Failed != 1 || summary.Cached != 0 || summary.Blocked != 0 || summary.NotAffected != 0 {
 		t.Fatalf("second summary = %+v, want total=1 passed=0 failed=1 cached=0", summary)
 	}
 	if err := os.WriteFile(filepath.Join(root, "packages", "dependency.ready"), nil, 0o644); err != nil {
@@ -333,7 +405,7 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	if !third.OK || len(third.Results) != 1 || third.Results[0].Cached {
 		t.Fatalf("third run = %+v, want a fresh successful execution", third)
 	}
-	if summary := third.Summary(); summary.Scheduled != 1 || summary.Passed != 1 || summary.Failed != 0 || summary.Cached != 0 || summary.Blocked != 0 || summary.NotAffected != 0 {
+	if summary, err := third.Summary(); err != nil || summary.Scheduled != 1 || summary.Passed != 1 || summary.Failed != 0 || summary.Cached != 0 || summary.Blocked != 0 || summary.NotAffected != 0 {
 		t.Fatalf("third summary = %+v, want total=1 passed=1 failed=0 cached=0", summary)
 	}
 
@@ -384,11 +456,14 @@ func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing
 	if err != nil || result.OK || len(result.Results) != 2 {
 		t.Fatalf("failed dependency run = %+v, error = %v; want failed root and independent result", result, err)
 	}
-	summary := result.Summary()
-	if summary.Scheduled != 4 || summary.Passed != 1 || summary.Cached != 0 || summary.Failed != 1 || summary.Blocked != 2 || summary.NotAffected != 1 {
-		t.Fatalf("failed dependency summary = %+v; want scheduled=4 passed=1 failed=1 blocked=2 notAffected=1", summary)
+	summary, err := result.Summary()
+	if err != nil {
+		t.Fatalf("failed dependency summary: %v", err)
 	}
-	if summary.Passed+summary.Cached+summary.Failed+summary.Blocked != summary.Scheduled {
+	if summary.Scheduled != 5 || summary.Passed != 1 || summary.Cached != 0 || summary.Failed != 1 || summary.Blocked != 2 || summary.NotAffected != 1 {
+		t.Fatalf("failed dependency summary = %+v; want scheduled=5 passed=1 failed=1 blocked=2 notAffected=1", summary)
+	}
+	if summary.Passed+summary.Cached+summary.Failed+summary.Blocked+summary.NotAffected != summary.Scheduled {
 		t.Fatalf("summary counts do not partition scheduled tasks: %+v", summary)
 	}
 	blocked := make(map[string]string, len(summary.BlockedTasks))
@@ -404,7 +479,7 @@ func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing
 			independentPassed = true
 		}
 	}
-	if result.NotAffected != 1 || !independentPassed {
+	if summary.NotAffected != 1 || !independentPassed {
 		t.Fatalf("result = %+v; want independent branch passed and one not-affected task", result)
 	}
 }
@@ -427,7 +502,7 @@ func TestRunIncludesDeclaredTaskDependenciesWhenOnlyTheDependentWasRequested(t *
 		t.Fatalf("buildDAG error: %v", err)
 	}
 	buildNode := nodes[nodeKey{pkg: "@fixture/package", task: "build"}]
-	if len(buildNode.deps) != 1 || buildNode.deps[0] != (nodeKey{pkg: "@fixture/package", task: "prepare"}) {
+	if len(buildNode.deps) != 1 || buildNode.deps[0].to != (nodeKey{pkg: "@fixture/package", task: "prepare"}) {
 		t.Fatalf("build dependencies = %+v; want same-package prepare task", buildNode.deps)
 	}
 	result, err := Run(ws, cfg, RunOptions{
