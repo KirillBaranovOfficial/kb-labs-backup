@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { createTestMatrix, parseAffectedPackages } from './remote-verify-plan.mjs';
+import { createTestMatrix, parseAffectedPackages, parseAffectedSelection } from './remote-verify-plan.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 
@@ -57,6 +57,20 @@ test('package shards partition the kb-devkit package set once with even package 
 
 // case: S-262.7
 test('rejects unsuccessful or malformed affected-package output instead of widening the test set', () => {
-  assert.throws(() => parseAffectedPackages(JSON.stringify({ ok: false, error: { message: 'failed' } })), /kb-devkit affected/);
+  assert.throws(() => parseAffectedPackages(JSON.stringify({ ok: false, error: { message: 'failed' } })), /package selection/);
   assert.throws(() => parseAffectedPackages(JSON.stringify({ ok: true, data: { packages: ['@kb-labs/core', '@kb-labs/core'] } })), /duplicate package/);
+});
+
+// case: S-262.7
+test('rejects zero packages for a non-empty stream diff and for every candidate selection', () => {
+  const emptyChangedStream = JSON.stringify({ ok: true, data: { packages: [], changedPathCount: 0 } });
+  assert.deepEqual(parseAffectedSelection(emptyChangedStream, 'stream'), { packages: [], changedPathCount: 0 });
+  assert.throws(
+    () => parseAffectedSelection(JSON.stringify({ ok: true, data: { packages: [], changedPathCount: 3 } }), 'stream'),
+    /KB_REMOTE_EMPTY_SELECTION/,
+  );
+  assert.throws(
+    () => parseAffectedSelection(emptyChangedStream, 'candidate'),
+    /KB_REMOTE_EMPTY_SELECTION/,
+  );
 });

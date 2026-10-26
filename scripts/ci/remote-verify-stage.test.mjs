@@ -12,6 +12,7 @@ test('workspace package shard uses kb-devkit and records a stage result with ela
   const result = await runStage({
     stage: profile.packageTestStage,
     packageNames: ['@kb-labs/core', '@kb-labs/cli'],
+    selectedPackageCount: 41,
     shard: 3,
     runCommand: async (command, args) => {
       invocation = [command, args];
@@ -26,12 +27,14 @@ test('workspace package shard uses kb-devkit and records a stage result with ela
   assert.deepEqual(result.packages, ['@kb-labs/core', '@kb-labs/cli']);
   assert.equal(result.status, 'pass');
   assert.equal(result.durationMs, 250);
+  assert.equal(result.selectedPackageCount, 2);
 });
 
 // case: S-262.7
 test('journey unit shard records its failure instead of losing it before artifact upload', async () => {
   const result = await runStage({
     stage: profile.buildDependentTestStages.candidate[0],
+    selectedPackageCount: 41,
     runCommand: async () => ({ status: 1, stdout: '', stderr: 'test failure' }),
     now: (() => { let value = 0; return () => value += 10; })(),
   });
@@ -39,4 +42,5 @@ test('journey unit shard records its failure instead of losing it before artifac
   assert.equal(result.status, 'fail');
   assert.match(result.logTail, /test failure/);
   assert.equal(result.durationMs, 10);
+  assert.equal(result.selectedPackageCount, 41);
 });
