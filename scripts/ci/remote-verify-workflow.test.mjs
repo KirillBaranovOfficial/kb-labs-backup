@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -74,29 +74,39 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
 });
 
 // case: S-262.7
-test('workflow base-ref wiring selects real workspace packages for stream and the complete workspace for candidate', () => {
+test('workflow base-ref wiring selects real workspace packages without origin/HEAD', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');
-  const prepare = workflow.jobs.prepare;
-  const selectorStep = prepare.steps.find((step) => step.name === 'Resolve affected packages and test matrix');
-  const defaultBranch = execFileSync('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { cwd: root, encoding: 'utf8' }).trim().replace(/^origin\//, '');
-  const emptyTree = execFileSync('git', ['hash-object', '-t', 'tree', '--stdin'], { cwd: root, input: '', encoding: 'utf8' }).trim();
-  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-test-'));
+  const checkout = workflow.jobs.prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+  const selectorStep = workflow.jobs.prepare.steps.find((step) => step.name === 'Resolve affected packages and test matrix');
+  const event = { repository: { default_branch: 'main' } };
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-hosted-shape-'));
+  const checkoutRoot = path.join(temporaryRoot, 'checkout');
   const binary = path.join(temporaryRoot, 'kb-devkit');
   try {
-    execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(root, 'tools/kb-devkit'), stdio: 'pipe' });
-    assert.equal(prepare.env.KB_DEVKIT_BASE_REF, 'origin/${{ github.event.repository.default_branch }}...HEAD');
+    assert.equal(checkout.with['fetch-depth'], 0);
+    assert.equal(workflow.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
+    assert.equal(workflow.jobs.prepare.env.VERIFICATION_PROFILE, "${{ github.event.inputs.profile || 'stream' }}");
     assert.match(selectorStep.run, /resolve-remote-selection\.mjs/);
-    assert.match(selectorStep.run, /\.\/tools\/kb-devkit\/kb-devkit/);
 
-    for (const [profile, baseRef] of [
-      ['stream', `origin/${defaultBranch}...HEAD`],
-      ['candidate', emptyTree],
-    ]) {
+    execFileSync('git', ['clone', '--shared', '--no-checkout', root, checkoutRoot], { stdio: 'pipe' });
+    execFileSync('git', ['checkout', '--detach', 'HEAD'], { cwd: checkoutRoot, stdio: 'pipe' });
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkoutRoot, encoding: 'utf8' }).trim();
+    const baseline = execFileSync('git', ['rev-parse', 'local/main'], { cwd: root, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', `refs/remotes/origin/${event.repository.default_branch}`, baseline], { cwd: checkoutRoot });
+    execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/HEAD'], { cwd: checkoutRoot });
+    assert.equal(spawnSync('git', ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/HEAD'], { cwd: checkoutRoot }).status, 1);
+    assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkoutRoot, encoding: 'utf8' }).trim(), head);
+
+    cpSync(path.join(root, 'scripts/ci/resolve-remote-selection.mjs'), path.join(checkoutRoot, 'scripts/ci/resolve-remote-selection.mjs'));
+    cpSync(path.join(root, 'scripts/ci/remote-changed-files.mjs'), path.join(checkoutRoot, 'scripts/ci/remote-changed-files.mjs'));
+    execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(checkoutRoot, 'tools/kb-devkit'), stdio: 'pipe' });
+
+    for (const profile of ['stream', 'candidate']) {
       const outputPath = path.join(temporaryRoot, `${profile}.json`);
       const result = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', profile, outputPath, binary], {
-        cwd: root,
+        cwd: checkoutRoot,
         encoding: 'utf8',
-        env: { ...process.env, KB_DEVKIT_BASE_REF: baseRef },
+        env: { ...process.env, DEFAULT_BRANCH: event.repository.default_branch, VERIFICATION_PROFILE: profile },
       });
       assert.equal(result.status, 0, `${profile} selection failed: ${result.stderr}`);
       const selection = JSON.parse(readFileSync(outputPath, 'utf8'));
@@ -106,7 +116,7 @@ test('workflow base-ref wiring selects real workspace packages for stream and th
         changedPathCount: selection.data.changedPathCount,
       });
       assert.equal(selection.selectedPackageCount, selection.data.packages.length);
-      assert.ok(selection.data.changedPathCount > 0, `${profile} base ref ${baseRef} produced an empty diff: ${result.stdout}`);
+      assert.ok(selection.data.changedPathCount > 0, `${profile} workflow inputs produced an empty diff: ${result.stdout}`);
       if (profile === 'candidate') assert.ok(selection.data.changedPathCount >= selection.selectedPackageCount);
     }
   } finally {
