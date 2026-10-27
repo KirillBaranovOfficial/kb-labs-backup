@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,7 +105,7 @@ func readAdmissionRecord(state, runID string) (record, error) {
 
 func waitForAdmissionRecord(t *testing.T, state, runID string, check func(record) bool) record {
 	t.Helper()
-	timer := time.NewTimer(3 * time.Second)
+	timer := time.NewTimer(testdeadline.Budget(t))
 	ticker := time.NewTicker(admissionPollInterval)
 	defer timer.Stop()
 	defer ticker.Stop()
@@ -205,7 +206,7 @@ func TestSecondHeavyAdmissionWaitsWithVisibleHostPressureReason(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { result <- reserveAdmission(ctx, cfg, "second-heavy", os.Getpid(), identity, &pressure) }()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	var waiting record
 	for time.Now().Before(deadline) {
 		waiting, err = readAdmissionRecord(state, "second-heavy")
@@ -260,7 +261,7 @@ func TestGovernorPausesLowestPriorityRunAndResumesAfterDiskFloorRestored(t *test
 			t.Fatalf("inspect shell identity: alive=%t err=%v", alive, err)
 		}
 		var childPID int
-		deadline := time.Now().Add(3 * time.Second)
+		deadline := time.Now().Add(testdeadline.Budget(t))
 		for time.Now().Before(deadline) {
 			data, readErr := os.ReadFile(pidPath)
 			if readErr == nil {
@@ -425,7 +426,7 @@ func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T
 	t.Run("normal pressure admits despite quota and live-memory shortfall", func(t *testing.T) {
 		state := t.TempDir()
 		cfg := quotaAndCost(state)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 		defer cancel()
 		if err := reserveAdmission(ctx, cfg, "alone-normal", os.Getpid(), identity, fakeHostResourceSource{sample: normal}); err != nil {
 			t.Fatalf("admission with no active costed run: %v", err)
@@ -443,7 +444,7 @@ func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T
 		elevated := normal
 		elevated.Pressure = "memory warn"
 		source := &mutableHostResourceSource{sample: elevated}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 		defer cancel()
 		done := make(chan error, 1)
 		go func() { done <- reserveAdmission(ctx, cfg, "alone-elevated", os.Getpid(), identity, source) }()
@@ -457,7 +458,7 @@ func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T
 		select {
 		case err := <-done:
 			t.Fatalf("run admitted before pressure hysteresis elapsed: %v", err)
-		case <-time.After(300 * time.Millisecond):
+		case <-time.After(testdeadline.Scale(t, pressureNormalDuration/10)):
 		}
 		duringHold, err := readAdmissionRecord(state, "alone-elevated")
 		if err != nil || duringHold.Status != StatusBlocked || !strings.Contains(duringHold.WaitReason, "hysteresis current: warn since") {
@@ -1049,7 +1050,7 @@ func TestInitialQueuedEventUsesFirstAdmissionSample(t *testing.T) {
 	warn := normal
 	warn.Pressure = "memory warn"
 	source := &sequenceHostResourceSource{samples: []HostResourceSnapshot{normal, warn}}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	finished := make(chan struct{})
 	defer func() {
 		cancel()

@@ -135,7 +135,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, SharedLeasePaths: leasePaths, Command: append([]string{helper}, argsForWorker...)})
+		run, err := proc.Start(ctx, proc.Config{StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, SharedLeasePaths: leasePaths, Command: append([]string{helper}, argsForWorker...)})
 		if err != nil {
 			return failAgentJob(store, id, PhaseAdmission, ReasonSetup, root, finalPath, fmt.Errorf("agent process admission failed: %w", err))
 		}

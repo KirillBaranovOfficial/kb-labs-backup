@@ -5,6 +5,7 @@ package child
 import (
 	"bufio"
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"os"
 	"os/exec"
 	"strconv"
@@ -85,7 +86,7 @@ func processExists(pid int) bool {
 
 func waitGone(t *testing.T, pid int) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		if !processExists(pid) {
 			return

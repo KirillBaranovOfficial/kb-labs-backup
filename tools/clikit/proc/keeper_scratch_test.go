@@ -3,25 +3,15 @@
 package proc
 
 import (
-	"context"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-const keeperRecordFailureTestEnv = "KB_CLIKIT_TEST_KEEPER_RECORD_FAILURE"
-
 func TestKeeperScratchIsRemovedWhenInitialRecordWriteFails(t *testing.T) {
-	if os.Getenv(keeperRecordFailureTestEnv) == "1" {
-		os.Exit(KeeperMain())
-	}
-
 	state := t.TempDir()
 	runID, err := newID()
 	if err != nil {
@@ -57,7 +47,7 @@ func TestKeeperScratchIsRemovedWhenInitialRecordWriteFails(t *testing.T) {
 	if !ok {
 		t.Fatal("cannot determine test process identity")
 	}
-	config, err := json.Marshal(keeperConfig{
+	cfg := keeperConfig{
 		Config: Config{
 			StateDir:   state,
 			Tag:        "record-failure",
@@ -69,46 +59,17 @@ func TestKeeperScratchIsRemovedWhenInitialRecordWriteFails(t *testing.T) {
 		RunID:          runID,
 		ParentPID:      os.Getpid(),
 		ParentIdentity: identity,
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	readReady, writeReady, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestKeeperScratchIsRemovedWhenInitialRecordWriteFails$")
-	cmd.ExtraFiles = []*os.File{writeReady}
-	cmd.Env = append(os.Environ(), keeperRecordFailureTestEnv+"=1", stateEnv+"="+base64.RawStdEncoding.EncodeToString(config), readyEnv+"=3")
-	if err := cmd.Start(); err != nil {
-		_ = readReady.Close()
-		_ = writeReady.Close()
-		t.Fatal(err)
-	}
-	waited := false
-	t.Cleanup(func() {
-		if waited || cmd.Process == nil {
-			return
-		}
-		if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			t.Errorf("stop keeper record-failure helper: %v", err)
-		}
-		if err := cmd.Wait(); err != nil {
-			t.Logf("reap keeper record-failure helper: %v", err)
-		}
-	})
-	if err := writeReady.Close(); err != nil {
-		t.Errorf("close keeper readiness writer: %v", err)
-	}
+	status := runKeeperWithReady(cfg, writeReady)
 	var ready readyMessage
 	decodeErr := json.NewDecoder(readReady).Decode(&ready)
 	closeErr := readReady.Close()
-	waitErr := cmd.Wait()
-	waited = true
 	if decodeErr != nil {
-		t.Fatalf("read keeper startup result: %v (wait: %v)", decodeErr, waitErr)
+		t.Fatalf("read keeper startup result: %v", decodeErr)
 	}
 	if ready.Error == "" {
 		t.Fatal("keeper unexpectedly accepted obstructed initial record path")
@@ -116,8 +77,8 @@ func TestKeeperScratchIsRemovedWhenInitialRecordWriteFails(t *testing.T) {
 	if !strings.Contains(ready.Error, filepath.Join(state, "runs", runID+".json.tmp")) {
 		t.Fatalf("keeper failed before the obstructed initial record write: %s", ready.Error)
 	}
-	if waitErr == nil {
-		t.Fatalf("keeper exited successfully after record failure: %s", ready.Error)
+	if status == 0 {
+		t.Fatalf("keeper returned success after record failure: %s", ready.Error)
 	}
 	if closeErr != nil {
 		t.Errorf("close keeper readiness reader: %v", closeErr)

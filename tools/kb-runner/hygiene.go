@@ -469,10 +469,6 @@ func sweepGoCache(options hygieneOptions, report *hygieneReport) (returnErr erro
 	if err != nil {
 		return err
 	}
-	helper, err := os.Executable()
-	if err != nil {
-		return err
-	}
 	stdout, err := os.CreateTemp(os.TempDir(), "kb-runner-hygiene-stdout-")
 	if err != nil {
 		return err
@@ -491,7 +487,9 @@ func sweepGoCache(options hygieneOptions, report *hygieneReport) (returnErr erro
 	if err := stderr.Close(); err != nil {
 		return err
 	}
-	run, err := proc.Start(options.Context, proc.Config{HelperPath: helper, StateDir: state, Tag: "hygiene-go-cache", Stall: 30 * time.Minute, StdoutPath: stdoutPath, StderrPath: stderrPath, CostKey: "go-test", CostClass: proc.CostHeavy, CostKeyLeaseMode: proc.LeaseExclusiveTry, Env: []string{"GOCACHE=" + cache}, Command: []string{"go", "clean", "-cache"}})
+	cleanupContext, cancel := context.WithCancel(options.Context)
+	defer cancel()
+	run, err := proc.Start(cleanupContext, proc.Config{StateDir: state, Tag: "hygiene-go-cache", Stall: 30 * time.Minute, StdoutPath: stdoutPath, StderrPath: stderrPath, CostKey: "go-test", CostClass: proc.CostHeavy, CostKeyLeaseMode: proc.LeaseExclusiveTry, Env: []string{"GOCACHE=" + cache}, Command: []string{"go", "clean", "-cache"}})
 	if err != nil {
 		if errors.Is(err, proc.ErrLeaseBusy) {
 			return appendHygieneAction(report, hygieneAction{Rule: "go-cache", Path: cache, Action: "skipped", ObservedBytes: bytes, Cause: "go-test cost-key slot is held by another run"})

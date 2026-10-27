@@ -29,7 +29,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         bin_dir.mkdir()
         (workspace / "e2e/journey").mkdir(parents=True)
         (workspace / "e2e/verdaccio").mkdir(parents=True)
-        shutil.copy2(ROOT / "e2e/journey/compose-owner.sh", workspace / "e2e/journey/compose-owner.sh")
+        shutil.copy2(ROOT / "e2e/compose-owner.sh", workspace / "e2e/compose-owner.sh")
         shutil.copy2(ROOT / "e2e/journey/candidate-services.sh", workspace / "e2e/journey/candidate-services.sh")
         shutil.copy2(REGISTRY, workspace / "e2e/journey/candidate-package-registry.mjs")
         shutil.copy2(CLEAR_CANDIDATES, workspace / "e2e/verdaccio/clear-candidates.sh")
@@ -70,7 +70,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         )
         result = subprocess.run(
             ["bash", "-c",
-             'source e2e/journey/compose-owner.sh; source e2e/journey/candidate-services.sh; '
+             'source e2e/compose-owner.sh; source e2e/journey/candidate-services.sh; '
              'journey_compose_init "$1"; journey_start_candidate_registry "$1/e2e/packages" '
              '"$1/.journey/release/journey-candidate" "$2"; journey_stop_registry; '
              'printf "%s\\n" "$JOURNEY_CANDIDATE_REGISTRY_URL"',
@@ -101,7 +101,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
             (workspace / "e2e/journey").mkdir(parents=True)
             (workspace / "e2e/verdaccio").mkdir(parents=True)
             (workspace / "tools/kb-create").mkdir(parents=True)
-            shutil.copy2(ROOT / "e2e/journey/compose-owner.sh", workspace / "e2e/journey/compose-owner.sh")
+            shutil.copy2(ROOT / "e2e/compose-owner.sh", workspace / "e2e/compose-owner.sh")
             shutil.copy2(ROOT / "e2e/journey/candidate-services.sh", workspace / "e2e/journey/candidate-services.sh")
             shutil.copy2(CLEAR_CANDIDATES, workspace / "e2e/verdaccio/clear-candidates.sh")
             calls_path = root / "compose-calls.txt"
@@ -136,7 +136,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
             )
             result = subprocess.run(
                 ["bash", "-c",
-                 'source e2e/journey/compose-owner.sh; source e2e/journey/candidate-services.sh; '
+                 'source e2e/compose-owner.sh; source e2e/journey/candidate-services.sh; '
                  'journey_compose_init "$KB_JOURNEY_WORKSPACE_SOURCE"; '
                  'runtime_root="$(journey_install_candidate_runtime index.json packages root)"; '
                  'printf "RUNTIME_ROOT=%s\\n" "$runtime_root"; journey_stop_registry',
@@ -158,7 +158,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         self.assertFalse(any("npx" in call or "verdaccio@" in call for call in compose_calls), compose_calls)
         self.assertEqual(len([call for call in compose_calls if call.startswith("compose ")]), 5, compose_calls)
         self.assertEqual(workspace_paths, {
-            "e2e", "e2e/journey", "e2e/journey/compose-owner.sh", "e2e/journey/candidate-services.sh",
+            "e2e", "e2e/journey", "e2e/compose-owner.sh", "e2e/journey/candidate-services.sh",
             "e2e/verdaccio", "e2e/verdaccio/clear-candidates.sh", "tools", "tools/kb-create",
         })
 
@@ -222,7 +222,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         self.assertEqual(directory_names, {"workspace", "bin", "home", "compose-calls.txt", "cleared-storage-script.sh",
                                            "candidate-registry-args.txt", "registry.pipe"})
         self.assertEqual(workspace_paths, {
-            "e2e", "e2e/journey", "e2e/journey/compose-owner.sh", "e2e/journey/candidate-services.sh",
+            "e2e", "e2e/journey", "e2e/compose-owner.sh", "e2e/journey/candidate-services.sh",
             "e2e/journey/candidate-package-registry.mjs",
             "e2e/verdaccio", "e2e/verdaccio/clear-candidates.sh",
         })

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/internal/testdeadline"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -445,7 +447,7 @@ func TestWaitReturnsForLostRunWithFailedResourceCleanup(t *testing.T) {
 	if err := recordObservedKeeperLoss(state, run.RunID); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	got, err := WaitTag(ctx, state, run.Tag)
 	if err != nil {
@@ -485,7 +487,7 @@ func TestWaitReturnsForLostRunWithFailedScratchCleanup(t *testing.T) {
 	if err := recordObservedKeeperLoss(state, run.RunID); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	got, err := WaitTag(ctx, state, run.Tag)
 	if err != nil {
@@ -831,7 +833,7 @@ func TestHangingDockerCleanupIsStalledAndBounded(t *testing.T) {
 	t.Cleanup(func() { dockerCommand = original })
 	started := time.Now()
 	outcomes := cleanupResources(state, "hang-run")
-	if time.Since(started) > composeCleanupBound()+2*time.Second {
+	if time.Since(started) > composeCleanupBound()+testdeadline.ResourceCleanupSlack(t) {
 		t.Fatalf("Docker cleanup exceeded its %s bound: %s", composeCleanupBound(), time.Since(started))
 	}
 	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceFailed || !strings.Contains(outcomes[0].Error, "stalled Docker cleanup") {

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"github.com/kb-labs/clikit/internal/testutil"
 	"github.com/kb-labs/clikit/proc"
 )
@@ -62,9 +63,8 @@ func TestFileLeaseSharedAndExclusiveTryArbitrateOneResource(t *testing.T) {
 func TestStartHoldsWorktreeAndCostKeyLeasesForRunLifetime(t *testing.T) {
 	state := t.TempDir()
 	worktreeLeasePath := filepath.Join(state, "worktree.lock")
-	ctx := context.Background()
-	run, err := startTest(ctx, proc.Config{
-		HelperPath: buildRunner(t), StateDir: state, Tag: "lease-lifetime", Stall: time.Minute,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "lease-lifetime", Stall: time.Minute,
 		StdoutPath: filepath.Join(state, "stdout"), StderrPath: filepath.Join(state, "stderr"),
 		CostKey: "go-test", CostClass: proc.CostLight, SharedLeasePaths: []string{worktreeLeasePath},
 		Command: []string{"/usr/bin/true"},
@@ -94,6 +94,13 @@ func TestStartHoldsWorktreeAndCostKeyLeasesForRunLifetime(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func cancellableTestContext(t testing.TB) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
 }
 
 // case: S-237.56
@@ -159,7 +166,7 @@ func TestLauncherExitTerminatesItsSpawnedRun(t *testing.T) {
 			}
 		}
 	})
-	deadline := time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(childPIDFile)
 		if err == nil {
@@ -182,7 +189,7 @@ func TestLauncherExitTerminatesItsSpawnedRun(t *testing.T) {
 	if err := command.Wait(); err == nil {
 		t.Fatal("terminated launcher reported a successful exit")
 	}
-	deadline = time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		identity, alive, err := proc.ProcessIdentity(childPID)
 		if err == nil && (!alive || identity != childIdentity) {
@@ -198,7 +205,7 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 	state := t.TempDir()
 	helper := buildHelper(t)
 	runner := buildRunner(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	readyFile := filepath.Join(state, "descendant.pid")
 	cmd := exec.CommandContext(ctx, runner, "run", "--tag", "normal", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--", helper, "detached", "3", readyFile)
@@ -213,7 +220,7 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 	if !strings.Contains(string(output), "run normal completed") {
 		t.Fatalf("kb-runner did not report completion: %s", output)
 	}
-	descendant, err := waitPIDFile(readyFile, 5*time.Second)
+	descendant, err := waitPIDFile(t, readyFile)
 	if err != nil {
 		t.Fatalf("setsid descendant did not report a complete PID: %v; output: %s", err, output)
 	}
@@ -225,7 +232,7 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 					t.Logf("cleanup detached test process %d: %v", descendant, err)
 				}
 			}
-			deadline := time.Now().Add(5 * time.Second)
+			deadline := time.Now().Add(testdeadline.Budget(t))
 			for time.Now().Before(deadline) {
 				if current, ok := identityForTest(t, descendant); !ok || current != identity {
 					return
@@ -379,7 +386,6 @@ func TestRunScratchRemovesReadOnlyGoModuleContent(t *testing.T) {
 // case: S-237.41
 func TestCanceledKeeperStartupRemovesRegisteredScratch(t *testing.T) {
 	state := t.TempDir()
-	runner := buildRunner(t)
 	stdoutFIFO := filepath.Join(state, "stdout.fifo")
 	if err := syscall.Mkfifo(stdoutFIFO, 0o600); err != nil {
 		t.Fatal(err)
@@ -387,8 +393,7 @@ func TestCanceledKeeperStartupRemovesRegisteredScratch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	started := make(chan error, 1)
 	go func() {
-		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{
-			HelperPath: runner, StateDir: state, Tag: "canceled-startup", Stall: time.Hour,
+		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{StateDir: state, Tag: "canceled-startup", Stall: time.Hour,
 			StdoutPath: stdoutFIFO, StderrPath: filepath.Join(state, "stderr.log"),
 			Command: []string{"/bin/sleep", "30"},
 		}, stableHostResourceSource{})
@@ -399,7 +404,7 @@ func TestCanceledKeeperStartupRemovesRegisteredScratch(t *testing.T) {
 	type runRecord struct {
 		Scratch string `json:"scratch"`
 	}
-	deadline := time.NewTimer(5 * time.Second)
+	deadline := time.NewTimer(testdeadline.Budget(t))
 	ticker := time.NewTicker(time.Millisecond)
 	defer deadline.Stop()
 	defer ticker.Stop()
@@ -452,7 +457,7 @@ waitForScratch:
 		if err == nil {
 			t.Fatal("canceled keeper startup returned no error")
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		t.Fatal("canceled keeper startup did not return promptly")
 	}
 	if _, err := os.Lstat(scratch); !os.IsNotExist(err) {
@@ -686,7 +691,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 				t.Logf("wait for killed test supervisor: %v", err)
 			}
 		}
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(testdeadline.Budget(t))
 		for time.Now().Before(deadline) {
 			alive := false
 			for pid, identity := range started {
@@ -716,18 +721,18 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 		if !strings.HasPrefix(ready, "descendant-ready ") {
 			t.Fatalf("setsid descendant did not become ready: %q; stderr: %s", ready, stderr.String())
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		t.Fatal("setsid descendant readiness timed out")
 	}
 	listing := proc.List(state)
 	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusRunning {
 		t.Fatalf("run did not become live before SIGKILL: %+v", listing)
 	}
-	descendant, err = waitPIDFile(descendantPIDFile, 3*time.Second)
+	descendant, err = waitPIDFile(t, descendantPIDFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !waitUntil(2*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		current := proc.List(state)
 		if current.Error != nil || len(current.Runs) != 1 {
 			return false
@@ -746,7 +751,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	if descendant == 0 {
 		t.Fatalf("setsid descendant absent from live tree: %+v", listing.Runs[0].Tree)
 	}
-	sleepPID, err := waitPIDFile(sleepPIDFile, 3*time.Second)
+	sleepPID, err := waitPIDFile(t, sleepPIDFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -762,7 +767,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		listing := proc.List(state)
 		if listing.Error != nil || len(listing.Runs) != 1 ||
 			!listing.Runs[0].Status.Terminal() || countEvents(t, state, "teardown") != 1 {
@@ -801,8 +806,7 @@ func TestSilentLeafEmitsOneStallEvent(t *testing.T) {
 	helper := buildHelper(t)
 	leafPIDFile := filepath.Join(state, "leaf.pid")
 	releaseFile := filepath.Join(state, "release-leaves")
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "stall", Stall: 250 * time.Millisecond,
+	run, err := startTest(cancellableTestContext(t), proc.Config{StateDir: state, Tag: "stall", Stall: 250 * time.Millisecond,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "hold", leafPIDFile, releaseFile},
 	})
@@ -813,16 +817,16 @@ func TestSilentLeafEmitsOneStallEvent(t *testing.T) {
 	// Registered after cleanupRun, so LIFO order releases the held leaf before
 	// the run kill: the leaf exits on its own and the keeper reaps a live tree.
 	t.Cleanup(func() { releaseHeldLeaves(t, releaseFile) })
-	if _, err := waitPIDFile(leafPIDFile, 5*time.Second); err != nil {
+	if _, err := waitPIDFile(t, leafPIDFile); err != nil {
 		t.Fatal(err)
 	}
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		listing := proc.List(state)
 		return listing.Error == nil && len(listing.Runs) == 1 && listing.Runs[0].Status == proc.StatusStalled
 	}) {
 		t.Fatalf("silent run never became visibly stalled: %+v", proc.List(state))
 	}
-	if !waitUntil(2*time.Second, func() bool { return countEvents(t, state, "stall") == 1 }) {
+	if !waitUntil(t, func() bool { return countEvents(t, state, "stall") == 1 }) {
 		t.Fatalf("stall event count = %d, want 1", countEvents(t, state, "stall"))
 	}
 	listing := proc.List(state)
@@ -855,8 +859,7 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 	helper := buildHelper(t)
 	pidFile := filepath.Join(state, "grandchild.pid")
 	releaseFile := filepath.Join(state, "release-command")
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "darwin-sampled-descendant", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{StateDir: state, Tag: "darwin-sampled-descendant", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "double-fork-system-held", "30", pidFile, releaseFile},
 	})
@@ -869,7 +872,7 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 			t.Logf("release test-owned intermediate during cleanup: %v", err)
 		}
 	})
-	grandchild, err := waitPIDFile(pidFile, 5*time.Second)
+	grandchild, err := waitPIDFile(t, pidFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -884,7 +887,7 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 			}
 		}
 	})
-	if !waitUntil(2*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		listing := proc.List(state)
 		if listing.Error != nil || len(listing.Runs) != 1 {
 			return false
@@ -940,8 +943,7 @@ func TestUnrelatedSameUIDProcessIsNotOwnedByRun(t *testing.T) {
 		t.Fatal("test-owned unrelated process exited before the run started")
 	}
 
-	run, err := proc.Start(context.Background(), proc.Config{
-		HelperPath: buildHelper(t), StateDir: state, Tag: "unrelated-same-uid", Stall: time.Hour,
+	run, err := proc.Start(cancellableTestContext(t), proc.Config{StateDir: state, Tag: "unrelated-same-uid", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{sleepPath, "3"},
 	})
@@ -949,7 +951,7 @@ func TestUnrelatedSameUIDProcessIsNotOwnedByRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanupRun(t, state, run)
-	if !waitUntil(2*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		tree, treeErr := proc.ProcessTree(run.PID, run.RunID)
 		if treeErr != nil {
 			return false
@@ -982,10 +984,8 @@ func wasKilledByTest(err *exec.ExitError) bool {
 // case: S-237.3
 func TestListShowsLiveTreeAndDetectsDeadKeeper(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	runner := buildRunner(t)
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "list", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{StateDir: state, Tag: "list", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "30"},
 	})
@@ -1003,7 +1003,7 @@ func TestListShowsLiveTreeAndDetectsDeadKeeper(t *testing.T) {
 	if err := run.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	if !waitUntil(3*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		listing, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
 		return err == nil && strings.Contains(string(listing), "DEAD")
 	}) {
@@ -1019,11 +1019,9 @@ func TestListShowsLiveTreeAndDetectsDeadKeeper(t *testing.T) {
 // case: S-237.4
 func TestEventsAreStructuredJSONL(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	runner := buildRunner(t)
-	runCtx, cancelRun := context.WithTimeout(context.Background(), 15*time.Second)
-	run, err := startTest(runCtx, proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "events", Stall: time.Hour,
+	runCtx, cancelRun := context.WithTimeout(context.Background(), testdeadline.Budget(t))
+	run, err := startTest(runCtx, proc.Config{StateDir: state, Tag: "events", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/usr/bin/true"},
 	})
@@ -1112,8 +1110,7 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 			}
 		}
 	})
-	followRun, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: followState, Tag: "follow", Stall: time.Hour,
+	followRun, err := startTest(cancellableTestContext(t), proc.Config{StateDir: followState, Tag: "follow", Stall: time.Hour,
 		StdoutPath: filepath.Join(followState, "stdout.log"), StderrPath: filepath.Join(followState, "stderr.log"),
 		Command: []string{"/usr/bin/true"},
 	})
@@ -1146,7 +1143,7 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 				t.Fatalf("events --follow emitted an invalid event %q: %v", record, err)
 			}
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		t.Fatal("events --follow did not stream appended lifecycle events")
 	}
 	if err := follow.Process.Signal(syscall.SIGTERM); err != nil {
@@ -1371,8 +1368,9 @@ func eventLeaves(t *testing.T, state, kind string) []proc.Process {
 	return nil
 }
 
-func waitUntil(d time.Duration, condition func() bool) bool {
-	deadline := time.Now().Add(d)
+func waitUntil(t testing.TB, condition func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		if condition() {
 			return true
@@ -1411,8 +1409,7 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 	helper := buildHelper(t)
 	pidFile := filepath.Join(state, "grandchild.pid")
 	releaseFile := filepath.Join(state, "release-command")
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "double-fork", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{StateDir: state, Tag: "double-fork", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "double-fork-held", "30", pidFile, releaseFile},
 	})
@@ -1420,11 +1417,11 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanupRun(t, state, run)
-	grandchild, err := waitPIDFile(pidFile, 3*time.Second)
+	grandchild, err := waitPIDFile(t, pidFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !waitUntil(3*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		tree, treeErr := proc.ProcessTree(run.PID, run.RunID)
 		if treeErr != nil {
 			t.Fatalf("process tree for run %s: %v", run.RunID, treeErr)
@@ -1452,12 +1449,10 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 // case: S-237.4
 func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	const count = 8
 	runs := make([]*proc.Run, 0, count)
 	for i := 0; i < count; i++ {
-		run, err := startTest(context.Background(), proc.Config{
-			HelperPath: helper, StateDir: state, Tag: fmt.Sprintf("parallel-%d", i), Stall: time.Hour,
+		run, err := startTest(cancellableTestContext(t), proc.Config{StateDir: state, Tag: fmt.Sprintf("parallel-%d", i), Stall: time.Hour,
 			StdoutPath: filepath.Join(state, fmt.Sprintf("out-%d", i)), StderrPath: filepath.Join(state, fmt.Sprintf("err-%d", i)),
 			Command: []string{"/bin/sleep", "0.3"},
 		})
@@ -1509,94 +1504,27 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 }
 
 // case: S-237.5
-func TestStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
-	testStartRejectsHelperWithoutKeeperDispatchPromptly(t)
-}
-
-// case: S-237.41
-func TestStartupErrorTeardownReportsScratchOutcome(t *testing.T) {
-	testStartRejectsHelperWithoutKeeperDispatchPromptly(t)
-}
-
-func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
-	state := t.TempDir()
-	badHelper := filepath.Join(state, "wrong-helper")
-	pidFile := filepath.Join(state, "bad-helper.pid")
-	if err := os.WriteFile(badHelper, []byte("#!/bin/sh\nprintf '%s\\n' \"$$\" > \""+pidFile+"\"\nexec /bin/sleep 30\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	killBadHelper := func() {
-		data, readErr := os.ReadFile(pidFile)
-		if readErr == nil {
-			if pid, ready, parseErr := parsePIDFile(data); parseErr == nil && ready {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			}
-		}
-	}
-	t.Cleanup(killBadHelper)
-	started := time.Now()
-	type startResult struct {
-		err error
-	}
-	startedResult := make(chan startResult, 1)
-	startCtx, cancelStart := context.WithCancel(context.Background())
-	t.Cleanup(cancelStart)
-	go func() {
-		_, err := startTest(startCtx, proc.Config{
-			HelperPath: badHelper, StateDir: state, Tag: "wrong-helper", Stall: time.Hour,
-			StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
-			Command: []string{"/usr/bin/true"},
-		})
-		startedResult <- startResult{err: err}
-	}()
-	var err error
-	select {
-	case result := <-startedResult:
-		err = result.err
-	case <-time.After(4 * time.Second):
-		cancelStart()
-		killBadHelper()
-		select {
-		case <-startedResult:
-			t.Fatal("Start did not reject an incorrect helper within four seconds")
-		case <-time.After(2 * time.Second):
-			t.Fatal("Start did not stop after its context was cancelled")
-		}
-	}
-	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
-		t.Fatalf("Start error = %v, want clear helper-dispatch error", err)
-	}
-	pid, readErr := waitPIDFile(pidFile, 5*time.Second)
-	if readErr != nil {
-		t.Fatalf("invalid helper did not record a complete process id: %v", readErr)
-	}
-	if identity, alive := identityForTest(t, pid); alive {
-		t.Fatalf("invalid helper process %d remains alive with identity %s", pid, identity)
-	}
-	if time.Since(started) > 4*time.Second {
-		t.Fatalf("invalid helper took too long to reject: %s", time.Since(started))
-	}
-	assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceAlreadyGone))
-}
-
-// case: S-237.5
 func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "replace-helper", Stall: time.Hour,
+	helper := proc.BuildProcTestExecutable(t)
+	image, err := os.ReadFile(helper.PathForTest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := proc.Config{StateDir: state, Tag: "replace-helper", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "1"},
-	})
+	}
+	run, err := proc.StartWithExecutableForTest(cancellableTestContext(t), config, stableHostResourceSource{}, helper)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cleanupRun(t, state, run)
 	replacement := filepath.Join(state, "replacement")
-	if err := os.WriteFile(replacement, []byte("#!/bin/sh\nexit 99\n"), 0o700); err != nil {
+	if err := os.WriteFile(replacement, image, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(replacement, helper); err != nil {
+	if err := os.Rename(replacement, helper.PathForTest()); err != nil {
 		t.Fatal(err)
 	}
 	if identity, alive := identityForTest(t, run.PID); !alive || identity != run.StartedAt {
@@ -1606,13 +1534,15 @@ func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
 		skipOnTeardownObservationFailure(t, state, run.RunID)
 		t.Fatalf("running keeper failed after on-disk helper replacement: %v", err)
 	}
-	_, err = startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "replacement-next-run", Stall: time.Hour,
-		StdoutPath: filepath.Join(state, "next-stdout.log"), StderrPath: filepath.Join(state, "next-stderr.log"),
-		Command: []string{"/usr/bin/true"},
-	})
-	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
-		t.Fatalf("future run with replacement helper error = %v", err)
+	config.Tag = "replacement-next-run"
+	config.StdoutPath = filepath.Join(state, "next-stdout.log")
+	config.StderrPath = filepath.Join(state, "next-stderr.log")
+	next, err := proc.StartWithExecutableForTest(cancellableTestContext(t), config, stableHostResourceSource{}, helper)
+	if err != nil {
+		t.Fatalf("future run with proc-linked replacement helper: %v", err)
+	}
+	if err := next.Wait(); err != nil {
+		t.Fatalf("wait for future run with proc-linked replacement helper: %v", err)
 	}
 	skipOnTeardownObservationFailure(t, state, run.RunID)
 }
@@ -1690,7 +1620,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
 		return err == nil && strings.Count(string(output), "\tRUNNING\t") == 2 && strings.Count(string(output), "\tQUEUED\t") == 2
 	}) {
@@ -1698,7 +1628,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 	}
 	ps := outputPS(t, runner, state)
 	for _, tag := range activeTags(t, ps) {
-		if _, err := waitPIDFile(pidFiles[tagIndex(tag)], 5*time.Second); err != nil {
+		if _, err := waitPIDFile(t, pidFiles[tagIndex(tag)]); err != nil {
 			t.Fatalf("active worker %s did not create its pid file: %v", tag, err)
 		}
 	}
@@ -1709,7 +1639,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 		stopSlotProcess(t, pidFiles[tagIndex(tag)])
 	}
 	firstQueuedIndex := tagIndex(firstQueued)
-	if _, err := waitPIDFile(pidFiles[firstQueuedIndex], 5*time.Second); err != nil {
+	if _, err := waitPIDFile(t, pidFiles[firstQueuedIndex]); err != nil {
 		t.Fatalf("first queued run was not admitted: %v; ps: %s", err, outputPS(t, runner, state))
 	}
 	order, err := os.ReadFile(startedLog)
@@ -1725,7 +1655,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 		}
 	}
 	secondQueuedIndex := tagIndex(secondQueued)
-	if _, err := waitPIDFile(pidFiles[secondQueuedIndex], 5*time.Second); err != nil {
+	if _, err := waitPIDFile(t, pidFiles[secondQueuedIndex]); err != nil {
 		t.Fatalf("second queued run was not admitted: %v; ps: %s", err, outputPS(t, runner, state))
 	}
 	order, err = os.ReadFile(startedLog)
@@ -1786,7 +1716,7 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 		}
 		forceKillRecordedTree(t, state)
 	})
-	firstChild, err := waitPIDFile(firstPIDFile, 5*time.Second)
+	firstChild, err := waitPIDFile(t, firstPIDFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1800,7 +1730,7 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 		t.Fatalf("list first run: %+v", listing)
 	}
 	firstRun := listing.Runs[0]
-	if runtime.GOOS == "darwin" && !waitUntil(3*time.Second, func() bool {
+	if runtime.GOOS == "darwin" && !waitUntil(t, func() bool {
 		data, err := os.ReadFile(proc.RunRecordFile(state, firstRun.RunID))
 		if err != nil {
 			return false
@@ -1824,7 +1754,7 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	second = start("stale-waiter", secondPIDFile)
-	secondChild, err := waitPIDFile(secondPIDFile, 5*time.Second)
+	secondChild, err := waitPIDFile(t, secondPIDFile)
 	if err != nil {
 		t.Fatalf("queued run did not acquire slot after keeper death: %v; ps: %s", err, outputPS(t, runner, state))
 	}
@@ -1833,7 +1763,7 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 		t.Fatalf("cannot verify second command identity for PID %d", secondChild)
 	}
 	ownedChildren[secondChild] = secondIdentity
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		listing := proc.List(state)
 		if listing.Error != nil {
 			return false
@@ -1937,10 +1867,8 @@ func eventForRunAndType(t *testing.T, state, runID string, eventType proc.EventT
 // case: S-237.17
 func TestRunWaitRecordsKeeperLossWithoutRegistryReader(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	childFile := filepath.Join(state, "daemon-child.pid")
-	run, err := proc.Start(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "daemon:wait-owner", Stall: time.Hour,
+	run, err := proc.Start(cancellableTestContext(t), proc.Config{StateDir: state, Tag: "daemon:wait-owner", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", childFile},
 	})
@@ -1966,7 +1894,7 @@ func TestRunWaitRecordsKeeperLossWithoutRegistryReader(t *testing.T) {
 			}
 		}
 	})
-	childPID, err = waitPIDFile(childFile, 5*time.Second)
+	childPID, err = waitPIDFile(t, childFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2036,7 +1964,7 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 		}
 		forceKillRecordedTree(t, state)
 	})
-	if _, err := waitPIDFile(holderPID, 5*time.Second); err != nil {
+	if _, err := waitPIDFile(t, holderPID); err != nil {
 		t.Fatal(err)
 	}
 	waiterPID := filepath.Join(state, "waiter.pid")
@@ -2050,7 +1978,7 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 			_ = waiter.Wait()
 		}
 	})
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		return strings.Contains(outputPS(t, runner, state), "waiter\t") && strings.Contains(outputPS(t, runner, state), "BLOCKED")
 	}) {
 		t.Fatalf("gate waiter was not visibly blocked: %s", outputPS(t, runner, state))
@@ -2064,7 +1992,7 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 	if err := holder.Wait(); err == nil {
 		t.Fatal("killed gate holder returned success")
 	}
-	if _, err := waitPIDFile(waiterPID, 5*time.Second); err != nil {
+	if _, err := waitPIDFile(t, waiterPID); err != nil {
 		t.Fatalf("dead holder did not release gate: %v; ps=%s", err, outputPS(t, runner, state))
 	}
 	stopSlotProcess(t, waiterPID)
@@ -2109,13 +2037,13 @@ func TestGateWaitDoesNotBlockUnrelatedRun(t *testing.T) {
 	holderRelease := filepath.Join(state, "holder.release")
 	holder := startHeld("admission-holder", "maintenance", holderStarted, holderRelease)
 	t.Cleanup(func() { stop(holder); forceKillRecordedTree(t, state) })
-	if _, err := waitFile(t, holderStarted, 5*time.Second); err != nil {
+	if _, err := waitFile(t, holderStarted); err != nil {
 		t.Fatalf("gate holder did not start: %v; ps=%s", err, outputPS(t, runner, state))
 	}
 	waiterStarted := filepath.Join(state, "waiter.started")
 	waiter := start("admission-waiter", "--wait-gate", "maintenance", "--", "/bin/sh", "-c", `touch "$1"; exec /bin/sleep 30`, "sh", waiterStarted)
 	t.Cleanup(func() { stop(waiter); forceKillRecordedTree(t, state) })
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		return strings.Contains(outputPS(t, runner, state), "admission-waiter\t") && strings.Contains(outputPS(t, runner, state), "BLOCKED")
 	}) {
 		t.Fatalf("gate waiter did not become blocked: %s", outputPS(t, runner, state))
@@ -2123,7 +2051,7 @@ func TestGateWaitDoesNotBlockUnrelatedRun(t *testing.T) {
 	freeStarted := filepath.Join(state, "unrelated.started")
 	unrelated := start("admission-unrelated", "--", "/bin/sh", "-c", `touch "$1"; exec /bin/sleep 30`, "sh", freeStarted)
 	t.Cleanup(func() { stop(unrelated); forceKillRecordedTree(t, state) })
-	if _, err := waitFile(t, freeStarted, 5*time.Second); err != nil {
+	if _, err := waitFile(t, freeStarted); err != nil {
 		t.Fatalf("unrelated run was held behind gate waiter: %v; ps=%s", err, outputPS(t, runner, state))
 	}
 	if strings.Contains(outputPS(t, runner, state), "admission-waiter\tRUNNING") {
@@ -2133,7 +2061,7 @@ func TestGateWaitDoesNotBlockUnrelatedRun(t *testing.T) {
 	if err := os.WriteFile(holderRelease, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := waitFile(t, waiterStarted, 5*time.Second); err != nil {
+	if _, err := waitFile(t, waiterStarted); err != nil {
 		t.Fatalf("gate waiter did not start after gate release: %v; ps=%s", err, outputPS(t, runner, state))
 	}
 	stop(waiter)
@@ -2165,7 +2093,7 @@ func TestGateWaitUsesLittleCPU(t *testing.T) {
 	holder := start("gate", "hold", "maintenance", "--tag", "cpu-holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "holder.out"), "--stderr", filepath.Join(state, "holder.err"), "--", "/bin/sleep", "30")
 	t.Cleanup(func() { stop(holder); forceKillRecordedTree(t, state) })
 	var gateStatErr error
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		_, held, err := proc.GateStatus(state, "maintenance")
 		gateStatErr = err
 		if err != nil {
@@ -2181,7 +2109,7 @@ func TestGateWaitUsesLittleCPU(t *testing.T) {
 	waiterStarted := filepath.Join(state, "waiter.started")
 	waiter := start("run", "--tag", "cpu-waiter", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "waiter.out"), "--stderr", filepath.Join(state, "waiter.err"), "--wait-gate", "maintenance", "--", "/bin/sh", "-c", `touch "$1"; exec /bin/sleep 30`, "sh", waiterStarted)
 	t.Cleanup(func() { stop(waiter); forceKillRecordedTree(t, state) })
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		ps := outputPS(t, runner, state)
 		return strings.Contains(ps, "cpu-waiter\t") && strings.Contains(ps, "\tBLOCKED\tblocked: position=") && strings.Contains(ps, "gate: maintenance")
 	}) {
@@ -2231,7 +2159,7 @@ func TestMinFreeWaitIsVisibleAndEmitsOneEvent(t *testing.T) {
 		}
 		forceKillRecordedTree(t, state)
 	})
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
 		return err == nil && strings.Contains(string(output), "BLOCKED") && strings.Contains(string(output), "disk budget")
 	}) {
@@ -2259,7 +2187,7 @@ func TestMinFreeWaitIsVisibleAndEmitsOneEvent(t *testing.T) {
 func TestWaitReturnsRecordedExitAndFilteredEvents(t *testing.T) {
 	state := t.TempDir()
 	runner := buildRunner(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	t.Cleanup(func() {
 		cancel()
 		forceKillRecordedTree(t, state)
@@ -2371,13 +2299,13 @@ func TestEventsFollowStreamsLaterFilteredRecords(t *testing.T) {
 		var readErr error
 		select {
 		case readErr = <-readDone:
-		case <-time.After(2 * time.Second):
+		case <-time.After(testdeadline.Budget(t)):
 			if err := follower.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 				stopErr = errors.Join(stopErr, fmt.Errorf("kill event follower after reader timeout: %w", err))
 			}
 			select {
 			case readErr = <-readDone:
-			case <-time.After(2 * time.Second):
+			case <-time.After(testdeadline.Budget(t)):
 				stopErr = errors.Join(stopErr, errors.New("event follower stdout reader did not finish after process termination"))
 			}
 		}
@@ -2404,7 +2332,7 @@ func TestEventsFollowStreamsLaterFilteredRecords(t *testing.T) {
 		t.Fatalf("followed command returned success: %s", output)
 	}
 	seen := make(map[proc.EventType]int)
-	deadline := time.NewTimer(2 * time.Second)
+	deadline := time.NewTimer(testdeadline.Budget(t))
 	defer deadline.Stop()
 	for seen[proc.EventExit] == 0 || seen[proc.EventStall] == 0 {
 		select {
@@ -2468,23 +2396,23 @@ func TestPSShowsRunningQueuedBlockedAndStalledTogether(t *testing.T) {
 	}
 	activePID := filepath.Join(state, "active.pid")
 	startWorker("active", activePID)
-	if _, err := waitPIDFile(activePID, 5*time.Second); err != nil {
+	if _, err := waitPIDFile(t, activePID); err != nil {
 		t.Fatal(err)
 	}
 	holderPID := filepath.Join(state, "gate-holder.pid")
 	startHeld([]string{"gate", "hold", "maintenance", "--tag", "gate-holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "gate-holder.out"), "--stderr", filepath.Join(state, "gate-holder.err"), "--"}, holderPID)
-	if _, err := waitPIDFile(holderPID, 5*time.Second); err != nil {
+	if _, err := waitPIDFile(t, holderPID); err != nil {
 		t.Fatal(err)
 	}
 	startHeld([]string{"run", "--tag", "stalled", "--state", state, "--stall", "100ms", "--stdout", filepath.Join(state, "stalled.out"), "--stderr", filepath.Join(state, "stalled.err"), "--"}, filepath.Join(state, "stalled.pid"))
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		return psHasTagStatus(outputPS(t, runner, state), "stalled", "STALLED")
 	}) {
 		t.Fatalf("silent command did not become stalled before queued work: %s", outputPS(t, runner, state))
 	}
 	startHeld([]string{"run", "--tag", "blocked", "--state", state, "--stall", "1h", "--wait-gate", "maintenance", "--stdout", filepath.Join(state, "blocked.out"), "--stderr", filepath.Join(state, "blocked.err"), "--"}, filepath.Join(state, "blocked.pid"))
 	startWorker("queued", filepath.Join(state, "queued.pid"))
-	if !waitUntil(5*time.Second, func() bool {
+	if !waitUntil(t, func() bool {
 		output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
 		if err != nil {
 			return false
@@ -2652,7 +2580,7 @@ func readText(t *testing.T, path string) string {
 
 func stopSlotProcess(t *testing.T, pidFile string) {
 	t.Helper()
-	pid, err := waitPIDFile(pidFile, 5*time.Second)
+	pid, err := waitPIDFile(t, pidFile)
 	if err != nil {
 		t.Fatalf("read complete process PID from %s: %v", pidFile, err)
 	}
@@ -2737,8 +2665,9 @@ func parsePIDFile(data []byte) (int, bool, error) {
 	return pid, true, nil
 }
 
-func waitPIDFile(path string, timeout time.Duration) (int, error) {
-	deadline := time.Now().Add(timeout)
+func waitPIDFile(t testing.TB, path string) (int, error) {
+	t.Helper()
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(path)
 		if err == nil {
@@ -2757,9 +2686,9 @@ func waitPIDFile(path string, timeout time.Duration) (int, error) {
 	return 0, fmt.Errorf("timed out waiting for a complete process PID in %s", path)
 }
 
-func waitFile(t *testing.T, path string, timeout time.Duration) ([]byte, error) {
+func waitFile(t *testing.T, path string) ([]byte, error) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		if data, err := os.ReadFile(path); err == nil {
 			return data, nil
