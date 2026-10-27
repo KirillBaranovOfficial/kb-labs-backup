@@ -24,6 +24,8 @@ import (
 	"github.com/kb-labs/clikit/result"
 )
 
+const runnerVersion = "kb-runner version 1"
+
 func main() {
 	command.Exit(executeCommand(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -34,6 +36,13 @@ func executeCommand(args []string, stdout, stderr io.Writer) diag.ExitStatus {
 
 func executeInvocation(invocation string, args []string, stdout, stderr io.Writer) diag.ExitStatus {
 	root := runnerRoot{Root: command.InvocationRoot(invocation), invocation: invocation}
+	if len(args) == 1 && args[0] == "--version" {
+		if _, err := fmt.Fprintln(stdout, runnerVersion); err != nil {
+			fmt.Fprintf(stderr, "%s --version: write version output: %v\n", root.Name(), err)
+			return diag.ProcessExitStatus(1)
+		}
+		return diag.SuccessStatus()
+	}
 	if len(args) > 0 && args[0] == "__keeper" {
 		return diag.ProcessExitStatus(proc.KeeperMain())
 	}
@@ -117,6 +126,11 @@ var runnerCommands = []runnerCommand{
 	{name: "status", execute: statusCommand},
 	{name: "limits", execute: limitsCommand},
 	{name: "agent", execute: agentCommand},
+	{name: "verify", execute: verifyCommand},
+	{name: "worktree", execute: worktreeCommand},
+	{name: "land", execute: landCommand},
+	{name: "sched", execute: schedulerCommand},
+	{name: "self-install", execute: selfInstallCommand},
 }
 
 func runnerUsage() string {
