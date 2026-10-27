@@ -4,6 +4,11 @@ import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '@kb-labs/plugin-contracts/node-engine-policy';
 
+/**
+ * @param {number | string} requiredMajor
+ * @param {string} actualVersion
+ * @returns {boolean}
+ */
 export function nodeVersionSupported(requiredMajor, actualVersion) {
   const actualMajor = parseNodeMajor(actualVersion);
   return actualMajor === Number(requiredMajor);
@@ -19,6 +24,10 @@ function parseNodeMajor(version) {
   return major;
 }
 
+/**
+ * @param {string} packageManifest
+ * @returns {{ requiredMajor: number }}
+ */
 export function readNodeEnginePolicy(packageManifest) {
   const parsed = readManifest(packageManifest);
   if (parsed.name !== '@kb-labs/plugin-runtime') {
@@ -35,6 +44,10 @@ function readManifest(packageManifest) {
   }
 }
 
+/**
+ * @param {string | URL} moduleURL
+ * @returns {string}
+ */
 export function runtimePackageManifest(moduleURL) {
   let directory = dirname(fileURLToPath(moduleURL));
   for (;;) {
@@ -50,6 +63,11 @@ export function runtimePackageManifest(moduleURL) {
   throw new Error(`Cannot locate the installed @kb-labs/plugin-runtime/package.json from ${moduleURL}.`);
 }
 
+/**
+ * @param {string} rootManifest
+ * @param {NodeJS.ProcessEnv} [environment]
+ * @returns {string}
+ */
 export function selectNodeExecutable(rootManifest, environment = process.env) {
   const declaration = readNodeEngineDeclaration(rootManifest);
   const { requiredMajor } = parseNodeEnginePolicy(declaration, 'platform');

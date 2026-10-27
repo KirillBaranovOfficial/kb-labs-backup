@@ -935,8 +935,19 @@ func GarbageCollect(stateDir string) ([]ResourceOutcome, error) {
 	return all, err
 }
 
-func Leftovers(stateDir string) ([]ResourceOutcome, error) {
-	var all []ResourceOutcome
+// LeftoverEntry is the public leftovers contract: one uncleaned owned
+// resource, attributed to the run that owns it. Consumers read leftovers
+// through this contract instead of composing resource ledger paths.
+type LeftoverEntry struct {
+	RunID   string `json:"run_id"`
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Outcome string `json:"outcome"`
+	Error   string `json:"error,omitempty"`
+}
+
+func Leftovers(stateDir string) ([]LeftoverEntry, error) {
+	var all []LeftoverEntry
 	err := withStateLock(stateDir, func() error {
 		if err := pruneStateLocked(stateDir); err != nil {
 			return err
@@ -952,7 +963,7 @@ func Leftovers(stateDir string) ([]ResourceOutcome, error) {
 			}
 			for _, entry := range entries {
 				if entry.Outcome == ResourceFailed || entry.Outcome == ResourceRefused || entry.Outcome == ResourcePending || entry.Outcome == "" {
-					all = append(all, ResourceOutcome{Resource: entry, Outcome: entry.Outcome, Error: entry.Error})
+					all = append(all, LeftoverEntry{RunID: rec.RunID, Kind: string(entry.Kind), ID: entry.ID, Outcome: entry.Outcome, Error: entry.Error})
 				}
 			}
 			if rec.Scratch != "" {
@@ -961,7 +972,7 @@ func Leftovers(stateDir string) ([]ResourceOutcome, error) {
 					return err
 				}
 				if unexpected {
-					all = append(all, ResourceOutcome{Resource: Resource{Kind: "scratch", ID: rec.Scratch}, Outcome: ResourceFailed, Error: "run scratch remains"})
+					all = append(all, LeftoverEntry{RunID: rec.RunID, Kind: "scratch", ID: rec.Scratch, Outcome: ResourceFailed, Error: "run scratch remains"})
 				}
 			}
 		}
