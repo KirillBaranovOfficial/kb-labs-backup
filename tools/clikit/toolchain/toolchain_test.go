@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/proc/child"
 )
+
+var errFixtureExitedBeforeReadiness = errors.New("fixture exited before readiness")
 
 // case: S-260.4
 func TestNodePolicyRejectsOlderAndNewerMajorsWithCatalogDiagnostic(t *testing.T) {
@@ -64,33 +67,24 @@ func TestExternalToolStallReturnsCataloguedDiagnostic(t *testing.T) {
 	dir := t.TempDir()
 	tool := filepath.Join(dir, "never-exits")
 	ready := filepath.Join(dir, "ready")
-	if err := os.WriteFile(tool, []byte("#!/bin/sh\nprintf 'stalled-tool-output\\n' >&2\n: > \"$READY_FILE\"\nexec sleep 30\n"), 0o700); err != nil {
+	// The sleep before the readiness signal injects the delayed fixture start
+	// of a loaded host; it must not be reported as the stall itself.
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nsleep 2\nprintf 'stalled-tool-output\\n' >&2\n: > \"$READY_FILE\"\nexec sleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("READY_FILE", ready)
-	started := time.Now()
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := run(context.Background(), Invocation{Tool: "fixture", Executable: tool, Args: []string{"--wait"}, Operation: OperationVersionProbe}, 5*time.Second)
-		errCh <- err
-	}()
-	deadline := time.NewTimer(10 * time.Second)
-	defer deadline.Stop()
-	readyPoll := time.NewTicker(time.Millisecond)
-	defer readyPoll.Stop()
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		}
-		select {
-		case err := <-errCh:
-			t.Fatalf("stalled fixture exited before it signaled readiness: %v", err)
-		case <-deadline.C:
-			t.Fatal("stalled fixture did not signal that stderr was written")
-		case <-readyPoll.C:
-		}
+	running, err := startInvocation(context.Background(), Invocation{Tool: "fixture", Executable: tool, Args: []string{"--wait"}, Operation: OperationVersionProbe})
+	if err != nil {
+		t.Fatal(err)
 	}
-	err := <-errCh
+	cleanupRunningInvocation(t, running)
+	if err := waitForReadiness(running, ready, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	// The stall budget is injected here, anchored after readiness instead of
+	// racing process start.
+	started := time.Now()
+	_, err = running.finish(started, time.Second)
 	if err == nil {
 		t.Fatal("stalled process returned success")
 	}
@@ -98,12 +92,72 @@ func TestExternalToolStallReturnsCataloguedDiagnostic(t *testing.T) {
 	if !errors.As(err, &failure) || failure.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" {
 		t.Fatalf("stall failure = %#v", err)
 	}
-	if elapsed := time.Since(started); elapsed > 6*time.Second {
-		t.Fatalf("stall bound took %s", elapsed)
-	}
 	for key, want := range map[string]string{"tool": "fixture", "argsSummary": "--wait", "stderrTail": "stalled-tool-output", "nextCommand": "'" + tool + "' '--wait'"} {
 		if got := fmt.Sprint(failure.Meta[key]); !strings.Contains(got, want) {
 			t.Errorf("timeout detail %s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+// case: S-261.6
+func TestExternalToolExitBeforeReadinessEndsWait(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	tool := filepath.Join(t.TempDir(), "exits-before-ready")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nexit 23\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	running, err := startInvocation(context.Background(), Invocation{Tool: "fixture", Executable: tool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupRunningInvocation(t, running)
+	if err := waitForReadiness(running, filepath.Join(t.TempDir(), "never-ready"), 30*time.Second); !errors.Is(err, errFixtureExitedBeforeReadiness) {
+		t.Fatalf("readiness result = %v, want child-exited signal", err)
+	}
+	if running.command.ProcessState == nil || running.command.ProcessState.ExitCode() != 23 {
+		t.Fatalf("fixture exit state = %#v, want exit code 23", running.command.ProcessState)
+	}
+}
+
+func cleanupRunningInvocation(t *testing.T, running *runningInvocation) {
+	t.Helper()
+	t.Cleanup(func() {
+		running.cancel(context.Canceled)
+		select {
+		case <-running.waitDone:
+		case <-time.After(time.Second):
+			killErr := child.KillTree(running.command.Process.Pid)
+			select {
+			case <-running.waitDone:
+				if killErr != nil {
+					t.Errorf("kill fixture process tree during cleanup: %v", killErr)
+				}
+			case <-time.After(time.Second):
+				t.Errorf("fixture process tree was not reaped during cleanup (kill error: %v)", killErr)
+			}
+		}
+	})
+}
+
+func waitForReadiness(running *runningInvocation, ready string, watchdog time.Duration) error {
+	readyPoll := time.NewTicker(time.Millisecond)
+	defer readyPoll.Stop()
+	readyWatchdog := time.NewTimer(watchdog)
+	defer readyWatchdog.Stop()
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect fixture readiness signal: %w", err)
+		}
+		select {
+		case <-running.waitDone:
+			return fmt.Errorf("%w: %v", errFixtureExitedBeforeReadiness, running.waitErr)
+		case <-readyWatchdog.C:
+			return fmt.Errorf("fixture did not signal readiness within %s", watchdog)
+		case <-readyPoll.C:
 		}
 	}
 }

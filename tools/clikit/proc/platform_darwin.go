@@ -90,24 +90,41 @@ func (osProcessSource) Signal(pid int, signal syscall.Signal) error {
 }
 
 func readProcessIdentity(pid int) (string, bool, error) {
+	info, alive, err := readProcessInfo(pid)
+	if err != nil || !alive {
+		return "", alive, err
+	}
+	return formatStart(info), true, nil
+}
+
+func readProcessStartIdentity(pid int) (time.Time, string, bool, error) {
+	info, alive, err := readProcessInfo(pid)
+	if err != nil || info == nil {
+		return time.Time{}, "", alive, err
+	}
+	started := time.Unix(info.Proc.P_starttime.Sec, int64(info.Proc.P_starttime.Usec)*1000)
+	return started, formatStart(info), alive, nil
+}
+
+func readProcessInfo(pid int) (*unix.KinfoProc, bool, error) {
 	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil {
 		if processGone(err) {
-			return "", false, nil
+			return nil, false, nil
 		}
 		probeErr := syscall.Kill(pid, 0)
 		if errors.Is(probeErr, syscall.ESRCH) {
-			return "", false, nil
+			return nil, false, nil
 		}
 		if probeErr != nil {
-			return "", false, errors.Join(fmt.Errorf("query kern.proc.pid for %d: %w", pid, err), fmt.Errorf("verify PID existence: %w", probeErr))
+			return nil, false, errors.Join(fmt.Errorf("query kern.proc.pid for %d: %w", pid, err), fmt.Errorf("verify PID existence: %w", probeErr))
 		}
-		return "", false, fmt.Errorf("query kern.proc.pid for %d: %w", pid, err)
+		return nil, false, fmt.Errorf("query kern.proc.pid for %d: %w", pid, err)
 	}
-	if int(info.Proc.P_pid) != pid || info.Proc.P_stat == 5 {
-		return "", false, nil
+	if int(info.Proc.P_pid) != pid {
+		return nil, false, nil
 	}
-	return formatStart(info), true, nil
+	return info, info.Proc.P_stat != 5, nil
 }
 
 func readProcessArguments(pid int) ([]string, error) {

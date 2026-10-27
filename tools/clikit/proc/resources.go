@@ -166,7 +166,7 @@ func resourceCommand(ctx context.Context, prefix []string, args ...string) ([]by
 	command := exec.Command(prefix[0], append(prefix[1:], args...)...)
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
-	err := child.Run(ctx, command)
+	err := child.Run(ctx, command, ChildProcessObserver())
 	return output.Bytes(), err
 }
 

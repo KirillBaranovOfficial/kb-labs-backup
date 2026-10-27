@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/proc"
 	"github.com/kb-labs/clikit/proc/child"
 )
 
@@ -199,41 +200,84 @@ func Run(ctx context.Context, invocation Invocation) (Result, error) {
 
 func run(ctx context.Context, invocation Invocation, operationTimeout time.Duration) (Result, error) {
 	started := time.Now()
-	callerDeadline, hasCallerDeadline := ctx.Deadline()
-	operationDeadline := started.Add(operationTimeout)
-	callerBound := hasCallerDeadline && callerDeadline.Before(operationDeadline)
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
+	running, err := startInvocation(ctx, invocation)
+	if err != nil {
+		return Result{}, &CommandError{Err: err}
+	}
+	return running.finish(started, operationTimeout)
+}
+
+// runningInvocation is a started external tool with its output captured but no
+// execution budget applied yet.
+type runningInvocation struct {
+	ctx        context.Context
+	waitCtx    context.Context
+	cancel     context.CancelCauseFunc
+	command    *exec.Cmd
+	invocation Invocation
+	stdout     bytes.Buffer
+	stderr     tailBuffer
+	waitDone   chan struct{}
+	waitErr    error
+}
+
+// startInvocation starts the external tool and captures its output without
+// bounding its execution, so process start can be separated from the stall
+// budget under which it is observed.
+func startInvocation(ctx context.Context, invocation Invocation) (*runningInvocation, error) {
 	command := exec.Command(invocation.Executable, invocation.Args...)
 	command.Dir = invocation.Dir
 	command.Stdin = invocation.Stdin
 	if invocation.Env != nil {
 		command.Env = invocation.Env
 	}
-	var stdout bytes.Buffer
-	var stderr tailBuffer
-	command.Stdout, command.Stderr = &stdout, &stderr
+	running := &runningInvocation{ctx: ctx, command: command, invocation: invocation, waitDone: make(chan struct{})}
+	command.Stdout, command.Stderr = &running.stdout, &running.stderr
 	if invocation.Stdout != nil {
-		command.Stdout = io.MultiWriter(&stdout, invocation.Stdout)
+		command.Stdout = io.MultiWriter(&running.stdout, invocation.Stdout)
 	}
 	if invocation.Stderr != nil {
-		command.Stderr = io.MultiWriter(&stderr, invocation.Stderr)
+		command.Stderr = io.MultiWriter(&running.stderr, invocation.Stderr)
 	}
-	err := child.Run(ctx, command)
-	result := Result{Stdout: stdout.String(), Stderr: stderr.String(), Elapsed: time.Since(started)}
+	process, err := child.StartManaged(command, child.ProcessGroup, proc.ChildProcessObserver())
+	if err != nil {
+		return nil, err
+	}
+	running.waitCtx, running.cancel = context.WithCancelCause(ctx)
+	go func() {
+		running.waitErr = process.Wait(running.waitCtx)
+		close(running.waitDone)
+	}()
+	return running, nil
+}
+
+// finish arms the operation budget anchored at started, waits for the tool,
+// and renders the shared result and catalogued failure diagnostics.
+func (r *runningInvocation) finish(started time.Time, operationTimeout time.Duration) (Result, error) {
+	callerDeadline, hasCallerDeadline := r.ctx.Deadline()
+	operationDeadline := started.Add(operationTimeout)
+	callerBound := hasCallerDeadline && callerDeadline.Before(operationDeadline)
+	timer := time.AfterFunc(time.Until(operationDeadline), func() {
+		r.cancel(context.DeadlineExceeded)
+	})
+	defer timer.Stop()
+	defer r.cancel(context.Canceled)
+	<-r.waitDone
+	err := r.waitErr
+	result := Result{Stdout: r.stdout.String(), Stderr: r.stderr.String(), Elapsed: time.Since(started)}
 	if err == nil {
 		return result, nil
 	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if errors.Is(context.Cause(r.waitCtx), context.DeadlineExceeded) {
 		if callerBound {
 			return result, &TimeoutError{Bound: BoundCaller, Budget: callerDeadline.Sub(started), Elapsed: result.Elapsed}
 		}
 		values := map[string]string{
-			"tool":        diag.RedactText(invocation.Tool),
-			"argsSummary": summarizeArgs(invocation.Args),
+			"tool":        diag.RedactText(r.invocation.Tool),
+			"argsSummary": summarizeArgs(r.invocation.Args),
 			"elapsed":     result.Elapsed.Round(time.Millisecond).String(),
 			"stderrTail":  diag.RedactText(strings.TrimRight(result.Stderr, "\r\n")),
-			"nextCommand": nextCommand(invocation),
+			"nextCommand": nextCommand(r.invocation),
 		}
 		diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_EXTERNAL_TIMEOUT", values, diag.WithMeta(map[string]any{
 			"tool": values["tool"], "argsSummary": values["argsSummary"], "elapsed": values["elapsed"], "stderrTail": values["stderrTail"], "nextCommand": values["nextCommand"],
