@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from kb_invocation import kb_command
 from installed_fixture import layout_relative, layout_value
+from marketplace_sync_fixture import (
+    marketplace_sync_request_count,
+    start_marketplace_sync_fixture,
+    stop_marketplace_sync_fixture,
+)
 
 import json
 import os
@@ -16,6 +21,7 @@ from typing import Callable
 from service_steps import Journey
 from invocations import (
     CompletedProcess,
+    decode_ux_error_result,
     decode_ux_success_result,
     invocation_context,
     read_ux_cli_result,
@@ -569,21 +575,35 @@ def run_plugin_author_flow(
                 raise RuntimeError("outside-project docs command did not return KB_PROJECT_UNKNOWN")
 
     def _reject_absolute_plugin_link() -> None:
-        lock_path = project / layout_value('versionStatePaths.kb_marketplace_lock')
-        before = lock_path.read_bytes()
-        command = kb_command(["marketplace", "plugins", "add", "--link", str(entry.resolve())],
-                             executable=str(kb_path))
-        with invocation_context(step_id="S-003.8"):
-            result = _invoke(command, cwd=project, env=child_env, command_runner=command_runner)
+        fixture_process, marketplace_url, startup_error = start_marketplace_sync_fixture(
+            project, child_env, request_recorder=True)
+        if startup_error or fixture_process is None or marketplace_url is None:
+            raise RuntimeError(startup_error or "Marketplace request recorder did not start")
+        try:
+            lock_path = project / layout_value('versionStatePaths.kb_marketplace_lock')
+            before = lock_path.read_bytes()
+            command = kb_command(["marketplace", "plugins", "add", "--link", str(entry.resolve())],
+                                 executable=str(kb_path))
+            command_env = child_env.copy()
+            command_env["KB_MARKETPLACE_URL"] = marketplace_url
+            with invocation_context(step_id="S-003.8"):
+                result = _invoke(command, cwd=project, env=command_env, command_runner=command_runner)
+            request_count = marketplace_sync_request_count(marketplace_url, command_env)
+        finally:
+            cleanup_error = stop_marketplace_sync_fixture(fixture_process)
+        if cleanup_error:
+            raise RuntimeError(cleanup_error)
         try:
             payload = read_ux_cli_result(result)
+            failure = decode_ux_error_result(payload)
         except ValueError as error:
             raise RuntimeError(f"absolute plugin link returned an invalid UX result: {error}") from error
-        message = payload.get("error", {}).get("message", "")
-        if (result.returncode == 0 or payload.get("ok") is not False
+        message = failure["message"]
+        if (result.returncode == 0 or failure["code"] != "KB_RUNTIME_INPUT_INVALID"
                 or "The --link path must be relative to the selected scope directory." not in message
+                or request_count != 0
                 or lock_path.read_bytes() != before):
-            raise RuntimeError("absolute --link path was not rejected before changing the project Marketplace registration")
+            raise RuntimeError("absolute --link path was not rejected with its catalog code before Marketplace access or project registration mutation")
 
     def _invoke_original() -> None:
         help_output = _run(kb_command([ "--help"], executable=str(kb_path)), cwd=project, env=child_env,
