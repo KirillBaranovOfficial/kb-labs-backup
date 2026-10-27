@@ -23,8 +23,8 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { projectErrorEnvelope, showProject } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import type { HostRoutes } from "@kb-labs/gateway-app";
 import { invalidBody, sendData, sendEnvelope } from "./envelope.js";
 import { MarketplaceClientError, type MarketplaceClient } from "./marketplace-client.js";

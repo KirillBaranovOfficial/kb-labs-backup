@@ -39,11 +39,13 @@ class HostBashTests(unittest.TestCase):
             self._install_docker(bin_dir / "docker")
             self._write_stub(
                 bin_dir / "python3",
-                f"#!{sys.executable}\nimport os, sys\n"
+                f"#!{sys.executable}\nimport json, os, sys\n"
                 "if sys.argv[1:2] == ['e2e/journey/container_outcomes.py'] and '--write-log-name' in sys.argv:\n"
                 "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
                 "if sys.argv[1:2] == ['-c']:\n"
                 "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+                "if sys.argv[1:3] == ['e2e/journey/dispatch_registry.py', '--lanes']:\n"
+                "    print('[]')\n"
                 "if sys.argv[1:] == ['" + str(repo) + "/e2e/journey/journey_resources.py', '--toolchain-contract']:\n"
                 "    print(json.dumps({'imageReference': 'kb-journey-runner-toolchain:test', 'imageLabel': 'dev.kblabs.journey.toolchain', 'imageArgument': 'KB_JOURNEY_TOOLCHAIN_IMAGE'}))\n"
                 "raise SystemExit(0)\n",

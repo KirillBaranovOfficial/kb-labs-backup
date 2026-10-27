@@ -80,7 +80,7 @@ describe('filterTools', () => {
     // so tool names match /^[a-z0-9-]+__[a-z0-9_]+$/ (MCP name constraint).
     const snap = { manifests: [entry('@kb-labs/commit', [cmd('commit plan create', 'read')])] };
     const [tool] = filterTools(snap, allow);
-    expect(tool!.name).toBe('kb-labs-commit__commit_generate');
+    expect(tool!.name).toBe('kb-labs-commit__commit_plan_create');
     expect(tool!.name).toMatch(/^[a-z0-9-]+__[a-z0-9_]+$/);
   });
 

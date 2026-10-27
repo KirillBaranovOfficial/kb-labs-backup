@@ -13,7 +13,7 @@ func TestParseProcStatUsesFinalCommDelimiter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.PID != 42 || got.Comm != "name ) (with ) delimiters" || got.State != 'S' || got.PPID != 7 || got.StartTicks != 987654 || got.UserTicks != 17 || got.SystemTicks != 18 || got.ResidentPages != 42 || got.Identity == "" {
+	if got.PID != 42 || got.Comm != "name ) (with ) delimiters" || got.State != 'S' || got.PPID != 7 || got.ProcessGroupID != 8 || got.StartTicks != 987654 || got.UserTicks != 17 || got.SystemTicks != 18 || got.ResidentPages != 42 || got.Identity == "" {
 		t.Fatalf("parsed stat = %+v", got)
 	}
 }

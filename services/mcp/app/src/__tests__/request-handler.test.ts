@@ -154,7 +154,7 @@ describe('resolveVisibleTools', () => {
       permits: allow, authHeader: null, cacheScope: '/projects/b', registry: projectB, cache,
     });
     expect(toolsA.map((item) => item.name)).toEqual(['mind__workflow_run']);
-    expect(toolsB.map((item) => item.name)).toEqual(['mind__commit_apply']);
+    expect(toolsB.map((item) => item.name)).toEqual(['mind__commit_plan_apply']);
     expect(projectB.snapshot).toHaveBeenCalledOnce();
   });
 

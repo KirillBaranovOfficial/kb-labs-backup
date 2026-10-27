@@ -36,7 +36,8 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_installer_case_steps, run_invalid_request_step,
                                   run_apply_scenario_step,
                                   run_uninstall_decline_step, run_missing_project_request_steps,
-                                  commit_marketplace_install_record)
+                                  commit_marketplace_install_record,
+                                  add_installed_host_stop_case_step)
 from installer_case_steps import parse_install_refusal
 from journey_resources import case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
 from project_service_path import project_service_path
@@ -1151,6 +1152,7 @@ def _run_final_uninstall(graph: FlowGraph, env: dict[str, str], launcher: str) -
         "uninstall platform", "uninstall", "platform.uninstall",
         lambda: run_uninstall_group(graph, env, launcher),
         cases=["S-050.1", "S-050.4", "S-050.6", "S-050.7"], role="lifecycle",
+        plan_phase="teardown",
     )
     if status == "SKIPPED":
         return not FIRST_FAILURE
@@ -2567,6 +2569,13 @@ def _main(*, update_variant_runner=None):
             fail(f"platform update variants: {error}")
     elif outer_graph.selection_active and variant_gate != "BLOCKED":
         outer_graph.skip_unselected("platform update variant journey", "platform.update")
+    add_installed_host_stop_case_step(
+        outer_graph.journey, PLATFORM, env,
+        runner=lambda command, **options: run(
+            command, env=options.get("env"), cwd=options.get("cwd"),
+            timeout=options.get("timeout", 120),
+        )[0],
+    )
     passed = _run_final_uninstall(outer_graph, env, launcher)
     return finalize_run(passed)
 

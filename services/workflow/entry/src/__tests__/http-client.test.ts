@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createErrorEnvelope, getCatalogEntry } from '@kb-labs/core-platform/error-envelope';
 import { createUxFailureResult } from '@kb-labs/core-platform/ux-result';
 import type { WorkflowHealthResponse } from '@kb-labs/workflow-contracts';
@@ -11,18 +14,23 @@ vi.mock('@kb-labs/sdk', () => ({
   },
 }));
 
-// Saved sessions/credentials live in the developer's real HOME; a stale login
-// would refresh through the stubbed fetch. These client tests run logged out.
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  gatewayApiFetch: (input: string | URL, init?: RequestInit) => fetch(input, init),
-}));
-
+// Keep Gateway auth isolated from the developer's saved sessions.
 import { getWorkflowDaemonUrl, WorkflowDaemonClient } from '../http-client.js';
 
 describe('workflow project gateway address', () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'workflow-http-client-test-'));
+    vi.stubEnv('HOME', home);
+  });
+
   afterEach(() => {
     delete process.env.KB_GATEWAY_URL;
     delete process.env.KB_PROJECT_ID;
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
   });
 
   it('routes through the selected project runtime', () => {
@@ -44,15 +52,13 @@ describe('workflow project gateway address', () => {
       status: 'degraded', service: 'workflow', ts: 123,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetch);
-    try {
-      const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
-      const health: WorkflowHealthResponse = await client.health();
+    const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
+    const health: WorkflowHealthResponse = await client.health();
 
-      expect(health).toEqual({ status: 'degraded', service: 'workflow', ts: 123 });
-      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4312/workflow/health', undefined);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    expect(health).toEqual({ status: 'degraded', service: 'workflow', ts: 123 });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(new URL(fetch.mock.calls[0]?.[0] as string).href).toBe('http://127.0.0.1:4312/workflow/health');
+    expect(fetch.mock.calls[0]?.[1]?.headers).toBeInstanceOf(Headers);
   });
 
   it('lists cron schedules through the daemon plural route', async () => {
@@ -61,34 +67,31 @@ describe('workflow project gateway address', () => {
       data: { crons: [{ id: 'user:journey-cron', schedule: '* * * * *', enabled: true }] },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetch);
-    try {
-      const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
-      await expect(client.getCronJobs()).resolves.toMatchObject({
-        crons: [{ id: 'user:journey-cron', schedule: '* * * * *', enabled: true }],
-      });
-      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4312/workflow/crons', undefined);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
+    await expect(client.getCronJobs()).resolves.toMatchObject({
+      crons: [{ id: 'user:journey-cron', schedule: '* * * * *', enabled: true }],
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(new URL(fetch.mock.calls[0]?.[0] as string).href).toBe('http://127.0.0.1:4312/workflow/crons');
+    expect(fetch.mock.calls[0]?.[1]?.headers).toBeInstanceOf(Headers);
   });
 
   it('preserves the structured code and message when a cron mutation is refused', async () => {
     const errorCode = 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY';
-    const errorMessage = 'Plugin cron plugin:qa:cleanup is read-only';
-    expect(getCatalogEntry(errorCode)?.hint).toBeTruthy();
+    const catalogEntry = getCatalogEntry(errorCode);
+    expect(catalogEntry?.hint).toBeTruthy();
+    expect(catalogEntry?.message).toBeTruthy();
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(createUxFailureResult(
-      createErrorEnvelope(errorCode, { message: errorMessage }),
+      createErrorEnvelope(errorCode),
     )), { status: 409, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetch);
-    try {
-      const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
-      await expect(client.setCronEnabled('plugin:qa:cleanup', true)).rejects.toMatchObject({
+    const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
+    await expect(client.setCronEnabled('plugin:qa:cleanup', true)).rejects.toMatchObject({
+      envelope: {
         code: errorCode,
-        message: errorMessage,
-        hint: getCatalogEntry(errorCode)?.hint,
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
+        message: catalogEntry?.message,
+        hint: catalogEntry?.hint,
+      },
+    });
   });
 });

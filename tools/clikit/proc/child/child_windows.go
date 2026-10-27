@@ -28,32 +28,41 @@ func configureCommand(command *exec.Cmd, mode Mode) error {
 	return nil
 }
 
-func runCommand(ctx context.Context, command *exec.Cmd, waitDelay time.Duration) error {
+// Windows uses the retained Job Object as the process-tree completion owner;
+// the observer is used only by Unix process-table confirmation.
+func startManaged(command *exec.Cmd, mode Mode, _ ProcessObserver) (*Started, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
-		return errors.Join(err, windows.CloseHandle(job))
+		return nil, errors.Join(err, windows.CloseHandle(job))
 	}
-	if err := configureCommand(command, ProcessGroup); err != nil {
-		return errors.Join(err, windows.CloseHandle(job))
+	if err := configureCommand(command, mode); err != nil {
+		return nil, errors.Join(err, windows.CloseHandle(job))
 	}
-	command.WaitDelay = waitDelay
+	command.WaitDelay = pipeWaitDelay
 	if err := command.Start(); err != nil {
-		return errors.Join(err, windows.CloseHandle(job))
+		return nil, errors.Join(err, windows.CloseHandle(job))
 	}
 	process, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(command.Process.Pid))
 	if err != nil {
-		return errors.Join(err, command.Process.Kill(), command.Wait(), windows.CloseHandle(job))
+		return nil, errors.Join(err, command.Process.Kill(), command.Wait(), windows.CloseHandle(job))
 	}
 	assignErr := windows.AssignProcessToJobObject(job, process)
 	closeProcessErr := windows.CloseHandle(process)
 	if assignErr != nil {
-		return errors.Join(assignErr, closeProcessErr, command.Process.Kill(), command.Wait(), windows.CloseHandle(job))
+		return nil, errors.Join(assignErr, closeProcessErr, command.Process.Kill(), command.Wait(), windows.CloseHandle(job))
 	}
+	return &Started{pid: command.Process.Pid, wait: func(ctx context.Context) error {
+		return waitCommand(ctx, command, job, pipeWaitDelay)
+	}}, nil
+}
+
+func waitCommand(ctx context.Context, command *exec.Cmd, job windows.Handle, waitDelay time.Duration) error {
+	command.WaitDelay = waitDelay
 	finished := make(chan struct{})
 	watcherDone := make(chan struct{})
 	var cancelErr error

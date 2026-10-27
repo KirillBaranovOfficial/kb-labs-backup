@@ -937,9 +937,9 @@ thread.join()
         self.assertEqual(variant_args[0]["project_b"].resolve(),
                          Path(service["states"]["fixtures-installed"]["value"]["projectBRoot"]).resolve())
         self.assertEqual(observed["fixture_calls"], isolated_groups)
-        self.assertEqual(observed["host_cycle"], ["stop", "start", "stop", "start"])
+        self.assertEqual(observed["host_cycle"], ["stop", "start", "stop", "start", "stop"])
         self.assertEqual(observed["events"], [
-            "host:stop", "host:start", "host:stop", *isolated_groups, "host:start",
+            "host:stop", "host:start", "host:stop", *isolated_groups, "host:start", "host:stop",
         ])
 
     def test_failed_update_keeps_candidate_version_known_and_runs_independent_cleanup(self):

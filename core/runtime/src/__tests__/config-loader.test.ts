@@ -48,7 +48,7 @@ describe('loadPlatformConfig', () => {
     if (env.KB_PLATFORM_ROOT) env.KB_PLATFORM_ROOT = realpathSync(env.KB_PLATFORM_ROOT)
     const startDir = realpathSync(options?.startDir ?? process.cwd())
     const registry = createProjectRegistry({ env })
-    const existing = (await registry.list()).find((entry) => entry.project.path === startDir)
+  const existing = (await registry.list()).projects.find((entry) => entry.project.path === startDir)
     const project = existing?.project ?? (await registry.add(startDir)).project
     return loadPlatformConfig({ ...options, startDir, env, projectId: project.id })
   }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -49,6 +50,9 @@ exit 99
 
 // S-237.61
 func TestZcodeTransientFailuresResumeSameSessionUntilSuccess(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("ZCode retry flow requires the macOS sandbox-exec boundary")
+	}
 	dir := t.TempDir()
 	schedule := `case "$count" in
   1) printf '%s\n' '{"type":"session.created","sessionId":"zcode-transient-session"}' '{"type":"turn.failed","sessionId":"zcode-transient-session","payload":{"error":{"message":"model concurrency limit exceeded","attribution":{"providerErrorCode":"3009","statusCode":429,"source":"provider","exceptionKind":"provider_business","retryable":false}}}}'
@@ -135,6 +139,9 @@ esac
 
 // S-237.62
 func TestZcodePermanentFailureEndsJobWithoutRetry(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("ZCode retry flow requires the macOS sandbox-exec boundary")
+	}
 	dir := t.TempDir()
 	schedule := `printf '%s\n' '{"type":"session.created","sessionId":"zcode-permanent-session"}' '{"type":"turn.failed","sessionId":"zcode-permanent-session","payload":{"error":{"message":"provider authentication failed","attribution":{"providerErrorCode":"3007","statusCode":403,"source":"provider","exceptionKind":"provider_business","retryable":false}}}}'
 exit 1

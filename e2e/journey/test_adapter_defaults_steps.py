@@ -14,12 +14,59 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from adapter_defaults_steps import (_assert_no_network_defaults, _assert_required_upstreams_ready, _json, _restore_platform_adapter_fixture,
-                                    _run_from_registered_project, run_adapter_default_steps)
+                                    _run_from_registered_project, run_adapter_default_steps,
+                                    _assert_no_project_adapter_config, _assert_missing_gateway_dispatch_error)
 from sdk_runtime_import_check import check_installed_runtime_imports
 from invocations import invocation_context
 import jsonl
 from service_steps import Journey
 from test_install_layout import create_test_install_container
+from invocations import catalogued_error_hint, catalogued_error_message
+
+
+class InstalledDefaultAdapterGapTests(unittest.TestCase):
+    # case: S-054.18
+    def test_installed_defaults_require_no_project_written_adapter_config(self):
+        with tempfile.TemporaryDirectory(prefix="journey-project-default-config-") as directory:
+            project = Path(directory)
+            (project / ".kb").mkdir()
+
+            _assert_no_project_adapter_config(project)
+
+            (project / ".kb" / "kb.config.jsonc").write_text("{}\n")
+            with self.assertRaisesRegex(RuntimeError, "user-written adapter config"):
+                _assert_no_project_adapter_config(project)
+
+    # case: S-054.19
+    def test_missing_gateway_dispatch_error_is_catalogued_and_correlated(self):
+        error = {
+            "code": "KB_HOST_SERVICE_ADDRESS_MISSING",
+            "message": catalogued_error_message("KB_HOST_SERVICE_ADDRESS_MISSING"),
+            "hint": catalogued_error_hint("KB_HOST_SERVICE_ADDRESS_MISSING"),
+            "details": {"service": "gateway"},
+            "correlationId": "corr-missing-gateway",
+        }
+        result = subprocess.CompletedProcess(
+            ["kb", "workflow", "run", "--workflow-id=e2e-hello", "--json"],
+            1, json.dumps({"ok": False, "error": error}), "",
+        )
+
+        _assert_missing_gateway_dispatch_error(result)
+
+    def test_missing_gateway_dispatch_error_rejects_other_service_or_no_correlation(self):
+        error = {
+            "code": "KB_HOST_SERVICE_ADDRESS_MISSING",
+            "message": catalogued_error_message("KB_HOST_SERVICE_ADDRESS_MISSING"),
+            "hint": catalogued_error_hint("KB_HOST_SERVICE_ADDRESS_MISSING"),
+            "details": {"service": "state-broker"},
+        }
+        result = subprocess.CompletedProcess(
+            ["kb", "workflow", "run", "--workflow-id=e2e-hello", "--json"],
+            1, json.dumps({"ok": False, "error": error}), "",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "gateway.*correlation"):
+            _assert_missing_gateway_dispatch_error(result)
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
@@ -247,9 +294,6 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             home = Path(directory)
             project_a = home / "project-a"
             (project_a / ".kb").mkdir(parents=True)
-            (project_a / ".kb" / "kb.config.json").write_text(json.dumps({
-                "plugins": {"@kb-labs/e2e-analytics-emitter": True},
-            }) + "\n")
             (project_a / "README.md").write_text("adapter defaults fixture\n")
             project_id = "prj_" + hashlib.sha256(unicodedata.normalize("NFC", str(project_a.resolve())).encode()).hexdigest()[:16]
             registry_home = (home / ".kb").resolve()
@@ -259,7 +303,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                  "addedAt": "2026-10-01T00:00:00.000Z", "lastUsedAt": None}
             ]}))
             storage_default = registry_home / "state" / project_id / "storage"
-            env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project_a)}
+            env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project_a),
+                   "KB_GATEWAY_URL": "http://127.0.0.1:4000"}
             calls: list[tuple[str, ...]] = []
             run_counter = 0
             host_running = True
@@ -483,6 +528,16 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     value.setdefault("platform", {}).setdefault("adapterOptions", {}).pop("storage", None)
                     write_config(platform_root, value)
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+                if args[:2] == ["workflow", "run"] and "KB_GATEWAY_URL" not in env:
+                    error = {
+                        "code": "KB_HOST_SERVICE_ADDRESS_MISSING",
+                        "message": catalogued_error_message("KB_HOST_SERVICE_ADDRESS_MISSING"),
+                        "hint": catalogued_error_hint("KB_HOST_SERVICE_ADDRESS_MISSING"),
+                        "details": {"service": "gateway"},
+                        "correlationId": "corr-adapter-workflow-gateway",
+                    }
+                    return subprocess.CompletedProcess(command, 1,
+                        json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["workflow", "run"]:
                     run_counter += 1
                     run_id = f"run-{run_counter}"
@@ -612,6 +667,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
 
             expected = ({f"S-054.{number}" for number in range(1, 9)}
                         | {f"S-054.{number}" for number in range(10, 17)}
+                        | {"S-054.18", "S-054.19"}
                         | {"S-054.21", "S-054.22", "S-051.5"}
                         | {f"S-048.{number}" for number in range(1, 8)})
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
@@ -623,8 +679,15 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertEqual([row.line_number for row in invocation_records if row.error is not None], [])
             workflow_rows = [row.value for row in invocation_records
                              if row.value.get("argv", [])[1:3] == ["workflow", "run"]]
-            self.assertTrue(workflow_rows)
-            for row in workflow_rows:
+            successful_workflow_rows = [row for row in workflow_rows
+                                        if json.loads(row["stdout"]).get("ok") is True]
+            failed_workflow_rows = [row for row in workflow_rows
+                                    if json.loads(row["stdout"]).get("ok") is False]
+            self.assertTrue(successful_workflow_rows)
+            self.assertTrue(any(
+                json.loads(row["stdout"]).get("error", {}).get("code") == "KB_HOST_SERVICE_ADDRESS_MISSING"
+                for row in failed_workflow_rows))
+            for row in successful_workflow_rows:
                 self.assertTrue(json.loads(row["stdout"])["ok"])
                 self.assertNotIn("[discover]", row["stdout"])
                 self.assertIn("[discover]", row["stderr"])
