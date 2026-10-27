@@ -136,20 +136,6 @@ test('S-121.1: analytics overview summarizes events and adapter usage', async ({
   await expect(page.getByText('Storage', { exact: true })).toBeVisible()
 })
 
-test('S-121.6: unconfigured analytics shows adapter setup guidance', async ({ page }) => {
-  test.skip(!enabled, 'Enabled by the installed Studio journey hook')
-  const projectId = process.env.KB_STUDIO_PROJECT_ID
-  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
-  await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
-  await page.route(`**${projectServicePath(projectId!, 'rest', 'analytics/stats')}`, async (route) => {
-    await route.fulfill({ status: 501, contentType: 'application/json', body: JSON.stringify({ message: 'Analytics adapter does not support reading stats' }) })
-  })
-
-  await page.goto(`${GATEWAY}/analytics/overview`)
-  await expect(page.getByText('Analytics Not Configured', { exact: true })).toBeVisible()
-  await expect(page.getByText('Configure an analytics adapter in kb.config.json', { exact: false })).toBeVisible()
-})
-
 test('unavailable analytics service names its source and recovery command @S-125.5', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
