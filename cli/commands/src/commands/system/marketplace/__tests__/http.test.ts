@@ -8,8 +8,8 @@ vi.mock('@kb-labs/sdk', () => ({
     return environment.KB_GATEWAY_URL.replace(/\/+$/, '');
   },
 }));
-vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>(),
+vi.mock('@kb-labs/sdk/gateway', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@kb-labs/sdk/gateway')>(),
   gatewayApiFetch,
 }));
 
