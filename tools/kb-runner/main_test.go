@@ -1259,3 +1259,114 @@ func TestOwnOutsideRunIsActionablyRefused(t *testing.T) {
 		t.Fatalf("own outside run result = code %d, err %v, output %q", code, err, output.String())
 	}
 }
+
+// case: S-237.110
+func TestSelfInstallAtomicallyReplacesValidatedRunnerBinaries(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	bin := filepath.Join(root, "bin")
+	tools := filepath.Join(root, "tools")
+	if err := os.MkdirAll(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(tools, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"kb-runner", "kb-runner-zcode"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexec /bin/sleep 1\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldProcess := exec.Command(filepath.Join(bin, "kb-runner"))
+	if err := oldProcess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if oldProcess.ProcessState == nil {
+			if err := oldProcess.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				t.Errorf("stop old runner process: %v", err)
+			}
+			if err := oldProcess.Wait(); err != nil {
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) {
+					t.Errorf("wait for old runner process cleanup: %v", err)
+				}
+			}
+		}
+	})
+	fakeGo := filepath.Join(tools, "go")
+	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; out=\"$1\"; fi; shift; done\nprintf '%s\n' '#!/bin/sh' 'if [ \"$1\" = --version ]; then echo \"$KB_RUNNER_EXPECTED_VERSION\"; else exit 2; fi' > \"$out\"\nchmod 700 \"$out\"\n"
+	if err := os.WriteFile(fakeGo, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("KB_RUNNER_EXPECTED_VERSION", runnerVersion)
+	var out, stderr bytes.Buffer
+	code, err := executeRoot(runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, []string{"self-install", "--source", source, "--root", root}, &out, &stderr)
+	if code != 0 || err != nil {
+		t.Fatalf("self-install code=%d err=%v stderr=%q", code, err, stderr.String())
+	}
+	if err := oldProcess.Wait(); err != nil {
+		t.Fatalf("running process did not finish from its original executable: %v", err)
+	}
+	for _, name := range []string{"kb-runner", "kb-runner-zcode"} {
+		installed := exec.Command(filepath.Join(bin, name), "--version")
+		data, err := installed.Output()
+		if err != nil || strings.TrimSpace(string(data)) != runnerVersion {
+			t.Fatalf("installed %s version=%q err=%v", name, data, err)
+		}
+	}
+}
+
+// case: S-237.110
+func TestRunnerVersionContract(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	status := executeInvocation("kb-runner", []string{"--version"}, &stdout, &stderr)
+	if status.Code() != 0 || stdout.String() != runnerVersion+"\n" || stderr.Len() != 0 {
+		t.Fatalf("version contract status=%d stdout=%q stderr=%q", status.Code(), stdout.String(), stderr.String())
+	}
+}
+
+// case: S-237.110
+func TestSelfInstallRejectsInvalidVersionWithoutChangingInstalledBinaries(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	bin := filepath.Join(root, "bin")
+	tools := filepath.Join(root, "tools")
+	for _, dir := range []string{source, bin, tools} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"kb-runner", "kb-runner-zcode"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("old"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fakeGo := filepath.Join(tools, "go")
+	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; out=\"$1\"; fi; shift; done\nprintf '%s\n' '#!/bin/sh' 'echo wrong binary' > \"$out\"\nchmod 700 \"$out\"\n"
+	if err := os.WriteFile(fakeGo, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var out, stderr bytes.Buffer
+	code, err := executeRoot(runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, []string{"self-install", "--source", source, "--root", root}, &out, &stderr)
+	if code == 0 || err == nil {
+		t.Fatalf("invalid version accepted: code=%d err=%v", code, err)
+	}
+	for _, name := range []string{"kb-runner", "kb-runner-zcode"} {
+		data, readErr := os.ReadFile(filepath.Join(bin, name))
+		if readErr != nil || string(data) != "old" {
+			t.Fatalf("invalid build changed %s: %q err=%v", name, data, readErr)
+		}
+	}
+}
