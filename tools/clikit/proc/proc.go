@@ -156,8 +156,9 @@ func (status RunStatus) Terminal() bool {
 }
 
 type Process struct {
-	PID              int       `json:"pid"`
-	PPID             int       `json:"ppid"`
+	PID              int `json:"pid"`
+	PPID             int `json:"ppid"`
+	processGroupID   int
 	Command          string    `json:"command"` // OS process command name, never the argument vector.
 	StartedAt        time.Time `json:"started_at"`
 	ElapsedMS        int64     `json:"elapsed_ms"`

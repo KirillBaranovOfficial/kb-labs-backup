@@ -40,7 +40,7 @@ func darwinProcessSnapshot(runID string) ([]Process, error) {
 		}
 		started := time.Unix(info.Proc.P_starttime.Sec, int64(info.Proc.P_starttime.Usec)*1000)
 		processes = append(processes, Process{
-			PID: int(info.Proc.P_pid), PPID: int(info.Eproc.Ppid),
+			PID: int(info.Proc.P_pid), PPID: int(info.Eproc.Ppid), processGroupID: int(info.Eproc.Pgid),
 			Command:   darwinCommandName(info.Proc.P_comm[:]),
 			StartedAt: started, ElapsedMS: max(int64(0), time.Since(started).Milliseconds()),
 			Identity: formatStart(&info), uid: info.Eproc.Ucred.Uid,
