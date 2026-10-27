@@ -220,7 +220,7 @@ test('shared candidate services start, publish, and clean up the native origin a
     + "  *' stop verdaccio') exit 0 ;;\n"
     + 'esac\nexit 97\n', { mode: 0o755 });
   writeFileSync(path.join(bin, 'sh'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$PUBLISH_CALL"\nexit 0\n', { mode: 0o755 });
-  const result = spawnSync('/bin/bash', ['-e', '-c', 'source "$1"; source "$2"; journey_compose_init "$KB_JOURNEY_WORKSPACE_SOURCE"; trap "journey_stop_host_services" EXIT; journey_start_host_services; journey_stop_host_services; trap - EXIT', 'candidate-services-test', path.join(root, 'e2e/journey/compose-owner.sh'), path.join(root, 'e2e/journey/candidate-services.sh')], {
+  const result = spawnSync('/bin/bash', ['-e', '-c', 'source "$1"; source "$2"; journey_compose_init "$KB_JOURNEY_WORKSPACE_SOURCE"; trap "journey_stop_host_services" EXIT; journey_start_host_services; journey_stop_host_services; trap - EXIT', 'candidate-services-test', path.join(root, 'e2e/compose-owner.sh'), path.join(root, 'e2e/journey/candidate-services.sh')], {
     cwd: root,
     encoding: 'utf8',
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: fixture, SERVICE_PIDS: pids, PUBLISH_CALL: publish, KB_JOURNEY_WORKSPACE_SOURCE: root },

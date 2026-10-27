@@ -87,7 +87,7 @@ fi
 
 ACTIVE_MONITORS=()
 MONITORED_CONTAINER_IDS=()
-source "$ROOT/e2e/journey/compose-owner.sh"
+source "$ROOT/e2e/compose-owner.sh"
 source "$ROOT/e2e/journey/runner-toolchain.sh"
 trap journey_compose_cleanup EXIT
 journey_compose_init "$ROOT"
@@ -96,7 +96,6 @@ source "$ROOT/e2e/journey/candidate-services.sh"
 
 if [[ -n "$compose_action" ]]; then
   if (( ! COMPOSE_AVAILABLE )); then
-    echo "Docker Compose is required for journey stack operations; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
     exit 127
   fi
   if [[ "$compose_action" == "--down" ]]; then
@@ -156,7 +155,6 @@ mkdir -p .journey/reports
 export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
 
 if (( ! COMPOSE_AVAILABLE )); then
-  echo "Docker Compose is required for journey runs; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
   exit 127
 fi
 

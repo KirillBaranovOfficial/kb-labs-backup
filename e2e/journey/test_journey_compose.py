@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -43,19 +42,15 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
         with tempfile.TemporaryDirectory(prefix="journey-compose-render-") as temp:
             bin_dir = Path(temp) / "bin"
             bin_dir.mkdir()
-            compose_tools = tuple(tool for tool in ("docker", "docker-compose") if shutil.which(tool))
-            self.assertTrue(compose_tools, "journey Compose tests require Docker Compose v2 or docker-compose on PATH")
+            compose_command = require_compose_command(self)
             env = isolated_environment(Path(temp) / "home", bin_dir,
-                                       required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "rm", *compose_tools),
+                                       required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "rm", *compose_command),
                                        overrides={
                                            "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
                                            "KB_JOURNEY_GIT_REVISION": "test-revision",
                                            "KB_JOURNEY_RUNNER_UID": str(os.getuid()),
                                            "KB_JOURNEY_RUNNER_GID": str(os.getgid()),
                                        })
-            compose_command = ["docker", "compose"] if shutil.which("docker") and subprocess.run(
-                ["docker", "compose", "version"], capture_output=True, check=False,
-            ).returncode == 0 else ["docker-compose"]
             composition = Path(temp) / "marketplace-registry-composition"
             producer = ROOT / "services" / "marketplace-registry" / "app" / "scripts" / "render-journey-composition.mjs"
             rendered = subprocess.run(
@@ -97,8 +92,7 @@ if (!configResult.ok || !lockResult.valid) {
             )
         self.assertEqual(
             result.returncode, 0,
-            "journey Compose rendering failed; install Docker Compose v2 (`docker compose`) or "
-            f"the standalone `docker-compose` command and rerun. Output: {result.stderr.strip()}",
+            f"journey Compose rendering failed. Output: {result.stderr.strip()}",
         )
         rendered = json.loads(result.stdout)
         mounts = {
@@ -261,14 +255,18 @@ if (!configResult.ok || !lockResult.valid) {
             env, _ = self._fake_compose_environment(temp)
             # Remove the fake Docker CLI so the real host Compose plugin cannot satisfy this test.
             (Path(temp) / "bin" / "docker").unlink()
+            owner = subprocess.run(
+                ["bash", str(ROOT / "e2e" / "compose-owner.sh"), "resolve"], cwd=ROOT, env=env,
+                capture_output=True, text=True, check=False,
+            )
             result = subprocess.run(
                 ["bash", str(RUNNER), "--render-compose-config"], cwd=ROOT, env=env,
                 capture_output=True, text=True, check=False,
             )
 
+            self.assertEqual(owner.returncode, 127)
             self.assertEqual(result.returncode, 127)
-            self.assertIn("install Docker Compose v2", result.stderr)
-            self.assertIn("standalone 'docker-compose' command", result.stderr)
+            self.assertEqual(result.stderr, owner.stderr)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ class JourneyTeardownTests(unittest.TestCase):
                 "volumes": ["journey-data"],
                 "calls": [],
             }), encoding="utf-8")
-            compose = root / "docker-compose"
+            compose = root / "compose"
             compose.write_text(
                 "#!/usr/bin/env python3\n"
                 "import json, pathlib, sys\n"
