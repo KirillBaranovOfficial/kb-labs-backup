@@ -86,13 +86,10 @@ export async function runStage({
   const isBuild = stage === profile.buildStage && Boolean(resourceSamplePath && partialResultPath);
   if (isBuild) captureResourceSample();
   const timer = isBuild ? setInterval(captureResourceSample, sampleIntervalMs) : undefined;
-  const runEnv = stage === profile.buildStage
-    ? { NODE_OPTIONS: `--max-old-space-size=${buildLimits.nodeHeapMb}` }
-    : {};
   persistPartial();
   let result;
   try {
-    result = await runCommand(command, args, { cwd: root, env: runEnv });
+    result = await runCommand(command, args, { cwd: root, env: {} });
   } finally {
     if (timer) clearInterval(timer);
   }
@@ -106,11 +103,14 @@ export async function runStage({
   }).join('\n\n');
   const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage;
   const visibleLog = taskFailures.length ? taskLogOutput : isDevkitStage ? (result.stderr || '') : log;
+  const failures = stage === profile.buildStage
+    ? taskFailures.map(formatBuildTaskFailure)
+    : [...failingNames(log), ...taskFailures.flatMap((failure) => (failure.logTail || failure.error || '').split(/\r?\n/).filter(Boolean)), ...sampleFailures];
   const stageResult = {
     name,
     status: result.status === 0 && sampleFailures.length === 0 ? 'pass' : 'fail',
     selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : selectedPackageCount,
-    failures: [...failingNames(log), ...taskFailures.flatMap((failure) => (failure.logTail || failure.error || '').split(/\r?\n/).filter(Boolean)), ...sampleFailures],
+    failures: [...failures, ...sampleFailures],
     taskFailures,
     logTail: boundedTail(visibleLog),
     startedAt: new Date(startedAt).toISOString(),
@@ -147,7 +147,13 @@ function devkitTaskFailures(stage, result) {
     return [{ error: 'kb-devkit run --json returned no structured task results for a failed stage.' }];
   }
   return results.filter((task) => task?.OK === false).map((task) => {
-    const failure = { package: task.Package, task: task.Task, logPath: task.logPath };
+    const failure = {
+      package: task.Package,
+      task: task.Task,
+      exitCode: task.ExitCode,
+      errorLine: firstStructuredErrorLine(task),
+      logPath: task.logPath,
+    };
     if (typeof task.logPath !== 'string' || task.logPath.length === 0) {
       return { ...failure, error: 'failed task result did not include its structured logPath.' };
     }
@@ -158,6 +164,20 @@ function devkitTaskFailures(stage, result) {
     }
     return failure;
   });
+}
+
+function firstStructuredErrorLine(task) {
+  for (const value of [task.Stderr, task.Error]) {
+    if (typeof value !== 'string') continue;
+    const firstLine = value.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+    if (firstLine) return firstLine;
+  }
+  return `task exited with code ${String(task.ExitCode)}`;
+}
+
+function formatBuildTaskFailure(failure) {
+  const identity = [failure.package, failure.task].filter((part) => typeof part === 'string' && part.length > 0).join(':') || 'kb-devkit build';
+  return `${identity} — ${failure.errorLine ?? failure.error ?? `task exited with code ${String(failure.exitCode)}`}`;
 }
 
 function commandFor(definition) {

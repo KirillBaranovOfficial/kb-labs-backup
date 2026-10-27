@@ -3,18 +3,17 @@ import { readFileSync } from 'node:fs';
 import os from 'node:os';
 
 export const BUILD_MEMORY_BUDGET_FRACTION = 0.7;
-export const BUILD_TASK_MEMORY_RESERVE_BYTES = 2.5 * 1024 ** 3;
-const NODE_HEAP_BUDGET_FRACTION = 0.64;
-const MEBIBYTE = 1024 ** 2;
+// Largest observed task-process RSS in run 40424362740, read from the 30-second resource samples.
+export const CALIBRATED_TASK_FOOTPRINT_BYTES = 2_536_468_480;
 
-export function deriveBuildLimits({ cpuCount, memTotalBytes }) {
+export function deriveBuildLimits({ cpuCount, memTotalBytes, expectedTaskFootprintBytes = CALIBRATED_TASK_FOOTPRINT_BYTES }) {
   if (!Number.isSafeInteger(cpuCount) || cpuCount < 1) throw new Error('Runner CPU count must be a positive integer.');
   if (!Number.isSafeInteger(memTotalBytes) || memTotalBytes < 1) throw new Error('Runner MemTotal must be a positive integer.');
+  if (!Number.isSafeInteger(expectedTaskFootprintBytes) || expectedTaskFootprintBytes < 1) throw new Error('Expected task footprint must be a positive integer measured in bytes.');
   const memoryBudgetBytes = Math.floor(memTotalBytes * BUILD_MEMORY_BUDGET_FRACTION);
-  const memoryBoundConcurrency = Math.max(1, Math.floor(memoryBudgetBytes / BUILD_TASK_MEMORY_RESERVE_BYTES));
+  const memoryBoundConcurrency = Math.max(1, Math.floor(memoryBudgetBytes / expectedTaskFootprintBytes));
   const concurrency = Math.min(cpuCount, memoryBoundConcurrency);
-  const nodeHeapMb = Math.floor((memoryBudgetBytes / concurrency * NODE_HEAP_BUDGET_FRACTION) / MEBIBYTE);
-  return { cpuCount, memoryBudgetBytes, concurrency, nodeHeapMb };
+  return { cpuCount, memoryBudgetBytes, concurrency, expectedTaskFootprintBytes };
 }
 
 export function readRunnerMemTotalBytes() {
