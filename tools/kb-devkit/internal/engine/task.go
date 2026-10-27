@@ -8,6 +8,7 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/devkit/internal/config"
+	"github.com/kb-labs/devkit/internal/workspace"
 )
 
 // TaskDef is the resolved definition of one (package, task) pair.
@@ -63,4 +64,14 @@ func ResolveTaskDef(cfg *config.DevkitConfig, taskName, pkgCategory string) *Tas
 		Deps:    v.Deps,
 		Cache:   cacheVal,
 	}
+}
+
+// ResolvePackageTaskDef resolves a task for a package in the discovered
+// workspace. Aggregate packages never own task variants; their nested workspace
+// packages own the work.
+func ResolvePackageTaskDef(ws *workspace.Workspace, cfg *config.DevkitConfig, taskName string, pkg workspace.Package) *TaskDef {
+	if ws.IsAggregatePackage(pkg.Name) {
+		return nil
+	}
+	return ResolveTaskDef(cfg, taskName, pkg.Category)
 }

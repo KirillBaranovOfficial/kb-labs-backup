@@ -76,6 +76,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:infra/devkit
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:core/plugin-contracts
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2
@@ -5577,6 +5580,9 @@ importers:
         specifier: ^4.0.2
         version: 4.0.2
     devDependencies:
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../../core/plugin-contracts
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../../../core/plugin-runtime

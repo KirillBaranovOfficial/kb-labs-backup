@@ -330,7 +330,7 @@ describe('secured CLI auth ordering', () => {
     await mkdir(unregisteredProjectRoot, { recursive: true });
     const projectRegistry = createProjectRegistry({ root: path.join(isolatedHome, '.kb') });
     await projectRegistry.add(registeredProjectRoot);
-    const registeredRoots = new Set((await projectRegistry.list()).map(({ project }) => project.path));
+    const registeredRoots = new Set((await projectRegistry.list()).projects.map(({ project }) => project.path));
     mocks.loadPlatformConfiguration.mockImplementation(async (cwd: string) => ({
       platformConfig: {},
       rawConfig: { gateway: { access: { mode: 'secured' } } },

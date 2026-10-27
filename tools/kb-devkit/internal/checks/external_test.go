@@ -149,8 +149,7 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 		t.Fatalf("workspace check calls = %q, want one invocation", got)
 	}
 	var input struct {
-		GraphTasks []string `json:"graphTasks"`
-		Workspace  struct {
+		Workspace struct {
 			Root     string `json:"root"`
 			Packages []struct {
 				Name        string `json:"name"`
@@ -166,17 +165,14 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 	if input.Workspace.Root != root || len(input.Workspace.Packages) != 2 {
 		t.Fatalf("workspace input = %#v, want root and both discovered packages", input.Workspace)
 	}
-	if len(input.GraphTasks) != 2 || input.GraphTasks[0] != "build" || input.GraphTasks[1] != "verify" {
-		t.Fatalf("graph tasks = %#v, want sorted keys from DevkitConfig.Tasks", input.GraphTasks)
-	}
 	if input.Workspace.Packages[0].Category != "adapter" || input.Workspace.Packages[1].Category != "ts-lib" {
 		t.Fatalf("package categories = %#v, want resolved devkit categories", input.Workspace.Packages)
 	}
 	if input.Workspace.Packages[0].BuildTarget || input.Workspace.Packages[1].BuildTarget {
 		t.Fatalf("build targets = %#v, want false because config declares no build task", input.Workspace.Packages)
 	}
-	if result, ok := results["workspace"]; !ok || len(result.Issues) != 0 || result.ChecksRun != 1 {
-		t.Fatalf("clean workspace check result = %#v, want one successful anchored check", result)
+	if result, ok := results["workspace"]; !ok || len(result.Issues) != 0 || result.ChecksRun != 2 {
+		t.Fatalf("clean workspace check result = %#v, want the custom check and built-in task-ownership check", result)
 	}
 }
 

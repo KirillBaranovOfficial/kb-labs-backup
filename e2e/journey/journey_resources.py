@@ -36,6 +36,7 @@ CONFIG_JSONC_RESOURCE = RunnerImageResource(
 TOOLCHAIN_STAGE_NAME = "toolchain"
 TOOLCHAIN_IMAGE_REPOSITORY = "kb-journey-runner-toolchain"
 TOOLCHAIN_IMAGE_LABEL = "org.kb-labs.journey.runner-toolchain"
+TOOLCHAIN_IMAGE_BUILD_ARGUMENT = "KB_JOURNEY_TOOLCHAIN_IMAGE"
 TOOLCHAIN_DOCKERFILE = "e2e/journey/Dockerfile.runner"
 PLAYWRIGHT_VERSION_INPUT = ".journey/runner-inputs/studio-playwright-version"
 
@@ -329,12 +330,24 @@ def runner_toolchain_image(*, dockerfile: Path | None = None,
     return f"{TOOLCHAIN_IMAGE_REPOSITORY}:{digest}"
 
 
+def runner_toolchain_contract(*, dockerfile: Path | None = None,
+                              playwright_version_input: Path | None = None) -> dict[str, str]:
+    """Return the Dockerfile input and derived image used by the runner stage."""
+    return {
+        "dockerfile": TOOLCHAIN_DOCKERFILE,
+        "toolchainStage": TOOLCHAIN_STAGE_NAME,
+        "imageLabel": TOOLCHAIN_IMAGE_LABEL,
+        "imageArgument": TOOLCHAIN_IMAGE_BUILD_ARGUMENT,
+        "imageReference": runner_toolchain_image(dockerfile=dockerfile,
+                                                  playwright_version_input=playwright_version_input),
+    }
+
+
 def main() -> int:
     argv = sys.argv[1:]
     try:
-        if argv == ["--toolchain-image"]:
-            print(runner_toolchain_image())
-            print(TOOLCHAIN_IMAGE_LABEL)
+        if argv == ["--toolchain-contract"]:
+            print(json.dumps(runner_toolchain_contract()))
             return 0
         if argv:
             print(f"unknown journey_resources option: {' '.join(argv)}", file=sys.stderr)

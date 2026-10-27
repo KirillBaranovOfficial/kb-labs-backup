@@ -11,8 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import { createPluginsRoutes } from "../plugins-routes.js";
 import { MarketplaceClientError, type MarketplaceClient } from "../marketplace-client.js";
 

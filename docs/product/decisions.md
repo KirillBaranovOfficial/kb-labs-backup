@@ -153,16 +153,23 @@ once; in-flight legacy agents are not migrated. The old reap helper remains
 until the post-install inventory passes, then is removed because `kb-runner`
 owns process-tree cleanup. Case: S-237.18.
 
-### D42 — A run with no active resource-costed reservation may start despite low host availability
+### D42 — Host pressure admission follows level and cost class
 
 When no resource-costed run is active, admission does not wait on the memory
 or CPU quota or live available-memory check because no work under this
-admission system can release memory. The run still waits on elevated host
-pressure, and slots, gates, FIFO, and disk admission remain enforced. When
-another resource-costed run is active, memory/CPU quota and live available
-memory both gate admission. If live available memory cannot be read, quota
-admission remains authoritative and the resource notice reports the failed
-signal and OS reason. Cases: S-237.29, S-237.38, S-237.53.
+admission system can release memory. Host-pressure admission is level-aware:
+normal admits both cost classes, memory warn admits light work and holds heavy
+work, and critical pressure holds both. The governor retains its pressure
+hysteresis and light concurrency limits; held work reports the pressure sample,
+current level, and when that level began. An unknown sample preserves the last
+known level for two minutes; once that sample is stale, the effective level is
+unknown, which admits light work and holds heavy work until a known sample
+updates the state. A held unknown-pressure run reports when pressure became
+unknown. Slots, gates, FIFO, and disk admission remain enforced. When another
+resource-costed run is active, memory/CPU quota and live available memory both
+gate admission. If live available memory cannot be read, quota admission remains
+authoritative and the resource notice reports the failed signal and OS reason.
+Cases: S-237.29, S-237.38, S-237.53, S-237.74.
 
 ### D43 — kb-runner cleanup protects against accidents, not deliberate same-user races
 
@@ -479,7 +486,7 @@ A CORS preflight (`OPTIONS` with `Access-Control-Request-Method`) receives only 
 
 Owner intent (2026-10-02): “главное сделать платформенно (чтобы все подключенные плагины сразу получали защиту от доступа) без необходимости добавлять что-то в потребитель. по сути для разных точек разная защита — CLI - общая обертка над всеми командами (до вызова команды идет проверка авторизация и только после доступ), gateway - тоже все запросы не публичные перехватывает и отдает ошибку до того как запрос дойдет до сервисов. ну и MCP аналогично”
 
-Cases: S-007.4, S-041.7 to S-041.13, S-045.5, S-104, S-140.6.
+Cases: S-007.4, S-041.7 to S-041.10, S-041.12, S-255.7 to S-255.10, S-045.5, S-104, S-140.6.
 
 ### Bind persistent built-in adapters on every fresh install
 
@@ -493,7 +500,7 @@ select it through `defaultFor: { llm: ["llm"] }` without writing an explicit
 to package entry-point path segments; an empty array selects the package root.
 With `OPENAI_API_KEY` unset, adapter list and doctor report the missing
 credential as a warning; an LLM request returns the typed credentials error.
-Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11.
+Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11, S-272.1.
 
 ### 2026-10-01: Explicit token kinds and lifecycle contract changes
 

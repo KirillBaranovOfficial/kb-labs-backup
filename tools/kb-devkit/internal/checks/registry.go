@@ -1,7 +1,6 @@
 package checks
 
 import (
-	"sort"
 	"time"
 
 	"github.com/kb-labs/devkit/internal/config"
@@ -40,6 +39,7 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 	if cfg == nil {
 		return r
 	}
+	r.Register(&aggregateTaskOwnerRule{cfg: cfg})
 	for _, c := range cfg.Custom {
 		if !matchesPhase(c, phase) {
 			continue
@@ -58,20 +58,10 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 			scope:         c.Scope,
 			workspaceRoot: workspaceRoot,
 			checkConfig:   packCfg,
-			graphTasks:    graphTaskNames(cfg.Tasks),
 			timeout:       time.Duration(cfg.Checks.TimeoutMS) * time.Millisecond,
 		})
 	}
 	return r
-}
-
-func graphTaskNames(tasks map[string]config.TaskConfig) []string {
-	names := make([]string, 0, len(tasks))
-	for name := range tasks {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // Register adds a custom rule to the registry.
@@ -83,12 +73,12 @@ func (r *Registry) Register(rule Rule) {
 func (r *Registry) RulesFor(preset config.Preset) []Rule {
 	var result []Rule
 	for _, rule := range r.rules {
-		if external, ok := rule.(*externalRule); ok {
-			if external.scope == "workspace" {
+		if scoped, ok := rule.(interface{ Scope() string }); ok {
+			if scoped.Scope() == "workspace" {
 				result = append(result, rule)
 				continue
 			}
-			if matchesLanguage(config.CustomCheck{Language: external.language}, preset.Language) {
+			if external, ok := rule.(*externalRule); ok && matchesLanguage(config.CustomCheck{Language: external.language}, preset.Language) {
 				result = append(result, rule)
 			}
 			continue

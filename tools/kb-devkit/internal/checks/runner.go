@@ -49,9 +49,11 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 	workspaceIssues := make([]Issue, 0)
 	workspaceRules := registry.WorkspaceRules(only)
 	for _, rule := range workspaceRules {
-		external := rule.(*externalRule)
+		workspaceRule := rule.(interface {
+			CheckWorkspace(*workspace.Workspace) []Issue
+		})
 		workspaceIssues = append(workspaceIssues, runRule(rule, workspace.Package{Name: "workspace"}, progress, func() []Issue {
-			return external.CheckWorkspace(ws)
+			return workspaceRule.CheckWorkspace(ws)
 		})...)
 	}
 	if len(workspaceRules) > 0 {

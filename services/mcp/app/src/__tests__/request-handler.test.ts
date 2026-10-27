@@ -154,7 +154,7 @@ describe('resolveVisibleTools', () => {
       permits: allow, authHeader: null, cacheScope: '/projects/b', registry: projectB, cache,
     });
     expect(toolsA.map((item) => item.name)).toEqual(['mind__workflow_run']);
-    expect(toolsB.map((item) => item.name)).toEqual(['mind__commit_apply']);
+    expect(toolsB.map((item) => item.name)).toEqual(['mind__commit_plan_apply']);
     expect(projectB.snapshot).toHaveBeenCalledOnce();
   });
 
@@ -347,7 +347,7 @@ describe('executeToolCall', () => {
     );
   });
 
-  // case: S-041.11
+  // case: S-255.7
   it('returns catalog auth envelopes for unauthenticated and forbidden tool calls', async () => {
     const unauthenticated = await executeToolCall({
       name: 'plugin__command', args: {}, visibleTools: [], permits: null, tenantId: 'tenant',

@@ -373,13 +373,11 @@ presets:
       check_circular: true
 
   # Next.js/Nuxt apps and their utility packages.
-  # Only 'build' is universally required — apps have 'dev', utility packages don't.
+  # Site roots can aggregate app packages; each app package owns its lifecycle scripts.
   site:
     extends: backend-construction-boundary
     language: typescript
     package_json:
-      required_scripts:
-        - build
       required_fields:
         - name
         - version
@@ -612,22 +610,6 @@ tasks:
         - "kb-monitor"
         - "kb-runner"
 
-    - categories: [site]
-      command: pnpm run build
-      inputs:
-        - "app/**"
-        - "components/**"
-        - "messages/**"
-        - "public/**"
-        - "next.config.*"
-        - "tailwind.config.*"
-        - "package.json"
-        - "^dist/**"
-      outputs:
-        - ".next/**"
-      deps:
-        - "^build"   # wait for ts-lib deps (e.g. @kb-labs/sdk)
-
     - categories: [site-pkg]
       command: pnpm run build
       inputs:
@@ -655,15 +637,6 @@ tasks:
         - "go.mod"
       outputs: []
 
-    - categories: [site]
-      command: pnpm run lint
-      inputs:
-        - "app/**"
-        - "components/**"
-        - "eslint.config.*"
-        - "package.json"
-      outputs: []
-
     - categories: [site-pkg]
       command: eslint --no-error-on-unmatched-pattern src/
       inputs:
@@ -681,18 +654,6 @@ tasks:
       outputs: []
       deps:
         - "^build"   # needs deps' dist/**/*.d.ts
-
-    - categories: [site]
-      command: pnpm run typecheck
-      inputs:
-        - "app/**"
-        - "components/**"
-        - "tsconfig*.json"
-        - "package.json"
-        - "^dist/**/*.d.ts"   # dep type declarations affect type resolution
-      outputs: []
-      deps:
-        - "^build"
 
     - categories: [site-pkg]
       command: tsc --noEmit
@@ -861,11 +822,6 @@ custom_checks:
     on: [check]
     scope: workspace
 
-  - name: plugin-entry-structure
-    run: node infra/devkit/bin/devkit-check-plugins.mjs --ci 1>&2
-    on: [check]
-    scope: workspace
-
   - name: local-workflow-script-references
     run: node .kb/workflows/scripts/check-local-script-references.mjs 1>&2
     on: [check]
@@ -961,6 +917,12 @@ custom_checks:
 
   - name: plugin-package-exports
     run: node scripts/checks/check-plugin-package-exports.mjs
+    on: [check]
+    scope: package
+    categories: [plugin-entry]
+
+  - name: plugin-dts-policy
+    run: node scripts/checks/check-plugin-dts-policy.mjs
     on: [check]
     scope: package
     categories: [plugin-entry]

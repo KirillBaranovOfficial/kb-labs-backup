@@ -58,6 +58,23 @@ type fakeHostResourceSource struct{ sample HostResourceSnapshot }
 
 func (source fakeHostResourceSource) Snapshot() HostResourceSnapshot { return source.sample }
 
+type sequenceHostResourceSource struct {
+	mu        sync.Mutex
+	samples   []HostResourceSnapshot
+	snapshots int
+}
+
+func (source *sequenceHostResourceSource) Snapshot() HostResourceSnapshot {
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	index := source.snapshots
+	source.snapshots++
+	if index >= len(source.samples) {
+		index = len(source.samples) - 1
+	}
+	return source.samples[index]
+}
+
 type mutableHostResourceSource struct {
 	mu     sync.RWMutex
 	sample HostResourceSnapshot
@@ -197,7 +214,7 @@ func TestSecondHeavyAdmissionWaitsWithVisibleHostPressureReason(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if waiting.Status != StatusBlocked || !strings.Contains(waiting.WaitReason, "host pressure") {
+	if waiting.Status != StatusBlocked || !strings.Contains(waiting.WaitReason, "waiting for memory pressure") {
 		cancel()
 		<-result
 		t.Fatalf("second heavy run did not expose pressure wait: %+v, err=%v", waiting, err)
@@ -207,7 +224,7 @@ func TestSecondHeavyAdmissionWaitsWithVisibleHostPressureReason(t *testing.T) {
 		t.Fatal("cancelled pressure wait returned success")
 	}
 	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
-	if err != nil || !strings.Contains(string(data), `"type":"blocked"`) || !strings.Contains(string(data), `"reason":"host pressure`) {
+	if err != nil || !strings.Contains(string(data), `"type":"blocked"`) || !strings.Contains(string(data), `"reason":"waiting for memory pressure`) {
 		t.Fatalf("pressure wait event missing reason: %s err=%v", data, err)
 	}
 }
@@ -402,7 +419,7 @@ func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T
 		if err := SetQuota(state, "50B", "1", "0"); err != nil {
 			t.Fatal(err)
 		}
-		return Config{StateDir: state, Tag: "alone", Command: []string{"/bin/true"}, MemoryBytes: 200, CPUsMin: 2, CPUsMax: 2}
+		return Config{StateDir: state, Tag: "alone", Command: []string{"/bin/true"}, CostClass: CostHeavy, MemoryBytes: 200, CPUsMin: 2, CPUsMax: 2}
 	}
 
 	t.Run("normal pressure admits despite quota and live-memory shortfall", func(t *testing.T) {
@@ -431,9 +448,9 @@ func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T
 		done := make(chan error, 1)
 		go func() { done <- reserveAdmission(ctx, cfg, "alone-elevated", os.Getpid(), identity, source) }()
 		blocked := waitForAdmissionRecord(t, state, "alone-elevated", func(rec record) bool {
-			return rec.Status == StatusBlocked && strings.HasPrefix(rec.WaitReason, "host pressure (")
+			return rec.Status == StatusBlocked && strings.Contains(rec.WaitReason, "waiting for memory pressure")
 		})
-		if blocked.WaitReason != "host pressure (memory warn)" {
+		if !strings.Contains(blocked.WaitReason, "drop below warn") || !strings.Contains(blocked.WaitReason, "current: warn since") {
 			t.Fatalf("elevated-pressure wait = %q", blocked.WaitReason)
 		}
 		source.set(normal)
@@ -443,7 +460,7 @@ func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T
 		case <-time.After(300 * time.Millisecond):
 		}
 		duringHold, err := readAdmissionRecord(state, "alone-elevated")
-		if err != nil || duringHold.Status != StatusBlocked || !strings.HasPrefix(duringHold.WaitReason, "host pressure") {
+		if err != nil || duringHold.Status != StatusBlocked || !strings.Contains(duringHold.WaitReason, "hysteresis current: warn since") {
 			t.Fatalf("normal-pressure hold record = %+v, err=%v", duringHold, err)
 		}
 		select {
@@ -719,17 +736,30 @@ func TestAdmissionPressureTransitionWritesEvent(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	candidate := record{RunID: "candidate", QueueOrder: 1, CostClass: CostHeavy}
+	baseline := fakeHostResourceSource{sample: HostResourceSnapshot{PhysicalMemory: 100, AvailableMemory: 80, MemoryAvailableKnown: true, LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}}
 	source := fakeHostResourceSource{sample: HostResourceSnapshot{PhysicalMemory: 100, AvailableMemory: 50, MemoryAvailableKnown: true, LogicalCPUs: 4, Pressure: "memory warn", PressureAvailable: true, LoadAvailable: true}}
 	var decision admissionDecision
+	if err := withStateLock(state, func() error {
+		if _, err := admissionStateLocked(state, candidate, baseline); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := countResourceEvents(t, state, EventPressure); got != 0 {
+		t.Fatalf("initial normal pressure sample emitted %d transition event(s), want 0", got)
+	}
 	err := withStateLock(state, func() error {
-		var err error
-		decision, err = admissionStateLocked(state, record{RunID: "candidate", QueueOrder: 1}, source)
-		return err
+		var decisionErr error
+		decision, decisionErr = admissionStateLocked(state, candidate, source)
+		return decisionErr
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Status != StatusBlocked || decision.Reason != "host pressure (memory warn)" {
+	if decision.Status != StatusBlocked || !strings.Contains(decision.Reason, "waiting for memory pressure") {
 		t.Fatalf("admission = %+v", decision)
 	}
 	if countResourceEvents(t, state, EventPressure) != 1 {
@@ -742,10 +772,20 @@ func TestConcurrentAdmissionObserversEmitOnePressureTransition(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	baseline := fakeHostResourceSource{sample: HostResourceSnapshot{
+		PhysicalMemory: 100, AvailableMemory: 80, MemoryAvailableKnown: true,
+		LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true,
+	}}
 	source := fakeHostResourceSource{sample: HostResourceSnapshot{
 		PhysicalMemory: 100, AvailableMemory: 50, MemoryAvailableKnown: true,
 		LogicalCPUs: 4, Pressure: "memory warn", PressureAvailable: true, LoadAvailable: true,
 	}}
+	if _, err := admissionStateLocked(state, record{RunID: "candidate", QueueOrder: 1, CostClass: CostHeavy}, baseline); err != nil {
+		t.Fatal(err)
+	}
+	if got := countResourceEvents(t, state, EventPressure); got != 0 {
+		t.Fatalf("initial normal pressure sample emitted %d transition event(s), want 0", got)
+	}
 	const observers = 8
 	start := make(chan struct{})
 	errs := make(chan error, observers)
@@ -790,6 +830,344 @@ func TestAdmissionResumesAfterNormalPressureHoldAndEmitsTransition(t *testing.T)
 	}
 	if countResourceEvents(t, state, EventPressure) != 1 {
 		t.Fatal("normal pressure transition event missing")
+	}
+}
+
+// case: S-237.74
+func TestAdmissionUsesPressureLevelAndCostClass(t *testing.T) {
+	state := t.TempDir()
+	cases := []struct {
+		name     string
+		pressure string
+		class    CostClass
+		status   RunStatus
+	}{
+		{name: "normal light", pressure: "normal", class: CostLight, status: StatusStarting},
+		{name: "normal heavy", pressure: "normal", class: CostHeavy, status: StatusStarting},
+		{name: "warn light", pressure: "memory warn", class: CostLight, status: StatusStarting},
+		{name: "warn heavy", pressure: "memory warn", class: CostHeavy, status: StatusBlocked},
+		{name: "critical light", pressure: "memory critical", class: CostLight, status: StatusBlocked},
+		{name: "critical heavy", pressure: "memory critical", class: CostHeavy, status: StatusBlocked},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			classState := filepath.Join(state, strings.ReplaceAll(test.name, " ", "-"))
+			if err := os.MkdirAll(classState, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			sample := HostResourceSnapshot{Pressure: test.pressure, PressureAvailable: true, LoadAvailable: true}
+			decision, err := admissionStateLocked(classState, record{RunID: "candidate", QueueOrder: 1, CostClass: test.class}, fakeHostResourceSource{sample: sample})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision.Status != test.status {
+				t.Fatalf("admission at %s for %s = %+v, want %s", test.pressure, test.class, decision, test.status)
+			}
+		})
+	}
+}
+
+// case: S-237.74
+func TestInitialPressureSampleEstablishesBaselineWithoutTransitionEvent(t *testing.T) {
+	normal := HostResourceSnapshot{Pressure: "normal", PressureAvailable: true, LoadAvailable: true}
+	critical := HostResourceSnapshot{Pressure: "memory critical", PressureAvailable: true, LoadAvailable: true}
+	for _, test := range []struct {
+		name          string
+		initial       HostResourceSnapshot
+		candidateCost CostClass
+		next          HostResourceSnapshot
+	}{
+		{name: "normal baseline", initial: normal, candidateCost: CostLight, next: critical},
+		{name: "unknown baseline", initial: HostResourceSnapshot{}, candidateCost: CostHeavy, next: normal},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := t.TempDir()
+			candidate := record{RunID: "candidate", QueueOrder: 1, CostClass: test.candidateCost}
+			if _, err := admissionStateLocked(state, candidate, fakeHostResourceSource{sample: test.initial}); err != nil {
+				t.Fatal(err)
+			}
+			if got := countResourceEvents(t, state, EventPressure); got != 0 {
+				t.Fatalf("initial pressure sample emitted %d transition event(s), want 0", got)
+			}
+			if _, err := admissionStateLocked(state, candidate, fakeHostResourceSource{sample: test.next}); err != nil {
+				t.Fatal(err)
+			}
+			if got := countResourceEvents(t, state, EventPressure); got != 1 {
+				t.Fatalf("actual pressure-level change emitted %d transition event(s), want 1", got)
+			}
+		})
+	}
+}
+
+// case: S-237.74
+func TestUnknownPressurePreservesFreshStateAndBoundsStaleness(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		age        time.Duration
+		level      pressureLevel
+		class      CostClass
+		wantStatus RunStatus
+		wantReason string
+	}{
+		{name: "fresh critical holds heavy", age: time.Minute, level: pressureCritical, class: CostHeavy, wantStatus: StatusBlocked, wantReason: "last known critical sample"},
+		{name: "fresh warn holds heavy", age: time.Minute, level: pressureWarn, class: CostHeavy, wantStatus: StatusBlocked, wantReason: "last known warn sample"},
+		{name: "stale unknown holds heavy", age: 2*time.Minute + time.Second, level: pressureCritical, class: CostHeavy, wantStatus: StatusBlocked, wantReason: "pressure unknown since"},
+		{name: "stale unknown admits light", age: 2*time.Minute + time.Second, level: pressureCritical, class: CostLight, wantStatus: StatusStarting},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := t.TempDir()
+			lastKnownAt := time.Now().UTC().Add(-test.age)
+			persisted := pressureState{
+				Level:       string(test.level),
+				LevelClass:  test.level,
+				LevelSince:  lastKnownAt.Add(-time.Minute),
+				LastKnownAt: lastKnownAt,
+				ElevatedAt:  lastKnownAt,
+			}
+			data, err := json.Marshal(persisted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(state, "pressure-state.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			decision, err := admissionStateLocked(state, record{RunID: "candidate", QueueOrder: 1, CostClass: test.class}, fakeHostResourceSource{sample: HostResourceSnapshot{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision.Status != test.wantStatus || (test.wantReason != "" && !strings.Contains(decision.Reason, test.wantReason)) {
+				t.Fatalf("unknown pressure at age %s for %s = %+v, want status %s and reason containing %q", test.age, test.class, decision, test.wantStatus, test.wantReason)
+			}
+			if test.name == "stale unknown holds heavy" {
+				normal := HostResourceSnapshot{Pressure: "normal", PressureAvailable: true, LoadAvailable: true}
+				decision, err = admissionStateLocked(state, record{RunID: "candidate", QueueOrder: 1, CostClass: CostHeavy}, fakeHostResourceSource{sample: normal})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if decision.Status != StatusBlocked || !strings.Contains(decision.Reason, "hysteresis current: critical") {
+					t.Fatalf("known normal sample cleared persisted critical before hysteresis: %+v", decision)
+				}
+			}
+		})
+	}
+}
+
+// case: S-237.74
+func TestUnknownPressureWaitIsVisibleInRecordAndEvent(t *testing.T) {
+	state := t.TempDir()
+	lastKnownAt := time.Now().UTC().Add(-pressureStateStalenessBound - time.Second)
+	persisted, err := json.Marshal(pressureState{
+		Level: "host pressure (memory critical)", LevelClass: pressureCritical,
+		LevelSince: lastKnownAt.Add(-time.Minute), LastKnownAt: lastKnownAt, ElevatedAt: lastKnownAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "pressure-state.json"), persisted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identity, alive, err := ProcessIdentity(os.Getpid())
+	if err != nil || !alive {
+		t.Fatalf("inspect test process: alive=%t err=%v", alive, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		result <- reserveAdmission(ctx, Config{StateDir: state, Tag: "unknown-pressure", Command: []string{"/bin/true"}, CostClass: CostHeavy}, "unknown-pressure", os.Getpid(), identity, fakeHostResourceSource{sample: HostResourceSnapshot{}})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-finished
+	})
+	blocked := waitForAdmissionRecord(t, state, "unknown-pressure", func(rec record) bool { return rec.Status == StatusBlocked })
+	wantWait := pressureAdmissionWait(pressureUnknown, lastKnownAt.Add(pressureStateStalenessBound), false)
+	if blocked.WaitReason != wantWait {
+		cancel()
+		<-result
+		t.Fatalf("unknown pressure wait = %q, want %q", blocked.WaitReason, wantWait)
+	}
+	listing := List(state)
+	if listing.Error != nil {
+		cancel()
+		<-result
+		t.Fatalf("list unknown-pressure run: %v", listing.Error)
+	}
+	listed := false
+	for _, run := range listing.Runs {
+		if run.RunID == "unknown-pressure" && run.WaitReason == wantWait {
+			listed = true
+			break
+		}
+	}
+	if !listed {
+		cancel()
+		<-result
+		t.Fatalf("ps listing did not show unknown-pressure wait %q: %+v", wantWait, listing.Runs)
+	}
+
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		cancel()
+		<-result
+		t.Fatal(err)
+	}
+	var blockedEvent *Event
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var event Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			cancel()
+			<-result
+			t.Fatal(err)
+		}
+		if event.Type == EventBlocked {
+			blockedEvent = &event
+			break
+		}
+	}
+	if blockedEvent == nil || blockedEvent.Reason != wantWait || blockedEvent.Pressure.PressureAvailable || blockedEvent.Pressure.LoadAvailable || blockedEvent.Pressure.MemoryAvailableKnown {
+		cancel()
+		<-result
+		t.Fatalf("blocked event did not report unknown pressure sample and wait: %+v", blockedEvent)
+	}
+	cancel()
+	if err := <-result; err == nil {
+		t.Fatal("cancelled unknown-pressure admission returned success")
+	}
+}
+
+// case: S-237.74
+func TestInitialQueuedEventUsesFirstAdmissionSample(t *testing.T) {
+	state := t.TempDir()
+	identity, alive, err := ProcessIdentity(os.Getpid())
+	if err != nil || !alive {
+		t.Fatalf("inspect test process: alive=%t err=%v", alive, err)
+	}
+	normal := HostResourceSnapshot{PhysicalMemory: 1 << 30, AvailableMemory: 1 << 29, MemoryAvailableKnown: true,
+		Pressure: "normal", PressureAvailable: true, LoadAvailable: true, LogicalCPUs: 4}
+	warn := normal
+	warn.Pressure = "memory warn"
+	source := &sequenceHostResourceSource{samples: []HostResourceSnapshot{normal, warn}}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	finished := make(chan struct{})
+	defer func() {
+		cancel()
+		<-finished
+	}()
+	result := make(chan error, 1)
+	go func() {
+		defer close(finished)
+		result <- reserveAdmission(ctx, Config{StateDir: state, Tag: "sampled", Command: []string{"/bin/true"}, CostClass: CostHeavy}, "sampled", os.Getpid(), identity, source)
+	}()
+	decision := waitForAdmissionRecord(t, state, "sampled", func(rec record) bool {
+		return rec.Status == StatusStarting || rec.Status == StatusBlocked
+	})
+	if decision.Status != StatusStarting {
+		cancel()
+		<-result
+		t.Fatalf("first admission used a later pressure sample: status=%s reason=%q", decision.Status, decision.WaitReason)
+	}
+	if err := <-result; err != nil {
+		t.Fatalf("admission using first pressure sample: %v", err)
+	}
+	cleanupAdmission(state, "sampled", "test complete")
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queued *Event
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var event Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == EventQueued {
+			queued = &event
+			break
+		}
+	}
+	if queued == nil {
+		t.Fatal("initial queued event was not recorded")
+	}
+	gotSample, err := json.Marshal(queued.Pressure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSample, err := json.Marshal(normal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotSample, wantSample) {
+		t.Fatalf("initial queued event pressure = %s, want first decision sample %s", gotSample, wantSample)
+	}
+	source.mu.Lock()
+	snapshotCount := source.snapshots
+	source.mu.Unlock()
+	if snapshotCount < 2 {
+		t.Fatalf("test source returned only %d sample(s); consecutive samples were not distinguishable", snapshotCount)
+	}
+}
+
+// case: S-237.74
+func TestBlockedPressureEventKeepsDecisionSampleAndWaitCondition(t *testing.T) {
+	state := t.TempDir()
+	identity, alive, err := ProcessIdentity(os.Getpid())
+	if err != nil || !alive {
+		t.Fatalf("inspect test process: alive=%t err=%v", alive, err)
+	}
+	sample := HostResourceSnapshot{PhysicalMemory: 1 << 30, AvailableMemory: 1 << 29, MemoryAvailableKnown: true,
+		Pressure: "memory warn", PressureAvailable: true, LoadAvailable: true, LogicalCPUs: 4, SwapUsedBytes: 1234}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- reserveAdmission(ctx, Config{StateDir: state, Tag: "waiter", Command: []string{"/bin/true"}, CostClass: CostHeavy}, "waiter", os.Getpid(), identity, fakeHostResourceSource{sample: sample})
+	}()
+	blocked := waitForAdmissionRecord(t, state, "waiter", func(rec record) bool { return rec.Status == StatusBlocked })
+	if !strings.Contains(blocked.WaitReason, "drop below warn") || !strings.Contains(blocked.WaitReason, "current: warn since") {
+		cancel()
+		<-result
+		t.Fatalf("pressure wait lacks its condition and age: %q", blocked.WaitReason)
+	}
+	listing := List(state)
+	if listing.Error != nil {
+		cancel()
+		<-result
+		t.Fatalf("list held run: %v", listing.Error)
+	}
+	var listedWait string
+	for _, run := range listing.Runs {
+		if run.RunID == "waiter" {
+			listedWait = run.WaitReason
+		}
+	}
+	if listedWait != blocked.WaitReason {
+		cancel()
+		<-result
+		t.Fatalf("ps wait reason = %q, persisted decision = %q", listedWait, blocked.WaitReason)
+	}
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []Event
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var event Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == EventBlocked {
+			events = append(events, event)
+		}
+	}
+	if len(events) != 1 || (events[0].Pressure.Pressure != sample.Pressure || events[0].Pressure.SwapUsedBytes != sample.SwapUsedBytes || !events[0].Pressure.MemoryAvailableKnown) || !strings.Contains(events[0].Reason, "current: warn since") {
+		cancel()
+		<-result
+		t.Fatalf("blocked pressure event does not describe the decision sample and wait: %+v", events)
+	}
+	cancel()
+	if err := <-result; err == nil {
+		t.Fatal("cancelled pressure admission returned success")
 	}
 }
 

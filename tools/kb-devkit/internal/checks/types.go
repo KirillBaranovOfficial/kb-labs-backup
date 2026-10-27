@@ -35,6 +35,8 @@ type Issue struct {
 	CheckFailure      bool       `json:"checkFailure,omitempty"`
 	Cause             string     `json:"cause,omitempty"`
 	FailureDiagnostic *diag.Diag `json:"-"`
+	FailureExitCode   int        `json:"-"`
+	FailureStderrTail string     `json:"-"`
 }
 
 // Rule is the interface every checker must implement.

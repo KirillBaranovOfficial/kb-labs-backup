@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseNodeEnginePolicy } from '../../../core/plugin-runtime/src/platform-resolve/node-engine.mjs';
+import { parseNodeEnginePolicy } from '@kb-labs/plugin-contracts/node-engine-policy';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rootArgument = process.argv.indexOf('--root');

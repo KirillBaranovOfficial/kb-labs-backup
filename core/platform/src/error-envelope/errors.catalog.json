@@ -629,8 +629,8 @@
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "Workspace check {check} could not complete.",
-      "hint": "Rerun this check alone with `kb-devkit check --only {check}`, then correct the check's execution problem.",
+      "message": "Workspace check {check} exited with status {exitCode}. Stderr tail: {stderrTail}",
+      "hint": "Rerun the check with `{nextCommand}`.",
       "httpStatus": 500
     },
     {
@@ -672,6 +672,46 @@
         "package"
       ],
       "httpStatus": 500
+    },
+    {
+      "code": "KB_DEVKIT_RUN_INCOMPLETE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The workspace task run could not classify every scheduled task.",
+      "hint": "Inspect the listed package manifests for a workspace dependency cycle, correct it, then rerun `kb-devkit run {task}`.",
+      "structuredDetailFields": ["unaccountedTasks"],
+      "requiredStructuredDetailFields": ["unaccountedTasks"],
+      "structuredDetailSchemas": {
+        "unaccountedTasks": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_DEVKIT_TASK_GRAPH_CYCLE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "The workspace task graph contains a cycle: {cycle}.",
+      "hint": "Correct one of the listed dependency edges, then rerun `kb-devkit run {task}`.",
+      "templateParameters": ["cycle", "task"],
+      "requiredTemplateParameters": ["cycle", "task"],
+      "structuredDetailFields": ["dependencyEdges"],
+      "requiredStructuredDetailFields": ["dependencyEdges"],
+      "structuredDetailSchemas": {
+        "dependencyEdges": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "httpStatus": 400
     },
     {
       "code": "KB_DEVKIT_STANDARDS_VIOLATIONS",
