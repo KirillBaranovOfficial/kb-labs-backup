@@ -3,6 +3,7 @@ import { createServer } from '@kb-labs/marketplace-api';
 import { MarketplaceService } from '@kb-labs/marketplace-core';
 
 const root = process.argv[2];
+const requestRecorder = process.argv[3] === '--request-recorder';
 if (!root) {
   throw new Error('Marketplace sync fixture requires the workspace root');
 }
@@ -30,6 +31,16 @@ const service = new MarketplaceService({
   logger,
 });
 const server = await createServer({ service, logger });
+let marketplaceRequestCount = 0;
+server.addHook('onRequest', async (request, reply) => {
+  if (request.url.startsWith('/api/v1/marketplace/')) {
+    marketplaceRequestCount++;
+    if (requestRecorder) {
+      return reply.code(204).send();
+    }
+  }
+});
+server.get('/__journey/request-count', async () => ({ count: marketplaceRequestCount }));
 await server.listen({ host: '127.0.0.1', port: 0 });
 const address = server.server.address();
 if (address === null || typeof address === 'string') {

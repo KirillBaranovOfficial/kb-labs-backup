@@ -3,12 +3,19 @@ import os
 import subprocess
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
 from plugin_author_steps import run_commit_case_steps, run_plugin_author_flow
 from service_steps import Journey
+from invocations import open_http
+from marketplace_sync_fixture import (
+    marketplace_sync_request_count,
+    start_marketplace_sync_fixture,
+    stop_marketplace_sync_fixture,
+)
 
 
 FAKE_KB = r'''#!/usr/bin/env python3
@@ -38,10 +45,24 @@ if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and
         "const { greeting } = hello({ who: input.flags.who ?? 'World' });\n")
     core.write_text('return { greeting: `Hello, ${who} from demo!` };\n')
 elif args[:3] == ["marketplace", "plugins", "add"]:
+    link_path = args[args.index("--link") + 1]
+    if link_path.startswith("/"):
+        request_log = os.environ.get("FAKE_MARKETPLACE_URL_LOG")
+        if request_log:
+            Path(request_log).write_text(os.environ.get("KB_MARKETPLACE_URL", ""), encoding="utf-8")
+        print(json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_INPUT_INVALID",
+            "message": "The --link path must be relative to the selected scope directory."}}))
+        raise SystemExit(1)
+    if os.environ.get("KB_MARKETPLACE_URL"):
+        import urllib.request
+        request = urllib.request.Request(
+            os.environ["KB_MARKETPLACE_URL"].rstrip("/") + "/api/v1/marketplace/packages/link",
+            data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=10):
+            pass
     if os.environ.get("FAIL_MARKETPLACE_ADD"):
         print("simulated marketplace plugins add failure")
         raise SystemExit(1)
-    link_path = args[args.index("--link") + 1]
     if not (root / link_path / "package.json").is_file():
         raise SystemExit("plugin package is missing")
     manifest = json.loads((root / link_path / "manifest.json").read_text())
@@ -56,6 +77,17 @@ elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
     print(json.dumps({"ok": True, "data": {"entries": entries, "total": len(entries)}}))
     if os.environ.get("FAKE_DISCOVERY_WARNING"):
         print("[discover] non-blocking diagnostic", file=sys.stderr)
+elif args[:4] == ["workflow", "defs", "list", "--json"]:
+    print(json.dumps({"ok": True, "data": {"defs": []}}))
+elif args[:2] == ["docs", "generate-cli-reference"]:
+    if not (root / ".kb/kb.config.json").is_file():
+        print(json.dumps({"ok": False, "error": {"code": "KB_PROJECT_UNKNOWN",
+            "message": "The current directory is not a registered project."}}))
+        raise SystemExit(1)
+    output = Path(args[args.index("--output") + 1])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("# KB Labs CLI Reference\n", encoding="utf-8")
+    print(f"CLI reference generated: {output}")
 elif args[:3] == ["marketplace", "plugins", "remove"]:
     lock = json.loads(lock_path.read_text())
     lock["plugins"].pop(args[3], None)
@@ -186,6 +218,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             "HOME": str(self.home),
             "PATH": f"{self.bin}:{self.env.get('PATH', '')}",
             "FAKE_JOURNEY_LOG": str(self.log),
+            "FAKE_MARKETPLACE_URL_LOG": str(self.root / "marketplace-url.log"),
         })
 
     def tearDown(self):
@@ -198,6 +231,22 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         run_plugin_author_flow(journey, self.project, self.kb, "http://verdaccio:4873",
                                command_runner=subprocess.run, base_env=self.env)
         return journey.result()
+
+    def test_marketplace_sync_fixture_records_marketplace_requests(self):
+        process, marketplace_url, startup_error = start_marketplace_sync_fixture(
+            self.project, self.env, request_recorder=True)
+        self.assertIsNone(startup_error, startup_error)
+        self.assertIsNotNone(process)
+        self.assertIsNotNone(marketplace_url)
+        self.addCleanup(stop_marketplace_sync_fixture, process)
+
+        request = urllib.request.Request(
+            f"{marketplace_url}/api/v1/marketplace/packages/link",
+            data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        status, _, _ = open_http(urllib.request.urlopen, request, timeout=10, env=self.env)
+        self.assertEqual(status, 204)
+
+        self.assertEqual(marketplace_sync_request_count(marketplace_url, self.env), 1)
 
     # case: S-014.1
     def test_commit_and_review_case_steps_are_claimed_from_fake_cli_responses(self):
@@ -280,6 +329,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.steps[0]["status"], "PASS", result.steps)
 
     # case: S-003.1
+    # case: S-003.7, S-003.8, S-041.10
     # case: S-210.1
     def test_scaffold_add_edit_invoke_and_remove_records_all_case_steps(self):
         result = self.run_flow()
@@ -287,30 +337,42 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.status, "PASS")
         self.assertEqual(
             [step["cases"] for step in result.steps],
-            [["S-003.1"], ["S-003.2"], ["S-003.3"], ["S-003.4", "S-210.1"],
-             ["S-003.5"], ["S-003.6"]],
+            [["S-003.1"], ["S-003.2"], ["S-003.3"], ["S-041.10"], ["S-003.7"],
+             ["S-003.8"], ["S-003.4", "S-210.1"], ["S-003.5"], ["S-003.6"]],
         )
+        claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
+        self.assertEqual({case_id: claims[case_id] for case_id in
+                          ("S-003.7", "S-003.8", "S-041.10")},
+                         {"S-003.7": "PASS", "S-003.8": "PASS", "S-041.10": "PASS"})
         self.assertEqual(
-            result.case_run["claims"],
-            [{"claimId": f"S-003.{step}", "kind": "journey", "status": "PASS"}
-             for step in range(1, 7)] +
-            [{"claimId": "S-210.1", "kind": "journey", "status": "PASS"}],
+            {claim["claimId"]: (claim["kind"], claim["status"])
+             for claim in result.case_run["claims"]},
+            {f"S-003.{step}": ("journey", "PASS") for step in range(1, 9)}
+            | {"S-041.10": ("journey", "PASS"), "S-210.1": ("journey", "PASS")},
         )
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
+        marketplace_url = (self.root / "marketplace-url.log").read_text(encoding="utf-8")
+        self.assertTrue(marketplace_url.startswith("http://127.0.0.1:"))
         commands = self.log.read_text().splitlines()
-        self.assertEqual(commands[:9], [
+        self.assertEqual(commands[:15], [
             "kb scaffold run plugin demo --mode standalone --yes",
             "pnpm install",
             "pnpm build",
             "kb marketplace plugins add --link .kb/plugins/demo",
             "kb marketplace plugins list --json",
+            "kb workflow defs list --json",
+            "kb marketplace plugins list --json",
+            "kb demo hello",
+            "kb docs generate-cli-reference --output docs/CLI-REFERENCE.md",
+            "kb docs generate-cli-reference --output docs/CLI-REFERENCE.md",
+            f"kb marketplace plugins add --link {self.project / '.kb/plugins/demo'}",
             "kb --help",
             "kb demo hello",
             "pnpm build",
             "kb demo hello",
         ])
-        self.assertTrue(commands[9].startswith("kb marketplace plugins remove "))
-        self.assertEqual(commands[10:], ["kb marketplace plugins list --json"])
+        self.assertTrue(commands[15].startswith("kb marketplace plugins remove "))
+        self.assertEqual(commands[16:], ["kb marketplace plugins list --json"])
         self.assertFalse((self.project / ".kb/plugins/demo").exists())
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
 
@@ -319,7 +381,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
         self.assertEqual(result.status, "PASS")
         self.assertTrue(all(step["mode"] == "secured" for step in result.steps))
-        self.assertEqual(len(result.case_run["claims"]), 7)
+        claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
+        self.assertEqual(claims["S-003.7"], "PASS")
+        self.assertEqual(claims["S-003.8"], "PASS")
+        self.assertNotIn("S-041.10", claims)
 
     # case: S-003.3
     def test_parseable_plugin_list_stdout_survives_discovery_stderr(self):

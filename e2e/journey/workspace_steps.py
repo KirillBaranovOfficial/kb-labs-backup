@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from installed_fixture import configure_hermetic_cli_fixture, layout_relative, layout_value
+from marketplace_sync_fixture import start_marketplace_sync_fixture, stop_marketplace_sync_fixture
 
 import json
 import os
@@ -11,13 +12,11 @@ from pathlib import Path
 from service_steps import Journey
 from invocations import (
     CompletedProcess,
-    BackgroundCommand,
     decode_ux_error_result,
     decode_ux_success_result,
     invocation_context,
     read_ux_cli_result,
     run_command,
-    start_background_command,
 )
 
 
@@ -71,33 +70,6 @@ def _stage_workspace_checkout(repo_root: Path, stage_root: Path) -> Path:
     shutil.copy2(repo_root / ".kb" / "marketplace.lock", staged_kb / "marketplace.lock")
     (staged_kb / "kb.config.jsonc").symlink_to(repo_root / ".kb" / "kb.config.jsonc")
     return stage_root
-
-
-def _start_marketplace_sync_fixture(repo_root: Path, workspace_root: Path, env: dict[str, str]):
-    fixture = Path(__file__).resolve().parents[1] / "platform" / "fixtures" / "marketplace-sync-server.mjs"
-    process = start_background_command(
-        ["node", str(fixture), str(workspace_root)], cwd=repo_root, env=env)
-    if not process.wait_for_output('"url":', 30):
-        process.terminate()
-        process.wait(timeout=10)
-        details = "".join(process.lines).strip()
-        return None, None, f"Marketplace sync fixture did not become ready: {details}"
-    try:
-        message = json.loads("".join(process.lines).splitlines()[0])
-        url = message["url"]
-    except (json.JSONDecodeError, KeyError, TypeError) as error:
-        process.terminate()
-        process.wait(timeout=10)
-        details = "".join(process.lines).strip()
-        return None, None, f"Marketplace sync fixture returned invalid readiness data: {error}; {details}"
-    return process, url, None
-
-
-def _stop_marketplace_sync_fixture(process: BackgroundCommand) -> str | None:
-    returncode = process.stop(timeout=10)
-    if returncode != 0:
-        return f"Marketplace sync fixture exited {returncode}: {''.join(process.lines).strip()}"
-    return None
 
 
 def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bool = False) -> None:
@@ -365,7 +337,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                      verify_agent_command_namespaces, cases=["S-142.5"])
 
         def verify_synced_workspace_lock() -> str | None:
-            process, marketplace_url, startup_error = _start_marketplace_sync_fixture(repo_root, workspace_root, env)
+            process, marketplace_url, startup_error = start_marketplace_sync_fixture(workspace_root, env)
             if startup_error:
                 return startup_error
             if process is None or marketplace_url is None:
@@ -379,7 +351,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                     env.pop("KB_MARKETPLACE_URL", None)
                 else:
                     env["KB_MARKETPLACE_URL"] = previous_url
-                cleanup_error = _stop_marketplace_sync_fixture(process)
+                cleanup_error = stop_marketplace_sync_fixture(process)
             if cleanup_error:
                 return cleanup_error
             if sync.returncode != 0:
