@@ -4,6 +4,8 @@ package workspace
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/kb-labs/devkit/internal/config"
 )
@@ -22,8 +24,9 @@ type Package struct {
 
 // Workspace holds all discovered packages and the root path.
 type Workspace struct {
-	Root     string
-	Packages []Package
+	Root       string
+	Packages   []Package
+	aggregates map[string][]string
 	// byAbsPath is an O(1) lookup map: absolute file path → package.
 	byAbsPath map[string]*Package
 }
@@ -36,16 +39,17 @@ func New(root string, cfg *config.DevkitConfig) (*Workspace, error) {
 	}
 
 	ws := &Workspace{
-		Root:      root,
-		Packages:  pkgs,
-		byAbsPath: make(map[string]*Package),
+		Root:       root,
+		Packages:   pkgs,
+		aggregates: discoverAggregates(pkgs),
+		byAbsPath:  make(map[string]*Package),
 	}
 
 	// Resolve the build task through the same category/task model used by the scheduler.
 	if cfg != nil {
 		for i := range ws.Packages {
 			if build, ok := cfg.Tasks["build"]; ok {
-				ws.Packages[i].BuildTarget = build.ResolveVariant(ws.Packages[i].Category) != nil
+				ws.Packages[i].BuildTarget = !ws.IsAggregatePackage(ws.Packages[i].Name) && build.ResolveVariant(ws.Packages[i].Category) != nil
 			}
 		}
 	}
@@ -58,6 +62,39 @@ func New(root string, cfg *config.DevkitConfig) (*Workspace, error) {
 	}
 
 	return ws, nil
+}
+
+// AggregateChildren returns the workspace package names nested below packageName.
+// The topology is derived once from the same discovered package list used by
+// the scheduler, so checks and task resolution share one owner.
+func (ws *Workspace) AggregateChildren(packageName string) []string {
+	return append([]string(nil), ws.aggregates[packageName]...)
+}
+
+// IsAggregatePackage reports whether the package directory contains another
+// discovered workspace package.
+func (ws *Workspace) IsAggregatePackage(packageName string) bool {
+	return len(ws.aggregates[packageName]) > 0
+}
+
+func discoverAggregates(packages []Package) map[string][]string {
+	aggregates := make(map[string][]string)
+	for _, parent := range packages {
+		for _, child := range packages {
+			if parent.Name == child.Name {
+				continue
+			}
+			rel, err := filepath.Rel(parent.Dir, child.Dir)
+			if err != nil || rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				continue
+			}
+			aggregates[parent.Name] = append(aggregates[parent.Name], child.Name)
+		}
+	}
+	for name := range aggregates {
+		sort.Strings(aggregates[name])
+	}
+	return aggregates
 }
 
 // FilterByName returns packages matching any of the given names.

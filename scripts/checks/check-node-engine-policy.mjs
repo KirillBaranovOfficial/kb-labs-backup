@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '../../core/plugin-runtime/src/platform-resolve/node-engine.mjs';
+import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '@kb-labs/plugin-contracts/node-engine-policy';
 import { nodeImageIssues } from './node-engine-dockerfiles.mjs';
 
 const inputText = await readStdin();
@@ -39,8 +39,12 @@ if (workspaceRoot === undefined) {
 
 if (workspaceRoot !== undefined && rootPolicy !== undefined) {
   const { requiredMajor } = parseNodeEnginePolicy(rootPolicy);
-  for (const item of nodeImageIssues(workspaceRoot, requiredMajor)) {
-    issue(item.file, item.message);
+  try {
+    for (const item of nodeImageIssues(workspaceRoot, requiredMajor)) {
+      issue(item.file, item.message);
+    }
+  } catch (error) {
+    issue('e2e/journey/Dockerfile.runner', `cannot verify the runner toolchain image contract: ${error.message}`);
   }
 }
 

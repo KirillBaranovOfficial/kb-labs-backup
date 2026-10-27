@@ -49,7 +49,7 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 	byName := make(map[string]workspace.Package, len(ws.Packages))
 	for _, pkg := range ws.Packages {
 		byName[pkg.Name] = pkg
-		def := ResolveTaskDef(cfg, "build", pkg.Category)
+		def := ResolvePackageTaskDef(ws, cfg, "build", pkg)
 		if def == nil {
 			if _, scheduled := nodes[nodeKey{pkg.Name, "build"}]; scheduled {
 				t.Errorf("package %s has a build node without a matching task definition", pkg.Name)
@@ -65,11 +65,11 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 		if key.task != "build" {
 			continue
 		}
-		def := ResolveTaskDef(cfg, "build", node.pkg.Category)
+		def := ResolvePackageTaskDef(ws, cfg, "build", node.pkg)
 		if def == nil || !containsTask(def.Deps, "^build") {
 			continue
 		}
-		for _, depName := range readWorkspaceDeps(node.pkg.Dir, byName) {
+		for _, depName := range WorkspaceDeps(node.pkg.Dir, byName) {
 			if depName == node.pkg.Name {
 				continue
 			}
@@ -80,7 +80,7 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 			}
 			found := false
 			for _, actual := range node.deps {
-				if actual == depKey {
+				if actual.to == depKey {
 					found = true
 					break
 				}
@@ -141,8 +141,8 @@ func TestBuildPkgDepMapKeepsLegitDeps(t *testing.T) {
 
 	// @kb/app should depend on @kb/types but NOT on itself
 	deps := depMap["@kb/app"]
-	if len(deps) != 1 || deps[0] != "@kb/types" {
-		t.Fatalf("@kb/app deps = %v, want [@kb/types]", deps)
+	if len(deps) != 1 || deps[0].Name != "@kb/types" || deps[0].Kind != DependenciesKind {
+		t.Fatalf("@kb/app deps = %v, want [@kb/types dependencies]", deps)
 	}
 }
 
@@ -247,7 +247,7 @@ func TestBuildDAGSelfDepDoesNotCreateCycle(t *testing.T) {
 
 	// @kb/core depends on @kb/devkit only
 	coreNode := nodes[nodeKey{"@kb/core", "build"}]
-	if len(coreNode.deps) != 1 || coreNode.deps[0].pkg != "@kb/devkit" {
+	if len(coreNode.deps) != 1 || coreNode.deps[0].to.pkg != "@kb/devkit" {
 		t.Fatalf("@kb/core deps = %v, want [{@kb/devkit build}]", coreNode.deps)
 	}
 
@@ -259,7 +259,7 @@ func TestBuildDAGSelfDepDoesNotCreateCycle(t *testing.T) {
 	for k, n := range nodes {
 		_ = k
 		for _, dep := range n.deps {
-			inDegree[nodeKey{dep.pkg, dep.task}]++
+			inDegree[dep.to]++
 		}
 	}
 

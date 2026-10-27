@@ -119,9 +119,25 @@ Examples:
 		result, err := engine.Run(ws, cfg, opts)
 		elapsed := time.Since(start)
 		if err != nil {
+			var cycleErr *engine.TaskCycleError
+			if errors.As(err, &cycleErr) {
+				return taskCycleFailure(cycleErr, args)
+			}
 			var graphErr *engine.TaskGraphError
 			if errors.As(err, &graphErr) {
 				return taskGraphFailure(graphErr)
+			}
+			var accountingErr *engine.RunAccountingError
+			if errors.As(err, &accountingErr) {
+				return taskAccountingFailure(accountingErr, args)
+			}
+			return err
+		}
+		summary, err := result.Summary()
+		if err != nil {
+			var accountingErr *engine.RunAccountingError
+			if errors.As(err, &accountingErr) {
+				return taskAccountingFailure(accountingErr, args)
 			}
 			return err
 		}
@@ -129,7 +145,7 @@ Examples:
 		if jsonMode {
 			payload := map[string]any{
 				"results": result.Results,
-				"summary": result.Summary(),
+				"summary": summary,
 				"elapsed": elapsed.String(),
 			}
 			if !result.OK {
@@ -139,7 +155,7 @@ Examples:
 		}
 
 		// Summary line.
-		s := result.Summary()
+		s := summary
 		clikitcommand.Printf("\n  %s scheduled  %s  %s  %s  %s  %s not affected  — %s\n\n",
 			o.dim.Render(fmt.Sprintf("%d", s.Scheduled)),
 			o.healthy.Render(fmt.Sprintf("%d passed", s.Passed)),
@@ -158,7 +174,7 @@ Examples:
 		}
 
 		if !result.OK {
-			return taskFailure(failedTaskResult(result.Results), result.Summary())
+			return taskFailure(failedTaskResult(result.Results), summary)
 		}
 		return nil
 	},

@@ -15,6 +15,8 @@ import (
 
 const pressureNormalDuration = 10 * time.Second
 
+const pressureStateStalenessBound = 2 * time.Minute
+
 const pressurePSIThreshold = 10.0
 
 const lowAvailableMemoryFraction = 10
@@ -32,6 +34,15 @@ type CostClass string
 const (
 	CostLight CostClass = "light"
 	CostHeavy CostClass = "heavy"
+)
+
+type pressureLevel string
+
+const (
+	pressureNormal   pressureLevel = "normal"
+	pressureWarn     pressureLevel = "warn"
+	pressureCritical pressureLevel = "critical"
+	pressureUnknown  pressureLevel = "unknown"
 )
 
 func ParseCostClass(value string) (CostClass, error) {
@@ -242,12 +253,57 @@ func SetQuota(stateDir, memory, cpus, minFree string) error {
 }
 
 type pressureState struct {
-	ElevatedAt    time.Time `json:"elevated_at,omitempty"`
-	NormalAt      time.Time `json:"normal_at,omitempty"`
-	Level         string    `json:"level,omitempty"`
-	SwapOuts      uint64    `json:"swap_outs,omitempty"`
-	SwapOutsKnown bool      `json:"swap_outs_known,omitempty"`
-	SwapUsedBytes uint64    `json:"swap_used_bytes,omitempty"`
+	ElevatedAt    time.Time     `json:"elevated_at,omitempty"`
+	NormalAt      time.Time     `json:"normal_at,omitempty"`
+	Level         string        `json:"level,omitempty"`
+	LevelClass    pressureLevel `json:"level_class,omitempty"`
+	LevelSince    time.Time     `json:"level_since,omitempty"`
+	LastKnownAt   time.Time     `json:"last_known_at,omitempty"`
+	UnknownSince  time.Time     `json:"unknown_since,omitempty"`
+	SwapOuts      uint64        `json:"swap_outs,omitempty"`
+	SwapOutsKnown bool          `json:"swap_outs_known,omitempty"`
+	SwapUsedBytes uint64        `json:"swap_used_bytes,omitempty"`
+}
+
+func classifyPressure(sample HostResourceSnapshot) pressureLevel {
+	if sample.Pressure == "memory warn" {
+		return pressureWarn
+	}
+	if isElevatedPressure(sample) {
+		return pressureCritical
+	}
+	return pressureNormal
+}
+
+func pressureLevelBlocks(level pressureLevel, class CostClass) bool {
+	switch level {
+	case pressureWarn:
+		return class == CostHeavy
+	case pressureCritical:
+		return true
+	case pressureUnknown:
+		return class == CostHeavy
+	default:
+		return false
+	}
+}
+
+func pressureAdmissionWait(level pressureLevel, levelSince time.Time, hysteresis bool) string {
+	current := string(level)
+	since := levelSince.UTC().Format(time.RFC3339)
+	if level == pressureUnknown {
+		return fmt.Sprintf("waiting for pressure sample; current: pressure unknown since %s", since)
+	}
+	if hysteresis {
+		if level == pressureWarn {
+			return fmt.Sprintf("waiting for memory pressure to drop below warn; hysteresis current: warn since %s", since)
+		}
+		return fmt.Sprintf("waiting for host pressure to return to normal; hysteresis current: %s since %s", current, since)
+	}
+	if level == pressureWarn {
+		return fmt.Sprintf("waiting for memory pressure to drop below warn; current: warn since %s", since)
+	}
+	return fmt.Sprintf("waiting for memory pressure to return to normal; current: %s since %s", current, since)
 }
 
 func isElevatedPressure(sample HostResourceSnapshot) bool {

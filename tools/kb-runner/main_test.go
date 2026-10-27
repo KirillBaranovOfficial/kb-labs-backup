@@ -696,26 +696,40 @@ func TestWaitRendererCoversEveryRunStatus(t *testing.T) {
 
 // case: S-237.48
 func TestWaitReturnsDirtyDiagnosticAfterLostResourceCleanup(t *testing.T) {
-	testWaitReturnsDirtyDiagnosticAfterLostCleanup(t, true)
+	testWaitReturnsDirtyDiagnosticAfterLostCleanup(t, true, 0)
 }
 
 // case: S-237.48
 func TestWaitReturnsDirtyDiagnosticAfterLostScratchCleanup(t *testing.T) {
-	testWaitReturnsDirtyDiagnosticAfterLostCleanup(t, false)
+	testWaitReturnsDirtyDiagnosticAfterLostCleanup(t, false, 0)
 }
 
-func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool) {
+// case: S-237.48
+func TestWaitReturnsDirtyDiagnosticAfterDelayedPIDWrite(t *testing.T) {
+	testWaitReturnsDirtyDiagnosticAfterLostCleanup(t, false, 250*time.Millisecond)
+}
+
+func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool, pidWriteDelay time.Duration) {
 	t.Helper()
 	state := t.TempDir()
 	runner := buildRunnerBinary(t)
 	tag := "lost-scratch"
 	path := filepath.Join(state, "runs", "owned-path")
 	childPIDFile := filepath.Join(state, "child.pid")
-	script := `printf '%s' "$$" > "$1"; exec /bin/sleep 30`
+	pidTarget := "$1"
+	prologue := ""
 	if resource {
 		tag = "lost-resource"
-		script = `"$1" own path --create file "$2"; printf '%s' "$$" > "$3"; exec /bin/sleep 30`
+		pidTarget = "$3"
+		prologue = `"$1" own path --create file "$2"; `
 	}
+	pidWindow := ""
+	if pidWriteDelay > 0 {
+		// A loaded host can be descheduled between the redirection creating the pid
+		// file and the pid landing in it; hold that window open deterministically.
+		pidWindow = `: > ` + pidTarget + `; sleep ` + strconv.FormatFloat(pidWriteDelay.Seconds(), 'f', -1, 64) + `; `
+	}
+	script := prologue + pidWindow + `printf '%s' "$$" > ` + pidTarget + `; exec /bin/sleep 30`
 	commandArgs := []string{"run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout"), "--stderr", filepath.Join(state, "stderr"), "--", "/bin/sh", "-c", script}
 	if resource {
 		commandArgs = append(commandArgs, "sh", runner, path, childPIDFile)
@@ -765,7 +779,10 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool)
 				}
 			}
 		}
-		if run.PID != 0 && fileExists(childPIDFile) && (resource && fileExists(path) || !resource && scratch != "") {
+		if childPID == 0 {
+			childPID = pidFromRecord(childPIDFile)
+		}
+		if run.PID != 0 && childPID != 0 && (resource && fileExists(path) || !resource && scratch != "") {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -773,13 +790,8 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool)
 	if run.PID == 0 {
 		t.Fatalf("run %q did not become visible", tag)
 	}
-	pidData, err := os.ReadFile(childPIDFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childPID, err = strconv.Atoi(string(pidData))
-	if err != nil {
-		t.Fatal(err)
+	if childPID == 0 {
+		t.Fatalf("run %q never recorded a complete pid in %s", tag, childPIDFile)
 	}
 	childIdentity, alive, err := proc.ProcessIdentity(childPID)
 	if err != nil || !alive || childIdentity == "" {
@@ -875,6 +887,21 @@ func failedCleanupPath(resource bool, path, scratch string) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// pidFromRecord returns the pid written to path, or 0 while the record is
+// absent or incomplete: the shell redirection creates the file before the pid
+// lands in it, so existence alone is not readiness.
+func pidFromRecord(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(string(data))
+	if err != nil || pid <= 0 {
+		return 0
+	}
+	return pid
 }
 
 func killOwnedProcess(pid int, expectedIdentity string) {

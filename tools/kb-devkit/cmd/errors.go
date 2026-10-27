@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/devkit/internal/engine"
 )
@@ -38,6 +41,29 @@ func taskGraphFailure(err *engine.TaskGraphError) error {
 			"task":           err.Task,
 			"dependency":     err.Dependency,
 			"dependencyTask": err.DependencyTask,
+		}),
+	)
+}
+
+func taskCycleFailure(err *engine.TaskCycleError, tasks []string) error {
+	return diag.New("KB_DEVKIT_TASK_GRAPH_CYCLE", "",
+		diag.WithMeta(map[string]any{
+			"task":            strings.Join(tasks, " "),
+			"cycle":           err.CycleDescription(),
+			"dependencyEdges": err.DependencyEdges(),
+		}),
+	)
+}
+
+func taskAccountingFailure(err *engine.RunAccountingError, tasks []string) error {
+	unaccounted := make([]string, 0, len(err.UnaccountedTasks))
+	for _, task := range err.UnaccountedTasks {
+		unaccounted = append(unaccounted, fmt.Sprintf("%s:%s", task.Package, task.Task))
+	}
+	return diag.New("KB_DEVKIT_RUN_INCOMPLETE", "",
+		diag.WithMeta(map[string]any{
+			"task":             strings.Join(tasks, " "),
+			"unaccountedTasks": unaccounted,
 		}),
 	)
 }

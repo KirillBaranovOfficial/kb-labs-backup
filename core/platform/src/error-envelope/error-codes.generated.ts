@@ -47,8 +47,10 @@ export type CatalogErrorCode =
   | "KB_DEPLOY_LOCK_WRITE_FAILED"
   | "KB_DEPLOY_WAVE_FAILED"
   | "KB_DEVKIT_CHECK_EXECUTION_FAILED"
+  | "KB_DEVKIT_RUN_INCOMPLETE"
   | "KB_DEVKIT_STANDARDS_VIOLATIONS"
   | "KB_DEVKIT_TASK_FAILED"
+  | "KB_DEVKIT_TASK_GRAPH_CYCLE"
   | "KB_DEVKIT_TASK_GRAPH_INVALID"
   | "KB_DEVKIT_TASK_LOG_UNAVAILABLE"
   | "KB_ENV_PROFILE_MISMATCH"
@@ -318,9 +320,11 @@ export interface CatalogTemplateParameters {
   "KB_DEPLOY_HOST_UNDEFINED": Record<never, never>;
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<never, never>;
   "KB_DEPLOY_WAVE_FAILED": Record<never, never>;
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string };
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string; "exitCode": string; "nextCommand": string; "stderrTail": string };
+  "KB_DEVKIT_RUN_INCOMPLETE": { "task": string };
   "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<never, never>;
   "KB_DEVKIT_TASK_FAILED": { "logPath": string; "package": string; "task": string };
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": { "cycle": string; "task": string };
   "KB_DEVKIT_TASK_GRAPH_INVALID": { "dependency": string; "dependencyTask": string; "task": string };
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": { "logDirectory": string; "package": string; "task": string };
   "KB_ENV_PROFILE_MISMATCH": Record<never, never>;
@@ -590,9 +594,11 @@ export interface CatalogDetailsFor {
   "KB_DEPLOY_HOST_UNDEFINED": Record<string, never>;
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<string, never>;
   "KB_DEPLOY_WAVE_FAILED": Record<string, never>;
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string };
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string; "exitCode": string; "nextCommand": string; "stderrTail": string };
+  "KB_DEVKIT_RUN_INCOMPLETE": { "task": string; "unaccountedTasks": readonly string[] };
   "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<string, never>;
   "KB_DEVKIT_TASK_FAILED": { "logPath": string; "package": string; "task": string };
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": { "cycle": string; "task": string; "dependencyEdges": readonly string[] };
   "KB_DEVKIT_TASK_GRAPH_INVALID": { "dependency": string; "dependencyTask": string; "task": string; "package"?: string };
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": { "logDirectory": string; "package": string; "task": string; "logError"?: string; "logPath"?: string };
   "KB_ENV_PROFILE_MISMATCH": Record<string, never>;
@@ -884,9 +890,11 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
   "KB_DEPLOY_WAVE_FAILED": [],
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check","exitCode","nextCommand","stderrTail"],
+  "KB_DEVKIT_RUN_INCOMPLETE": ["task"],
   "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
   "KB_DEVKIT_TASK_FAILED": ["logPath","package","task"],
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": ["cycle","task"],
   "KB_DEVKIT_TASK_GRAPH_INVALID": ["dependency","dependencyTask","task"],
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": ["logDirectory","package","task"],
   "KB_ENV_PROFILE_MISMATCH": [],
@@ -1156,9 +1164,11 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
   "KB_DEPLOY_WAVE_FAILED": [],
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check","exitCode","stderrTail"],
+  "KB_DEVKIT_RUN_INCOMPLETE": [],
   "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
   "KB_DEVKIT_TASK_FAILED": [],
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": ["cycle"],
   "KB_DEVKIT_TASK_GRAPH_INVALID": [],
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": [],
   "KB_ENV_PROFILE_MISMATCH": [],
@@ -1428,9 +1438,11 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
   "KB_DEPLOY_WAVE_FAILED": [],
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["nextCommand"],
+  "KB_DEVKIT_RUN_INCOMPLETE": ["task"],
   "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
   "KB_DEVKIT_TASK_FAILED": ["logPath","package","task"],
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": ["task"],
   "KB_DEVKIT_TASK_GRAPH_INVALID": ["dependency","dependencyTask","task"],
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": ["logDirectory","package","task"],
   "KB_ENV_PROFILE_MISMATCH": [],
@@ -1700,9 +1712,11 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
   "KB_DEPLOY_WAVE_FAILED": [],
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check","exitCode","nextCommand","stderrTail"],
+  "KB_DEVKIT_RUN_INCOMPLETE": ["task"],
   "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
   "KB_DEVKIT_TASK_FAILED": ["logPath","package","task"],
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": ["cycle","task"],
   "KB_DEVKIT_TASK_GRAPH_INVALID": ["dependency","dependencyTask","task"],
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": ["logDirectory","package","task"],
   "KB_ENV_PROFILE_MISMATCH": [],
@@ -1972,9 +1986,11 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
   "KB_DEPLOY_WAVE_FAILED": [],
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check","exitCode","stderrTail"],
+  "KB_DEVKIT_RUN_INCOMPLETE": [],
   "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
   "KB_DEVKIT_TASK_FAILED": [],
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": ["cycle"],
   "KB_DEVKIT_TASK_GRAPH_INVALID": [],
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": [],
   "KB_ENV_PROFILE_MISMATCH": [],
@@ -2244,9 +2260,11 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_DEPLOY_HOST_UNDEFINED": [],
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
   "KB_DEPLOY_WAVE_FAILED": [],
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["nextCommand"],
+  "KB_DEVKIT_RUN_INCOMPLETE": ["task"],
   "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
   "KB_DEVKIT_TASK_FAILED": ["logPath","package","task"],
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": ["task"],
   "KB_DEVKIT_TASK_GRAPH_INVALID": ["dependency","dependencyTask","task"],
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": ["logDirectory","package","task"],
   "KB_ENV_PROFILE_MISMATCH": [],
@@ -2517,8 +2535,10 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_DEPLOY_LOCK_WRITE_FAILED": [],
   "KB_DEPLOY_WAVE_FAILED": [],
   "KB_DEVKIT_CHECK_EXECUTION_FAILED": [],
+  "KB_DEVKIT_RUN_INCOMPLETE": ["unaccountedTasks"],
   "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
   "KB_DEVKIT_TASK_FAILED": [],
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": ["dependencyEdges"],
   "KB_DEVKIT_TASK_GRAPH_INVALID": ["package"],
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": ["logError","logPath"],
   "KB_ENV_PROFILE_MISMATCH": [],
@@ -2788,9 +2808,11 @@ export interface CatalogMessageTemplateParameters {
   "KB_DEPLOY_HOST_UNDEFINED": Record<never, never>;
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<never, never>;
   "KB_DEPLOY_WAVE_FAILED": Record<never, never>;
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string };
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string; "exitCode": string; "stderrTail": string };
+  "KB_DEVKIT_RUN_INCOMPLETE": Record<never, never>;
   "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<never, never>;
   "KB_DEVKIT_TASK_FAILED": Record<never, never>;
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": { "cycle": string };
   "KB_DEVKIT_TASK_GRAPH_INVALID": Record<never, never>;
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": Record<never, never>;
   "KB_ENV_PROFILE_MISMATCH": Record<never, never>;
@@ -3060,9 +3082,11 @@ export interface CatalogHintTemplateParameters {
   "KB_DEPLOY_HOST_UNDEFINED": Record<never, never>;
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<never, never>;
   "KB_DEPLOY_WAVE_FAILED": Record<never, never>;
-  "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string };
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "nextCommand": string };
+  "KB_DEVKIT_RUN_INCOMPLETE": { "task": string };
   "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<never, never>;
   "KB_DEVKIT_TASK_FAILED": { "logPath": string; "package": string; "task": string };
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": { "task": string };
   "KB_DEVKIT_TASK_GRAPH_INVALID": { "dependency": string; "dependencyTask": string; "task": string };
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": { "logDirectory": string; "package": string; "task": string };
   "KB_ENV_PROFILE_MISMATCH": Record<never, never>;
@@ -3333,8 +3357,10 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_DEPLOY_LOCK_WRITE_FAILED": Record<never, never>;
   "KB_DEPLOY_WAVE_FAILED": Record<never, never>;
   "KB_DEVKIT_CHECK_EXECUTION_FAILED": Record<never, never>;
+  "KB_DEVKIT_RUN_INCOMPLETE": Record<never, never>;
   "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<never, never>;
   "KB_DEVKIT_TASK_FAILED": Record<never, never>;
+  "KB_DEVKIT_TASK_GRAPH_CYCLE": Record<never, never>;
   "KB_DEVKIT_TASK_GRAPH_INVALID": Record<never, never>;
   "KB_DEVKIT_TASK_LOG_UNAVAILABLE": Record<never, never>;
   "KB_ENV_PROFILE_MISMATCH": Record<never, never>;

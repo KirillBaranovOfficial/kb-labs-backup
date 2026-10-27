@@ -27,7 +27,6 @@ type externalRule struct {
 	scope         string
 	workspaceRoot string
 	checkConfig   config.CheckPackConfig
-	graphTasks    []string
 	timeout       time.Duration
 }
 
@@ -40,7 +39,6 @@ type externalInput struct {
 	Phase         string             `json:"phase"`
 	DryRun        bool               `json:"dryRun,omitempty"`
 	Config        map[string]any     `json:"config,omitempty"`
-	GraphTasks    []string           `json:"graphTasks"`
 	Issues        []Issue            `json:"issues,omitempty"`
 }
 
@@ -118,6 +116,8 @@ func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issu
 		Cause:             safeExternalCause(err),
 		File:              pkg.Dir,
 		FailureDiagnostic: externalDiagnostic(err),
+		FailureExitCode:   externalExitCode(err),
+		FailureStderrTail: externalStderrTail(err),
 	}}
 }
 
@@ -135,7 +135,6 @@ func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 		Phase:         r.phase,
 		Workspace:     &externalWorkspace{Root: ws.Root, Packages: packages},
 		Config:        r.checkConfig.Config,
-		GraphTasks:    r.graphTasks,
 	})
 	if err == nil {
 		return out.Issues
@@ -143,7 +142,7 @@ func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 	if len(out.Issues) > 0 {
 		return out.Issues
 	}
-	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root, FailureDiagnostic: externalDiagnostic(err)}}
+	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root, FailureDiagnostic: externalDiagnostic(err), FailureExitCode: externalExitCode(err), FailureStderrTail: externalStderrTail(err)}}
 }
 
 func (r *externalRule) Apply(pkg workspace.Package, issues []Issue, dryRun bool) error {
@@ -163,7 +162,6 @@ func (r *externalRule) runCommand(command string, pkg workspace.Package, preset 
 		Phase:         r.phase,
 		DryRun:        dryRun,
 		Config:        r.checkConfig.Config,
-		GraphTasks:    r.graphTasks,
 		Issues:        issues,
 	}
 	return r.runCommandWithInput(command, input)
@@ -231,6 +229,22 @@ func externalDiagnostic(err error) *diag.Diag {
 		return diagnostic
 	}
 	return nil
+}
+
+func externalExitCode(err error) int {
+	var commandErr *toolchain.CommandError
+	if errors.As(err, &commandErr) {
+		return commandErr.ExitCode
+	}
+	return 0
+}
+
+func externalStderrTail(err error) string {
+	var commandErr *toolchain.CommandError
+	if errors.As(err, &commandErr) {
+		return commandErr.StderrTail
+	}
+	return ""
 }
 
 func modeForCommand(issues []Issue) string {
