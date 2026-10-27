@@ -11,21 +11,11 @@ export const RELEASE_CASE_CLAIM_BASELINE = [
   'S-041.13',
   'S-041.14',
   'S-041.16',
-  'S-051.1',
   'S-054.9',
   'S-054.18',
   'S-054.19',
   'S-120.3',
   'S-121.6',
-  'S-124.1',
-  'S-124.2',
-  'S-124.3',
-  'S-124.4',
-  'S-124.5',
-  'S-124.6',
-  'S-124.8',
-  'S-124.9',
-  'S-124.12',
 ] as const;
 
 const BASELINE_SOURCE = 'plugins/qa/src/core/cases/release-claim-baseline.ts';

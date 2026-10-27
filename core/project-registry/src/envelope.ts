@@ -10,9 +10,9 @@ import { homedir } from 'node:os';
 import { createValidatedErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { isProjectRegistryError } from './errors.js';
 
-/** Replaces the home directory prefix with `~` so envelopes never carry it. */
+/** Replaces the active process HOME prefix with `~` so envelopes never carry fixture or user home paths. */
 function redactHome(value: string): string {
-  const home = homedir();
+  const home = process.env.HOME?.trim() || homedir();
   return home.length > 1 ? value.split(home).join('~') : value;
 }
 
@@ -20,7 +20,7 @@ function redactHome(value: string): string {
 export function projectErrorEnvelope(error: unknown): ErrorEnvelope {
   if (isProjectRegistryError(error)) {
     const details = Object.fromEntries(Object.entries(error.details).map(([k, v]) => [k, redactHome(v)]));
-    return createValidatedErrorEnvelope(error.code, { cause: redactHome(error.message), details });
+    return createValidatedErrorEnvelope(error.code, { details });
   }
   return toErrorEnvelope(error);
 }
