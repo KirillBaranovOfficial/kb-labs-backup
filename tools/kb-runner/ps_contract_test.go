@@ -67,12 +67,12 @@ func assertNoJSONStringContains(t *testing.T, value any, forbidden string, path 
 	}
 }
 
-// case: S-237.75
 // Script-level record consumers (the orchestration event daemon and any
 // future reader) must read run records only through this JSON contract. The
 // test runs a real run to a terminal record and asserts every field such
 // consumers read is present, and that no record field leaks the state
 // directory layout.
+// case: S-237.75
 func TestPSJSONCarriesEveryRecordFieldRecordConsumersRead(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("process supervision supports Linux and macOS")
@@ -130,9 +130,9 @@ func TestPSJSONCarriesEveryRecordFieldRecordConsumersRead(t *testing.T) {
 	assertNoJSONStringContains(t, record, state, "$")
 }
 
-// case: S-237.75
 // The leftovers JSON contract attributes every uncleaned owned resource to
 // its owning run, so outcome publishers never compose resource ledger paths.
+// case: S-237.75
 func TestPSLeftoversJSONAttributesEveryLeftoverToItsRun(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("process supervision supports Linux and macOS")
