@@ -486,7 +486,7 @@ A CORS preflight (`OPTIONS` with `Access-Control-Request-Method`) receives only 
 
 Owner intent (2026-10-02): “главное сделать платформенно (чтобы все подключенные плагины сразу получали защиту от доступа) без необходимости добавлять что-то в потребитель. по сути для разных точек разная защита — CLI - общая обертка над всеми командами (до вызова команды идет проверка авторизация и только после доступ), gateway - тоже все запросы не публичные перехватывает и отдает ошибку до того как запрос дойдет до сервисов. ну и MCP аналогично”
 
-Cases: S-007.4, S-041.7 to S-041.13, S-045.5, S-104, S-140.6.
+Cases: S-007.4, S-041.7 to S-041.10, S-041.12, S-255.7 to S-255.10, S-045.5, S-104, S-140.6.
 
 ### Bind persistent built-in adapters on every fresh install
 
@@ -500,7 +500,7 @@ select it through `defaultFor: { llm: ["llm"] }` without writing an explicit
 to package entry-point path segments; an empty array selects the package root.
 With `OPENAI_API_KEY` unset, adapter list and doctor report the missing
 credential as a warning; an LLM request returns the typed credentials error.
-Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11.
+Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11, S-272.1.
 
 ### 2026-10-01: Explicit token kinds and lifecycle contract changes
 
