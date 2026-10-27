@@ -75,31 +75,86 @@ test('failed kb-devkit task contributes the task log tail identified by structur
     execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(repoRoot, 'tools/kb-devkit'), stdio: 'pipe' });
 
     let invocation;
-    let nodeOptions;
+    let childEnvironment;
     const result = await runStage({
       stage: profile.buildStage,
       packages: ['@fixture/site'],
       selectedPackageCount: 1,
-      buildLimits: { cpuCount: 2, memoryBudgetBytes: 1_000_000, concurrency: 2, nodeHeapMb: 512 },
+      buildLimits: { cpuCount: 2, memoryBudgetBytes: 1_000_000, concurrency: 2, expectedTaskFootprintBytes: 500_000 },
       runCommand: async (command, args, options) => {
         invocation = [command, args];
-        nodeOptions = options.env.NODE_OPTIONS;
+        childEnvironment = options.env;
         return spawnSync(binary, ['--config', configPath, ...args], {
           cwd: fixtureRoot,
           encoding: 'utf8',
-          env: { ...process.env, ...options.env, HOME: home },
+          env: { ...process.env, ...options.env, NODE_OPTIONS: '', HOME: home },
         });
       },
       now: (() => { let value = 0; return () => value += 10; })(),
     });
 
     assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', '@fixture/site', '--concurrency', '2', '--json']]);
-    assert.equal(nodeOptions, '--max-old-space-size=512');
+    assert.deepEqual(childEnvironment, {});
     assert.equal(result.status, 'fail');
-    assert.ok(result.failures.some((line) => line.includes('ENOENT: no such file or directory, mkdir .next/export')));
+    assert.ok(result.failures.some((line) => line.includes('@fixture/site:build — command exited with code 1')));
     assert.ok(result.taskFailures[0].logTail.includes('Error occurred prerendering page /404'));
     assert.ok(result.logTail.includes('Error occurred prerendering page /404'));
     assert.ok(readFileSync(result.taskFailures[0].logPath, 'utf8').includes('ENOENT: no such file or directory, mkdir .next/export'));
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+// case: S-262.7
+test('workspace build failures come from structured task errors, not streamed build output', async () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-stage-structured-errors-'));
+  const fixtureRoot = path.join(temporaryRoot, 'workspace');
+  const packagesRoot = path.join(fixtureRoot, 'packages');
+  const configPath = path.join(fixtureRoot, 'devkit.yaml');
+  const binary = path.join(temporaryRoot, 'kb-devkit');
+  const packageNames = ['mind', 'release', 'qa', 'agents', 'commit', 'quality'].map((name) => `@kb-labs/${name}`);
+  const diagnostic = 'Error [ERR_WORKER_OUT_OF_MEMORY]: Worker terminated due to reaching memory limit: JS heap out of memory';
+  try {
+    for (const [index, packageName] of packageNames.entries()) {
+      const packageRoot = path.join(packagesRoot, String(index));
+      mkdirSync(packageRoot, { recursive: true });
+      writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ name: packageName }));
+    }
+    writeFileSync(path.join(fixtureRoot, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }));
+    writeFileSync(configPath, [
+      'workspace:',
+      '  categories:',
+      '    app:',
+      '      match: ["packages/*"]',
+      '      preset: node-lib',
+      'tasks:',
+      '  build:',
+      '    - categories: [app]',
+      '      command: >-',
+      `        node -e 'console.log("ESM dist/core/services.js.map 72.00 B"); console.error("${diagnostic}"); process.exit(1)'`,
+      '',
+    ].join('\n'));
+    execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(repoRoot, 'tools/kb-devkit'), stdio: 'pipe' });
+
+    const result = await runStage({
+      stage: profile.buildStage,
+      packages: packageNames,
+      selectedPackageCount: packageNames.length,
+      buildLimits: { cpuCount: 4, memoryBudgetBytes: 11_736_487_526, concurrency: 4, expectedTaskFootprintBytes: 2_536_468_480 },
+      runCommand: async (command, args, options) => spawnSync(binary, ['--config', configPath, ...args], {
+        cwd: fixtureRoot,
+        encoding: 'utf8',
+        env: { ...process.env, ...options.env, NODE_OPTIONS: '', HOME: path.join(temporaryRoot, 'home') },
+      }),
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.equal(result.taskFailures.length, packageNames.length);
+    assert.deepEqual(result.taskFailures.map((failure) => failure.package).sort(), packageNames.slice().sort());
+    assert.ok(result.taskFailures.every((failure) => failure.task === 'build' && failure.exitCode === 1));
+    assert.deepEqual(result.failures.slice().sort(), packageNames.map((name) => `${name}:build — ${diagnostic}`).sort());
+    assert.ok(result.taskFailures.every((failure) => failure.errorLine === diagnostic));
+    assert.ok(!result.failures.some((failure) => failure.includes('ESM dist/core/services.js.map')));
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }

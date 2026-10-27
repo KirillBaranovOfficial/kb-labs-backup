@@ -1,16 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { deriveBuildLimits, sampleRunnerResources } from './remote-build-resources.mjs';
+import { CALIBRATED_TASK_FOOTPRINT_BYTES, deriveBuildLimits, sampleRunnerResources } from './remote-build-resources.mjs';
 
 // case: S-262.7
-test('build concurrency and Node heap derive from runner CPU and memory within the declared budget', () => {
-  assert.deepEqual(deriveBuildLimits({ cpuCount: 4, memTotalBytes: 16 * 1024 ** 3 }), {
+test('build concurrency derives from runner capacity without a per-process heap ceiling', () => {
+  const limits = deriveBuildLimits({
+    cpuCount: 4,
+    memTotalBytes: 16 * 1024 ** 3,
+    expectedTaskFootprintBytes: CALIBRATED_TASK_FOOTPRINT_BYTES,
+  });
+  assert.deepEqual(limits, {
     cpuCount: 4,
     memoryBudgetBytes: Math.floor(16 * 1024 ** 3 * 0.7),
     concurrency: 4,
-    nodeHeapMb: 1835,
+    expectedTaskFootprintBytes: 2_536_468_480,
   });
-  assert.equal(deriveBuildLimits({ cpuCount: 2, memTotalBytes: 4 * 1024 ** 3 }).concurrency, 1);
+  assert.equal('nodeHeapMb' in limits, false);
+  assert.equal(deriveBuildLimits({
+    cpuCount: 2,
+    memTotalBytes: 4 * 1024 ** 3,
+    expectedTaskFootprintBytes: CALIBRATED_TASK_FOOTPRINT_BYTES,
+  }).concurrency, 1);
 });
 
 // case: S-262.7
@@ -53,7 +63,7 @@ test('terminated build keeps an incrementally persisted partial result and resou
       stage: 'workspace-build', packages: ['@fixture/a'], selectedPackageCount: 1,
       resourceSamplePath: samplesPath, partialResultPath: resultPath, sampleIntervalMs: 60_000,
       sampleResources: () => expectedSample,
-      buildLimits: { cpuCount: 1, memoryBudgetBytes: 700, concurrency: 1, nodeHeapMb: 1 },
+      buildLimits: { cpuCount: 1, memoryBudgetBytes: 700, concurrency: 1, expectedTaskFootprintBytes: 500 },
       runCommand: async () => new Promise((resolve) => { complete = resolve; }),
       now: (() => { let value = 1000; return () => value += 1; })(),
     });
@@ -90,7 +100,7 @@ test('build fails visibly when its required resource sampler cannot produce evid
       resourceSamplePath: path.join(temporaryRoot, 'samples.jsonl'),
       partialResultPath: path.join(temporaryRoot, 'stage.json'),
       sampleResources: () => { throw new Error('df unavailable'); },
-      buildLimits: { cpuCount: 1, memoryBudgetBytes: 700, concurrency: 1, nodeHeapMb: 1 },
+      buildLimits: { cpuCount: 1, memoryBudgetBytes: 700, concurrency: 1, expectedTaskFootprintBytes: 500 },
       runCommand: async () => ({ status: 0, stdout: 'built', stderr: '' }),
     });
     assert.equal(result.status, 'fail');
