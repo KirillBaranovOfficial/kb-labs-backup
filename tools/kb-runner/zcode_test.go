@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
+
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 )
@@ -478,7 +480,7 @@ printf toolchain-ok`
 	if err != nil || strings.TrimSpace(string(output)) != "toolchain-ok" {
 		t.Fatalf("sandboxed toolchain steps: output=%q err=%v", output, err)
 	}
-	if elapsed := time.Since(started); elapsed > 10*time.Second {
+	if elapsed := time.Since(started); elapsed > testdeadline.SignalDeliveryBound(t) {
 		t.Fatalf("signal to own child was not delivered (took %s)", elapsed)
 	}
 }

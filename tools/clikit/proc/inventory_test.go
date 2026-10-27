@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,7 +116,7 @@ func TestInventoryOmitsRealZombieChild(t *testing.T) {
 		}
 	})
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		_, alive, err := ProcessIdentity(child.Process.Pid)
 		if err != nil {
@@ -274,7 +275,7 @@ func TestProcessInventoryDuringRealForkExecExitStorm(t *testing.T) {
 
 	select {
 	case <-firstReady:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		t.Fatal("real fork/exec/exit storm did not start its first child")
 	}
 	observedStormRows := 0

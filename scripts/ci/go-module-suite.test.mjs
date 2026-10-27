@@ -22,7 +22,7 @@ function temporaryDirectory(prefix) {
   return directory;
 }
 
-// case: S-261.1
+// case: S-261.1, S-261.8
 test('registry-driven suite runs discovered packages with clean HOME and TMPDIR variants', () => {
   const fixture = mkdtempSync(path.join('/tmp', 'go-module-suite-'));
   temporaryDirectories.push(fixture);
@@ -37,7 +37,7 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
   writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n`);
   const invocations = path.join(fixture, 'go-invocations.jsonl');
   const fakeGo = path.join(fixture, 'go');
-  writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "{\\"args\\":\\"$*\\",\\"cwd\\":\\"$PWD\\",\\"home\\":\\"$HOME\\",\\"tmpdir\\":\\"$TMPDIR\\",\\"platform_root\\":\\"$KB_PLATFORM_ROOT\\",\\"kb_home\\":\\"$KB_HOME\\",\\"net_offset\\":\\"$KB_NET_OFFSET\\",\\"goflags\\":\\"$GOFLAGS\\"}" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first' 'fixture/first/e2e' 'fixture/second'; fi\n`);
+  writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "{\\"args\\":\\"$*\\",\\"cwd\\":\\"$PWD\\",\\"home\\":\\"$HOME\\",\\"tmpdir\\":\\"$TMPDIR\\",\\"platform_root\\":\\"$KB_PLATFORM_ROOT\\",\\"kb_home\\":\\"$KB_HOME\\",\\"net_offset\\":\\"$KB_NET_OFFSET\\",\\"goflags\\":\\"$GOFLAGS\\",\\"deadline_scale\\":\\"$KB_TEST_DEADLINE_SCALE\\"}" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first' 'fixture/first/e2e' 'fixture/second'; fi\n`);
   const chmod = spawnSync('chmod', ['+x', fakeGo]);
   assert.equal(chmod.status, 0);
 
@@ -52,6 +52,7 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
       KB_HOME: '/must/be/unset',
       KB_NET_OFFSET: '99',
       GOFLAGS: '-tags=contaminated',
+      KB_TEST_DEADLINE_SCALE: '1.5',
     },
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -69,6 +70,7 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
     assert.equal(call.kb_home, '');
     assert.equal(call.net_offset, '');
     assert.equal(call.goflags, '');
+    assert.equal(call.deadline_scale, '1.5');
   }
   for (const call of tests) {
     assert.ok(call.args.includes('fixture/first') || call.args.includes('fixture/second'));

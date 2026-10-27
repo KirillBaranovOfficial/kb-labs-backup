@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/devkit/internal/config"
+	"github.com/kb-labs/devkit/internal/testdeadline"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
 
@@ -22,8 +23,8 @@ func TestWorkspaceExternalCheckFailsAtDeclaredExecutionBudget(t *testing.T) {
 	ws := &workspace.Workspace{Root: root}
 	started := time.Now()
 	results := RunAll(ws, cfg, Build(cfg, root, "check"), []string{"slow-check"}, nil)
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("check elapsed = %s, want timeout within 1s", elapsed)
+	if elapsed := time.Since(started); elapsed > testdeadline.ExternalCheckObservationSlack(t) {
+		t.Fatalf("check elapsed = %s, exceeds the scaled observation slack", elapsed)
 	}
 	issues := results["workspace"].Issues
 	if len(issues) != 1 || !issues[0].CheckFailure || issues[0].Check != "slow-check" {

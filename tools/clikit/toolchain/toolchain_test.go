@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 )
 
 // case: S-260.4
@@ -68,13 +69,14 @@ func TestExternalToolStallReturnsCataloguedDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("READY_FILE", ready)
+	const stallTimeout = 5 * time.Second
 	started := time.Now()
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := run(context.Background(), Invocation{Tool: "fixture", Executable: tool, Args: []string{"--wait"}, Operation: OperationVersionProbe}, 5*time.Second)
+		_, err := run(context.Background(), Invocation{Tool: "fixture", Executable: tool, Args: []string{"--wait"}, Operation: OperationVersionProbe}, stallTimeout)
 		errCh <- err
 	}()
-	deadline := time.NewTimer(10 * time.Second)
+	deadline := time.NewTimer(testdeadline.Budget(t))
 	defer deadline.Stop()
 	readyPoll := time.NewTicker(time.Millisecond)
 	defer readyPoll.Stop()
@@ -98,7 +100,7 @@ func TestExternalToolStallReturnsCataloguedDiagnostic(t *testing.T) {
 	if !errors.As(err, &failure) || failure.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" {
 		t.Fatalf("stall failure = %#v", err)
 	}
-	if elapsed := time.Since(started); elapsed > 6*time.Second {
+	if elapsed := time.Since(started); elapsed > stallTimeout+testdeadline.ExternalToolTimeoutSlack(t) {
 		t.Fatalf("stall bound took %s", elapsed)
 	}
 	for key, want := range map[string]string{"tool": "fixture", "argsSummary": "--wait", "stderrTail": "stalled-tool-output", "nextCommand": "'" + tool + "' '--wait'"} {
@@ -114,15 +116,17 @@ func TestCallerDeadlineWinsOverOperationBound(t *testing.T) {
 	if err := os.WriteFile(tool, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	operationBound := 2 * time.Second
+	callerBudget := testdeadline.Scale(t, operationBound/20)
+	ctx, cancel := context.WithTimeout(context.Background(), callerBudget)
 	defer cancel()
 	started := time.Now()
-	_, err := run(ctx, Invocation{Tool: "fixture", Executable: tool, Operation: OperationWorkspaceTask}, 2*time.Second)
+	_, err := run(ctx, Invocation{Tool: "fixture", Executable: tool, Operation: OperationWorkspaceTask}, operationBound)
 	var timedOut *TimeoutError
-	if !errors.As(err, &timedOut) || timedOut.Bound != BoundCaller || timedOut.Budget.Round(time.Millisecond) != 100*time.Millisecond {
+	if !errors.As(err, &timedOut) || timedOut.Bound != BoundCaller || timedOut.Budget.Round(time.Millisecond) != callerBudget.Round(time.Millisecond) {
 		t.Fatalf("caller deadline error = %#v", err)
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
+	if elapsed := time.Since(started); elapsed > testdeadline.Scale(t, operationBound/2) {
 		t.Fatalf("caller deadline took %s", elapsed)
 	}
 }

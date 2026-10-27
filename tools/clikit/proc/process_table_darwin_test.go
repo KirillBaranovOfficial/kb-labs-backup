@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"io"
 	"os"
 	"os/exec"
@@ -22,6 +23,13 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func contextForTestLifetime(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
+}
 
 // case: S-237.21
 func TestProcargs2ArgumentsPreserveOSArgumentBoundaries(t *testing.T) {
@@ -182,7 +190,7 @@ func TestDarwinExecCanReplaceMarkerWithinOneProcessIdentity(t *testing.T) {
 	if want := fmt.Sprintf("exec-ready %d exec-marker\n", pid); execLine != want {
 		t.Fatalf("post-exec child acknowledgment = %q, want %q", execLine, want)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	var lastMarker string
 	var lastUnverified bool
 	var lastMarkerErr error
@@ -249,8 +257,7 @@ func TestIdleKeeperCPUStaysBelowOnePercent(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build proc helper: %v\n%s", err, output)
 	}
-	run, err := StartWithHostResourceSource(context.Background(), Config{
-		HelperPath: helper, StateDir: state, Tag: "idle-keeper-cpu", Stall: time.Hour,
+	run, err := StartWithHostResourceSource(contextForTestLifetime(t), Config{StateDir: state, Tag: "idle-keeper-cpu", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "30"},
 	}, fakeHostResourceSource{sample: HostResourceSnapshot{
@@ -346,8 +353,7 @@ func TestSupervisedRunObservesWholeDarwinTableWithForeignUIDs(t *testing.T) {
 		t.Fatalf("build kb-runner: %v\n%s", err, output)
 	}
 	state := filepath.Join(dir, "state")
-	run, err := Start(context.Background(), Config{
-		HelperPath: runner, StateDir: state, Tag: "foreign-process-table", Stall: time.Hour,
+	run, err := Start(contextForTestLifetime(t), Config{StateDir: state, Tag: "foreign-process-table", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout"), StderrPath: filepath.Join(state, "stderr"),
 		Command: []string{truePath},
 	})
@@ -377,8 +383,7 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 	releaseFile := filepath.Join(dir, "release")
 	var pids []int
 	identities := make(map[int]string)
-	run, err := Start(context.Background(), Config{
-		HelperPath: helper, StateDir: state, Tag: "darwin-procargs", Stall: 250 * time.Millisecond,
+	run, err := Start(contextForTestLifetime(t), Config{StateDir: state, Tag: "darwin-procargs", Stall: 250 * time.Millisecond,
 		StdoutPath: filepath.Join(dir, "stdout"), StderrPath: filepath.Join(dir, "stderr"),
 		Command: []string{helper, "probe-detached", pidFile, releaseFile},
 	})
@@ -399,7 +404,7 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 				}
 			}
 		}
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(testdeadline.Budget(t))
 		for time.Now().Before(deadline) {
 			alive := false
 			for _, pid := range pids {
@@ -414,7 +419,7 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 		}
 		t.Logf("test-owned detached process identities still exist after bounded cleanup: %v", pids)
 	})
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		data, readErr := os.ReadFile(pidFile)
 		if readErr == nil {

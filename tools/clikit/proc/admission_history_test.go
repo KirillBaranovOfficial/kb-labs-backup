@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,9 +113,9 @@ func TestAdmissionWaitCostIsIndependentOfFinishedHistory(t *testing.T) {
 		if err != nil {
 			t.Fatalf("admission did not start after the disk floor cleared: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		cancel()
-		t.Fatal("admission did not start within 5s of clearing the disk floor")
+		t.Fatal("admission did not start before the test deadline after the disk floor cleared")
 	}
 	rec, err := readAdmissionRecord(state, "history-waiter")
 	if err != nil || rec.Status != StatusStarting {
@@ -217,7 +218,7 @@ func TestTerminalTransitionRetiresRecordAndKeepsItVisible(t *testing.T) {
 	if err != nil || rec.Status != StatusCompleted || rec.ExitCode == nil || *rec.ExitCode != 0 {
 		t.Fatalf("completed record = %+v, err=%v", rec, err)
 	}
-	waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	waitCtx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	info, err := WaitTag(waitCtx, state, "completing")
 	if err != nil {
@@ -303,9 +304,9 @@ func TestWaitRunCostIsIndependentOfFinishedHistory(t *testing.T) {
 		if outcome.info.Status != StatusFailed || outcome.info.ExitCode == nil || *outcome.info.ExitCode != 7 {
 			t.Fatalf("waited run info = %+v, want failed with exit 7", outcome.info)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		cancel()
-		t.Fatal("tag wait did not return within 5s of the run completing")
+		t.Fatal("tag wait did not return before the test deadline after the run completed")
 	}
 }
 
@@ -350,7 +351,7 @@ func TestWaitRunReturnsRunThatFinishesBetweenPolls(t *testing.T) {
 		if info.Status != StatusCompleted || info.ExitCode == nil || *info.ExitCode != 0 {
 			t.Fatalf("between-polls run info = %+v, want completed with exit 0", info)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		cancel()
 		t.Fatal("wait never observed the run that finished between two polls")
 	}

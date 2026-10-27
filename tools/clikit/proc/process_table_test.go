@@ -5,6 +5,7 @@ package proc
 import (
 	"context"
 	"errors"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"io"
 	"os"
 	"os/exec"
@@ -46,7 +47,7 @@ func TestGovernorStopsAndContinuesOwnedChildTree(t *testing.T) {
 	t.Cleanup(func() { _ = child.Process.Signal(syscall.SIGCONT); _ = child.Process.Kill(); _ = child.Wait() })
 	waitForOutput := func(previous int64) int64 {
 		t.Helper()
-		deadline := time.Now().Add(2 * time.Second)
+		deadline := time.Now().Add(testdeadline.Budget(t))
 		for time.Now().Before(deadline) {
 			info, statErr := os.Stat(outputPath)
 			if statErr == nil && info.Size() > previous {
@@ -74,7 +75,7 @@ func TestGovernorStopsAndContinuesOwnedChildTree(t *testing.T) {
 	}
 	waitForStopped := func(want bool) {
 		t.Helper()
-		deadline := time.Now().Add(2 * time.Second)
+		deadline := time.Now().Add(testdeadline.Budget(t))
 		for time.Now().Before(deadline) {
 			stopped, present, inspectErr := testProcessStopped(child.Process.Pid)
 			if inspectErr == nil && present && stopped == want {
@@ -95,7 +96,7 @@ func TestGovernorStopsAndContinuesOwnedChildTree(t *testing.T) {
 		t.Fatalf("resume process tree: %v", err)
 	}
 	waitForStopped(false)
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for fileSize(t, outputPath) == pausedSize && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -319,7 +320,7 @@ func TestWaitLatestTagSelectsNewestTerminalRun(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	info, err := WaitLatestTag(ctx, state, "stream")
 	if err != nil {

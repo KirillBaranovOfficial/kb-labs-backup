@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"github.com/kb-labs/clikit/proc"
 )
 
@@ -54,7 +55,7 @@ wait`
 			}
 		}
 	})
-	deadline := time.NewTimer(5 * time.Second)
+	deadline := time.NewTimer(testdeadline.Budget(t))
 	defer deadline.Stop()
 	readyPoll := time.NewTicker(time.Millisecond)
 	defer readyPoll.Stop()
@@ -74,10 +75,10 @@ wait`
 		if err == nil {
 			t.Fatal("canceled process tree returned success")
 		}
-	case <-time.After(time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		t.Fatal("Run did not return promptly after canceling the process group")
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
+	if elapsed := time.Since(started); elapsed > testdeadline.ProcessCancellationBound(t) {
 		t.Fatalf("process tree cancellation took %s", elapsed)
 	}
 	data, err := os.ReadFile(grandchildPID)

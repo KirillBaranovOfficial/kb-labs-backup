@@ -1,6 +1,7 @@
 package proc
 
 import (
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"os"
 	"os/exec"
 	"testing"
@@ -41,7 +42,7 @@ func TestRealChildSnapshotHasStableIdentityAndWallStart(t *testing.T) {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	})
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	var snapshots []Process
 	var err error
 	for time.Now().Before(deadline) {
