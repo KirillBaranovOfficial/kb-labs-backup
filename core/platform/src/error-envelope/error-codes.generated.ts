@@ -12,6 +12,8 @@ export type CatalogErrorCode =
   | "KB_ADAPTER_PROJECT_SCOPE"
   | "KB_ADAPTER_SLOT_MISMATCH"
   | "KB_AGENT_NOT_FOUND"
+  | "KB_ANALYTICS_PERSISTENCE_VOLATILE"
+  | "KB_ANALYTICS_STATS_UNSUPPORTED"
   | "KB_AUTH_CLOCK_SKEW"
   | "KB_AUTH_FORBIDDEN"
   | "KB_AUTH_GATEWAY_UNREACHABLE"
@@ -286,6 +288,8 @@ export interface CatalogTemplateParameters {
   "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
   "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string };
   "KB_AGENT_NOT_FOUND": { "agentId": string };
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<never, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -560,6 +564,8 @@ export interface CatalogDetailsFor {
   "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
   "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string; "path"?: string };
   "KB_AGENT_NOT_FOUND": { "agentId": string };
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<string, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<string, never>;
   "KB_AUTH_CLOCK_SKEW": Record<string, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<string, never>;
@@ -856,6 +862,8 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
   "KB_AGENT_NOT_FOUND": ["agentId"],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1130,6 +1138,8 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
   "KB_AGENT_NOT_FOUND": ["agentId"],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1404,6 +1414,8 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_ADAPTER_PROJECT_SCOPE": [],
   "KB_ADAPTER_SLOT_MISMATCH": ["slot"],
   "KB_AGENT_NOT_FOUND": [],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": [],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1678,6 +1690,8 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
   "KB_AGENT_NOT_FOUND": ["agentId"],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1952,6 +1966,8 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
   "KB_AGENT_NOT_FOUND": ["agentId"],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -2226,6 +2242,8 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_ADAPTER_PROJECT_SCOPE": [],
   "KB_ADAPTER_SLOT_MISMATCH": ["slot"],
   "KB_AGENT_NOT_FOUND": [],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": [],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -2500,6 +2518,8 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_ADAPTER_PROJECT_SCOPE": [],
   "KB_ADAPTER_SLOT_MISMATCH": ["path"],
   "KB_AGENT_NOT_FOUND": [],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["requestStage","httpStatus","remoteCorrelationId"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -2774,6 +2794,8 @@ export interface CatalogMessageTemplateParameters {
   "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
   "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string };
   "KB_AGENT_NOT_FOUND": { "agentId": string };
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<never, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -3048,6 +3070,8 @@ export interface CatalogHintTemplateParameters {
   "KB_ADAPTER_PROJECT_SCOPE": Record<never, never>;
   "KB_ADAPTER_SLOT_MISMATCH": { "slot": string };
   "KB_AGENT_NOT_FOUND": Record<never, never>;
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<never, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": Record<never, never>;
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -3322,6 +3346,8 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_ADAPTER_PROJECT_SCOPE": Record<never, never>;
   "KB_ADAPTER_SLOT_MISMATCH": Record<never, never>;
   "KB_AGENT_NOT_FOUND": Record<never, never>;
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<never, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": Record<never, never>;
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
