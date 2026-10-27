@@ -5,6 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '@kb-labs/plugin-contracts/node-engine-policy';
 import { nodeImageIssues } from './node-engine-dockerfiles.mjs';
+import { inspectPrebuildImportGraph, nodeEnginePrebuildEntry } from './prebuild-imports.mjs';
+import { checkAuthoredEsmDeclarationDrift } from './authored-esm-declarations.mjs';
 
 const inputText = await readStdin();
 if (inputText.trim() === '') {
@@ -17,6 +19,21 @@ const issues = [];
 const workspaceRoot = typeof input.workspaceRoot === 'string' ? path.resolve(input.workspaceRoot) : undefined;
 const packages = input.workspace?.packages;
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+for (const item of inspectPrebuildImportGraph(
+  nodeEnginePrebuildEntry(repositoryRoot),
+  repositoryRoot,
+)) {
+  issue(item.file, item.resolved
+    ? `pre-build import ${JSON.stringify(item.specifier)} resolves to ${item.resolved}; pre-build modules must not depend on build output or modules outside the workspace`
+    : `pre-build import ${JSON.stringify(item.specifier)} cannot be resolved`);
+}
+
+if (Array.isArray(packages)) {
+  for (const item of checkAuthoredEsmDeclarationDrift(packages, repositoryRoot)) {
+    issue(item.file, item.message);
+  }
+}
 
 function issue(file, message) {
   issues.push({ check, severity: 'error', message, file });

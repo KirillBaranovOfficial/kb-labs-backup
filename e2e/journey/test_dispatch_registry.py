@@ -1128,6 +1128,52 @@ class DispatchRegistryTests(unittest.TestCase):
             "--write-plan-baseline, then review the ordered plan diff before updating the golden",
         )
 
+    def test_installed_host_stop_plan_barrier_follows_steps_before_lifecycle(self):
+        root = Path(__file__).resolve().parents[2]
+        plans = full_runner_plans(root)
+        for selector, plan in plans.items():
+            runner = RUNNERS[selector]
+            sources = set().union(*(_imported_journey_sources({source}, root)
+                                    for source in runner.journey_sources))
+            declarations = [declaration for declaration in _source_step_declarations(sources, root).values()
+                            if declaration.get("name") is not None
+                            and (not declaration.get("runners") or selector in declaration["runners"])]
+            barrier = next(declaration for declaration in declarations
+                           if declaration.get("plan_after_phase") == "all-steps")
+            teardown = next(declaration for declaration in declarations
+                            if declaration.get("plan_phase") == "teardown")
+            self.assertEqual(plan[-2:], [barrier["name"], teardown["name"]], selector)
+
+    def test_full_runner_plan_rejects_missing_or_duplicate_ordering_markers(self):
+        root = Path(__file__).resolve().parents[2]
+        invalid_counts = (
+            (0, 1),
+            (1, 0),
+            (0, 0),
+            (2, 1),
+            (1, 2),
+        )
+        for barrier_count, teardown_count in invalid_counts:
+            with self.subTest(barriers=barrier_count, teardowns=teardown_count):
+                declarations = {"step": {"name": "regular journey step"}}
+                for index in range(barrier_count):
+                    declarations[f"barrier-{index}"] = {
+                        "name": f"barrier {index}", "plan_after_phase": "all-steps",
+                    }
+                for index in range(teardown_count):
+                    declarations[f"teardown-{index}"] = {
+                        "name": f"teardown {index}", "plan_phase": "teardown", "role": "lifecycle",
+                    }
+                with patch("select_from_cases.RUNNERS", {
+                        "fixture-plan": SimpleNamespace(journey_sources=("fixture.py",))}), \
+                        patch("select_from_cases._imported_journey_sources",
+                              side_effect=lambda sources, _root: frozenset(sources)), \
+                        patch("select_from_cases._source_step_declarations", return_value=declarations):
+                    with self.assertRaisesRegex(
+                            ValueError,
+                            rf"fixture-plan:.*barrier.*{barrier_count}.*teardown.*{teardown_count}"):
+                        full_runner_plans(root)
+
     def test_service_readiness_claim_uses_registered_project_state(self):
         resolved = selection_from_coverage(self._coverage(), "PC-002.3")
         self.assertEqual(resolved["prerequisiteSteps"], [])

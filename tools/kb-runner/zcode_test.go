@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -126,6 +127,9 @@ func TestZcodeChildEnvironmentIsCleanAndUsesAccountDataDirectory(t *testing.T) {
 }
 
 func TestZcodeSandboxProfileCanonicalizesSymlinkedWriteRoot(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("ZCode sandbox profile requires the macOS sandbox-exec boundary")
+	}
 	// Expectations are canonical paths; t.TempDir may itself sit under a symlink such as /var.
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -162,6 +166,9 @@ func TestZcodeSandboxProfileCanonicalizesSymlinkedWriteRoot(t *testing.T) {
 }
 
 func TestZcodeSandboxProfileResolvesMissingRootThroughExistingParent(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("ZCode sandbox profile requires the macOS sandbox-exec boundary")
+	}
 	// Expectations are canonical paths; t.TempDir may itself sit under a symlink such as /var.
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -195,6 +202,9 @@ func TestZcodeSandboxProfileResolvesMissingRootThroughExistingParent(t *testing.
 }
 
 func TestZcodeSandboxCommandAndProfileEnforceWriteBoundary(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("ZCode sandbox boundary requires macOS sandbox-exec")
+	}
 	sandbox, err := exec.LookPath(zcodeSandboxBinary)
 	if err != nil {
 		t.Fatalf("sandbox-exec is unavailable: %v", err)
@@ -439,9 +449,12 @@ func TestZcodeEnvironmentCarriesJobModel(t *testing.T) {
 }
 
 func TestZcodeSandboxAllowsToolchainDevicesSignalsAndJobTemp(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("ZCode sandbox boundary requires macOS sandbox-exec")
+	}
 	sandbox, err := exec.LookPath(zcodeSandboxBinary)
 	if err != nil {
-		t.Skip("sandbox-exec unavailable")
+		t.Fatalf("sandbox-exec is unavailable: %v", err)
 	}
 	root := t.TempDir()
 	worktree := filepath.Join(root, "worktree")

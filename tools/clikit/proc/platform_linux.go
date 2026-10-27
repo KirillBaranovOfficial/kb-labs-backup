@@ -64,21 +64,49 @@ func (osProcessSource) Signal(pid int, signal syscall.Signal) error {
 }
 
 func readProcessIdentity(pid int) (string, bool, error) {
+	stat, alive, err := readProcessStat(pid)
+	if err != nil || !alive {
+		return "", alive, err
+	}
+	return stat.Identity, true, nil
+}
+
+func readProcessStartIdentity(pid int) (time.Time, string, bool, error) {
+	stat, alive, err := readProcessStat(pid)
+	if err != nil || stat.PID == 0 {
+		return time.Time{}, "", alive, err
+	}
+	bootData, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return time.Time{}, "", false, fmt.Errorf("read process boot time: %w", err)
+	}
+	boot, err := parseProcBootTime(string(bootData))
+	if err != nil {
+		return time.Time{}, "", false, fmt.Errorf("parse process boot time: %w", err)
+	}
+	clockTicks, err := procClockTicks()
+	if err != nil {
+		return time.Time{}, "", false, fmt.Errorf("read process clock ticks: %w", err)
+	}
+	return procStartTime(boot, stat.StartTicks, clockTicks), stat.Identity, alive, nil
+}
+
+func readProcessStat(pid int) (procStat, bool, error) {
 	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
 	if err != nil {
 		if processGone(err) {
-			return "", false, nil
+			return procStat{}, false, nil
 		}
-		return "", false, fmt.Errorf("read /proc/%d/stat: %w", pid, err)
+		return procStat{}, false, fmt.Errorf("read /proc/%d/stat: %w", pid, err)
 	}
 	stat, err := parseProcStat(string(data))
 	if err != nil {
-		return "", false, fmt.Errorf("parse /proc/%d/stat: %w", pid, err)
+		return procStat{}, false, fmt.Errorf("parse /proc/%d/stat: %w", pid, err)
 	}
-	if stat.PID != pid || stat.State == 'Z' {
-		return "", false, nil
+	if stat.PID != pid {
+		return procStat{}, false, nil
 	}
-	return stat.Identity, true, nil
+	return stat, stat.State != 'Z', nil
 }
 
 func readProcessArguments(pid int) ([]string, error) {
@@ -196,7 +224,7 @@ func allProcesses(runID string) ([]Process, error) {
 			}
 		}
 		out = append(out, Process{
-			PID: pid, PPID: parsed.PPID, Command: command, StartedAt: started,
+			PID: pid, PPID: parsed.PPID, processGroupID: parsed.ProcessGroupID, Command: command, StartedAt: started,
 			ElapsedMS: elapsed, Identity: parsed.Identity, uid: statInfo.Uid,
 		})
 	}

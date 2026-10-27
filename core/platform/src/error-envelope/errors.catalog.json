@@ -147,6 +147,28 @@
       "hint": "Use an agent ID registered by the Agents plugin, then retry this request."
     },
     {
+      "code": "KB_ANALYTICS_STATS_UNSUPPORTED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "httpStatus": 501,
+      "message": "The analytics adapter cannot read aggregate statistics.",
+      "hint": "Configure `platform.adapters.analytics` in `kb.config.json` with an adapter that implements `getStats()`."
+    },
+    {
+      "code": "KB_ANALYTICS_PERSISTENCE_VOLATILE",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "warning",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "httpStatus": 200,
+      "message": "Analytics history is kept in memory and resets when the host restarts.",
+      "hint": "Run `kb marketplace install @kb-labs/adapters-analytics-sqlite --scope platform`, then `kb adapter bind analytics @kb-labs/adapters-analytics-sqlite` to retain analytics history across host restarts."
+    },
+    {
       "code": "KB_AUTH_CLOCK_SKEW",
       "area": "auth",
       "stage": "run",
@@ -786,6 +808,19 @@
         "platformRoot"
       ],
       "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNNER_SCHEDULER_ALREADY_RUNNING",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "Another scheduler process owns this state directory.",
+      "hint": "Wait for it to exit, then run `{nextCommand}`.",
+      "templateParameters": ["nextCommand"],
+      "requiredTemplateParameters": ["nextCommand"],
+      "httpStatus": 409
     },
     {
       "code": "KB_HOST_CONTROL_UNAUTHORIZED",

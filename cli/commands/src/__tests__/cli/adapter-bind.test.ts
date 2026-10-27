@@ -398,7 +398,7 @@ describe('platform adapter commands from unregistered directories', () => {
     expect(await adapterUnbind.run(ctx, ['storage'], { json: true })).toBe(0);
     expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8')))
       .not.toHaveProperty('platform.adapters.storage');
-    expect(await createProjectRegistry({ env: process.env }).list()).toHaveLength(1);
+    expect((await createProjectRegistry({ env: process.env }).list()).projects).toHaveLength(1);
   });
 });
 

@@ -39,6 +39,7 @@ ENV KB_JOURNEY_RESOURCE_LAYOUT=runner-image
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
 COPY --from=release-index-sealer /out/kb-create-release-index /usr/local/bin/kb-create-release-index
 COPY e2e/journey /opt/kb-journey/e2e/journey
+COPY e2e/compose-owner.sh /opt/kb-journey/e2e/compose-owner.sh
 COPY .journey/runner-inputs/config-jsonc-edit.mjs /opt/kb-journey/core/config/dist/jsonc-edit.mjs
 COPY .journey/runner-inputs/project-service-path.js /opt/kb-journey/core/plugin-contracts/dist/project-service-path.js
 COPY docs/qa/scenarios /opt/kb-journey/docs/qa/scenarios

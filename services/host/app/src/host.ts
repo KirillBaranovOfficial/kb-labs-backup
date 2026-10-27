@@ -13,7 +13,6 @@
 
 import { createRequire } from "node:module";
 import { loadEffectiveConfig, validatePlatformAdapterOptions } from "@kb-labs/core-config";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import {
   GATEWAY_SERVICE_NETWORK,
   AdapterConfigError,
@@ -22,6 +21,7 @@ import {
   type IServiceTransport,
 } from "@kb-labs/core-platform";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import type { PlatformAssemblyHook } from "@kb-labs/core-runtime";
 import {
   isLoopbackHost,

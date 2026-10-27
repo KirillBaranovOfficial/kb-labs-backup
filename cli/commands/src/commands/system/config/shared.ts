@@ -51,7 +51,7 @@ export async function resolveConfigRoots(
     };
   }
   const { rootDir: projectRoot } = await resolveProjectRoot({ cwd });
-  const projects = await createProjectRegistry().list();
+  const { projects } = await createProjectRegistry().list();
   const project = projects.find(({ project }) => project.path === projectRoot)?.project;
   if (!project) {
     requireProjectContext(undefined, projectRoot);

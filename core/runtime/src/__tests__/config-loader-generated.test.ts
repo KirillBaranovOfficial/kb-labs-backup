@@ -30,7 +30,7 @@ async function projectRegistration(root: string) {
   const env = { KB_HOME: home }
   const canonicalRoot = realpathSync(root)
   const registry = createProjectRegistry({ env })
-  const existing = (await registry.list()).find((entry) => entry.project.path === canonicalRoot)
+  const existing = (await registry.list()).projects.find((entry) => entry.project.path === canonicalRoot)
   const project = existing?.project ?? (await registry.add(canonicalRoot)).project
   return { env, projectId: project.id }
 }

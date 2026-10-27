@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kb-labs/clikit/internal/testdeadline"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kb-labs/clikit/internal/testdeadline"
 )
 
 func TestInventoryKeepsUnobservableArgvVisible(t *testing.T) {
@@ -103,35 +104,10 @@ func TestInventoryOmitsReusedProcessAfterArgvReadError(t *testing.T) {
 
 // case: S-237.22
 func TestInventoryOmitsRealZombieChild(t *testing.T) {
-	child := exec.Command("/bin/sh", "-c", "exit 0")
-	if err := child.Start(); err != nil {
-		t.Fatalf("start zombie fixture child: %v", err)
-	}
-	waited := false
-	t.Cleanup(func() {
-		if !waited {
-			if err := child.Wait(); err != nil {
-				t.Errorf("reap zombie fixture child during cleanup: %v", err)
-			}
-		}
-	})
-
-	deadline := time.Now().Add(testdeadline.Budget(t))
-	for time.Now().Before(deadline) {
-		_, alive, err := ProcessIdentity(child.Process.Pid)
-		if err != nil {
-			t.Fatalf("inspect zombie fixture identity: %v", err)
-		}
-		if !alive {
-			if err := syscall.Kill(child.Process.Pid, 0); err != nil {
-				t.Fatalf("fixture PID %d is gone instead of remaining as an unreaped zombie: %v", child.Process.Pid, err)
-			}
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if _, alive, err := ProcessIdentity(child.Process.Pid); err != nil || alive {
-		t.Fatalf("fixture child PID %d did not reach zombie state: alive=%t err=%v", child.Process.Pid, alive, err)
+	child, reap := startZombieChild(t)
+	startedAt, identity, alive, err := readProcessStartIdentity(child.Process.Pid)
+	if err != nil || alive || startedAt.IsZero() || identity == "" {
+		t.Fatalf("zombie root start identity = (%s, %q, alive=%t, err=%v); want its PID/start identity with alive=false", startedAt, identity, alive, err)
 	}
 	if err := syscall.Kill(child.Process.Pid, 0); err != nil {
 		t.Fatalf("fixture child PID %d was reaped before inventory: %v", child.Process.Pid, err)
@@ -146,10 +122,62 @@ func TestInventoryOmitsRealZombieChild(t *testing.T) {
 			t.Fatalf("FAILED PREDICATE [inventory.zombie-omitted]: zombie PID %d was returned as %+v", child.Process.Pid, entry)
 		}
 	}
-	if err := child.Wait(); err != nil {
+	if err := reap(); err != nil {
 		t.Fatalf("reap zombie fixture child after inventory: %v", err)
 	}
-	waited = true
+}
+
+// case: S-261.6
+func TestZombieRootIdentityRemainsAvailableForManagedChild(t *testing.T) {
+	child, reap := startZombieChild(t)
+	root, err := ChildProcessObserver().RootIdentity(child.Process.Pid)
+	if err != nil {
+		t.Fatalf("capture zombie root identity: %v", err)
+	}
+	if root.PID != child.Process.Pid || root.Identity == "" || root.StartedAt.IsZero() {
+		t.Fatalf("zombie root identity = %+v, want PID/start identity", root)
+	}
+	if err := reap(); err != nil {
+		t.Fatalf("reap zombie root: %v", err)
+	}
+}
+
+func startZombieChild(t *testing.T) (*exec.Cmd, func() error) {
+	t.Helper()
+	child := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := child.Start(); err != nil {
+		t.Fatalf("start zombie fixture child: %v", err)
+	}
+	waited := false
+	reap := func() error {
+		if waited {
+			return nil
+		}
+		err := child.Wait()
+		waited = true
+		return err
+	}
+	t.Cleanup(func() {
+		if err := reap(); err != nil {
+			t.Errorf("reap zombie fixture child during cleanup: %v", err)
+		}
+	})
+	deadline := time.Now().Add(testdeadline.Budget(t))
+	for time.Now().Before(deadline) {
+		_, alive, err := ProcessIdentity(child.Process.Pid)
+		if err != nil {
+			t.Fatalf("inspect zombie fixture identity: %v", err)
+		}
+		if !alive {
+			if err := syscall.Kill(child.Process.Pid, 0); err != nil {
+				t.Fatalf("fixture PID %d is gone instead of remaining as an unreaped zombie: %v", child.Process.Pid, err)
+			}
+			return child, reap
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("fixture child PID %d did not reach zombie state", child.Process.Pid)
+	return nil, nil
 }
 
 func TestInventoryRetainsIdentityObservationFailure(t *testing.T) {

@@ -35,11 +35,14 @@ const providerContinuationPrompt = "The provider connection dropped mid-task (tr
 
 func agentCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprintf(out, "Usage: %s agent start --stream <name> --vendor <%s> --workdir <path> --prompt-file <path> [phase commands]\n", root.Name(), strings.Join(vendorNamesFor(nil), "|"))
+		_, err := fmt.Fprintf(out, "Usage: %s agent <launch|resume|review|rework> <stream> [--state <dir>] | %s agent start --stream <name> --vendor <%s> --workdir <path> --prompt-file <path> [phase commands]\n", root.Name(), root.Name(), strings.Join(vendorNamesFor(nil), "|"))
 		return 0, err
 	}
-	if len(args) == 0 || args[0] != "start" {
-		return 2, fmt.Errorf("%s agent: expected start; next: %s agent --help", root.Name(), root.InvocationCommand())
+	if len(args) == 0 {
+		return 2, fmt.Errorf("%s agent: operation required; next: %s agent --help", root.Name(), root.InvocationCommand())
+	}
+	if args[0] != "start" {
+		return agentLifecycleCommand(root, args, out)
 	}
 	return agentStartCommand(root, args[1:], out, errOut)
 }

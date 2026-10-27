@@ -26,6 +26,8 @@ from invocations import (
     decode_ux_error_result,
     decode_ux_success_result,
     export_project_identity_to_child_environment,
+    catalogued_error_hint,
+    catalogued_error_message,
     open_http,
     read_kb_create_cli_result,
     read_ux_cli_result,
@@ -86,6 +88,32 @@ def config(root: Path) -> dict:
         return {}
     value = json.loads(config_path.read_text())
     return value if isinstance(value, dict) else {}
+
+
+def _assert_no_project_adapter_config(project_root: Path) -> None:
+    config_paths = [project_root / ".kb" / "kb.config.json",
+                    project_root / ".kb" / "kb.config.jsonc"]
+    present = [path.name for path in config_paths if path.is_file()]
+    if present:
+        raise RuntimeError("registered project has user-written adapter config: " + ", ".join(present))
+
+
+def _assert_missing_gateway_dispatch_error(result: CompletedProcess[str]) -> None:
+    if result.returncode == 0:
+        raise RuntimeError("workflow dispatch without KB_GATEWAY_URL unexpectedly succeeded")
+    try:
+        envelope = read_ux_cli_result(result)
+        error = decode_ux_error_result(envelope)
+    except ValueError as failure:
+        raise RuntimeError(f"workflow dispatch without KB_GATEWAY_URL returned no typed error: {failure}") from failure
+    details = error.get("details")
+    if (error.get("code") != "KB_HOST_SERVICE_ADDRESS_MISSING"
+            or error.get("message") != catalogued_error_message("KB_HOST_SERVICE_ADDRESS_MISSING")
+            or error.get("hint") != catalogued_error_hint("KB_HOST_SERVICE_ADDRESS_MISSING")
+            or not isinstance(details, dict) or details.get("service") != "gateway"
+            or not isinstance(error.get("correlationId"), str)
+            or not error["correlationId"]):
+        raise RuntimeError("workflow dispatch did not report the catalogued missing gateway address with correlation")
 
 
 def write_config(root: Path, value: dict) -> None:
@@ -358,6 +386,23 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 raise RuntimeError(f"{slot} is not reported unconfigured without an adequate local implementation")
 
     journey.step("list fresh-install built-in adapter defaults", "adapter", assert_default_list, cases=["S-054.1"])
+
+    def assert_installed_defaults_without_project_config() -> None:
+        _assert_no_project_adapter_config(project_a)
+        assert_default_list()
+
+    journey.step("list installed defaults without project adapter config", "adapter",
+                 assert_installed_defaults_without_project_config, cases=["S-054.18"])
+
+    def assert_missing_gateway_dispatch_is_actionable() -> None:
+        command = ["workflow", "run", "--workflow-id=e2e-hello", "--json"]
+        dispatch_env = base_env.copy()
+        dispatch_env.pop("KB_GATEWAY_URL", None)
+        result = runner(kb_command(command), cwd=str(project_a), env=dispatch_env, timeout=300)
+        _assert_missing_gateway_dispatch_error(result)
+
+    journey.step("report missing host gateway address for workflow dispatch", "adapter",
+                 assert_missing_gateway_dispatch_is_actionable, cases=["S-054.19"])
 
     def assert_optional_openai_requirement_in_install_plan() -> None:
         receipt_path = active_platform_root(platform_root) / ".kb" / "v2" / "receipt.json"

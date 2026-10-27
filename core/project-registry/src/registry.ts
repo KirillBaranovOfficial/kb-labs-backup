@@ -5,7 +5,6 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
   AddProjectOptions,
   AddProjectResult,
-  IProjectRegistry,
   ProjectDeclarationState,
   ProjectId,
   ProjectRecord,
@@ -13,7 +12,9 @@ import type {
   ProjectStatus,
   ProjectView,
 } from '@kb-labs/core-contracts';
+import type { IProjectRegistry, ProjectRegistryList } from './interface.js';
 import { ProjectRegistryError } from './errors.js';
+import { projectErrorEnvelope } from './envelope.js';
 import { withFileLock, type FileLockOptions } from './file-lock.js';
 import { canonicalizeProjectPath, deriveProjectId, isProjectId } from './project-id.js';
 
@@ -41,6 +42,26 @@ export interface ProjectRegistryOptions {
   /** Clock, injectable for tests. */
   now?: () => Date;
   lock?: FileLockOptions;
+}
+
+interface IdentityMismatchRecord {
+  record: ProjectRecord;
+  error: ProjectRegistryError<'KB_PROJECT_REGISTRY_CORRUPT'>;
+}
+
+interface RegistrySnapshot {
+  file: ProjectRegistryFile;
+  identityMismatches: IdentityMismatchRecord[];
+}
+
+class ProjectRecordIdentityMismatch extends ProjectRegistryError<'KB_PROJECT_REGISTRY_CORRUPT'> {
+  readonly record: ProjectRecord;
+
+  constructor(file: string, index: number, record: ProjectRecord) {
+    const reason = `projects[${index}].id ${record.id} does not match registered path ${record.path}`;
+    super('KB_PROJECT_REGISTRY_CORRUPT', `Project registry ${file} is invalid: ${reason}`, { file, reason });
+    this.record = record;
+  }
 }
 
 function corrupt(file: string, reason: string): ProjectRegistryError {
@@ -79,13 +100,19 @@ function parseRecord(value: unknown, file: string, index: number): ProjectRecord
     throw corrupt(file, `${at}.lastUsedAt is not a timestamp or null`);
   }
   if (deriveProjectId(path) !== id) {
-    throw corrupt(file, `${at}.id does not match its path`);
+    throw new ProjectRecordIdentityMismatch(file, index, {
+      id,
+      path,
+      name,
+      status: status as ProjectStatus,
+      addedAt,
+      lastUsedAt,
+    });
   }
   return { id, path, name, status: status as ProjectStatus, addedAt, lastUsedAt };
 }
 
-/** Validates the raw file content. Never repairs: a bad file is reported, not rewritten. */
-export function parseRegistryFile(raw: string, file: string): ProjectRegistryFile {
+function parseRegistrySnapshot(raw: string, file: string, recoverIdentityMismatches: boolean): RegistrySnapshot {
   let data: unknown;
   try {
     data = JSON.parse(raw);
@@ -109,7 +136,18 @@ export function parseRegistryFile(raw: string, file: string): ProjectRegistryFil
   if (!Array.isArray(projects)) {
     throw corrupt(file, 'projects is not an array');
   }
-  const records = projects.map((entry, index) => parseRecord(entry, file, index));
+  const records: ProjectRecord[] = [];
+  const identityMismatches: IdentityMismatchRecord[] = [];
+  projects.forEach((entry, index) => {
+    try {
+      records.push(parseRecord(entry, file, index));
+    } catch (error) {
+      if (!recoverIdentityMismatches || !(error instanceof ProjectRecordIdentityMismatch)) {
+        throw error;
+      }
+      identityMismatches.push({ record: error.record, error });
+    }
+  });
   const ids = new Set<string>();
   const names = new Set<string>();
   for (const record of records) {
@@ -122,7 +160,12 @@ export function parseRegistryFile(raw: string, file: string): ProjectRegistryFil
     ids.add(record.id);
     names.add(record.name);
   }
-  return { schemaVersion, projects: records };
+  return { file: { schemaVersion, projects: records }, identityMismatches };
+}
+
+/** Validates the complete raw file. Never repairs: a bad file is reported, not rewritten. */
+export function parseRegistryFile(raw: string, file: string): ProjectRegistryFile {
+  return parseRegistrySnapshot(raw, file, false).file;
 }
 
 /** Write to a sibling temp file, fsync, then rename: readers never see a partial file. */
@@ -174,36 +217,56 @@ function uniqueName(base: string, taken: ReadonlySet<string>): string {
   }
 }
 
+function containingPath<T extends { path: string }>(
+  rows: readonly T[], cwd: string,
+): T | undefined {
+  return rows
+    .filter(({ path }) => {
+      const rel = relative(path, cwd);
+      return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+    })
+    .sort((left, right) => right.path.length - left.path.length)[0];
+}
+
 export function createProjectRegistry(options: ProjectRegistryOptions = {}): IProjectRegistry {
   const root = options.root ? resolve(options.root) : resolveKbHome(options.env);
   const filePath = join(root, PROJECT_REGISTRY_FILE);
   const lockPath = `${filePath}.lock`;
   const now = options.now ?? (() => new Date());
 
-  const readFile = async (): Promise<ProjectRegistryFile> => {
+  const readFile = async (): Promise<RegistrySnapshot> => {
     let raw: string;
     try {
       raw = await fs.readFile(filePath, 'utf8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { schemaVersion: PROJECT_REGISTRY_SCHEMA_VERSION, projects: [] };
+        return { file: { schemaVersion: PROJECT_REGISTRY_SCHEMA_VERSION, projects: [] }, identityMismatches: [] };
       }
       throw error;
     }
-    return parseRegistryFile(raw, filePath);
+    return parseRegistrySnapshot(raw, filePath, true);
   };
 
   /** Read-only twin of `mutate` for dry runs: same validation, nothing written, no lock taken. */
-  const preview = async <T>(change: (file: ProjectRegistryFile) => T): Promise<T> => change(await readFile());
+  const preview = async <T>(change: (file: ProjectRegistryFile) => T): Promise<T> => {
+    const snapshot = await readFile();
+    if (snapshot.identityMismatches.length > 0) {
+      throw snapshot.identityMismatches[0]!.error;
+    }
+    return change(snapshot.file);
+  };
 
   const mutate = async <T>(change: (file: ProjectRegistryFile) => T): Promise<T> => {
     await fs.mkdir(root, { recursive: true, mode: 0o700 });
     return withFileLock(
       lockPath,
       async () => {
-        const file = await readFile();
-        const result = change(file);
-        await writeFileAtomic(filePath, `${JSON.stringify(file, null, 2)}\n`);
+        const snapshot = await readFile();
+        if (snapshot.identityMismatches.length > 0) {
+          throw snapshot.identityMismatches[0]!.error;
+        }
+        const result = change(snapshot.file);
+        await writeFileAtomic(filePath, `${JSON.stringify(snapshot.file, null, 2)}\n`);
         return result;
       },
       options.lock,
@@ -287,15 +350,56 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
       return { project, declaration: await hasDeclaration(canonical), alreadyExisted };
     },
 
-    async list(): Promise<ProjectView[]> {
-      const file = await readFile();
-      return Promise.all(file.projects.map(view));
+    async list(): Promise<ProjectRegistryList> {
+      const snapshot = await readFile();
+      return {
+        projects: await Promise.all(snapshot.file.projects.map(view)),
+        diagnostics: snapshot.identityMismatches.map(({ record, error }) => {
+          const envelope = projectErrorEnvelope(error);
+          return {
+            code: error.code,
+            message: envelope.message,
+            severity: 'warning',
+            path: record.path,
+            hint: envelope.hint,
+          };
+        }),
+      };
+    },
+
+    async findContainingPath(cwd: string): Promise<ProjectView | undefined> {
+      let canonicalCwd: string;
+      try {
+        canonicalCwd = await fs.realpath(cwd);
+      } catch {
+        canonicalCwd = resolve(cwd);
+      }
+      const snapshot = await readFile();
+      const candidate = containingPath([
+        ...snapshot.file.projects.map((record) => ({ path: record.path, record })),
+        ...snapshot.identityMismatches.map((mismatch) => ({
+          path: mismatch.record.path,
+          record: mismatch.record,
+          error: mismatch.error,
+        })),
+      ], canonicalCwd);
+      if (!candidate) return undefined;
+      if ('error' in candidate) throw candidate.error;
+      return view(candidate.record);
     },
 
     async get(ref: string): Promise<ProjectView> {
-      const file = await readFile();
-      const record = find(file, ref, await aliasId(ref));
+      const snapshot = await readFile();
+      const alias = await aliasId(ref);
+      const record = find(snapshot.file, ref, alias);
       if (!record) {
+        const resolvedRef = resolve(ref);
+        const identityMismatch = snapshot.identityMismatches.find(({ record: invalid }) =>
+          invalid.id === ref || invalid.name === ref || invalid.path === resolvedRef ||
+          (alias !== undefined && invalid.id === alias));
+        if (identityMismatch) {
+          throw identityMismatch.error;
+        }
         throw unknown(ref);
       }
       return view(record);
@@ -336,19 +440,7 @@ export async function findProjectContainingPath(
   registry: IProjectRegistry,
   cwd: string,
 ): Promise<ProjectView | undefined> {
-  let canonicalCwd: string;
-  try {
-    canonicalCwd = await fs.realpath(cwd);
-  } catch {
-    canonicalCwd = resolve(cwd);
-  }
-  const projects = await registry.list();
-  return projects
-    .filter(({ project }) => {
-      const rel = relative(project.path, canonicalCwd);
-      return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-    })
-    .sort((left, right) => right.project.path.length - left.project.path.length)[0];
+  return registry.findContainingPath(cwd);
 }
 
 /** Synchronous registry lookup for legacy synchronous plugin entry points. */
@@ -358,9 +450,9 @@ export function findRegisteredProjectContainingPathSync(
 ): ProjectRecord | undefined {
   const root = options.root ? resolve(options.root) : resolveKbHome(options.env);
   const filePath = join(root, PROJECT_REGISTRY_FILE);
-  let registryFile: ProjectRegistryFile;
+  let snapshot: RegistrySnapshot;
   try {
-    registryFile = parseRegistryFile(readFileSync(filePath, 'utf8'), filePath);
+    snapshot = parseRegistrySnapshot(readFileSync(filePath, 'utf8'), filePath, true);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return undefined;
@@ -373,10 +465,11 @@ export function findRegisteredProjectContainingPathSync(
   } catch {
     canonicalCwd = resolve(cwd);
   }
-  return registryFile.projects
-    .filter(({ path: projectPath }) => {
-      const rel = relative(projectPath, canonicalCwd);
-      return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-    })
-    .sort((left, right) => right.path.length - left.path.length)[0];
+  const candidate = containingPath([
+    ...snapshot.file.projects,
+    ...snapshot.identityMismatches.map(({ record, error }) => ({ ...record, error })),
+  ], canonicalCwd);
+  if (!candidate) return undefined;
+  if ('error' in candidate) throw candidate.error;
+  return candidate;
 }

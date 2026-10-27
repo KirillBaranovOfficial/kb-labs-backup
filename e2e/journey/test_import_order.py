@@ -174,6 +174,32 @@ class JourneyImportOrderTests(unittest.TestCase):
                     shutil.copy2(source_path, target_path)
 
             journey_root = image_root / "opt/kb-journey/e2e/journey"
+            command_bin = image_root / "command-bin"
+            command_bin.mkdir()
+            docker = command_bin / "docker"
+            docker.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1 $2\" = 'compose version' ]; then exit 0; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o755)
+            git = command_bin / "git"
+            git.write_text("#!/bin/sh\nprintf 'runner-image-test\\n'\n", encoding="utf-8")
+            git.chmod(0o755)
+            run = subprocess.run(
+                ["bash", str(journey_root / "run.sh"), "--render-compose-config"],
+                cwd=image_root / "opt/kb-journey",
+                env={**os.environ, "PATH": f"{command_bin}{os.pathsep}{os.environ['PATH']}"},
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(
+                run.returncode,
+                0,
+                f"copied runner could not resolve its shared Compose owner\n"
+                f"stdout:\n{run.stdout}\nstderr:\n{run.stderr}",
+            )
+
             env = os.environ.copy()
             env["PYTHONPATH"] = str(journey_root)
             probe = "\n".join((

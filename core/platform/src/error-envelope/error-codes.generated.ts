@@ -12,6 +12,8 @@ export type CatalogErrorCode =
   | "KB_ADAPTER_PROJECT_SCOPE"
   | "KB_ADAPTER_SLOT_MISMATCH"
   | "KB_AGENT_NOT_FOUND"
+  | "KB_ANALYTICS_PERSISTENCE_VOLATILE"
+  | "KB_ANALYTICS_STATS_UNSUPPORTED"
   | "KB_AUTH_CLOCK_SKEW"
   | "KB_AUTH_FORBIDDEN"
   | "KB_AUTH_GATEWAY_UNREACHABLE"
@@ -190,6 +192,7 @@ export type CatalogErrorCode =
   | "KB_RELEASE_TREE_DIRTY"
   | "KB_RELEASE_VERSION_CONFLICT"
   | "KB_RESTART_WORK_IN_FLIGHT"
+  | "KB_RUNNER_SCHEDULER_ALREADY_RUNNING"
   | "KB_RUNNER_ZAI_KEY_FILE_INVALID"
   | "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE"
   | "KB_RUNTIME_APPROVAL_INPUT_INVALID"
@@ -286,6 +289,8 @@ export interface CatalogTemplateParameters {
   "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
   "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string };
   "KB_AGENT_NOT_FOUND": { "agentId": string };
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<never, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -464,6 +469,7 @@ export interface CatalogTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": { "nextCommand": string };
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string };
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
@@ -560,6 +566,8 @@ export interface CatalogDetailsFor {
   "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
   "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string; "path"?: string };
   "KB_AGENT_NOT_FOUND": { "agentId": string };
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<string, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<string, never>;
   "KB_AUTH_CLOCK_SKEW": Record<string, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<string, never>;
@@ -738,6 +746,7 @@ export interface CatalogDetailsFor {
   "KB_RELEASE_TREE_DIRTY": { "check"?: string; "classification"?: string; "changes"?: string; "toolGenerated"?: string };
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string; "items": readonly { "kind": string; "id": string; "owningService": string }[] };
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": { "nextCommand": string };
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string; "keyFile"?: string };
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<string, never>;
@@ -856,6 +865,8 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
   "KB_AGENT_NOT_FOUND": ["agentId"],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1034,6 +1045,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -1130,6 +1142,8 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
   "KB_AGENT_NOT_FOUND": ["agentId"],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1308,6 +1322,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": [],
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": [],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": [],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -1404,6 +1419,8 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_ADAPTER_PROJECT_SCOPE": [],
   "KB_ADAPTER_SLOT_MISMATCH": ["slot"],
   "KB_AGENT_NOT_FOUND": [],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": [],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1582,6 +1599,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -1678,6 +1696,8 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
   "KB_AGENT_NOT_FOUND": ["agentId"],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1856,6 +1876,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -1952,6 +1973,8 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_ADAPTER_PROJECT_SCOPE": ["path"],
   "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
   "KB_AGENT_NOT_FOUND": ["agentId"],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["permission"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -2130,6 +2153,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": [],
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": [],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": [],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -2226,6 +2250,8 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_ADAPTER_PROJECT_SCOPE": [],
   "KB_ADAPTER_SLOT_MISMATCH": ["slot"],
   "KB_AGENT_NOT_FOUND": [],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": [],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -2404,6 +2430,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -2500,6 +2527,8 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_ADAPTER_PROJECT_SCOPE": [],
   "KB_ADAPTER_SLOT_MISMATCH": ["path"],
   "KB_AGENT_NOT_FOUND": [],
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": [],
+  "KB_ANALYTICS_STATS_UNSUPPORTED": [],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["requestStage","httpStatus","remoteCorrelationId"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -2678,6 +2707,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_TREE_DIRTY": ["check","classification","changes","toolGenerated"],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RESTART_WORK_IN_FLIGHT": ["items"],
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": [],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["keyFile"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -2774,6 +2804,8 @@ export interface CatalogMessageTemplateParameters {
   "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
   "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string };
   "KB_AGENT_NOT_FOUND": { "agentId": string };
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<never, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -2952,6 +2984,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
   "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": Record<never, never>;
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": Record<never, never>;
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
@@ -3048,6 +3081,8 @@ export interface CatalogHintTemplateParameters {
   "KB_ADAPTER_PROJECT_SCOPE": Record<never, never>;
   "KB_ADAPTER_SLOT_MISMATCH": { "slot": string };
   "KB_AGENT_NOT_FOUND": Record<never, never>;
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<never, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": Record<never, never>;
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -3226,6 +3261,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": Record<never, never>;
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": { "nextCommand": string };
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string };
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
@@ -3322,6 +3358,8 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_ADAPTER_PROJECT_SCOPE": Record<never, never>;
   "KB_ADAPTER_SLOT_MISMATCH": Record<never, never>;
   "KB_AGENT_NOT_FOUND": Record<never, never>;
+  "KB_ANALYTICS_PERSISTENCE_VOLATILE": Record<never, never>;
+  "KB_ANALYTICS_STATS_UNSUPPORTED": Record<never, never>;
   "KB_AUTH_CLOCK_SKEW": Record<never, never>;
   "KB_AUTH_FORBIDDEN": Record<never, never>;
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<never, never>;
@@ -3500,6 +3538,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": Record<never, never>;
   "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
+  "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": Record<never, never>;
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": Record<never, never>;
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;

@@ -14,5 +14,4 @@ export default defineConfig({
   external: [
     '@kb-labs/sdk',
   ],
-  dts: true,
 });

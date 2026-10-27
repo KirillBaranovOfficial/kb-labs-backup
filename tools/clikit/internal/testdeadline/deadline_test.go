@@ -38,7 +38,7 @@ func TestScaledBudget(t *testing.T) {
 	}
 }
 
-// case: S-261.8
+// case: S-261.9
 func TestBudgetUsesScaleEnvironment(t *testing.T) {
 	t.Setenv("KB_TEST_DEADLINE_SCALE", "2")
 	if got := Budget(t); got != 60*time.Second {
@@ -59,7 +59,7 @@ func TestNamedOperationBudgetsUseScale(t *testing.T) {
 	}
 }
 
-// case: S-261.8
+// case: S-261.9
 func TestFailureDiagnosticIncludesBudgetElapsedAndHostLoad(t *testing.T) {
 	const childEnv = "KB_TEST_DEADLINE_DIAGNOSTIC_CHILD"
 	if os.Getenv(childEnv) == "1" {

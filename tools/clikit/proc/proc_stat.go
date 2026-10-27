@@ -9,15 +9,16 @@ import (
 )
 
 type procStat struct {
-	PID           int
-	Comm          string
-	State         byte
-	PPID          int
-	StartTicks    int64
-	UserTicks     int64
-	SystemTicks   int64
-	ResidentPages int64
-	Identity      string
+	PID            int
+	Comm           string
+	State          byte
+	PPID           int
+	ProcessGroupID int
+	StartTicks     int64
+	UserTicks      int64
+	SystemTicks    int64
+	ResidentPages  int64
+	Identity       string
 }
 
 // parseProcStat parses Linux /proc/<pid>/stat. Comm is parenthesized but may
@@ -41,6 +42,10 @@ func parseProcStat(data string) (procStat, error) {
 	if err != nil {
 		return procStat{}, fmt.Errorf("parse proc stat parent pid: %w", err)
 	}
+	processGroupID, err := strconv.Atoi(fields[2])
+	if err != nil || processGroupID < 0 {
+		return procStat{}, errors.New("parse proc stat process group: invalid value")
+	}
 	startTicks, err := strconv.ParseInt(fields[19], 10, 64)
 	if err != nil || startTicks < 0 {
 		return procStat{}, errors.New("parse proc stat start ticks: invalid value")
@@ -51,7 +56,7 @@ func parseProcStat(data string) (procStat, error) {
 	if uErr != nil || sErr != nil || rErr != nil || residentPages < 0 {
 		return procStat{}, errors.New("proc stat has invalid CPU or resident memory fields")
 	}
-	return procStat{PID: pid, Comm: data[open+1 : close], State: fields[0][0], PPID: ppid, StartTicks: startTicks, UserTicks: userTicks, SystemTicks: systemTicks, ResidentPages: residentPages, Identity: strconv.FormatInt(startTicks, 10)}, nil
+	return procStat{PID: pid, Comm: data[open+1 : close], State: fields[0][0], PPID: ppid, ProcessGroupID: processGroupID, StartTicks: startTicks, UserTicks: userTicks, SystemTicks: systemTicks, ResidentPages: residentPages, Identity: strconv.FormatInt(startTicks, 10)}, nil
 }
 
 func parseProcBootTime(data string) (time.Time, error) {

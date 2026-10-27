@@ -4,13 +4,16 @@ package proc
 
 import (
 	"context"
-	"github.com/kb-labs/clikit/internal/testdeadline"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kb-labs/clikit/internal/testdeadline"
 )
 
 // Run only with `go test -tags docker ./proc -run '^TestDockerComposeCleanupRemovesOnlyUniqueProject$'`.
@@ -20,7 +23,7 @@ func TestDockerComposeCleanupRemovesOnlyUniqueProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := "x56-cleanup-" + strings.ToLower(strings.ReplaceAll(id, "_", "a"))
-	prefix := resolveComposePrefix(t)
+	prefix := composePrefixFromOwner(t)
 	composeFile := filepath.Join(t.TempDir(), "compose.yaml")
 	compose := "services:\n  sleeper:\n    image: busybox:latest\n    command: [\"sh\", \"-c\", \"trap '' TERM; exec sleep 3600\"]\n"
 	if err := os.WriteFile(composeFile, []byte(compose), 0o600); err != nil {
@@ -67,21 +70,35 @@ func TestDockerComposeCleanupRemovesOnlyUniqueProject(t *testing.T) {
 	}
 }
 
-func resolveComposePrefix(t *testing.T) []string {
+func composePrefixFromOwner(t *testing.T) []string {
 	t.Helper()
-	const resolve = `if command docker compose version >/dev/null 2>&1; then printf 'docker\000compose'; elif command -v docker-compose >/dev/null 2>&1; then printf 'docker-compose'; else exit 127; fi`
-	output, err := exec.Command("sh", "-c", resolve).Output()
+	workingDirectory, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("resolve Compose prefix using journey policy: %v", err)
+		t.Fatalf("locate Compose owner from test directory: %v", err)
+	}
+	rootOutput, err := exec.Command("git", "-C", workingDirectory, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatalf("locate workspace root for Compose owner: %v", err)
+	}
+	ownerPath := filepath.Join(strings.TrimSpace(string(rootOutput)), "e2e", "compose-owner.sh")
+	if _, err := os.Stat(ownerPath); err != nil {
+		t.Fatalf("locate workspace Compose owner at %s: %v", ownerPath, err)
+	}
+	command := exec.Command("bash", ownerPath, "resolve")
+	output, err := command.Output()
+	if err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) && exitError.ExitCode() == 127 && len(exitError.Stderr) > 0 {
+			t.Skip(strings.TrimSpace(string(exitError.Stderr)))
+		}
+		t.Fatalf("resolve Compose command using workspace owner: %v", err)
 	}
 	var prefix []string
-	for _, part := range strings.Split(string(output), "\x00") {
-		if part != "" {
-			prefix = append(prefix, part)
-		}
+	if err := json.Unmarshal(output, &prefix); err != nil {
+		t.Fatalf("decode Compose command from workspace owner: %v", err)
 	}
 	if len(prefix) == 0 {
-		t.Fatal("journey Compose policy resolved an empty command prefix")
+		t.Fatal("workspace Compose owner resolved an empty command prefix")
 	}
 	return prefix
 }
