@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,19 @@ const ancestrySampleInterval = 100 * time.Millisecond
 
 func configureKeeper(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+}
+
+func readProcessCWD(pid int) (string, error) {
+	output, err := exec.Command("lsof", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("lsof cwd for process %d: %w: %s", pid, err, output)
+	}
+	for _, record := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(record, "n") {
+			return strings.TrimPrefix(record, "n"), nil
+		}
+	}
+	return "", fmt.Errorf("lsof returned no cwd for process %d", pid)
 }
 
 func prepareKeeperPlatform() error { return nil }

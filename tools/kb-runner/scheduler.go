@@ -957,6 +957,7 @@ func schedulerCompleteCommand(root runnerRoot, args []string, out io.Writer) (in
 	if err := store.transition(stream, SchedulerDone, "", "dependencies may now dispatch"); err != nil {
 		return 1, err
 	}
+	(schedulerRunOptions{store: store, root: root, state: *state}).startHygieneSweep(context.Background(), true)
 	_, err = fmt.Fprintf(out, "completed stream %s\n", streamName)
 	return 0, err
 }

@@ -46,30 +46,32 @@ const (
 )
 
 type Config struct {
-	HelperPath  string
-	StateDir    string
-	Tag         string
-	LatestTag   string
-	Stall       time.Duration
-	StdoutPath  string
-	StderrPath  string
-	StdinPath   string
-	SlotGroup   string
-	Slots       int
-	WaitGate    string
-	HoldGate    string
-	MinFree     uint64
-	CostKey     string
-	CostClass   CostClass
-	Priority    int
-	MemoryBytes uint64
-	CPUsMin     int
-	CPUsMax     int
-	DiskBytes   uint64
-	GrantedCPUs int
-	Command     []string
-	Dir         string
-	Env         []string
+	HelperPath       string
+	StateDir         string
+	Tag              string
+	LatestTag        string
+	Stall            time.Duration
+	StdoutPath       string
+	StderrPath       string
+	StdinPath        string
+	SlotGroup        string
+	Slots            int
+	WaitGate         string
+	HoldGate         string
+	MinFree          uint64
+	CostKey          string
+	CostClass        CostClass
+	CostKeyLeaseMode LeaseMode
+	SharedLeasePaths []string
+	Priority         int
+	MemoryBytes      uint64
+	CPUsMin          int
+	CPUsMax          int
+	DiskBytes        uint64
+	GrantedCPUs      int
+	Command          []string
+	Dir              string
+	Env              []string
 	// CleanEnv makes Env the complete environment for both the keeper and its command.
 	CleanEnv bool
 	Keep     []string
@@ -124,6 +126,7 @@ type Run struct {
 	once      sync.Once
 	err       error
 	done      chan struct{}
+	leases    []*FileLease
 }
 
 type RunStatus string
@@ -331,7 +334,7 @@ func Start(ctx context.Context, cfg Config) (*Run, error) {
 // StartWithHostResourceSource launches a run using the supplied host resource
 // reader for admission. All clients sharing a state directory should use the
 // same source so their decisions observe the same host contract.
-func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostResourceSource) (*Run, error) {
+func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostResourceSource) (startedRun *Run, returnErr error) {
 	if ctx == nil {
 		return nil, errors.New("proc: context is required")
 	}
@@ -347,6 +350,16 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 	if cfg.CostClass != CostLight && cfg.CostClass != CostHeavy {
 		return nil, errors.New("proc: cost class must be light or heavy")
 	}
+	leases, err := acquireConfigLeases(cfg)
+	if err != nil {
+		return nil, err
+	}
+	leaseOwnershipTransferred := false
+	defer func() {
+		if !leaseOwnershipTransferred {
+			returnErr = errors.Join(returnErr, closeFileLeases(leases))
+		}
+	}()
 	if err := os.MkdirAll(liveRecordsDir(cfg.StateDir), 0o700); err != nil {
 		return nil, fmt.Errorf("proc: create state directory: %w", err)
 	}
@@ -448,7 +461,8 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake reader: %w", err), cmd.Process.Kill(), cmd.Wait())
 	}
 	admissionPending = false
-	run := &Run{PID: cmd.Process.Pid, RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, done: make(chan struct{})}
+	run := &Run{PID: cmd.Process.Pid, RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, done: make(chan struct{}), leases: leases}
+	leaseOwnershipTransferred = true
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -464,7 +478,7 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 	return run, nil
 }
 
-func (r *Run) Wait() error {
+func (r *Run) Wait() (waitErr error) {
 	r.once.Do(func() {
 		r.err = r.cmd.Wait()
 		if r.err != nil {
@@ -472,6 +486,7 @@ func (r *Run) Wait() error {
 				r.err = errors.Join(r.err, fmt.Errorf("proc: record keeper loss for run %s: %w", r.RunID, lostErr))
 			}
 		}
+		r.err = errors.Join(r.err, closeFileLeases(r.leases))
 		close(r.done)
 	})
 	return r.err

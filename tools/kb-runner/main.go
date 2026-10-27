@@ -128,6 +128,7 @@ var runnerCommands = []runnerCommand{
 	{name: "agent", execute: agentCommand},
 	{name: "verify", execute: verifyCommand},
 	{name: "worktree", execute: worktreeCommand},
+	{name: "hygiene", execute: hygieneCommand},
 	{name: "land", execute: landCommand},
 	{name: "sched", execute: schedulerCommand},
 	{name: "self-install", execute: selfInstallCommand},
@@ -264,8 +265,16 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	if err != nil {
 		return 1, fmt.Errorf("kb-runner run: locate keeper executable: %w", err)
 	}
+	workdir, err := os.Getwd()
+	if err != nil {
+		return 1, fmt.Errorf("%s run: inspect current workdir for lease: %w", root.Name(), err)
+	}
+	leasePaths, err := runnerWorktreeLeasePaths(workdir)
+	if err != nil {
+		return 1, fmt.Errorf("%s run: acquire owned-worktree lease: %w", root.Name(), err)
+	}
 	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
-	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
+	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, SharedLeasePaths: leasePaths, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("%s run: %w\nInspect state directory access before retrying:\nnext: ls -ld %s\nnext: %s", root.Name(), err, shellQuote(*state), shellJoin(os.Args))
 	}

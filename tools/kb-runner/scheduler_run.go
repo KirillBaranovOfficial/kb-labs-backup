@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
@@ -316,12 +317,53 @@ type schedulerWorkerResult struct {
 }
 
 type schedulerRunOptions struct {
-	store    *schedulerStore
-	root     runnerRoot
-	state    string
-	slots    int
-	selected map[string]bool
+	store       *schedulerStore
+	root        runnerRoot
+	state       string
+	slots       int
+	selected    map[string]bool
+	clock       schedulerClock
+	maintenance *hygieneSupervisor
 }
+
+type hygieneSupervisor struct {
+	mu sync.Mutex
+	wg sync.WaitGroup
+}
+
+func (supervisor *hygieneSupervisor) Start(work func()) {
+	supervisor.mu.Lock()
+	supervisor.wg.Add(1)
+	supervisor.mu.Unlock()
+	go func() {
+		defer supervisor.wg.Done()
+		work()
+	}()
+}
+
+func (supervisor *hygieneSupervisor) Wait() {
+	supervisor.wg.Wait()
+}
+
+type schedulerTicker interface {
+	C() <-chan time.Time
+	Stop()
+}
+
+type schedulerClock interface {
+	Now() time.Time
+	NewTicker(time.Duration) schedulerTicker
+}
+
+type wallSchedulerClock struct{}
+type wallSchedulerTicker struct{ ticker *time.Ticker }
+
+func (wallSchedulerClock) Now() time.Time { return time.Now() }
+func (wallSchedulerClock) NewTicker(d time.Duration) schedulerTicker {
+	return wallSchedulerTicker{time.NewTicker(d)}
+}
+func (ticker wallSchedulerTicker) C() <-chan time.Time { return ticker.ticker.C }
+func (ticker wallSchedulerTicker) Stop()               { ticker.ticker.Stop() }
 
 func runScheduler(ctx context.Context, root runnerRoot, state string, slots int, once bool) (code int, runErr error) {
 	store := newSchedulerStore(state)
@@ -352,6 +394,17 @@ func (options schedulerRunOptions) run(ctx context.Context, once bool) (int, err
 	if err := options.store.replayHandoff(); err != nil {
 		return 1, err
 	}
+	maintenanceCtx, cancelMaintenance := context.WithCancel(ctx)
+	supervisor := &hygieneSupervisor{}
+	options.maintenance = supervisor
+	defer func() { cancelMaintenance(); supervisor.Wait() }()
+	options.startHygieneSweep(maintenanceCtx, false)
+	clock := options.clock
+	if clock == nil {
+		clock = wallSchedulerClock{}
+	}
+	lastHygiene := clock.Now()
+	diskWasLow := false
 	results := make(chan schedulerWorkerResult, options.slots)
 	active := 0
 	var visited map[string]bool
@@ -359,7 +412,7 @@ func (options schedulerRunOptions) run(ctx context.Context, once bool) (int, err
 		visited = map[string]bool{}
 	}
 	watchDone := false
-	ticker := time.NewTicker(schedulerRemoteWait)
+	ticker := clock.NewTicker(schedulerRemoteWait)
 	defer ticker.Stop()
 	for {
 		started, err := options.dispatch(ctx, results, options.slots-active, visited)
@@ -395,10 +448,19 @@ func (options schedulerRunOptions) run(ctx context.Context, once bool) (int, err
 			if once {
 				visited[result.task.ID] = true
 			}
-		case <-ticker.C:
+		case <-ticker.C():
 			if err := options.watchRemote(ctx); err != nil {
 				return 1, err
 			}
+			low, err := options.orchestrationDiskLow()
+			if err != nil {
+				return 1, err
+			}
+			if low && !diskWasLow || clock.Now().Sub(lastHygiene) >= time.Hour {
+				options.startHygieneSweep(maintenanceCtx, false)
+				lastHygiene = clock.Now()
+			}
+			diskWasLow = low
 			watchDone = true
 		}
 		if once && watchDone && active == 0 {
@@ -1207,6 +1269,7 @@ func (options schedulerRunOptions) watchRemote(ctx context.Context) error {
 				if err := options.store.transition(stream, SchedulerDone, "", "integration candidate passed; dependencies may dispatch"); err != nil {
 					return err
 				}
+				options.startHygieneSweep(ctx, true)
 			} else if err := options.queueReview(task, stream); err != nil {
 				return err
 			}
