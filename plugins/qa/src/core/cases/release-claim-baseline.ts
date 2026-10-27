@@ -4,9 +4,6 @@ import type { QACatalogDiagnostic } from './catalog.js';
 /** Active release steps retained here until the installed journey can prove them. */
 export const RELEASE_CASE_CLAIM_BASELINE = [
   'PC-002.4',
-  'S-003.7',
-  'S-003.8',
-  'S-041.10',
   'S-041.11',
   'S-041.13',
   'S-041.14',
