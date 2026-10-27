@@ -39,20 +39,20 @@ type RunOptions struct {
 
 // RunResult is the aggregate result of a scheduler run.
 type RunResult struct {
-	OK           bool
-	Scheduled    int
-	NotAffected  int
-	Results      []TaskResult
-	BlockedTasks []BlockedTask
+	OK               bool
+	Results          []TaskResult
+	BlockedTasks     []BlockedTask
+	scheduledTasks   []TaskIdentity
+	notAffectedTasks []TaskIdentity
 }
 
-func (r RunResult) Summary() RunSummary {
+func (r RunResult) Summary() (RunSummary, error) {
 	s := RunSummary{
-		Scheduled:    r.Scheduled,
-		NotAffected:  r.NotAffected,
 		BlockedTasks: append([]BlockedTask{}, r.BlockedTasks...),
 	}
+	accounted := make(map[nodeKey]struct{}, len(r.Results)+len(r.BlockedTasks)+len(r.notAffectedTasks))
 	for _, res := range r.Results {
+		accounted[nodeKey{pkg: res.Package, task: res.Task}] = struct{}{}
 		switch {
 		case res.Cached:
 			s.Cached++
@@ -63,7 +63,45 @@ func (r RunResult) Summary() RunSummary {
 		}
 	}
 	s.Blocked = len(r.BlockedTasks)
-	return s
+	for _, task := range r.BlockedTasks {
+		accounted[nodeKey{pkg: task.Package, task: task.Task}] = struct{}{}
+	}
+	for _, task := range r.notAffectedTasks {
+		accounted[nodeKey{pkg: task.Package, task: task.Task}] = struct{}{}
+	}
+	s.NotAffected = len(r.notAffectedTasks)
+	s.Scheduled = len(r.scheduledTasks)
+	var unaccounted []TaskIdentity
+	for _, task := range r.scheduledTasks {
+		if _, ok := accounted[nodeKey{pkg: task.Package, task: task.Task}]; !ok {
+			unaccounted = append(unaccounted, task)
+		}
+	}
+	if len(unaccounted) > 0 || s.Passed+s.Failed+s.Cached+s.Blocked+s.NotAffected != s.Scheduled {
+		sort.Slice(unaccounted, func(i, j int) bool {
+			if unaccounted[i].Package == unaccounted[j].Package {
+				return unaccounted[i].Task < unaccounted[j].Task
+			}
+			return unaccounted[i].Package < unaccounted[j].Package
+		})
+		return s, &RunAccountingError{UnaccountedTasks: unaccounted}
+	}
+	return s, nil
+}
+
+// TaskIdentity identifies one scheduled package/task pair.
+type TaskIdentity struct {
+	Package string
+	Task    string
+}
+
+// RunAccountingError identifies graph nodes with no terminal scheduler outcome.
+type RunAccountingError struct {
+	UnaccountedTasks []TaskIdentity
+}
+
+func (e *RunAccountingError) Error() string {
+	return "scheduled tasks have no terminal outcome"
 }
 
 // RunSummary partitions every scheduled task by its execution outcome.
@@ -124,7 +162,32 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		}
 	}
 
-	// Init cache.
+	// Build DAG of (pkg, task) nodes — only for packages with a matching variant.
+	nodes, err := buildDAG(pkgs, opts.Tasks, cfg, ws)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if err := validateTaskGraph(nodes); err != nil {
+		return RunResult{}, err
+	}
+	var notAffectedTasks []TaskIdentity
+	allNodes := nodes
+	if opts.Affected {
+		allNodes, err = buildDAG(ws.Packages, opts.Tasks, cfg, ws)
+		if err != nil {
+			return RunResult{}, err
+		}
+		if err := validateTaskGraph(allNodes); err != nil {
+			return RunResult{}, err
+		}
+		for key := range allNodes {
+			if !selectedPackageNames[key.pkg] {
+				notAffectedTasks = append(notAffectedTasks, TaskIdentity{Package: key.pkg, Task: key.task})
+			}
+		}
+	}
+
+	// Initialize execution state only after the full task graph is known to be acyclic.
 	cacheRoot := opts.CacheRoot
 	if cacheRoot == "" {
 		cacheRoot = ".kb/devkit"
@@ -138,24 +201,6 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	executor := NewExecutor(objects, manifests, states, opts.WSRoot, cacheRoot, opts.LiveOutput)
 	executor.onHeartbeat = opts.OnHeartbeat
 
-	// Build DAG of (pkg, task) nodes — only for packages with a matching variant.
-	nodes, err := buildDAG(pkgs, opts.Tasks, cfg, ws)
-	if err != nil {
-		return RunResult{}, err
-	}
-	notAffected := 0
-	if opts.Affected {
-		allNodes, err := buildDAG(ws.Packages, opts.Tasks, cfg, ws)
-		if err != nil {
-			return RunResult{}, err
-		}
-		for key := range allNodes {
-			if !selectedPackageNames[key.pkg] {
-				notAffected++
-			}
-		}
-	}
-
 	// Precompute direct workspace dep directories for each package in the run.
 	// Used by HashInputs to resolve "^"-prefixed input patterns (e.g. "^dist/**").
 	// We index the full workspace (not just pkgs) so that deps outside the current
@@ -164,16 +209,22 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	for _, p := range ws.Packages {
 		allPkgByName[p.Name] = p
 	}
-	pkgDepDirs := make(map[string][]string, len(pkgs))
+	pkgDepDirs := make(map[nodeKey][]string, len(nodes))
 	for _, p := range pkgs {
-		depNames := readWorkspaceDeps(p.Dir, allPkgByName)
-		dirs := make([]string, 0, len(depNames))
-		for _, name := range depNames {
-			if dep, ok := allPkgByName[name]; ok {
-				dirs = append(dirs, dep.Dir)
+		for _, taskName := range opts.Tasks {
+			def := ResolveTaskDef(cfg, taskName, p.Category)
+			if def == nil {
+				continue
 			}
+			depNames := WorkspaceDeps(p.Dir, allPkgByName)
+			dirs := make([]string, 0, len(depNames))
+			for _, name := range depNames {
+				if dep, ok := allPkgByName[name]; ok {
+					dirs = append(dirs, dep.Dir)
+				}
+			}
+			pkgDepDirs[nodeKey{pkg: p.Name, task: taskName}] = dirs
 		}
-		pkgDepDirs[p.Name] = dirs
 	}
 
 	// Concurrency priority: --concurrency flag > devkit.yaml run.concurrency > NumCPU-1.
@@ -201,7 +252,7 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		}
 		for _, dep := range n.deps {
 			inDegree[k]++
-			revDeps[dep] = append(revDeps[dep], k)
+			revDeps[dep.to] = append(revDeps[dep.to], k)
 		}
 	}
 
@@ -276,11 +327,20 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		}
 		return blockedTasks[i].Package < blockedTasks[j].Package
 	})
-	if failed {
-		return RunResult{OK: false, Scheduled: total, NotAffected: notAffected, Results: allResults, BlockedTasks: blockedTasks}, nil
+	result := RunResult{
+		OK:               ok && !failed,
+		Results:          allResults,
+		BlockedTasks:     blockedTasks,
+		scheduledTasks:   make([]TaskIdentity, 0, len(allNodes)),
+		notAffectedTasks: notAffectedTasks,
 	}
-
-	return RunResult{OK: ok, Scheduled: total, NotAffected: notAffected, Results: allResults, BlockedTasks: blockedTasks}, nil
+	for key := range allNodes {
+		result.scheduledTasks = append(result.scheduledTasks, TaskIdentity{Package: key.pkg, Task: key.task})
+	}
+	if _, err := result.Summary(); err != nil {
+		return RunResult{}, err
+	}
+	return result, nil
 }
 
 func markBlockedDependents(failed nodeKey, reverse map[nodeKey][]nodeKey, blockedBy map[nodeKey]nodeKey) {
@@ -327,7 +387,7 @@ func expandBuildDependencyClosure(selected, all []workspace.Package) []workspace
 	for len(queue) > 0 {
 		pkg := queue[0]
 		queue = queue[1:]
-		for _, depName := range readWorkspaceDeps(pkg.Dir, byName) {
+		for _, depName := range WorkspaceDeps(pkg.Dir, byName) {
 			dep, ok := byName[depName]
 			if ok && !seen[dep.Name] {
 				seen[dep.Name] = true
@@ -356,7 +416,68 @@ type nodeKey struct {
 type dagNode struct {
 	pkg  workspace.Package
 	task string
-	deps []nodeKey
+	deps []taskDependencyEdge
+}
+
+type taskDependencyEdge struct {
+	from nodeKey
+	to   nodeKey
+	kind WorkspaceDependencyKind
+}
+
+type WorkspaceDependencyKind string
+
+const (
+	DependenciesKind     WorkspaceDependencyKind = "dependencies"
+	DevDependenciesKind  WorkspaceDependencyKind = "devDependencies"
+	PeerDependenciesKind WorkspaceDependencyKind = "peerDependencies"
+	TaskDependencyKind   WorkspaceDependencyKind = "task"
+)
+
+type WorkspaceDependency struct {
+	Name string
+	Kind WorkspaceDependencyKind
+}
+
+// TaskCycleEdge describes one directed prerequisite edge in a task cycle.
+type TaskCycleEdge struct {
+	From TaskIdentity
+	To   TaskIdentity
+	Kind WorkspaceDependencyKind
+}
+
+// TaskCycleError is returned before execution when the task graph contains a cycle.
+type TaskCycleError struct {
+	Edges []TaskCycleEdge
+}
+
+func (e *TaskCycleError) Error() string {
+	return "workspace task dependency cycle: " + e.CycleDescription()
+}
+
+func (e *TaskCycleError) CycleDescription() string {
+	if len(e.Edges) == 0 {
+		return ""
+	}
+	var description strings.Builder
+	identity := e.Edges[0].From
+	fmt.Fprintf(&description, "%s:%s", identity.Package, identity.Task)
+	for _, edge := range e.Edges {
+		fmt.Fprintf(&description, " --%s--> %s:%s", edge.Kind, edge.To.Package, edge.To.Task)
+	}
+	return description.String()
+}
+
+func (e *TaskCycleError) DependencyEdges() []string {
+	result := make([]string, 0, len(e.Edges))
+	for _, edge := range e.Edges {
+		result = append(result, formatTaskCycleEdge(edge))
+	}
+	return result
+}
+
+func formatTaskCycleEdge(edge TaskCycleEdge) string {
+	return fmt.Sprintf("%s:%s --%s--> %s:%s", edge.From.Package, edge.From.Task, edge.Kind, edge.To.Package, edge.To.Task)
 }
 
 func buildDAG(
@@ -371,7 +492,7 @@ func buildDAG(
 		pkgByName[p.Name] = p
 	}
 
-	// Build dep map: pkg name → list of workspace dep names.
+	// Build dep map: package name → all direct workspace dependencies with their manifest kind.
 	pkgDeps := buildPkgDepMap(pkgs, pkgByName)
 
 	nodes := make(map[nodeKey]dagNode)
@@ -398,13 +519,14 @@ func buildDAG(
 		if err := validatePackageScriptTask(n.pkg, k.task, def.Command); err != nil {
 			return nil, err
 		}
-		var deps []nodeKey
+		var deps []taskDependencyEdge
 		for _, dep := range def.Deps {
 			workspaceDependency := strings.HasPrefix(dep, "^")
 			depTask := strings.TrimPrefix(dep, "^")
 			if workspaceDependency {
 				// ^build = run 'build' for every workspace dependency first.
-				for _, depPkgName := range pkgDeps[k.pkg] {
+				for _, dependency := range pkgDeps[k.pkg] {
+					depPkgName := dependency.Name
 					depPkg, exists := pkgByName[depPkgName]
 					if !exists {
 						continue
@@ -417,7 +539,7 @@ func buildDAG(
 						nodes[depKey] = dagNode{pkg: depPkg, task: depTask}
 						pending = append(pending, depKey)
 					}
-					deps = append(deps, depKey)
+					deps = append(deps, taskDependencyEdge{from: k, to: depKey, kind: dependency.Kind})
 				}
 			} else {
 				// "build" = run 'build' for this same package first.
@@ -429,7 +551,7 @@ func buildDAG(
 					nodes[depKey] = dagNode{pkg: n.pkg, task: depTask}
 					pending = append(pending, depKey)
 				}
-				deps = append(deps, depKey)
+				deps = append(deps, taskDependencyEdge{from: k, to: depKey, kind: TaskDependencyKind})
 			}
 		}
 
@@ -438,6 +560,82 @@ func buildDAG(
 	}
 
 	return nodes, nil
+}
+
+func validateTaskGraph(nodes map[nodeKey]dagNode) error {
+	if cycle := findTaskDependencyCycle(nodes); len(cycle) > 0 {
+		return &TaskCycleError{Edges: cycle}
+	}
+	return nil
+}
+
+func findTaskDependencyCycle(nodes map[nodeKey]dagNode) []TaskCycleEdge {
+	keys := make([]nodeKey, 0, len(nodes))
+	for key := range nodes {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return nodeKeyLess(keys[i], keys[j]) })
+
+	state := make(map[nodeKey]uint8, len(nodes))
+	var path []nodeKey
+	var pathEdges []taskDependencyEdge
+	var found []TaskCycleEdge
+	var visit func(nodeKey) bool
+	visit = func(key nodeKey) bool {
+		state[key] = 1
+		path = append(path, key)
+		deps := append([]taskDependencyEdge(nil), nodes[key].deps...)
+		sort.Slice(deps, func(i, j int) bool {
+			if deps[i].to != deps[j].to {
+				return nodeKeyLess(deps[i].to, deps[j].to)
+			}
+			return deps[i].kind < deps[j].kind
+		})
+		for _, edge := range deps {
+			switch state[edge.to] {
+			case 0:
+				pathEdges = append(pathEdges, edge)
+				if visit(edge.to) {
+					return true
+				}
+				pathEdges = pathEdges[:len(pathEdges)-1]
+			case 1:
+				start := 0
+				for path[start] != edge.to {
+					start++
+				}
+				for _, pathEdge := range pathEdges[start:] {
+					found = append(found, taskCycleEdge(pathEdge))
+				}
+				found = append(found, taskCycleEdge(edge))
+				return true
+			}
+		}
+		path = path[:len(path)-1]
+		state[key] = 2
+		return false
+	}
+	for _, key := range keys {
+		if state[key] == 0 && visit(key) {
+			return found
+		}
+	}
+	return nil
+}
+
+func taskCycleEdge(edge taskDependencyEdge) TaskCycleEdge {
+	return TaskCycleEdge{
+		From: TaskIdentity{Package: edge.from.pkg, Task: edge.from.task},
+		To:   TaskIdentity{Package: edge.to.pkg, Task: edge.to.task},
+		Kind: edge.kind,
+	}
+}
+
+func nodeKeyLess(left, right nodeKey) bool {
+	if left.pkg == right.pkg {
+		return left.task < right.task
+	}
+	return left.pkg < right.pkg
 }
 
 func validatePackageScriptTask(pkg workspace.Package, task, command string) error {
@@ -467,14 +665,14 @@ func validatePackageScriptTask(pkg workspace.Package, task, command string) erro
 // Returns: pkg name → list of workspace dep names.
 // Self-references (package depending on itself) are filtered out to prevent
 // cycles in the DAG — e.g. @kb-labs/devkit listing itself in devDependencies.
-func buildPkgDepMap(pkgs []workspace.Package, pkgByName map[string]workspace.Package) map[string][]string {
-	result := make(map[string][]string, len(pkgs))
+func buildPkgDepMap(pkgs []workspace.Package, pkgByName map[string]workspace.Package) map[string][]WorkspaceDependency {
+	result := make(map[string][]WorkspaceDependency, len(pkgs))
 	for _, p := range pkgs {
-		raw := readWorkspaceDeps(p.Dir, pkgByName)
+		raw := readWorkspaceDependencyEdges(p.Dir, pkgByName)
 		filtered := raw[:0]
-		for _, dep := range raw {
-			if dep != p.Name {
-				filtered = append(filtered, dep)
+		for _, dependency := range raw {
+			if dependency.Name != p.Name {
+				filtered = append(filtered, dependency)
 			}
 		}
 		result[p.Name] = filtered
@@ -486,7 +684,7 @@ func buildPkgDepMap(pkgs []workspace.Package, pkgByName map[string]workspace.Pac
 // Reads dependencies, devDependencies, and peerDependencies — all three are
 // relevant for build-time ordering (devDeps like @kb-labs/devkit are needed
 // during the build phase inside Docker containers).
-func readWorkspaceDeps(dir string, pkgByName map[string]workspace.Package) []string {
+func readWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Package) []WorkspaceDependency {
 	data, err := os.ReadFile(dir + "/package.json")
 	if err != nil {
 		return nil
@@ -501,29 +699,28 @@ func readWorkspaceDeps(dir string, pkgByName map[string]workspace.Package) []str
 		return nil
 	}
 
-	seen := make(map[string]struct{})
-	var result []string
-	for name := range pkg.Dependencies {
-		if _, ok := pkgByName[name]; ok {
-			seen[name] = struct{}{}
-			result = append(result, name)
-		}
+	sections := []struct {
+		kind WorkspaceDependencyKind
+		deps map[string]string
+	}{
+		{kind: DependenciesKind, deps: pkg.Dependencies},
+		{kind: DevDependenciesKind, deps: pkg.DevDependencies},
+		{kind: PeerDependenciesKind, deps: pkg.PeerDependencies},
 	}
-	for name := range pkg.DevDependencies {
-		if _, ok := pkgByName[name]; ok {
-			if _, dup := seen[name]; !dup {
-				seen[name] = struct{}{}
-				result = append(result, name)
+	var result []WorkspaceDependency
+	for _, section := range sections {
+		for name := range section.deps {
+			if _, ok := pkgByName[name]; ok {
+				result = append(result, WorkspaceDependency{Name: name, Kind: section.kind})
 			}
 		}
 	}
-	for name := range pkg.PeerDependencies {
-		if _, ok := pkgByName[name]; ok {
-			if _, dup := seen[name]; !dup {
-				result = append(result, name)
-			}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name == result[j].Name {
+			return result[i].Kind < result[j].Kind
 		}
-	}
+		return result[i].Name < result[j].Name
+	})
 	return result
 }
 
@@ -531,39 +728,34 @@ func readWorkspaceDeps(dir string, pkgByName map[string]workspace.Package) []str
 // Reads dependencies + devDependencies + peerDependencies.
 // pkgByName must cover all workspace packages to correctly filter internal deps.
 func WorkspaceDeps(pkgDir string, pkgByName map[string]workspace.Package) []string {
-	return readWorkspaceDeps(pkgDir, pkgByName)
+	edges := readWorkspaceDependencyEdges(pkgDir, pkgByName)
+	seen := make(map[string]struct{}, len(edges))
+	result := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		if _, exists := seen[edge.Name]; exists {
+			continue
+		}
+		seen[edge.Name] = struct{}{}
+		result = append(result, edge.Name)
+	}
+	return result
 }
 
 // WorkspaceProdDeps returns direct workspace:* dependency names for a package dir,
 // excluding devDependencies. Used by bundle --prod to build minimal Docker closures.
 func WorkspaceProdDeps(pkgDir string, pkgByName map[string]workspace.Package) []string {
-	data, err := os.ReadFile(pkgDir + "/package.json")
-	if err != nil {
-		return nil
-	}
-
-	var pkg struct {
-		Dependencies     map[string]string `json:"dependencies"`
-		PeerDependencies map[string]string `json:"peerDependencies"`
-	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return nil
-	}
-
-	seen := make(map[string]struct{})
-	var result []string
-	for name := range pkg.Dependencies {
-		if _, ok := pkgByName[name]; ok {
-			seen[name] = struct{}{}
-			result = append(result, name)
+	edges := readWorkspaceDependencyEdges(pkgDir, pkgByName)
+	seen := make(map[string]struct{}, len(edges))
+	result := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		if edge.Kind == DevDependenciesKind {
+			continue
 		}
-	}
-	for name := range pkg.PeerDependencies {
-		if _, ok := pkgByName[name]; ok {
-			if _, dup := seen[name]; !dup {
-				result = append(result, name)
-			}
+		if _, exists := seen[edge.Name]; exists {
+			continue
 		}
+		seen[edge.Name] = struct{}{}
+		result = append(result, edge.Name)
 	}
 	return result
 }
@@ -577,7 +769,7 @@ func runLayer(
 	cfg *config.DevkitConfig,
 	noCache bool,
 	concurrency int,
-	pkgDepDirs map[string][]string,
+	pkgDepDirs map[nodeKey][]string,
 	onComplete func(TaskResult),
 ) []TaskResult {
 	results := make([]TaskResult, len(layer))
@@ -600,7 +792,7 @@ func runLayer(
 				onComplete(results[i])
 				return
 			}
-			results[i] = executor.Run(n.pkg, *def, noCache, pkgDepDirs[n.pkg.Name])
+			results[i] = executor.Run(n.pkg, *def, noCache, pkgDepDirs[k])
 			onComplete(results[i])
 		}()
 	}
@@ -637,7 +829,7 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 				changed = append(changed, p)
 				break
 			}
-			depNames := readWorkspaceDeps(p.Dir, pkgByName)
+			depNames := WorkspaceDeps(p.Dir, pkgByName)
 			depDirs := make([]string, 0, len(depNames))
 			for _, name := range depNames {
 				if dep, ok := pkgByName[name]; ok {
@@ -717,7 +909,7 @@ func packagesAndDependents(ws *workspace.Workspace, direct []workspace.Package) 
 	}
 	reverseDeps := make(map[string][]string, len(ws.Packages))
 	for _, p := range ws.Packages {
-		for _, dep := range readWorkspaceDeps(p.Dir, pkgByName) {
+		for _, dep := range WorkspaceDeps(p.Dir, pkgByName) {
 			reverseDeps[dep] = append(reverseDeps[dep], p.Name)
 		}
 	}
