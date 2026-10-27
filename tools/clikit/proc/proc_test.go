@@ -37,6 +37,65 @@ func startTest(ctx context.Context, cfg proc.Config) (*proc.Run, error) {
 	return proc.StartWithHostResourceSource(ctx, cfg, stableHostResourceSource{})
 }
 
+// case: S-276.1, S-276.4
+func TestFileLeaseSharedAndExclusiveTryArbitrateOneResource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lease.lock")
+	shared, acquired, err := proc.AcquireFileLease(path, proc.LeaseShared)
+	if err != nil || !acquired {
+		t.Fatalf("acquire shared lease: acquired=%t err=%v", acquired, err)
+	}
+	if _, acquired, err := proc.AcquireFileLease(path, proc.LeaseExclusiveTry); err != nil || acquired {
+		t.Fatalf("exclusive try crossed shared holder: acquired=%t err=%v", acquired, err)
+	}
+	if err := shared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	exclusive, acquired, err := proc.AcquireFileLease(path, proc.LeaseExclusiveTry)
+	if err != nil || !acquired {
+		t.Fatalf("acquire exclusive after shared release: acquired=%t err=%v", acquired, err)
+	}
+	if err := exclusive.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// case: S-276.1, S-276.4
+func TestStartHoldsWorktreeAndCostKeyLeasesForRunLifetime(t *testing.T) {
+	state := t.TempDir()
+	worktreeLeasePath := filepath.Join(state, "worktree.lock")
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "lease-lifetime", Stall: time.Minute,
+		StdoutPath: filepath.Join(state, "stdout"), StderrPath: filepath.Join(state, "stderr"),
+		CostKey: "go-test", CostClass: proc.CostLight, SharedLeasePaths: []string{worktreeLeasePath},
+		Command: []string{"/usr/bin/true"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := run.Wait(); err != nil {
+			t.Errorf("reap lease fixture run: %v", err)
+		}
+	})
+	for _, path := range []string{worktreeLeasePath, proc.CostKeyLeasePath(state, "go-test")} {
+		if _, acquired, err := proc.AcquireFileLease(path, proc.LeaseExclusiveTry); err != nil || acquired {
+			t.Fatalf("exclusive lease crossed active run for %s: acquired=%t err=%v", path, acquired, err)
+		}
+	}
+	if err := run.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{worktreeLeasePath, proc.CostKeyLeasePath(state, "go-test")} {
+		lease, acquired, err := proc.AcquireFileLease(path, proc.LeaseExclusiveTry)
+		if err != nil || !acquired {
+			t.Fatalf("lease remained after run completed for %s: acquired=%t err=%v", path, acquired, err)
+		}
+		if err := lease.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func cancellableTestContext(t testing.TB) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())

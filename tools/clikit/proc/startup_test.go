@@ -76,6 +76,7 @@ func TestStartCancellationReapsKeeperWaitingForReady(t *testing.T) {
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	leasePath := filepath.Join(state, "worktree.lock")
 	ctx, cancel := context.WithCancel(context.Background())
 	resultCh := make(chan error, 1)
 	startDone := make(chan struct{})
@@ -84,7 +85,8 @@ func TestStartCancellationReapsKeeperWaitingForReady(t *testing.T) {
 		_, err := startTest(ctx, proc.Config{
 			StateDir: state, Tag: "cancel-ready", Stall: time.Hour,
 			StdoutPath: fifo, StderrPath: filepath.Join(state, "stderr.log"),
-			Command: []string{"true"},
+			SharedLeasePaths: []string{leasePath},
+			Command:          []string{"true"},
 		})
 		resultCh <- err
 	}()
@@ -99,6 +101,13 @@ func TestStartCancellationReapsKeeperWaitingForReady(t *testing.T) {
 	}
 	if identity, alive := identityForTest(t, keeperPID); alive {
 		t.Fatalf("cancelled keeper %d remains alive with identity %s", keeperPID, identity)
+	}
+	lease, acquired, err := proc.AcquireFileLease(leasePath, proc.LeaseExclusiveTry)
+	if err != nil || !acquired {
+		t.Fatalf("canceled Start retained its worktree lease: acquired=%t err=%v", acquired, err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

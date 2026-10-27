@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,9 @@ import (
 )
 
 const schedulerTestSHA = "0123456789abcdef0123456789abcdef01234567"
+
+//go:embed scheduler-policy.json
+var schedulerPolicyFixture []byte
 
 type schedulerFixture struct {
 	home        string
@@ -63,7 +67,11 @@ func newSchedulerFixture(t *testing.T, runList, verdict string) schedulerFixture
 	if err := os.Symlink(filepath.Join(repoSource, "scripts", "ci"), filepath.Join(fixture.repo, "scripts", "ci")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(repoSource, "tools", "kb-runner"), filepath.Join(fixture.repo, "tools", "kb-runner")); err != nil {
+	fixtureRunnerDir := filepath.Join(fixture.repo, "tools", "kb-runner")
+	if err := os.MkdirAll(fixtureRunnerDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fixtureRunnerDir, "scheduler-policy.json"), schedulerPolicyFixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fixture.writeCommand(t, "git", `#!/bin/sh
@@ -136,6 +144,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 mkdir -p "$workdir" "$state/jobs"
+if [ -n "${FAKE_AGENT_STARTED_FIFO:-}" ]; then
+  printf '%s\n' "$stream" > "$FAKE_AGENT_STARTED_FIFO"
+fi
+if [ -n "${FAKE_AGENT_BLOCK_STREAM:-}" ] && [ "$stream" = "$FAKE_AGENT_BLOCK_STREAM" ]; then
+  IFS= read -r _ < "$FAKE_AGENT_RELEASE_FIFO"
+fi
 case "$stream" in
   *-2) report="$workdir/.review-report-$stream.md"; [ -z "$message" ] || report="$message"; mkdir -p "$(dirname "$report")"; if [ "$vendor" = "zcode" ] && [ "${FAKE_ZCODE_FAIL:-0}" = "1" ]; then exit 71; fi; printf '%s\n' "${FAKE_REVIEW_VERDICT_2:-${FAKE_REVIEW_VERDICT:-ACCEPT}}" > "$report" ;;
   *-review*) report="$workdir/.review-report-$stream.md"; [ -z "$message" ] || report="$message"; mkdir -p "$(dirname "$report")"; if [ "$vendor" = "zcode" ] && [ "${FAKE_ZCODE_FAIL:-0}" = "1" ]; then exit 71; fi; printf '%s\n' "${FAKE_REVIEW_VERDICT:-ACCEPT}" > "$report" ;;
@@ -167,6 +181,8 @@ printf '%s\n' "${FAKE_ZCODE_VERDICT:-ACCEPT}" > "$FAKE_ZCODE_REPORT"
 	}
 	t.Setenv("PATH", fixture.bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HOME", fixture.home)
+	t.Setenv("KBLABS_WORKTREES_ROOT", fixture.worktrees)
+	t.Setenv("GOCACHE", filepath.Join(fixture.worktrees, "go-build-cache"))
 	t.Setenv("FAKE_REPO", fixture.repo)
 	t.Setenv("FAKE_WORKTREE_ROOT", fixture.worktrees)
 	t.Setenv("FAKE_CHANGED_FILES", "docs/qa/scenarios/S-237-process-tree-supervision.md README.md")
@@ -181,6 +197,21 @@ printf '%s\n' "${FAKE_ZCODE_VERDICT:-ACCEPT}" > "$FAKE_ZCODE_REPORT"
 	t.Setenv("FAKE_VERDICT_DIR", fixture.bin)
 	t.Setenv("FAKE_AGENT_PROPOSALS", "## Proposed commits\n```json\n[{\"kind\":\"case\",\"subject\":\"docs(qa): update scheduler case\",\"body\":\"\"},{\"kind\":\"tests\",\"subject\":\"test(kb-runner): cover scheduler lifecycle\",\"body\":\"\"},{\"kind\":\"code\",\"subject\":\"feat(kb-runner): schedule agent work\",\"body\":\"Scheduler implementation details.\"}]\n```")
 	return fixture
+}
+
+func TestSchedulerFixtureUsesIsolatedPolicyAndWorktreeRoot(t *testing.T) {
+	fixture := newSchedulerFixture(t, `[]`, `{}`)
+	fixtureRunnerDir := filepath.Join(fixture.repo, "tools", "kb-runner")
+	info, err := os.Lstat(fixtureRunnerDir)
+	if err != nil {
+		t.Fatalf("stat scheduler fixture runner directory: %v", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("scheduler fixture runner directory is not isolated: mode=%s", info.Mode())
+	}
+	if got := os.Getenv("KBLABS_WORKTREES_ROOT"); got != fixture.worktrees {
+		t.Fatalf("scheduler fixture worktree root = %q, want %q", got, fixture.worktrees)
+	}
 }
 
 // case: S-237.114

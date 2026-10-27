@@ -38,16 +38,63 @@ func TestInventoryKeepsUnobservableArgvVisible(t *testing.T) {
 	}
 }
 
+// case: S-276.6
+func TestInventoryOmitsProcessGoneBetweenSnapshotAndCWDRead(t *testing.T) {
+	process := Process{PID: 840, Identity: "840:started", uid: 501}
+	identityReads := 0
+	entry, include := inventoryEntryWithReaders(process, 501,
+		func(int) ([]string, error) { return []string{"worker"}, nil },
+		func(int) (string, bool, error) {
+			identityReads++
+			if identityReads == 1 {
+				return "", false, syscall.ESRCH
+			}
+			return process.Identity, true, nil
+		},
+		func(int) (string, error) { return "", syscall.ESRCH },
+	)
+	if include || identityReads != 1 {
+		t.Fatalf("process gone during cwd read remained in inventory: %+v reads=%d", entry, identityReads)
+	}
+}
+
+// case: S-276.6
+func TestInventoryReportsForeignUIDCWDReadFailure(t *testing.T) {
+	process := Process{PID: 841, Identity: "841:foreign", uid: 0}
+	entry, include := inventoryEntryWithReaders(process, 501,
+		func(int) ([]string, error) { t.Fatal("foreign argv must not be read"); return nil, nil },
+		func(int) (string, bool, error) { return process.Identity, true, nil },
+		func(int) (string, error) { return "", syscall.EACCES },
+	)
+	if !include || entry.UID != 0 || entry.CwdError == "" || entry.ObservationError != "" {
+		t.Fatalf("foreign cwd denial classification = %+v, included=%t", entry, include)
+	}
+}
+
+// case: S-276.6
+func TestInventoryReportsCurrentUIDCWDReadFailure(t *testing.T) {
+	process := Process{PID: 842, Identity: "842:started", uid: 501}
+	entry, include := inventoryEntryWithReaders(process, 501,
+		func(int) ([]string, error) { return []string{"worker", "--workdir", "/work/agent/x"}, nil },
+		func(int) (string, bool, error) { return process.Identity, true, nil },
+		func(int) (string, error) { return "", syscall.EACCES },
+	)
+	if !include || entry.UID != 501 || entry.CwdError == "" || entry.Unverified {
+		t.Fatalf("current-user cwd denial classification = %+v, included=%t", entry, include)
+	}
+}
+
 func TestInventoryForeignUIDJSONExplicitlyMarksNoObservationError(t *testing.T) {
 	process := Process{PID: 831, PPID: 1, Identity: "831:foreign", uid: 0}
+	identityReads := 0
 	entry, include := inventoryEntry(process, 501, func(int) ([]string, error) {
 		t.Fatal("foreign-uid argv must remain out of scope")
 		return nil, nil
 	}, func(int) (string, bool, error) {
-		t.Fatal("foreign-uid identity must not be re-read")
-		return "", false, nil
+		identityReads++
+		return process.Identity, true, nil
 	})
-	if !include || entry.Unverified || entry.Samples != 0 || entry.ArgvError == "" {
+	if !include || entry.Unverified || entry.Samples != 0 || entry.ArgvError == "" || identityReads != 1 {
 		t.Fatalf("foreign-uid classification = %+v, included=%t; want out-of-scope row", entry, include)
 	}
 	encoded, err := json.Marshal(entry)

@@ -58,29 +58,31 @@ const (
 )
 
 type Config struct {
-	StateDir    string
-	Tag         string
-	LatestTag   string
-	Stall       time.Duration
-	StdoutPath  string
-	StderrPath  string
-	StdinPath   string
-	SlotGroup   string
-	Slots       int
-	WaitGate    string
-	HoldGate    string
-	MinFree     uint64
-	CostKey     string
-	CostClass   CostClass
-	Priority    int
-	MemoryBytes uint64
-	CPUsMin     int
-	CPUsMax     int
-	DiskBytes   uint64
-	GrantedCPUs int
-	Command     []string
-	Dir         string
-	Env         []string
+	StateDir         string
+	Tag              string
+	LatestTag        string
+	Stall            time.Duration
+	StdoutPath       string
+	StderrPath       string
+	StdinPath        string
+	SlotGroup        string
+	Slots            int
+	WaitGate         string
+	HoldGate         string
+	MinFree          uint64
+	CostKey          string
+	CostClass        CostClass
+	Priority         int
+	MemoryBytes      uint64
+	CPUsMin          int
+	CPUsMax          int
+	DiskBytes        uint64
+	GrantedCPUs      int
+	Command          []string
+	Dir              string
+	Env              []string
+	CostKeyLeaseMode LeaseMode
+	SharedLeasePaths []string
 	// CleanEnv makes Env the complete environment for both the keeper and its command.
 	CleanEnv bool
 	Keep     []string
@@ -136,6 +138,7 @@ type Run struct {
 	once      sync.Once
 	err       error
 	done      chan struct{}
+	leases    []*FileLease
 }
 
 type processWait struct {
@@ -446,7 +449,7 @@ func validateStartContext(ctx context.Context) error {
 	return diagnostic
 }
 
-func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSource, executable string) (*Run, error) {
+func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSource, executable string) (startedRun *Run, returnErr error) {
 	if source == nil {
 		return nil, errors.New("proc: resource source is required")
 	}
@@ -459,6 +462,16 @@ func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSou
 	if cfg.CostClass != CostLight && cfg.CostClass != CostHeavy {
 		return nil, errors.New("proc: cost class must be light or heavy")
 	}
+	leases, err := acquireConfigLeases(cfg)
+	if err != nil {
+		return nil, err
+	}
+	leaseOwnershipTransferred := false
+	defer func() {
+		if !leaseOwnershipTransferred {
+			returnErr = errors.Join(returnErr, closeFileLeases(leases))
+		}
+	}()
 	if err := os.MkdirAll(liveRecordsDir(cfg.StateDir), 0o700); err != nil {
 		return nil, fmt.Errorf("proc: create state directory: %w", err)
 	}
@@ -613,7 +626,8 @@ keeperReady:
 		}
 	}
 	admissionPending = false
-	run := &Run{PID: cmd.Process.Pid, RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, wait: keeperWait, done: make(chan struct{})}
+	run := &Run{PID: cmd.Process.Pid, RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, wait: keeperWait, done: make(chan struct{}), leases: leases}
+	leaseOwnershipTransferred = true
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -678,6 +692,7 @@ func (r *Run) Wait() error {
 				r.err = errors.Join(r.err, fmt.Errorf("proc: record keeper loss for run %s: %w", r.RunID, lostErr))
 			}
 		}
+		r.err = errors.Join(r.err, closeFileLeases(r.leases))
 		close(r.done)
 	})
 	return r.err
