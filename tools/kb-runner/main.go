@@ -412,12 +412,21 @@ func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 		if err != nil {
 			return 1, fmt.Errorf("%s ps: list leftovers: %w\nnext: ls -ld %s", root.Name(), err, shellQuote(*state))
 		}
+		if *jsonOutput {
+			if entries == nil {
+				entries = []proc.LeftoverEntry{}
+			}
+			if err := json.NewEncoder(output).Encode(entries); err != nil {
+				return 1, fmt.Errorf("kb-runner ps: write JSON: %w", err)
+			}
+			return 0, nil
+		}
 		if len(entries) == 0 {
 			_, err := fmt.Fprintln(output, "No resource leftovers.")
 			return 0, err
 		}
 		for _, entry := range entries {
-			if _, err := fmt.Fprintf(output, "%s\t%s\t%s\t%s\n", entry.Resource.Kind, entry.Resource.ID, entry.Outcome, entry.Error); err != nil {
+			if _, err := fmt.Fprintf(output, "%s\t%s\t%s\t%s\n", entry.Kind, entry.ID, entry.Outcome, entry.Error); err != nil {
 				return 1, err
 			}
 		}
