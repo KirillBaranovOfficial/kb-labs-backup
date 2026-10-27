@@ -27,7 +27,6 @@ type externalRule struct {
 	scope         string
 	workspaceRoot string
 	checkConfig   config.CheckPackConfig
-	graphTasks    []string
 	timeout       time.Duration
 }
 
@@ -40,7 +39,6 @@ type externalInput struct {
 	Phase         string             `json:"phase"`
 	DryRun        bool               `json:"dryRun,omitempty"`
 	Config        map[string]any     `json:"config,omitempty"`
-	GraphTasks    []string           `json:"graphTasks"`
 	Issues        []Issue            `json:"issues,omitempty"`
 }
 
@@ -135,7 +133,6 @@ func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 		Phase:         r.phase,
 		Workspace:     &externalWorkspace{Root: ws.Root, Packages: packages},
 		Config:        r.checkConfig.Config,
-		GraphTasks:    r.graphTasks,
 	})
 	if err == nil {
 		return out.Issues
@@ -163,7 +160,6 @@ func (r *externalRule) runCommand(command string, pkg workspace.Package, preset 
 		Phase:         r.phase,
 		DryRun:        dryRun,
 		Config:        r.checkConfig.Config,
-		GraphTasks:    r.graphTasks,
 		Issues:        issues,
 	}
 	return r.runCommandWithInput(command, input)

@@ -232,7 +232,7 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 			done++
 			opts.OnResult(result, done, total)
 		}
-		layerResults := runLayer(layer, nodes, executor, cfg, opts.NoCache, concurrency, pkgDepDirs, complete)
+		layerResults := runLayer(layer, nodes, executor, cfg, ws, opts.NoCache, concurrency, pkgDepDirs, complete)
 		allResults = append(allResults, layerResults...)
 
 		for _, r := range layerResults {
@@ -378,7 +378,7 @@ func buildDAG(
 	var pending []nodeKey
 	for _, p := range pkgs {
 		for _, taskName := range taskNames {
-			def := ResolveTaskDef(cfg, taskName, p.Category)
+			def := ResolvePackageTaskDef(ws, cfg, taskName, p)
 			if def == nil {
 				// No variant for this package category — skip silently.
 				continue
@@ -394,7 +394,7 @@ func buildDAG(
 	for next := 0; next < len(pending); next++ {
 		k := pending[next]
 		n := nodes[k]
-		def := ResolveTaskDef(cfg, k.task, n.pkg.Category)
+		def := ResolvePackageTaskDef(ws, cfg, k.task, n.pkg)
 		if err := validatePackageScriptTask(n.pkg, k.task, def.Command); err != nil {
 			return nil, err
 		}
@@ -411,7 +411,7 @@ func buildDAG(
 					}
 					depKey := nodeKey{depPkgName, depTask}
 					if _, hasNode := nodes[depKey]; !hasNode {
-						if ResolveTaskDef(cfg, depTask, depPkg.Category) == nil {
+						if ResolvePackageTaskDef(ws, cfg, depTask, depPkg) == nil {
 							return nil, &TaskGraphError{Package: k.pkg, Task: k.task, Dependency: depPkgName, DependencyTask: depTask}
 						}
 						nodes[depKey] = dagNode{pkg: depPkg, task: depTask}
@@ -423,7 +423,7 @@ func buildDAG(
 				// "build" = run 'build' for this same package first.
 				depKey := nodeKey{k.pkg, depTask}
 				if _, hasNode := nodes[depKey]; !hasNode {
-					if ResolveTaskDef(cfg, depTask, n.pkg.Category) == nil {
+					if ResolvePackageTaskDef(ws, cfg, depTask, n.pkg) == nil {
 						return nil, &TaskGraphError{Package: k.pkg, Task: k.task, Dependency: k.pkg, DependencyTask: depTask}
 					}
 					nodes[depKey] = dagNode{pkg: n.pkg, task: depTask}
@@ -575,6 +575,7 @@ func runLayer(
 	nodes map[nodeKey]dagNode,
 	executor *Executor,
 	cfg *config.DevkitConfig,
+	ws *workspace.Workspace,
 	noCache bool,
 	concurrency int,
 	pkgDepDirs map[string][]string,
@@ -593,7 +594,7 @@ func runLayer(
 			defer func() { <-sem }()
 
 			n := nodes[k]
-			def := ResolveTaskDef(cfg, k.task, n.pkg.Category)
+			def := ResolvePackageTaskDef(ws, cfg, k.task, n.pkg)
 			if def == nil {
 				// Should not happen — node was created only if variant matched.
 				results[i] = TaskResult{Package: k.pkg, Task: k.task, OK: false, Error: "no variant matched"}
@@ -628,7 +629,7 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 	var changed []workspace.Package
 	for _, p := range ws.Packages {
 		for _, task := range tasks {
-			def := ResolveTaskDef(cfg, task, p.Category)
+			def := ResolvePackageTaskDef(ws, cfg, task, p)
 			if def == nil {
 				continue
 			}
