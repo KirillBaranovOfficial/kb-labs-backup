@@ -50,7 +50,7 @@ async function expectRuntimeError(
 }
 
 describe("ProjectRuntimeManager (real child processes, fake runtime script)", () => {
-  // case: S-124.12
+  // case: S-226.2
   it("preserves a typed project identity mismatch for the host response", () => {
     const failure = runtimeStartFailed(
       "prj_1234567890123456",

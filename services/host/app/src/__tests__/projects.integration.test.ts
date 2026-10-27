@@ -10,8 +10,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
+import { getCatalogEntry, renderTemplate } from "@kb-labs/core-platform";
 import { startTestHost, type HostFixtureConfig, type RunningHost } from "./harness.js";
 import {
   FAKE_RUNTIME_ENTRY,
@@ -27,7 +28,7 @@ import { createChildProcessLauncher } from "../project-runtime/launcher.js";
 import type { RuntimeLauncher, RuntimeProject } from "../project-runtime/manager.js";
 
 interface ErrorBody {
-  error: { code: string; message: string; hint: string; cause?: string; details?: Record<string, unknown> };
+  error: { code: string; message: string; hint: string; cause?: string; stack?: string; details?: Record<string, unknown> };
 }
 
 interface HealthBody {
@@ -636,6 +637,54 @@ describe("kb-host project routing", () => {
   });
 
   // case: S-124.12
+  it("keeps valid projects available when the registry contains an identity mismatch", async () => {
+    const valid = await registered();
+    const corrupt = await registered();
+    const contents = JSON.parse(await readFile(registry.filePath, "utf8")) as {
+      projects: Array<{ id: string; path: string; name: string; status: string }>;
+    };
+    const corruptRecord = contents.projects.find((record) => record.id === corrupt.id);
+    if (!corruptRecord) {
+      throw new Error("corrupt project fixture was not persisted");
+    }
+    corruptRecord.id = "prj_0000000000000000";
+    await writeFile(registry.filePath, JSON.stringify(contents));
+
+    const subject = await host();
+    const projectsResponse = await subject.fetchGateway("/api/v1/projects");
+    expect(projectsResponse.status).toBe(200);
+    const projectsBody = await projectsResponse.json() as { data: Array<{ id: string }> };
+    expect(projectsBody.data.map((project) => project.id)).toContain(valid.id);
+    expect(projectsBody.data.map((project) => project.id)).not.toContain(corruptRecord.id);
+
+    const validReply = await reply(subject, valid.id, "/rest/whoami");
+    expect(validReply.projectId).toBe(valid.id);
+
+    const corruptResponse = await subject.fetchGateway(
+      `/api/v1/projects/${corruptRecord.id}/rest/whoami`,
+    );
+    expect(corruptResponse.status).toBe(500);
+    const corruptBody = await corruptResponse.json() as ErrorBody;
+    expect(corruptBody.error.code).toBe("KB_PROJECT_REGISTRY_CORRUPT");
+    const catalogEntry = getCatalogEntry("KB_PROJECT_REGISTRY_CORRUPT");
+    const errorDetails = corruptBody.error.details ?? {};
+    expect(corruptBody.error.message).toBe(renderTemplate(
+      catalogEntry.message,
+      Object.fromEntries(Object.entries(errorDetails).map(([key, value]) => [key, String(value)])),
+      ["file", "reason"],
+    ));
+    expect(corruptBody.error.hint).toBe(renderTemplate(
+      catalogEntry.hint,
+      Object.fromEntries(Object.entries(errorDetails).map(([key, value]) => [key, String(value)])),
+      ["file"],
+    ));
+    expect(corruptBody.error.cause).toBeUndefined();
+    expect(corruptBody.error.stack).toBeUndefined();
+    expect(JSON.stringify(corruptBody)).not.toContain("Error:");
+    expect(JSON.stringify(corruptBody)).not.toContain(" at ");
+  });
+
+  // case: S-226.2
   it("returns the runtime's typed project identity mismatch without exposing a stack", async () => {
     const project = await registered();
     const launcher: RuntimeLauncher = {

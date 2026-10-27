@@ -54,7 +54,8 @@ from analytics_steps import run_analytics_steps
 from gateway_steps import run_adapter_catalog_step, run_gateway_steps
 from installed_cli_contract_steps import run_installed_cli_contract_steps
 from worktree_steps import run_worktree_steps
-from project_identity_steps import run_project_identity_steps, run_project_registry_steps
+from project_identity_steps import (run_project_identity_steps, run_project_registration_case_steps,
+                                    run_project_registry_corruption_case_step, run_project_registry_steps)
 from workspace_steps import run_workspace_cli_steps, workspace_checkout_problem
 from plugin_isolation_steps import run_project_plugin_availability_steps
 from unexpected_error_steps import run_unexpected_error_steps
@@ -978,8 +979,17 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
     project_id = service_project(graph)["id"]
     cli_path = Path.home() / ".local/bin/kb"
     graph.flow("project registry and current-project flows", "project-registry", "projects",
-               lambda: run_project_registry_steps(journey, str(cli_path), env, registry),
-               cases=["S-043.1", "S-196.1"], record_empty_success=False)
+               lambda: (run_project_registry_steps(journey, str(cli_path), env, registry),
+                        run_project_registration_case_steps(journey, str(cli_path), env),
+                        run_project_registry_corruption_case_step(
+                            journey, str(cli_path), env,
+                            Path(journey_value("KB_JOURNEY_PLATFORM_ROOT", required=True)),
+                            project_id,
+                            service_api_token(graph) or "",
+                            lambda path, token: request(path, token=token))),
+               cases=["S-043.1", "S-196.1", "S-124.1", "S-124.2", "S-124.3", "S-124.4",
+                      "S-124.5", "S-124.6", "S-124.8", "S-124.9", "S-124.12", "S-051.1"],
+               record_empty_success=False)
     workspace_root = Path(journey_value("KB_JOURNEY_WORKSPACE_ROOT", resource_root()))
 
     def run_workspace_flows() -> None:
