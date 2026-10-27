@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-import { writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import os from 'node:os';
 import { runStage } from './remote-verify-stage.mjs';
+import { deriveBuildLimits, readRunnerMemTotalBytes } from './remote-build-resources.mjs';
 
+const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const stage = process.env.REMOTE_STAGE;
 const packageNames = process.env.REMOTE_PACKAGES ? process.env.REMOTE_PACKAGES.split(',') : undefined;
 const shard = process.env.REMOTE_SHARD ? Number(process.env.REMOTE_SHARD) : undefined;
@@ -16,6 +19,11 @@ const cache = {
   go: process.env.GO_CACHE_HIT,
   devkit: process.env.DEVKIT_CACHE_HIT,
 };
+const resourceSamplePath = process.env.REMOTE_RESOURCE_SAMPLES;
+const buildLimits = stage === profile.buildStage
+  ? deriveBuildLimits({ cpuCount: os.availableParallelism(), memTotalBytes: readRunnerMemTotalBytes() })
+  : undefined;
+if (buildLimits) process.stdout.write(`${profile.buildStage} resource limits: ${JSON.stringify(buildLimits)}\n`);
 const result = await runStage({
   stage,
   packageNames,
@@ -23,7 +31,25 @@ const result = await runStage({
   packages,
   selectedPackageCount,
   cache,
-  runCommand: (command, args, options) => spawnSync(command, args, { ...options, encoding: 'utf8', env: process.env, maxBuffer: 16 * 1024 * 1024 }),
+  resourceSamplePath,
+  partialResultPath: stage === profile.buildStage ? out : undefined,
+  buildLimits,
+  runCommand: (command, args, options) => new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: { ...process.env, ...options.env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; process.stdout.write(chunk); });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; process.stderr.write(chunk); });
+    child.once('error', (error) => resolve({ status: 1, stdout, stderr, error }));
+    child.once('close', (status, signal) => resolve({
+      status: status ?? 1, stdout, stderr,
+      ...(signal ? { error: new Error(`process terminated by ${signal}`) } : {}),
+    }));
+  }),
 });
 writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
 process.stdout.write(`${result.name}: ${result.status} (${result.durationMs} ms)\n${result.logTail}\n`);

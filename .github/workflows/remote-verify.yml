@@ -55,23 +55,24 @@ jobs:
         with:
           go-version: '1.26.8'
           cache-dependency-path: tools/kb-create/go.sum
-      - name: Install workspace dependencies
-        run: corepack pnpm install --frozen-lockfile
-      - name: Build kb-devkit
-        run: make build
-        working-directory: tools/kb-devkit
-      - name: Resolve affected packages and test matrix
+      - name: Run remote prepare stage
         id: plan
-        run: |
-          node scripts/ci/resolve-remote-selection.mjs \
-            "$VERIFICATION_PROFILE" \
-            "$RUNNER_TEMP/affected-packages.json" \
-            ./tools/kb-devkit/kb-devkit
-          node scripts/ci/remote-verify-plan.mjs \
-            "$VERIFICATION_PROFILE" \
-            "$RUNNER_TEMP/affected-packages.json" \
-            "$RUNNER_TEMP/test-matrix.json" \
-            "$GITHUB_OUTPUT"
+        env:
+          REMOTE_PREPARE_RESULT: stage-result-prepare.json
+          REMOTE_AFFECTED_PACKAGES: ${{ runner.temp }}/affected-packages.json
+          REMOTE_TEST_PLAN: ${{ runner.temp }}/test-matrix.json
+          PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
+          GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
+        run: node scripts/ci/run-remote-prepare.mjs
+
+      - name: Upload prepare stage result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-result-prepare
+          path: stage-result-prepare.json
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Upload prepared kb-devkit binary
         if: success()
@@ -123,6 +124,7 @@ jobs:
         env:
           REMOTE_STAGE: ${{ needs.prepare.outputs.build_stage }}
           REMOTE_STAGE_RESULT: stage-result-build.json
+          REMOTE_RESOURCE_SAMPLES: stage-resource-samples.jsonl
           AFFECTED_PACKAGES: ${{ needs.prepare.outputs.packages }}
           REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count }}
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
@@ -138,12 +140,14 @@ jobs:
           else
             tar cf workspace-dist.tar --files-from /dev/null
           fi
-      - name: Upload build result for verdict aggregation
+      - name: Upload build result and resource evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: remote-result-build
-          path: stage-result-build.json
+          path: |
+            stage-result-build.json
+            stage-resource-samples.jsonl
           if-no-files-found: warn
           retention-days: 1
       - name: Upload workspace build artifact
@@ -297,7 +301,10 @@ jobs:
       - name: Aggregate commit-bound verdict
         env:
           REMOTE_TEST_MATRIX: ${{ needs.prepare.outputs.test_matrix }}
-          REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count }}
+          REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count || '0' }}
+          PREPARE_JOB_RESULT: ${{ needs.prepare.result }}
+          BUILD_JOB_RESULT: ${{ needs.build.result }}
+          BUILD_RESOURCE_SAMPLES: remote-results/stage-resource-samples.jsonl
         run: node scripts/ci/aggregate-remote-verdict.mjs remote-results verdict.json
       - name: Upload commit-bound verdict
         if: always()

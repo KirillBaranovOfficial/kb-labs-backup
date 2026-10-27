@@ -1,6 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { appendFileSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import { deriveBuildLimits, resourcePeaks, sampleRunnerResources } from './remote-build-resources.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
@@ -10,7 +12,7 @@ function failingNames(log) {
   return log.split(/\r?\n/).filter((line) => /(^FAIL\s|^--- FAIL:|Tests\s+\d+ failed|ERR_PNPM|^✖\s|^FAILED\s)/.test(line)).slice(-40);
 }
 
-function boundedTail(log) {
+export function boundedTail(log) {
   return log.split(/\r?\n/).slice(-80).join('\n').slice(-12_000);
 }
 function cacheStatus(value) {
@@ -19,7 +21,12 @@ function cacheStatus(value) {
   return 'unavailable';
 }
 
-export async function runStage({ stage, packageNames, packages, selectedPackageCount, shard, runCommand, now = Date.now, cache = {} }) {
+export async function runStage({
+  stage, packageNames, packages, selectedPackageCount, shard, runCommand, now = Date.now, cache = {},
+  resourceSamplePath, partialResultPath, sampleIntervalMs = 30_000,
+  sampleResources = () => sampleRunnerResources({ workspaceRoot: root, now }),
+  buildLimits = deriveBuildLimits({ cpuCount: os.availableParallelism(), memTotalBytes: os.totalmem() }),
+}) {
   const definition = stageDefinitions.find((entry) => entry.id === stage);
   if (!definition) throw new Error(`Unknown verification stage ${stage}; use the registered stages in scripts/ci/verification-profile.json.`);
   if (!Number.isSafeInteger(selectedPackageCount) || selectedPackageCount < 0) throw new Error(`${stage} requires the selected package count from the remote verification plan.`);
@@ -38,7 +45,7 @@ export async function runStage({ stage, packageNames, packages, selectedPackageC
       };
     }
     command = './tools/kb-devkit/kb-devkit';
-    args = ['run', 'build', '--packages', selected.join(','), '--json'];
+    args = ['run', 'build', '--packages', selected.join(','), '--concurrency', String(buildLimits.concurrency), '--json'];
   } else if (stage === profile.packageTestStage) {
     if (!Array.isArray(packageNames) || packageNames.length === 0 || packageNames.some((packageName) => typeof packageName !== 'string' || !packageName)) throw new Error(`${profile.packageTestStage} requires packages selected by kb-devkit affected --json.`);
     if (!Number.isSafeInteger(shard) || shard < 1) throw new Error(`${profile.packageTestStage} requires a positive shard number from the remote verification plan.`);
@@ -49,7 +56,47 @@ export async function runStage({ stage, packageNames, packages, selectedPackageC
     [command, args] = commandFor(definition);
   }
   const startedAt = now();
-  const result = await runCommand(command, args, { cwd: root });
+  const buildSamples = [];
+  const sampleFailures = [];
+  const persistPartial = (status = 'running') => {
+    if (!partialResultPath) return;
+    const partial = {
+      name, status, selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : selectedPackageCount,
+      failures: [...sampleFailures], logTail: '', startedAt: new Date(startedAt).toISOString(),
+      finishedAt: null, durationMs: Math.max(0, now() - startedAt),
+      ...(stage === profile.buildStage ? { resourceLimits: buildLimits, resourcePeaks: resourcePeaks(buildSamples), lastResourceSample: buildSamples.at(-1) } : {}),
+      cache: cacheRecord(cache),
+    };
+    writeAtomicJSON(partialResultPath, partial);
+  };
+  const captureResourceSample = () => {
+    try {
+      const sample = sampleResources();
+      buildSamples.push(sample);
+      if (resourceSamplePath) appendFileSync(resourceSamplePath, `${JSON.stringify(sample)}\n`);
+      process.stdout.write(`workspace-build resource sample: ${JSON.stringify(sample)}\n`);
+      persistPartial();
+    } catch (error) {
+      const failure = `resource sampling failed: ${error.message}`;
+      sampleFailures.push(failure);
+      process.stderr.write(`${failure}\n`);
+      persistPartial();
+    }
+  };
+  const isBuild = stage === profile.buildStage && Boolean(resourceSamplePath && partialResultPath);
+  if (isBuild) captureResourceSample();
+  const timer = isBuild ? setInterval(captureResourceSample, sampleIntervalMs) : undefined;
+  const runEnv = stage === profile.buildStage
+    ? { NODE_OPTIONS: `--max-old-space-size=${buildLimits.nodeHeapMb}` }
+    : {};
+  persistPartial();
+  let result;
+  try {
+    result = await runCommand(command, args, { cwd: root, env: runEnv });
+  } finally {
+    if (timer) clearInterval(timer);
+  }
+  if (isBuild) captureResourceSample();
   const finishedAt = now();
   const log = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join('\n');
   const taskFailures = devkitTaskFailures(stage, result);
@@ -59,11 +106,11 @@ export async function runStage({ stage, packageNames, packages, selectedPackageC
   }).join('\n\n');
   const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage;
   const visibleLog = taskFailures.length ? taskLogOutput : isDevkitStage ? (result.stderr || '') : log;
-  return {
+  const stageResult = {
     name,
-    status: result.status === 0 ? 'pass' : 'fail',
+    status: result.status === 0 && sampleFailures.length === 0 ? 'pass' : 'fail',
     selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : selectedPackageCount,
-    failures: [...failingNames(log), ...taskFailures.flatMap((failure) => (failure.logTail || failure.error || '').split(/\r?\n/).filter(Boolean))],
+    failures: [...failingNames(log), ...taskFailures.flatMap((failure) => (failure.logTail || failure.error || '').split(/\r?\n/).filter(Boolean)), ...sampleFailures],
     taskFailures,
     logTail: boundedTail(visibleLog),
     startedAt: new Date(startedAt).toISOString(),
@@ -71,7 +118,20 @@ export async function runStage({ stage, packageNames, packages, selectedPackageC
     durationMs: Math.max(0, finishedAt - startedAt),
     ...(stage === profile.packageTestStage ? { packages: packageNames } : {}),
     cache: cacheRecord(cache),
+    ...(stage === profile.buildStage ? {
+      resourceLimits: buildLimits,
+      resourcePeaks: resourcePeaks(buildSamples),
+      lastResourceSample: buildSamples.at(-1),
+    } : {}),
   };
+  if (partialResultPath) writeAtomicJSON(partialResultPath, stageResult);
+  return stageResult;
+}
+
+function writeAtomicJSON(file, value) {
+  const temporary = `${file}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  renameSync(temporary, file);
 }
 
 function devkitTaskFailures(stage, result) {
@@ -113,7 +173,7 @@ function commandFor(definition) {
   throw new Error(`Unsupported verification runner ${definition.runner}; declare a supported runner in scripts/ci/verification-profile.json.`);
 }
 
-function cacheRecord(cache) {
+export function cacheRecord(cache) {
   return {
     pnpm: cacheStatus(cache.pnpm),
     go: cacheStatus(cache.go),
