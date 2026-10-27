@@ -87,6 +87,28 @@ func TestCheckRejectsUnknownAndUnmatchedFilters(t *testing.T) {
 	}
 }
 
+func TestCheckSelectionRecognizesWorkspaceCircularCheck(t *testing.T) {
+	cfg := &config.DevkitConfig{
+		Presets: map[string]config.Preset{"node-lib": {Deps: config.DepsRules{CheckCircular: true}}},
+		Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{
+			Name: "libs", Category: config.CategoryConfig{Preset: "node-lib"},
+		}}},
+	}
+	ws := &workspace.Workspace{Packages: []workspace.Package{{Name: "@kb/a", Preset: "node-lib"}}}
+	registry := checks.Default()
+	if err := validateCheckSelection(ws, cfg, registry, []string{"circular"}, ""); err != nil {
+		t.Fatalf("validate circular selection: %v", err)
+	}
+	if counts := selectedCheckCounts(ws, cfg, registry, []string{"circular"}, ""); counts["circular"] != 1 {
+		t.Fatalf("check counts = %#v, want circular check count", counts)
+	}
+	err := validateCheckSelection(ws, cfg, registry, []string{"circular"}, "@kb/a")
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != "KB_RUNTIME_INPUT_INVALID" || !strings.Contains(failure.Hint, "kb-devkit check --only circular") {
+		t.Fatalf("package-scoped circular selection error = %v, want typed full-workspace instruction", err)
+	}
+}
+
 // case: S-179.28
 func TestCheckRejectsCategoryMismatchWithApplicableCategories(t *testing.T) {
 	cfg := &config.DevkitConfig{

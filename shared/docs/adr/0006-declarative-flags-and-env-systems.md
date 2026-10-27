@@ -341,7 +341,7 @@ Verified with commit plugin:
 
 ```bash
 KB_COMMIT_LLM_TEMPERATURE=0.5 KB_COMMIT_LLM_MAX_TOKENS=3000 \
-  pnpm kb commit generate --scope="kb-labs-commit-plugin"
+  pnpm kb commit plan create --scope="kb-labs-commit-plugin"
 ```
 
 Results:

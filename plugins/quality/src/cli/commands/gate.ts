@@ -59,7 +59,7 @@ export default defineCommand<unknown, CLIInput<GateFlags>, unknown>({
         error: {
           code: 'KB_RUNTIME_COMMAND_FAILED',
           message: `Architecture gate failed with ${current} layering violation(s).`,
-          hint: 'Review the reported imports, then rerun `kb quality gate`.',
+          hint: 'Review the reported imports, then rerun `kb quality gate run`.',
           diagnostics: report.violations.map((violation) => ({
             code: 'KB_QUALITY_LAYERING_VIOLATION',
             severity: 'error' as const,

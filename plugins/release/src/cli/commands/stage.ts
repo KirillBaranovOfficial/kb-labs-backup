@@ -142,7 +142,7 @@ function verifyStagePackage(
 
 export default defineCommand({
   id: 'release:stage',
-  description: 'Pack the currently-committed package versions for a flow into real npm tarballs, once, for `release deliver` to ship',
+  description: 'Pack the currently-committed package versions for a flow into real npm tarballs, once, for `release artifact publish` to ship',
 
   handler: {
     async execute(ctx: PluginCommandContextV3, input: CLIInput<StageFlags>): Promise<CommandResult<StagePayload>> {
@@ -156,7 +156,7 @@ export default defineCommand({
       const flowResult = resolveFlowName(baseConfig, flags);
       if (typeof flowResult !== 'string') {
         const msg = `release:stage ${flowResult.error}`;
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Check the flow name and configuration, then retry `kb release stage`.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Check the flow name and configuration, then retry `kb release artifact create`.' } };
       }
       const flowName = flowResult;
 
@@ -172,7 +172,7 @@ export default defineCommand({
       if (discovered.length === 0) {
         const msg = `No packages found for flow "${flowName}"`;
         if (!flags.json) { ctx.ui?.write?.(msg); }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release stage --help` to review its inputs and recovery steps, then retry." } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release artifact create --help` to review its inputs and recovery steps, then retry." } };
       }
 
       // versionMap must cover the WHOLE workspace, not just this flow's packages:

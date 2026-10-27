@@ -30,7 +30,7 @@ export interface PackageToPublish {
   path: string;
   /**
    * Pre-built tarball to publish instead of packing fresh from `path`
-   * (produced by `release stage` — see stage.ts). When set, `path` is
+   * (produced by `release artifact create` — see stage.ts). When set, `path` is
    * only used as the cwd for npm's `.npmrc` auth lookup — no
    * `rewriteWorkspaceDeps` mutation happens, since the tarball's
    * package.json is already final and must ship byte-for-byte unchanged.

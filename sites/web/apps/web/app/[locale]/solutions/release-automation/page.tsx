@@ -77,7 +77,7 @@ const CHANGELOG_OUTPUT = `## [1.4.2] - 2026-05-24
 - Checkpoint detection skips stale entries older than 24h
 
 ### Internal
-- Pipeline timing reported per-step in \`kb release report\``;
+- Pipeline timing reported per-step in \`kb release report show\``;
 
 // i18n-ignore
 const RELEASE_CONFIG = `{

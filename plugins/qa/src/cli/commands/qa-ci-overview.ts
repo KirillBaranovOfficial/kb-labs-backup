@@ -14,7 +14,7 @@ export default defineCommand<unknown, CLIInput<QaCiOverviewFlags>, unknown>({
       const dossiers = loadCiDossiers(inputPath);
       if (dossiers.length === 0) {
 
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No CI dossiers were found under ${inputPath}.`, hint: 'Run `kb qa ci evidence capture` in CI, then rerun `kb qa ci overview`.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No CI dossiers were found under ${inputPath}.`, hint: 'Run `kb qa ci evidence create` in CI, then rerun `kb qa ci overview show`.' } };
       }
       const overview = analyzeCiReliability(dossiers);
       if (input.flags.output) {

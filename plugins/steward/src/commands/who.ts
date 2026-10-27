@@ -12,7 +12,7 @@ export default defineCommand({
       const [topic] = input.argv;
       const { project, json } = input.flags;
       if (!topic?.trim()) {
-        return validationError('topic is required', 'Usage: kb steward who <topic> [--project=]');
+        return validationError('topic is required', 'Usage: kb steward person search <topic> [--project=]');
       }
 
       try {

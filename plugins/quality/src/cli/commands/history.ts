@@ -23,7 +23,7 @@ export default defineCommand<unknown, CLIInput<HistoryFlags>, unknown>({
       const { snapshots, delta, latest } = store.history();
 
       if (snapshots.length === 0) {
-        ctx.ui?.success?.('No snapshots yet. Run `kb quality snapshot` first.');
+        ctx.ui?.success?.('No snapshots yet. Run `kb quality snapshot create` first.');
         return {  };
       }
 

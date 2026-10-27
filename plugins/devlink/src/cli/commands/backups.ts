@@ -86,7 +86,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
             title: 'DevLink — Backups',
             sections: [
               { header: 'Backups (newest first)', items },
-              { header: 'Restore', items: ['kb devlink backups --restore <id>'] },
+              { header: 'Restore', items: ['kb devlink backup list --restore <id>'] },
             ],
             timing: tracker.total(),
           });

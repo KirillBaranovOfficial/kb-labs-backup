@@ -79,7 +79,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa check',
+        path: 'qa check run',
         category: 'Run',
         describe: 'Run devkit structural checks',
         operationType: 'analyze' as const,
@@ -88,7 +88,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa stats',
+        path: 'qa stats show',
         category: 'Run',
         describe: 'Show devkit health score and category breakdown',
         operationType: 'read' as const,
@@ -97,7 +97,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa gate',
+        path: 'qa gate run',
         category: 'Run',
         describe: 'Run pre-commit gate check (exits 1 if violations found)',
         operationType: 'analyze' as const,
@@ -106,7 +106,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa history',
+        path: 'qa history list',
         category: 'History',
         describe: 'Show QA run history',
         operationType: 'read' as const,
@@ -115,7 +115,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa trends',
+        path: 'qa trends show',
         category: 'History',
         describe: 'Show QA quality trends over time',
         operationType: 'read' as const,
@@ -124,7 +124,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa e2e flaky',
+        path: 'qa e2e flaky list',
         category: 'History',
         describe: 'Track flaky e2e cases across CI runs (agent-first overview + drill-down)',
         operationType: 'read' as const,
@@ -133,7 +133,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa ci evidence capture',
+        path: 'qa ci evidence create',
         category: 'CI',
         describe: 'Capture a GitHub Actions run dossier (CI producer command)',
         operationType: 'execute' as const,
@@ -142,7 +142,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa ci evidence sync',
+        path: 'qa ci evidence update',
         category: 'CI',
         describe: 'Download new CI evidence artifacts into a local cache',
         operationType: 'execute' as const,
@@ -151,7 +151,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa ci overview',
+        path: 'qa ci overview show',
         category: 'CI',
         describe: 'Show a compact CI reliability overview',
         operationType: 'read' as const,
@@ -160,7 +160,7 @@ export const manifest = {
         permissions: pluginPermissions,
       },
       {
-        path: 'qa regressions',
+        path: 'qa regressions list',
         category: 'History',
         describe: 'Detect regressions since last run',
         operationType: 'read' as const,

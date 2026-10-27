@@ -766,7 +766,7 @@ func installOutput(t *testing.T) (*bytes.Buffer, string) {
 	return &bytes.Buffer{}, path
 }
 
-// case: PC-001.17, PC-001.18
+// case: PC-001.17, PC-001.18, S-261.7
 func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -778,6 +778,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 	}
 	source.Provenance = nil
 	graph := source.Platforms[0].Profiles["default"]
+	defaultServices := append([]contracts.Service(nil), graph.Services...)
 	baseGatewayPort := 0
 	highestServicePort := 0
 	for _, service := range graph.Services {
@@ -792,6 +793,12 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 		t.Fatal("default service graph has no Gateway port")
 	}
 	source.Platforms[0].Host = testHostOnFreePortWithPortHeadroom(t, highestServicePort)
+	serviceOffsets := make([]int, 0, len(graph.Services))
+	for _, service := range graph.Services {
+		if service.Port != 0 {
+			serviceOffsets = append(serviceOffsets, service.Port-baseGatewayPort)
+		}
+	}
 	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
@@ -815,8 +822,13 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runInstall := func(root string) (int, string) {
+	runInstall := func(t *testing.T, root string) (int, string) {
 		t.Helper()
+		gatewayPort := freeLoopbackPortWithOffsets(t, serviceOffsets...)
+		if gatewayPort == baseGatewayPort {
+			t.Fatalf("test Gateway allocation reused default port %d", baseGatewayPort)
+		}
+		gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", gatewayPort)
 		dependencyFactory := func(cmd *cobra.Command) commandDependencies {
 			return commandDependencies{
 				Runtime:       &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
@@ -830,7 +842,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 				Command: cmd, Executable: launcher,
 			}
 		}
-		args := []string{"install", "--json", "--index", index, "--platform-root", root,
+		args := []string{"install", "--json", "--index", index, "--platform-root", root, "--gateway-url", gatewayURL,
 			"--service-profile", "default", "--scenario", "explore", "--registry", "http://verdaccio:4873",
 			"--project-root", project}
 		var stdout, stderr bytes.Buffer
@@ -846,8 +858,18 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if code, output := runInstall(root); code != 0 {
+			if code, output := runInstall(t, root); code != 0 {
 				t.Fatalf("install target %s: code=%d output=%s", target, code, output)
+			} else {
+				layout, err := versionroot.New(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				installed, err := receipt.Read(layout.PlatformRoot())
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertServicePortsAvoidDefaultGraph(t, installed.Plan.ServiceGraph, defaultServices)
 			}
 			layout, err := versionroot.New(root)
 			if err != nil {
@@ -855,9 +877,6 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 			}
 			if err := layout.Validate(); err != nil {
 				t.Fatalf("install target %s did not become a valid versioned install: %v", target, err)
-			}
-			if _, err := receipt.Read(layout.PlatformRoot()); err != nil {
-				t.Fatal(err)
 			}
 		})
 	}
@@ -870,8 +889,14 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 	if _, err := partialLayout.StageInitial(); err != nil {
 		t.Fatal(err)
 	}
-	if code, output := runInstall(partialRoot); code != 0 {
+	if code, output := runInstall(t, partialRoot); code != 0 {
 		t.Fatalf("install retry from a declared initial handoff: code=%d output=%s", code, output)
+	} else {
+		installedPartial, err := receipt.Read(partialLayout.PlatformRoot())
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertServicePortsAvoidDefaultGraph(t, installedPartial.Plan.ServiceGraph, defaultServices)
 	}
 	if err := partialLayout.Validate(); err != nil {
 		t.Fatalf("install retry did not recover the declared initial handoff: %v", err)
@@ -886,7 +911,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	foreignBefore := snapshotTree(t, foreignRoot)
-	if code, output := runInstall(foreignRoot); code == 0 || !strings.Contains(output, contracts.CodeInstallLayoutUnsupported) {
+	if code, output := runInstall(t, foreignRoot); code == 0 || !strings.Contains(output, contracts.CodeInstallLayoutUnsupported) {
 		t.Fatalf("foreign target was not refused with KB_INSTALL_LAYOUT_UNSUPPORTED: code=%d output=%s", code, output)
 	}
 	if after := snapshotTree(t, foreignRoot); !bytes.Equal(after, foreignBefore) {
@@ -908,7 +933,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := snapshotTree(t, damagedRoot)
-			if code, output := runInstall(damagedRoot); code == 0 || !strings.Contains(output, contracts.CodeInstallLayoutUnsupported) {
+			if code, output := runInstall(t, damagedRoot); code == 0 || !strings.Contains(output, contracts.CodeInstallLayoutUnsupported) {
 				t.Fatalf("damaged target was not refused with KB_INSTALL_LAYOUT_UNSUPPORTED: code=%d output=%s", code, output)
 			}
 			if after := snapshotTree(t, damagedRoot); !bytes.Equal(after, before) {

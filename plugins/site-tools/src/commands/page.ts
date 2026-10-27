@@ -106,15 +106,15 @@ async function runPage(
   if (!segment) {
 
     ctx.ui.write(
-      'Examples:\n  kb site page pricing\n  kb site page solutions/my-solution --badge Solutions\n',
+      'Examples:\n  kb site page create pricing\n  kb site page create solutions/my-solution --badge Solutions\n',
     );
-    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'A page segment is required', hint: 'Provide a lowercase route segment, for example `kb site page pricing`.' } };
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'A page segment is required', hint: 'Provide a lowercase route segment, for example `kb site page create pricing`.' } };
   }
 
   // Reject path traversal — only forward slashes and alphanumeric/hyphen segments allowed
   if (!/^[a-z0-9][a-z0-9/-]*$/.test(segment) || segment.includes('..') || normalize(segment) !== segment) {
 
-    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Invalid segment '${segment}'`, hint: 'Use lowercase letters, numbers, hyphens, and forward slashes without path traversal, then rerun `kb site page <segment>`.' } };
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Invalid segment '${segment}'`, hint: 'Use lowercase letters, numbers, hyphens, and forward slashes without path traversal, then rerun `kb site page create <segment>`.' } };
   }
 
   const badge = input.flags?.badge ?? '';
@@ -128,7 +128,7 @@ async function runPage(
   // Double-check the resolved path is still inside localeDir (defense in depth)
   if (!segmentDir.startsWith(resolve(localeDir) + '/') && segmentDir !== resolve(localeDir)) {
 
-    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Segment '${segment}' resolves outside app/[locale]/`, hint: "Run `kb site page --help` to review its inputs and recovery steps, then retry." } };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Segment '${segment}' resolves outside app/[locale]/`, hint: "Run `kb site page create --help` to review its inputs and recovery steps, then retry." } };
   }
 
   const namespace = segment
@@ -145,12 +145,12 @@ async function runPage(
 
   if (existsSync(pagePath)) {
 
-    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `page.tsx already exists at app/[locale]/${segment}/`, hint: "Run `kb site page --help` to review its inputs and recovery steps, then retry." } };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `page.tsx already exists at app/[locale]/${segment}/`, hint: "Run `kb site page create --help` to review its inputs and recovery steps, then retry." } };
   }
 
   if (existsSync(ogPath)) {
 
-    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `opengraph-image.tsx already exists at app/[locale]/${segment}/`, hint: "Run `kb site page --help` to review its inputs and recovery steps, then retry." } };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `opengraph-image.tsx already exists at app/[locale]/${segment}/`, hint: "Run `kb site page create --help` to review its inputs and recovery steps, then retry." } };
   }
 
   const pageContent = pageTemplate(segment, namespace);
@@ -174,7 +174,7 @@ async function runPage(
   const prefix = dryRun ? '[dry-run] would create' : 'Created';
 
   ctx.ui.success(`${prefix} page '${segment}'`, {
-    title: 'site page',
+    title: 'site page create',
     sections: [
       {
         header: 'Files',

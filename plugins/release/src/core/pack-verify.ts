@@ -36,7 +36,7 @@ import { matchesPackagePattern } from './planner';
 import { describeArboristError } from './clean-install-verify';
 import { findUndeclaredImports } from './undeclared-imports';
 
-/** Where `release stage plan` persists the tarballs it publishes to the staging registry (repo-relative). */
+/** Where `release candidate publish` persists the tarballs it publishes to the staging registry (repo-relative). */
 export const STAGED_TARBALLS_REL_DIR = '.kb/release/staging/tarballs';
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -617,7 +617,7 @@ export async function runPackInstallCheck(input: PackInstallInputs, deps: PackVe
 export interface ResolveArtifactsInput {
   /** Planned packages (name + version the staging registry must hold). */
   packages: Array<{ name: string; version: string }>;
-  /** Directory holding manifest.json + tarballs written by `release stage plan`. */
+  /** Directory holding manifest.json + tarballs written by `release candidate publish`. */
   stagedDir?: string;
   /** Staging registry used as a fallback source of the very same tarballs. */
   registry?: string;
@@ -723,7 +723,7 @@ function artifactsFor(pack: PackVerifyRuntime): Promise<ResolvedArtifacts> {
 async function runBuiltin(kind: BuiltinCheckKind, ctx: BuiltinCheckContext): Promise<PackVerifyOutput> {
   if (!ctx.pack) {
     return {
-      packages: ctx.packages.map(p => failure(p.path, `ERROR: ${kind} needs the staged tarballs but no staging information was provided (RELEASE_PLAN_PATH / staging registry unset). Run \`release stage plan\` first.`)),
+      packages: ctx.packages.map(p => failure(p.path, `ERROR: ${kind} needs the staged tarballs but no staging information was provided (RELEASE_PLAN_PATH / staging registry unset). Run \`release candidate publish\` first.`)),
       phases: [],
       durationMs: 0,
     };

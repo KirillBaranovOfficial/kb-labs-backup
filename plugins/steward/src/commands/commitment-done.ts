@@ -12,13 +12,13 @@ export default defineCommand({
       const [id] = input.argv;
       const { json } = input.flags;
       if (!id) {
-        return validationError('id is required', 'Usage: kb steward commitment done <id>');
+        return validationError('id is required', 'Usage: kb steward commitment done set <id>');
       }
 
       try {
         const commitment = await commitmentDone({ id });
         if (!commitment) {
-          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment done --help` to review the failure and next steps." } };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment done set --help` to review the failure and next steps." } };
         }
         if (json) {return commitment;}
         else {ctx.ui?.info?.(`Done: "${commitment.text}"`);}

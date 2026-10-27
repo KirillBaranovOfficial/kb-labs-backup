@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { runSafeBuild } from '../../src/core/build';
 
-describe('release build governed execution', () => {
+describe('release build run governed execution', () => {
   it('delegates build commands to the injected shell with structured argv', async () => {
     const packagePath = join(tmpdir(), `kb-release-build-test-${randomBytes(4).toString('hex')}`);
     await mkdir(packagePath, { recursive: true });

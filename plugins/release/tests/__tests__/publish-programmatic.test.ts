@@ -115,7 +115,7 @@ describe('publishPackagesProgrammatic — .npmrc registry auth', () => {
   });
 });
 
-describe('publishPackagesProgrammatic — tarballPath (release deliver)', () => {
+describe('publishPackagesProgrammatic — tarballPath (release artifact publish)', () => {
   let pkgDir: string;
 
   beforeEach(() => {

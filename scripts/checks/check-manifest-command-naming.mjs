@@ -6,8 +6,7 @@
  *
  * Rules (ids):
  *   command-verb-vocabulary  the last segment of a multi-segment command path is a verb from
- *                            the closed vocabulary (list show add remove create delete install
- *                            uninstall enable disable get set update run validate status doctor start stop commit).
+ *                            the closed vocabulary (VERBS below; documented in 06-command-naming.md section 2).
  *                            Single-segment paths (`kb <namespace>` default command) are not checked.
  *   command-path-case        every path segment is lowercase kebab-case ([a-z][a-z0-9]*(-[a-z0-9]+)*).
  *   command-operation-type   operationType, when set, is read | mutate | analyze | execute.
@@ -45,6 +44,7 @@ export const RULES = ['command-verb-vocabulary', 'command-path-case', 'mutate-js
 export const VERBS = new Set([
   'list', 'show', 'add', 'remove', 'create', 'delete', 'install', 'uninstall',
   'enable', 'disable', 'get', 'set', 'update', 'run', 'validate', 'status', 'doctor', 'start', 'stop', 'commit',
+  'search', 'diff', 'plan', 'apply', 'rollback', 'publish', 'send', 'ask',
 ]);
 
 // read/mutate/analyze per 06 section 3; 'execute' is a valid fourth type (author decision).

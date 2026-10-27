@@ -783,16 +783,16 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:2] == ["commit", "--help"]:
                     if lock(cwd_path)["plugins"].get("@kb-labs/commit", {}).get("enabled") is False:
                         return subprocess.CompletedProcess(command, 1, "", "Command not found: commit")
-                    stdout = "Commands: commit open"
+                    stdout = "Commands: commit plan show"
                 elif args == ["review", "--help"]:
                     installed = _release_entity("@kb-labs/review")["id"] in lock(cwd_path)["plugins"]
                     return subprocess.CompletedProcess(command, 0 if installed else 2, "", "")
-                elif args[:2] == ["commit", "open"]:
+                elif args[:3] == ["commit", "plan", "show"]:
                     value = lock(cwd_path)
                     if "@kb-labs/commit" not in value["plugins"]:
                         return subprocess.CompletedProcess(command, 2, json.dumps({"ok": False, "error": {
                             "code": "KB_RUNTIME_UNKNOWN_COMMAND",
-                            "message": "Unknown command: commit open",
+                            "message": "Unknown command: commit plan show",
                             "hint": 'Check the command name or run "kb --help" to list available commands.',
                         }}), "")
                     stdout = json.dumps({"hasPlan": False})

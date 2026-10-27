@@ -188,7 +188,7 @@ export function CheckDetailDrawer({ open, onClose }: CheckDetailDrawerProps) {
           variant="info"
           showIcon
           message="No check data available"
-          description="Run 'kb qa check --save' to generate check results."
+          description="Run 'kb qa check run --save' to generate check results."
         />
       )}
 

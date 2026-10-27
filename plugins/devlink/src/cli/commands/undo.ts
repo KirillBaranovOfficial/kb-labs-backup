@@ -89,7 +89,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
       }
 
       return errors.length > 0
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${errors.length} undo operation(s) failed`, hint: 'Review the reported undo errors, then rerun `kb devlink undo`.', diagnostics: errors.map((error) => ({ code: 'KB_DEVLINK_UNDO_FAILED', severity: 'error', message: error })) } }
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${errors.length} undo operation(s) failed`, hint: 'Review the reported undo errors, then rerun `kb devlink rollback`.', diagnostics: errors.map((error) => ({ code: 'KB_DEVLINK_UNDO_FAILED', severity: 'error', message: error })) } }
         : result;
     },
   },

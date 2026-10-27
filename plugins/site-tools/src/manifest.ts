@@ -27,7 +27,7 @@ export const manifest = {
     ],
     commands: [
       {
-        path: 'site page',
+        path: 'site page create',
         describe: 'Scaffold a new site page with SEO defaults (page.tsx + opengraph-image.tsx + i18n stubs)',
         handler: './commands/page.js#default',
         flags: [
@@ -43,9 +43,9 @@ export const manifest = {
           },
         ],
         examples: [
-          'kb site page pricing — create /pricing page',
-          'kb site page solutions/my-solution --badge Solutions — create a solutions sub-page',
-          'kb site page new-feature --dry-run — preview without writing',
+          'kb site page create pricing — create /pricing page',
+          'kb site page create solutions/my-solution --badge Solutions — create a solutions sub-page',
+          'kb site page create new-feature --dry-run — preview without writing',
         ],
       },
     ],

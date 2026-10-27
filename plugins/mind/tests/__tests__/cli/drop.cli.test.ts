@@ -5,7 +5,7 @@ import type { CommandFailure } from '@kb-labs/sdk';
 import dropCmd from '../../../src/cli/commands/drop.js';
 
 /**
- * `mind drop` is destructive — it must NOT run without --yes, in any mode. The
+ * `mind index delete` is destructive — it must NOT run without --yes, in any mode. The
  * confirmation gate fires before the engine is ever built, so these assert the
  * software-protocol behaviour without a live platform.
  */
@@ -25,7 +25,7 @@ function captureCtx() {
   return { ctx, calls };
 }
 
-describe('mind drop — destructive confirmation gate', () => {
+describe('mind index delete — destructive confirmation gate', () => {
   it('blocks with a typed failure and confirmation signal without --yes — no execution', async () => {
     const { ctx, calls } = captureCtx();
     const res = await dropCmd.execute(ctx, mockCLIInput({ flags: { index: 'code', yes: false, json: false } }));
@@ -43,7 +43,7 @@ describe('mind drop — destructive confirmation gate', () => {
     expect(failure.error.details).toMatchObject({
       confirmationRequired: 'true',
       destructive: 'true',
-      action: 'mind drop',
+      action: 'mind index delete',
       severity: 'high',
       confirmWith: '--yes',
     });

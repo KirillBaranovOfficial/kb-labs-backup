@@ -19,9 +19,10 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc/child"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
+	"github.com/kb-labs/create/v2/internal/tempdirguard"
+	"github.com/kb-labs/create/v2/internal/testprocess"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -135,6 +136,13 @@ func TestStartFailureRejectsUndeclaredEvidence(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	// Re-exec helper children (process_identity_exec_test.go) either replace
+	// their image with syscall.Exec or exit from inside the test, so the
+	// cleanup below never runs in them; they never use the fake host.
+	if os.Getenv("KB_PROCESS_IDENTITY_EXEC_PHASE") != "" {
+		os.Exit(m.Run())
+	}
+	checkLeakedTempEntries := tempdirguard.Own("kb-create-fakehost-")
 	dir, err := os.MkdirTemp("", "kb-create-fakehost-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -161,6 +169,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stdout, "process audit %s: none\n", fakeHostBinary)
 	}
 	os.RemoveAll(dir)
+	if leaked := checkLeakedTempEntries(); len(leaked) > 0 {
+		fmt.Fprintf(os.Stderr, "host tests left their own temp entries in %s: %v; entries with this prefix must be removed by the suite that created them\n", os.TempDir(), leaked)
+		code = 1
+	}
 	os.Exit(code)
 }
 
@@ -173,6 +185,16 @@ func freePort(t *testing.T) int {
 	}
 	defer listener.Close()
 	return listener.Addr().(*net.TCPAddr).Port
+}
+
+func startOwnedFakeHost(t *testing.T, port int, identityToken string) *exec.Cmd {
+	t.Helper()
+	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(port))
+	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), identityToken)
+	if err := testprocess.Start(t, command); err != nil {
+		t.Fatalf("start owned fakehost process group: %v", err)
+	}
+	return command
 }
 
 type fixture struct {
@@ -604,15 +626,7 @@ func TestActiveHostRejectsAReusedPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
-	if err := child.Start(command, child.ProcessGroup); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(command.Process.Pid, token)
-		_ = command.Wait()
-	})
+	command := startOwnedFakeHost(t, freePort(t), token)
 	if err := writeJSONFile(state.HostPID(), map[string]any{
 		"pid": command.Process.Pid, "platformRoot": "/tmp/recorded-kb-root", "processIdentity": "different-process-identity",
 	}); err != nil {
@@ -632,15 +646,7 @@ func TestStopDoesNotSignalAReusedPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), foreignIdentity)
-	if err := child.Start(command, child.ProcessGroup); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(command.Process.Pid, foreignIdentity)
-		_ = command.Wait()
-	})
+	command := startOwnedFakeHost(t, freePort(t), foreignIdentity)
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
 		"pid": command.Process.Pid, "platformRoot": f.runner.PlatformRoot, "installationId": f.runner.InstallationID, "processIdentity": "recorded-owner-token",
 	}); err != nil {
@@ -668,15 +674,7 @@ func TestOldHostRecordWithoutIdentityIsDiagnosedAndNeverSignalled(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
-	if err := child.Start(command, child.ProcessGroup); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(command.Process.Pid, token)
-		_ = command.Wait()
-	})
+	command := startOwnedFakeHost(t, freePort(t), token)
 	// This is the host.pid shape written before processIdentity was required.
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
 		"pid": command.Process.Pid, "platformRoot": f.runner.PlatformRoot,
@@ -707,15 +705,7 @@ func TestX26RecordWithoutInstallationIDFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
-	if err := child.Start(command, child.ProcessGroup); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(command.Process.Pid, token)
-		_ = command.Wait()
-	})
+	command := startOwnedFakeHost(t, freePort(t), token)
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
 		"pid": command.Process.Pid, "processIdentity": token, "platformRoot": f.runner.PlatformRoot,
 	}); err != nil {

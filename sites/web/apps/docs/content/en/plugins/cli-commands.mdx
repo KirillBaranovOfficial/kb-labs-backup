@@ -52,7 +52,7 @@ cli: {
 
 ### `id`
 
-Format: `<group>:<action>` or just `<action>`. The group prefix is what a user types first (`pnpm kb commit commit` or `pnpm kb commit generate`); the runtime dispatches by exact ID match.
+Format: `<group>:<action>` or just `<action>`. The group prefix is what a user types first (`pnpm kb commit commit` or `pnpm kb commit plan create`); the runtime dispatches by exact ID match.
 
 IDs must be unique across all installed plugins. Two plugins declaring `commit:commit` is a conflict — the registry warns and keeps the first one loaded.
 

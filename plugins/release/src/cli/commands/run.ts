@@ -312,7 +312,7 @@ export default defineCommand({
       // 1b. Pre-flight — fail fast before planning (which is slow).
       // The npm-credentials check is skipped entirely in prepare-only mode:
       // no npm access is needed to build, version, changelog, and git-tag a
-      // release. The separate `kb release promote` step (run by CI on the
+      // release. The separate `kb release stable publish` step (run by CI on the
       // tag this pushes) does its own npm pre-flight. Flow validity is
       // always checked, publish or not.
       if (!dryRun) {

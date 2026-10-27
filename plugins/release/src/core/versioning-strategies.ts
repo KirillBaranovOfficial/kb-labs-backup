@@ -91,7 +91,7 @@ function applyLockstep(packages: PackageVersion[]): PackageVersion[] {
   // tag ('none') — nothing to release, so the shared version must stay
   // exactly where it is. Previously getMaxBump() had no 'none' floor (it
   // started at 'patch'), so an all-unchanged lockstep group still bumped a
-  // patch on every re-plan — e.g. re-running `release version` against a
+  // patch on every re-plan — e.g. re-running `release version update` against a
   // commit that's already tagged at the target version.
   if (maxBump === 'none') {
     return packages.map(pkg => ({

@@ -20,7 +20,7 @@ const mockedLoadPlan = vi.mocked(loadPlan);
 describe('commit:open', () => {
   beforeEach(() => mockedLoadPlan.mockReset());
 
-  it('keeps a malformed plan error hint attributable through commit open error handling', async () => {
+  it('keeps a malformed plan error hint attributable through commit plan show error handling', async () => {
     mockedLoadPlan.mockRejectedValueOnce(Object.assign(new Error('Plan could not be loaded.'), {
       code: 'COMMIT_PLAN_FAILED',
       hint: { key: 'errors.commit.open', params: { path: '.kb/commit/plan.json' } },

@@ -61,12 +61,12 @@ export const pluginContractsManifest = {
     'release:report': {
       id: 'release:report',
       description: 'Show release report',
-      examples: ['kb release report'],
+      examples: ['kb release report show'],
     },
     'release:changelog': {
       id: 'release:changelog',
       description: 'Generate changelog',
-      examples: ['kb release changelog'],
+      examples: ['kb release changelog show'],
     },
     'release:preview': {
       id: 'release:preview',
@@ -80,8 +80,8 @@ export const pluginContractsManifest = {
       id: 'release:verify',
       description: 'Verify release readiness (checks, tests, etc.)',
       examples: [
-        'kb release verify',
-        'kb release verify --scope packages/*',
+        'kb release validate',
+        'kb release validate --scope packages/*',
       ],
     },
   },

@@ -52,7 +52,7 @@ export default defineCommand({
 
       if (!plan) {
         loadLoader.fail('No commit plan found');
-        return validationError('No commit plan found', 'Run `kb commit generate` first');
+        return validationError('No commit plan found', 'Run `kb commit plan create` first');
       }
 
       if (plan.commits.length === 0) {
@@ -136,7 +136,7 @@ export default defineCommand({
         }
       }
 
-      return result.success ? output : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit apply failed', hint: 'Review the commit apply output, then rerun `kb commit apply`.' } };
+      return result.success ? output : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit apply failed', hint: 'Review the commit plan apply output, then rerun `kb commit plan apply`.' } };
     },
   },
 });

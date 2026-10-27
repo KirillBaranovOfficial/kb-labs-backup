@@ -73,7 +73,7 @@ const LOG_BATCH_MAX_MS = 500;
  * (pnpm's "[ELIFECYCLE] Command failed...") becomes the true last bytes of
  * output, while the command's own `::kb-output::` result — the whole reason
  * `runReleaseChecks` and friends exist — sits earlier in the stream and gets
- * discarded (observed live: a failed `release checks` step logged only
+ * discarded (observed live: a failed `release checks run` step logged only
  * "[ELIFECYCLE] Command failed with exit code 1." with the real
  * `{"ok":false,"failed":[...]}` payload truncated away). When a marker line
  * is present, surface it ahead of the raw tail instead of dropping it.

@@ -9,8 +9,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/internal/testprocess"
 	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
@@ -47,6 +50,8 @@ func registerTestHostProcessTreeCleanup(t *testing.T, platformRoot string) {
 			t.Errorf("inspect test supervisor process record during cleanup: %v", supervisorRecordErr)
 			return
 		}
+		hostRecord, hostAlive := host.ActiveHost(state)
+		supervisorRecord, supervisorAlive := supervisor.ReadRecord(state)
 		runner, err := host.NewRecordedRunner(platformRoot)
 		if err != nil {
 			t.Errorf("load recorded test host for process-tree cleanup: %v", err)
@@ -57,7 +62,8 @@ func registerTestHostProcessTreeCleanup(t *testing.T, platformRoot string) {
 		command := hostCommand{PlatformRoot: platformRoot}
 		if _, failure := command.stop(ctx, runner, runner.State); failure != nil {
 			t.Errorf("stop test host process tree during cleanup: %v", failure)
-			return
+			terminateTestProcessGroup(t, hostRecord.PID, hostRecord.ProcessIdentity, hostAlive)
+			terminateTestProcessGroup(t, supervisorRecord.PID, supervisorRecord.ProcessIdentity, supervisorAlive)
 		}
 		status, err := runner.Status(ctx)
 		if err != nil {
@@ -71,6 +77,25 @@ func registerTestHostProcessTreeCleanup(t *testing.T, platformRoot string) {
 			t.Errorf("test supervisor process remains alive after cleanup: pid=%d", record.PID)
 		}
 	})
+}
+
+func terminateTestProcessGroup(t *testing.T, pid int, identity string, recorded bool) {
+	t.Helper()
+	if !recorded {
+		return
+	}
+	if host.TerminateProcessGroupIfIdentity(pid, identity) {
+		deadline := time.Now().Add(5 * time.Second)
+		for host.ProcessAlive(pid) && time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+	if host.ProcessAlive(pid) && !host.KillProcessGroupIfIdentity(pid, identity) {
+		t.Errorf("could not terminate recorded test process group %d", pid)
+	}
+	if host.ProcessAlive(pid) {
+		t.Errorf("test process group %d remains alive after forced cleanup", pid)
+	}
 }
 
 func writeVersionedReceipt(t *testing.T, root string, installed contracts.InstallReceipt) {
@@ -110,33 +135,114 @@ func assertEmptyOrMissing(t *testing.T, path string) {
 	}
 }
 
+var allocatedTestPorts = struct {
+	sync.Mutex
+	ports map[int]struct{}
+}{ports: make(map[int]struct{})}
+
 func freeLoopbackPortWithOffset(t *testing.T, offset int) int {
+	return freeLoopbackPortWithOffsets(t, offset)
+}
+
+func freeLoopbackPortWithOffsets(t *testing.T, offsets ...int) int {
 	t.Helper()
-	for range 128 {
-		primary, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		port := primary.Addr().(*net.TCPAddr).Port
-		if port+offset > 65535 {
-			_ = primary.Close()
+	uniqueOffsets := make([]int, 0, len(offsets))
+	seenOffsets := make(map[int]struct{}, len(offsets))
+	for _, offset := range offsets {
+		if _, exists := seenOffsets[offset]; exists {
 			continue
 		}
-		secondary, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+offset))
-		if err != nil {
-			_ = primary.Close()
+		seenOffsets[offset] = struct{}{}
+		uniqueOffsets = append(uniqueOffsets, offset)
+	}
+	for port := 50000; port > 10000 && portOffsetsFit(port, uniqueOffsets); port-- {
+		allocatedTestPorts.Lock()
+		alreadyAllocated := false
+		for _, offset := range uniqueOffsets {
+			if _, exists := allocatedTestPorts.ports[port+offset]; exists {
+				alreadyAllocated = true
+				break
+			}
+		}
+		if alreadyAllocated {
+			allocatedTestPorts.Unlock()
 			continue
 		}
-		if err := primary.Close(); err != nil {
-			t.Fatal(err)
+		listeners := make([]net.Listener, 0, len(uniqueOffsets)+1)
+		primary, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			allocatedTestPorts.Unlock()
+			continue
 		}
-		if err := secondary.Close(); err != nil {
-			t.Fatal(err)
+		listeners = append(listeners, primary)
+		available := true
+		for _, offset := range uniqueOffsets {
+			if offset == 0 {
+				continue
+			}
+			listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+offset))
+			if err != nil {
+				for _, opened := range listeners {
+					_ = opened.Close()
+				}
+				available = false
+				break
+			}
+			listeners = append(listeners, listener)
 		}
+		if !available {
+			allocatedTestPorts.Unlock()
+			continue
+		}
+		var closeErr error
+		for _, listener := range listeners {
+			if err := listener.Close(); err != nil {
+				closeErr = errors.Join(closeErr, err)
+			}
+		}
+		if closeErr != nil {
+			allocatedTestPorts.Unlock()
+			t.Fatal(closeErr)
+		}
+		for _, offset := range uniqueOffsets {
+			allocatedTestPorts.ports[port+offset] = struct{}{}
+		}
+		allocatedTestPorts.Unlock()
 		return port
 	}
-	t.Fatalf("could not reserve a free Gateway port and its %d-port offset", offset)
+	t.Fatalf("could not reserve a free Gateway port and its service offsets %v", uniqueOffsets)
 	return 0
+}
+
+func portOffsetsFit(port int, offsets []int) bool {
+	for _, offset := range offsets {
+		if port+offset < 1 || port+offset > 65535 {
+			return false
+		}
+	}
+	return true
+}
+
+func assertServicePortsAvoidDefaultGraph(t *testing.T, graph contracts.ServiceGraph, defaultServices []contracts.Service) {
+	t.Helper()
+	defaultPorts := make(map[int]struct{}, len(defaultServices))
+	for _, service := range defaultServices {
+		if service.Port != 0 {
+			defaultPorts[service.Port] = struct{}{}
+		}
+	}
+	for _, service := range graph.Services {
+		if _, isDefault := defaultPorts[service.Port]; isDefault {
+			t.Errorf("service %s retained a fixed default service port %d", service.ID, service.Port)
+		}
+	}
+}
+
+func startTestProcessGroup(t *testing.T, command *exec.Cmd) {
+	t.Helper()
+	if err := testprocess.Start(t, command); err != nil {
+		t.Fatalf("start test process group: %v", err)
+	}
 }
 
 func platformRootForTest(t *testing.T, installRoot string) string {

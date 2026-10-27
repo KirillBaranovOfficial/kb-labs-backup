@@ -23,15 +23,15 @@ jobs:
 
       - name: Checks
         id: checks
-        run: pnpm kb release checks --scope ${{ inputs.scope }} --json
+        run: pnpm kb release checks run --scope ${{ inputs.scope }} --json
 
       - name: Build
         id: build
-        run: pnpm kb release build --scope ${{ inputs.scope }} --json
+        run: pnpm kb release build run --scope ${{ inputs.scope }} --json
 
       - name: Pack verify
         id: pack
-        run: pnpm kb release pack --scope ${{ inputs.scope }} --json
+        run: pnpm kb release pack validate --scope ${{ inputs.scope }} --json
 
       - name: Approve release
         id: approve
@@ -46,7 +46,7 @@ jobs:
 
       - name: Bump versions
         if: ${{ steps.approve.outputs.approved }}
-        run: pnpm kb release version --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --json
+        run: pnpm kb release version update --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --json
 
       - name: Publish
         id: publish
@@ -55,4 +55,4 @@ jobs:
 
       - name: Git commit & tag
         if: ${{ steps.approve.outputs.approved }}
-        run: pnpm kb release git --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --json
+        run: pnpm kb release git commit --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --json

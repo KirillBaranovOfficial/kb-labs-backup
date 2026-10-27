@@ -82,8 +82,7 @@ Several commands break word-boundary convention inside paths:
 - `clickup task comment-list`, `clickup task comment-add`
 - `mind rag-index`, `mind rag-query`, `mind sync-add`, `mind sync-update`, `mind sync-delete`, `mind sync-list`, `mind sync-status`
 
-All of these should be either proper subgroups (`quality check layers`)
-or single-word verbs (`quality layers`, `quality cycles`).
+All of these should be proper subgroups (`quality check layers run`).
 
 ### P6 — Mixed noun/verb pattern at top level
 
@@ -101,7 +100,8 @@ or the action being taken?
 ### P7 — `devlink`: opaque name
 
 `devlink` means "development link" (local dependency linking). Not guessable from the name.
-`kb devlink switch` — switch what? Users familiar with `npm link` / `pnpm link` might get it,
+The verb ambiguity of the old `devlink switch` is resolved (`devlink mode set`); the
+namespace itself is still not guessable: users familiar with `npm link` / `pnpm link` might get it,
 but it's not obvious.
 
 ### P8 — `mind`: opaque name
@@ -141,22 +141,17 @@ not a pattern.
 
 ### Rule 2 — Second level is a verb from a standard vocabulary
 
-No invented verbs. Standard set:
-
-| Category  | Allowed verbs                           |
-|-----------|-----------------------------------------|
-| Data      | `list`, `get`, `create`, `update`, `delete` |
-| Lifecycle | `run`, `start`, `stop`, `apply`, `sync` |
-| Publishing| `publish`, `yank`, `deprecate`, `share` |
-| Info      | `status`, `health`, `logs`, `diag`      |
-| Setup     | `init`, `install`, `uninstall`, `link`, `unlink` |
+No invented verbs. The closed vocabulary (this audit's draft table won the review in
+`docs/architecture/target/06-command-naming.md` section 2 and was amended there — `yank`,
+`deprecate`, `share` and friends did not survive) is maintained in that document and enforced
+by `scripts/checks/check-manifest-command-naming.mjs` (`VERBS`).
 
 ### Rule 3 — No kebab-case in command paths
 
 Use subgroups instead:
 ```
 ✗  quality check-layers
-✓  quality check layers     (3-part path)
+✓  quality check layers run     (4-part path: ns → check → layers → run)
 
 ✗  workflow runs-list
 ✓  workflow runs list
@@ -212,7 +207,7 @@ Ordered by impact and effort.
 | R3 | `registry` (system) | P3: prime name for 1 internal cmd | Keep top-level diagnostics at `kb diag`; assess registry command separately |
 | R4 | `quality` kebab subcommands | P5 | Restructure as proper subgroups |
 | R5 | `workflow` kebab subcommands (`runs-list` etc.) | P5 | `workflow runs list/view/watch/rerun` |
-| R6 | `mind` subcommand names (`rag-index`, `rag-query`, `sync-add`) | P5 + P8 | `mind index`, `mind search`, `mind sync add` |
+| R6 | `mind` subcommand names (`rag-index`, `rag-query`, `sync-add`) | P5 + P8 | `mind index update`, `mind search`, `mind sync add` |
 | R7 | `clickup` kebab (`comment-list`, `comment-add`) | P5 | `clickup task comments list/add` |
 | R8 | `quality` vs `qa` boundary | P2 | Document the boundary explicitly (or merge) |
 
@@ -222,7 +217,7 @@ Ordered by impact and effort.
 |---|------|---------|--------------|
 | R9  | `devlink` opaque name | P7 | Consider `deps` or `link` |
 | R10 | `mind` opaque name | P8 | Consider `search` or `rag` |
-| R12 | `infra-worker` subcommand names (`capture-snapshot`) | P5 | `infra snapshot capture/restore` |
+| R12 | `infra-worker` subcommand names (`capture-snapshot`) | P5 | `infra snapshot create/rollback` |
 
 ---
 
@@ -230,7 +225,7 @@ Ordered by impact and effort.
 
 **Q1: Where do `marketplace-registry` commands go?**
 Options discussed:
-- `hub publish`, `hub yank` — "KB Labs Hub" for authors
+- `hub publish`, `hub version remove` — "KB Labs Hub" for authors
 - `publish plugin`, `publish yank` — verb-first group for publishing actions
 - Keep under `marketplace` via explicit namespace sharing (requires Rule 5 exception mechanism)
 

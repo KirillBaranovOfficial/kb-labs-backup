@@ -435,7 +435,7 @@ def run_platform_update_variant_steps(
         if len(projects) < 2:
             raise RuntimeError("one or more registered projects disappeared after update")
         for project in (project_a, project_b):
-            result = cli(kb_command([ "commit", "open", "--help"], executable=kb_binary), project)
+            result = cli(kb_command(["commit", "plan", "show", "--help"], executable=kb_binary), project)
             if result.returncode:
                 raise RuntimeError(f"compatible project plugin command disappeared after update: {result.stdout}")
             settings = _payload(cli(kb_command([ "config", "get", "plugins.commit.scope.scopes", "--json"], executable=kb_binary), project),

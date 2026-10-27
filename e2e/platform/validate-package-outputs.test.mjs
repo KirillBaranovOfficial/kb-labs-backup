@@ -261,7 +261,7 @@ test('release package set excludes the source-only devkit tooling package', () =
 });
 
 
-test('release build preflight reports a missing dist output and exact package build command', t => {
+test('release build run preflight reports a missing dist output and exact package build command', t => {
   const root = mkdtempSync(join(tmpdir(), 'kb-release-build-preflight-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const packageDirectory = join(root, 'packages/example');

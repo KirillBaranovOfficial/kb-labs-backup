@@ -1,6 +1,6 @@
 /**
  * Shared wiring of runReleasePreflight for `release doctor` and the
- * opt-in `release checks --preflight` step.
+ * opt-in `release checks run --preflight` step.
  */
 import {
   computeFlowReleaseStatus,

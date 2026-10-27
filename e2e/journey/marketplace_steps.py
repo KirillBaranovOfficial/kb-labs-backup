@@ -920,11 +920,11 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     journey.step("inspect exact v3 marketplace lock entry", "marketplace", assert_commit_lock, cases=["S-010.3"],
                  requires=("step:install Commit into the project for the route lifecycle",))
 
-    commit_open = ["commit", "open", "--json"]
+    commit_open = ["commit", "plan", "show", "--json"]
     def assert_commit_command() -> None:
         payload = _json(cli(commit_open), commit_open)
         if payload.get("hasPlan") is not False:
-            raise RuntimeError(f"`kb commit open --json` did not return its documented empty-plan result: {payload!r}")
+            raise RuntimeError(f"`kb commit plan show --json` did not return its documented empty-plan result: {payload!r}")
     journey.step("load installed Commit handler with platform SDK and invoke its documented command", "marketplace", assert_commit_command,
                  cases=["S-010.4"], requires=("step:install Commit into the project for the route lifecycle",))
 
@@ -1178,12 +1178,12 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         lock = json.loads(lock_file.read_text())
         if commit_package in lock.get("plugins", {}):
             raise RuntimeError("project lock still pins the uninstalled target plugin")
-        command = ["commit", "open", "--json"]
+        command = ["commit", "plan", "show", "--json"]
         with invocation_context(step_id="S-047.3"):
             unavailable = cli(command)
         failure = decode_ux_error_result(read_ux_cli_result(unavailable))
         if (unavailable.returncode != 2 or failure.get("code") != "KB_RUNTIME_UNKNOWN_COMMAND"
-                or "commit open" not in failure.get("message", "")):
+                or "commit plan show" not in failure.get("message", "")):
             raise RuntimeError(f"removed command did not return its typed unknown-command error: {failure!r}")
         command = ["review", "--help"]
         result = cli(command)

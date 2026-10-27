@@ -31,7 +31,7 @@ export default defineCommand<unknown, CLIInput<HealthFlags>, unknown>({
         const health = cached as HealthScore;
         outputHealth(health, flags, ctx);
         return health.score < cfg.thresholds.health
-          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Health score is below threshold', hint: 'Review the health report, then rerun `kb quality health`.', diagnostics: Object.entries(health.dimensions).filter(([, dimension]) => dimension.score < cfg.thresholds.health).map(([name, dimension]) => ({ code: 'KB_QUALITY_HEALTH_BELOW_THRESHOLD', severity: 'warning', message: `${name} score ${dimension.score} is below threshold ${cfg.thresholds.health}.` })) } }
+          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Health score is below threshold', hint: 'Review the health report, then rerun `kb quality health show`.', diagnostics: Object.entries(health.dimensions).filter(([, dimension]) => dimension.score < cfg.thresholds.health).map(([name, dimension]) => ({ code: 'KB_QUALITY_HEALTH_BELOW_THRESHOLD', severity: 'warning', message: `${name} score ${dimension.score} is below threshold ${cfg.thresholds.health}.` })) } }
           : health;
       }
 
@@ -61,7 +61,7 @@ export default defineCommand<unknown, CLIInput<HealthFlags>, unknown>({
 
       outputHealth(health, flags, ctx);
       return health.score < cfg.thresholds.health
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Health score is below threshold', hint: 'Review the health report, then rerun `kb quality health`.', diagnostics: Object.entries(health.dimensions).filter(([, dimension]) => dimension.score < cfg.thresholds.health).map(([name, dimension]) => ({ code: 'KB_QUALITY_HEALTH_BELOW_THRESHOLD', severity: 'warning', message: `${name} score ${dimension.score} is below threshold ${cfg.thresholds.health}.` })) } }
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Health score is below threshold', hint: 'Review the health report, then rerun `kb quality health show`.', diagnostics: Object.entries(health.dimensions).filter(([, dimension]) => dimension.score < cfg.thresholds.health).map(([name, dimension]) => ({ code: 'KB_QUALITY_HEALTH_BELOW_THRESHOLD', severity: 'warning', message: `${name} score ${dimension.score} is below threshold ${cfg.thresholds.health}.` })) } }
         : health;
     },
   },

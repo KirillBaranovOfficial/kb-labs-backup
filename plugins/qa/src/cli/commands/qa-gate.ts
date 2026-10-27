@@ -41,7 +41,7 @@ export default defineCommand<unknown, CLIInput<QaGateFlags>, unknown>({
         error: {
           code: 'KB_RUNTIME_COMMAND_FAILED',
           message: 'QA gate failed',
-          hint: 'Review the reported gate violations, then rerun `kb qa gate`.',
+          hint: 'Review the reported gate violations, then rerun `kb qa gate run`.',
           diagnostics: raw.violations.map((violation) => ({
             code: 'KB_QA_GATE_VIOLATION',
             severity: violation.severity,

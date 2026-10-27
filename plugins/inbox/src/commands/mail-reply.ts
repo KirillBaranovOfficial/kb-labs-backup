@@ -17,7 +17,7 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<ReplyFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        return validationError('uid is required', 'Usage: kb inbox reply <uid> --body "..."');
+        return validationError('uid is required', 'Usage: kb inbox thread send <uid> --body "..."');
       }
       if (!input.flags.body) {
         return validationError('--body is required');

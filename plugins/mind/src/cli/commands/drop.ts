@@ -19,12 +19,12 @@ export default defineCommand<unknown, CLIInput<DropFlags>, DropResponse>({
         const blocked = confirmDestructive({
           confirmed: flags.yes,
           action: {
-            action: 'mind drop',
+            action: 'mind index delete',
             resource: `index "${flags.index}"`,
             effect: 'deletes all vectors and the manifest',
             severity: 'high',
             reversible: true,
-            recovery: 'rebuild with `kb mind index --index <id> --full`',
+            recovery: 'rebuild with `kb mind index update --index <id> --full`',
             blastRadius: { scope: 'whole index' },
           },
         });

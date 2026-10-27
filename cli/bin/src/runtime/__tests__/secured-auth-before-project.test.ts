@@ -429,13 +429,13 @@ describe('secured CLI auth ordering', () => {
     mocks.hasUsablePlatformAuth.mockResolvedValue(false);
 
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const exitCode = await executeCli(['commit', 'open', '--json'], { cwd: isolatedHome });
+    const exitCode = await executeCli(['commit', 'plan', 'show', '--json'], { cwd: isolatedHome });
     const records = stdout.mock.calls.map(([record]) => String(record));
 
     expect(exitCode).toBe(2);
     expect(JSON.parse(records[0]!)).toMatchObject({
       ok: false,
-      error: { code: 'KB_RUNTIME_UNKNOWN_COMMAND', message: 'Unknown command: commit open' },
+      error: { code: 'KB_RUNTIME_UNKNOWN_COMMAND', message: 'Unknown command: commit plan show' },
     });
     expect(mocks.hasUsablePlatformAuth).not.toHaveBeenCalled();
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();

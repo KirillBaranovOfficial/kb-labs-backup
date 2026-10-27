@@ -17,7 +17,7 @@ export default defineCommand<unknown, CLIInput<DeprecateFlags>, unknown>({
       const t0 = Date.now();
 
       if (!pkg) {
-        return validationError('Package spec is required', 'Usage: kb hub deprecate kb:handle/name [--message "reason"]');
+        return validationError('Package spec is required', 'Usage: kb hub disable kb:handle/name [--message "reason"]');
       }
 
       if (!pkg.startsWith('kb:')) {
@@ -50,7 +50,7 @@ export default defineCommand<unknown, CLIInput<DeprecateFlags>, unknown>({
 
         ctx.ui?.success?.(`${pkg} deprecated`, {
           sections: [{ header: 'What this means', items }],
-          hint: 'To block a specific version only, use kb hub yank instead',
+          hint: 'To block a specific version only, use kb hub version remove instead',
           timing: Date.now() - t0,
         });
 

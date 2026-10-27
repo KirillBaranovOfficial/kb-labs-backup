@@ -26,6 +26,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/internal/tempdirguard"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -326,30 +327,41 @@ func hostSupervisorHelperBinary(t *testing.T) string {
 }
 
 func TestMain(m *testing.M) {
+	checkLeakedTempEntries := tempdirguard.Own("kb-create-cli-")
 	code := m.Run()
 	if buildDir != "" {
-		for _, binary := range []string{filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost"), filepath.Join(buildDir, "kb-create-supervisor.test")} {
-			if _, err := os.Stat(binary); os.IsNotExist(err) {
+		binaries := []struct{ name, path string }{
+			{name: "kb-create launcher", path: filepath.Join(buildDir, "kb-create")},
+			{name: "kb-create supervisor", path: filepath.Join(buildDir, "kb-create")},
+			{name: "fakehost", path: filepath.Join(buildDir, "fakehost")},
+			{name: "test supervisor helper", path: filepath.Join(buildDir, "kb-create-supervisor.test")},
+		}
+		for _, process := range binaries {
+			if _, err := os.Stat(process.path); os.IsNotExist(err) {
 				continue
 			}
-			output, err := exec.Command("lsof", "-nP", "-t", binary).CombinedOutput()
+			output, err := exec.Command("lsof", "-nP", "-t", process.path).CombinedOutput()
 			if err == nil && len(bytes.TrimSpace(output)) > 0 {
-				fmt.Fprintf(os.Stderr, "test process remains alive for %s:\n%s", binary, output)
+				fmt.Fprintf(os.Stderr, "test process remains alive for %s (%s):\n%s", process.name, process.path, output)
 				code = 1
 			} else if err != nil {
 				if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 || len(bytes.TrimSpace(output)) != 0 {
-					fmt.Fprintf(os.Stderr, "could not audit test process path %s: %v\n%s", binary, err, output)
+					fmt.Fprintf(os.Stderr, "could not audit test process path %s (%s): %v\n%s", process.name, process.path, err, output)
 					code = 1
 				} else {
-					fmt.Fprintf(os.Stdout, "process audit %s: none\n", binary)
+					fmt.Fprintf(os.Stdout, "process audit %s (%s): none\n", process.name, process.path)
 				}
 			} else {
-				fmt.Fprintf(os.Stdout, "process audit %s: none\n", binary)
+				fmt.Fprintf(os.Stdout, "process audit %s (%s): none\n", process.name, process.path)
 			}
 		}
 	}
 	if buildDir != "" {
 		os.RemoveAll(buildDir)
+	}
+	if leaked := checkLeakedTempEntries(); len(leaked) > 0 {
+		fmt.Fprintf(os.Stderr, "kb-create-v2 tests left their own temp entries in %s: %v; entries with this prefix must be removed by the suite that created them\n", os.TempDir(), leaked)
+		code = 1
 	}
 	os.Exit(code)
 }
@@ -408,20 +420,7 @@ func newEmptyInstallation(t *testing.T) installation {
 		t.Fatal(err)
 	}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
-	t.Cleanup(func() {
-		layout, layoutErr := versionroot.New(inst.root)
-		if layoutErr != nil || layout.Validate() != nil {
-			return
-		}
-		_, code, output := inst.run("stop", "--json")
-		if code != 0 {
-			t.Errorf("test cleanup stop failed: %s", output)
-		}
-		status, statusCode, statusOutput := inst.run("status", "--json")
-		if statusCode != 0 || status["running"] == true {
-			t.Errorf("test cleanup left host running: %s", statusOutput)
-		}
-	})
+	registerTestHostProcessTreeCleanup(t, root)
 	return inst
 }
 
@@ -443,29 +442,6 @@ func (i installation) runAt(root string, args ...string) (map[string]any, int, s
 	_ = json.Unmarshal(stdout.Bytes(), &parsed)
 	if data, ok := parsed["data"].(map[string]any); ok {
 		parsed = data
-	}
-	if code == 0 && len(args) > 0 && (args[0] == "start" || args[0] == "restart") {
-		pid := 0
-		if hostStatus, ok := parsed["host"].(map[string]any); ok {
-			if value, ok := hostStatus["pid"].(float64); ok {
-				pid = int(value)
-			}
-		}
-		i.t.Cleanup(func() {
-			if _, rootErr := os.Stat(i.root); rootErr == nil {
-				_, stopCode, stopOutput := i.run("stop", "--json")
-				if stopCode != 0 {
-					i.t.Errorf("test cleanup stop failed: %s", stopOutput)
-				}
-				status, statusCode, statusOutput := i.run("status", "--json")
-				if statusCode != 0 || status["running"] == true {
-					i.t.Errorf("test cleanup left host running: %s", statusOutput)
-				}
-			}
-			if pid != 0 && !waitHostExit(pid, 5*time.Second) {
-				i.t.Errorf("test cleanup host process %d did not exit", pid)
-			}
-		})
 	}
 	return parsed, code, stdout.String() + stderr.String()
 }
@@ -1336,9 +1312,7 @@ func TestForegroundStartRunsTheHostDirectly(t *testing.T) {
 	inst := newInstallation(t)
 	command := exec.Command(inst.launcher, "start", "--foreground", "--json", "--platform-root", inst.root)
 	command.Env = append(os.Environ(), "KB_HOME="+inst.kbHome)
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
-	}
+	startTestProcessGroup(t, command)
 	waited := make(chan error, 1)
 	go func() { waited <- command.Wait() }()
 	finished := false

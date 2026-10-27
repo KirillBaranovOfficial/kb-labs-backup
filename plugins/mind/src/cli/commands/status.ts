@@ -19,7 +19,7 @@ export default defineCommand<unknown, CLIInput<StatusFlags>, StatusResponse>({
         }
 
         if (res.indexes.length === 0) {
-          ctx.ui?.warn?.('No indexes built yet. Run `kb mind index` first.');
+          ctx.ui?.warn?.('No indexes built yet. Run `kb mind index update` first.');
           return res;
         }
 

@@ -3,10 +3,12 @@
 package proc
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -116,6 +118,92 @@ func TestDarwinProcargs2ReadsLiveChildArguments(t *testing.T) {
 	}
 }
 
+// Requires kern.procargs2 access; verifies exec can replace environment while PID/start identity stays stable.
+// case: S-237.21
+func TestDarwinExecCanReplaceMarkerWithinOneProcessIdentity(t *testing.T) {
+	if os.Getenv("X53_EXEC_MARKER_HELPER") == "1" {
+		if os.Getenv("X53_EXEC_MARKER_IMAGE") == "1" {
+			fmt.Fprintf(os.Stdout, "exec-ready %d %s\n", os.Getpid(), os.Getenv("KBLABS_CLIPROC_RUN"))
+			if _, err := bufio.NewReader(os.Stdin).ReadString('\n'); err != nil {
+				t.Fatalf("wait after exec: %v", err)
+			}
+			return
+		}
+		fmt.Fprintln(os.Stdout, os.Getpid())
+		if _, err := bufio.NewReader(os.Stdin).ReadString('\n'); err != nil {
+			t.Fatalf("wait before exec: %v", err)
+		}
+		if err := syscall.Exec(os.Args[0], []string{os.Args[0], "-test.run=^TestDarwinExecCanReplaceMarkerWithinOneProcessIdentity$"}, []string{
+			"PATH=/usr/bin:/bin", "X53_EXEC_MARKER_HELPER=1", "X53_EXEC_MARKER_IMAGE=1", "KBLABS_CLIPROC_RUN=exec-marker",
+		}); err != nil {
+			t.Fatalf("exec replacement environment: %v", err)
+		}
+		return
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestDarwinExecCanReplaceMarkerWithinOneProcessIdentity$")
+	command.Env = append(os.Environ(), "X53_EXEC_MARKER_HELPER=1", "KBLABS_CLIPROC_RUN=before-exec")
+	input, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = input.Close()
+		if command.Process != nil && command.ProcessState == nil {
+			_ = command.Process.Kill()
+		}
+		_ = command.Wait()
+	})
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read test child PID: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil {
+		t.Fatalf("parse test child PID %q: %v", line, err)
+	}
+	before, alive, err := ProcessIdentity(pid)
+	if err != nil || !alive {
+		t.Fatalf("inspect pre-exec identity: alive=%v err=%v", alive, err)
+	}
+	if _, err := io.WriteString(input, "go\n"); err != nil {
+		t.Fatal(err)
+	}
+	execLine, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read post-exec environment acknowledgment: %v", err)
+	}
+	if want := fmt.Sprintf("exec-ready %d exec-marker\n", pid); execLine != want {
+		t.Fatalf("post-exec child acknowledgment = %q, want %q", execLine, want)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var lastMarker string
+	var lastUnverified bool
+	var lastMarkerErr error
+	for {
+		marker, unverified, markerErr := inspectProcessMarker(pid)
+		lastMarker, lastUnverified, lastMarkerErr = marker, unverified, markerErr
+		if markerErr == nil && marker == "exec-marker" {
+			break
+		}
+		if time.Now().After(deadline) {
+			raw, rawErr := unix.SysctlRaw("kern.procargs2", pid)
+			t.Fatalf("exec marker not visible in kern.procargs2: marker=%q unverified=%t err=%v raw_contains_marker=%t raw_len=%d raw_err=%v", lastMarker, lastUnverified, lastMarkerErr, bytes.Contains(raw, []byte("exec-marker")), len(raw), rawErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	after, alive, err := ProcessIdentity(pid)
+	if err != nil || !alive || after != before {
+		t.Fatalf("exec changed process identity: before=%q after=%q alive=%v err=%v", before, after, alive, err)
+	}
+}
+
 func equalArguments(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
@@ -149,6 +237,76 @@ func TestDarwinCommandNameParsesLiveKinfoRecord(t *testing.T) {
 	}
 	if got, want := darwinCommandName(comm), string(comm[:end]); got != want {
 		t.Fatalf("live kinfo P_comm decoded as %q, want %q", got, want)
+	}
+}
+
+// Requires process-table access to measure another process; run outside the restricted sandbox.
+// case: S-237.68
+func TestIdleKeeperCPUStaysBelowOnePercent(t *testing.T) {
+	state := t.TempDir()
+	helper := filepath.Join(t.TempDir(), "proc-helper")
+	build := exec.Command("go", "build", "-o", helper, "./testhelper")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build proc helper: %v\n%s", err, output)
+	}
+	run, err := StartWithHostResourceSource(context.Background(), Config{
+		HelperPath: helper, StateDir: state, Tag: "idle-keeper-cpu", Stall: time.Hour,
+		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
+		Command: []string{"/bin/sleep", "30"},
+	}, fakeHostResourceSource{sample: HostResourceSnapshot{
+		PhysicalMemory: 1 << 40, AvailableMemory: 1 << 40, MemoryAvailableKnown: true,
+		LogicalCPUs: 8, Pressure: "normal", PressureAvailable: true, LoadAvailable: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := readAdmissionRecord(state, run.RunID)
+	if err != nil {
+		t.Fatalf("read keeper record: %v", err)
+	}
+	if rec.PID != run.PID || rec.StartedAt != run.StartedAt {
+		t.Fatalf("run handle does not identify keeper: run=(pid %d identity %q) record=(pid %d identity %q)", run.PID, run.StartedAt, rec.PID, rec.StartedAt)
+	}
+	t.Cleanup(func() {
+		if err := run.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("stop idle keeper: %v", err)
+		}
+		if err := run.Wait(); err != nil {
+			t.Logf("wait for stopped idle keeper: %v", err)
+		}
+	})
+	keeperProcess := func() Process {
+		t.Helper()
+		snapshot, err := darwinProcessSnapshot(run.RunID)
+		if err != nil {
+			t.Fatalf("snapshot keeper process: %v", err)
+		}
+		var keeper *Process
+		for index := range snapshot {
+			if snapshot[index].PID == rec.PID && snapshot[index].Identity == rec.StartedAt {
+				keeper = &snapshot[index]
+				break
+			}
+		}
+		if keeper == nil {
+			t.Fatalf("keeper PID %d identity %q absent from process table", rec.PID, rec.StartedAt)
+		}
+		processes, err := darwinProcessMetrics([]Process{*keeper})
+		if err != nil {
+			t.Fatalf("measure keeper CPU with proc_pid_rusage: %v", err)
+		}
+		if len(processes) != 1 || !processes[0].MetricsAvailable || processes[0].PID != rec.PID || processes[0].Identity != rec.StartedAt {
+			t.Fatalf("keeper resource metrics unavailable: %+v", processes)
+		}
+		return processes[0]
+	}
+	start := keeperProcess()
+	time.Sleep(10 * time.Second)
+	end := keeperProcess()
+	cpu := end.CPUSeconds - start.CPUSeconds
+	t.Logf("idle keeper CPU over ten seconds: %.3fs (pid=%d identity=%q command=%q)", cpu, end.PID, end.Identity, end.Command)
+	if cpu >= 0.1 {
+		t.Fatalf("idle keeper used %.3fs CPU over ten seconds; want under 0.100s (1%%)", cpu)
 	}
 }
 
@@ -216,17 +374,21 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 	}
 	state := filepath.Join(dir, "state")
 	pidFile := filepath.Join(dir, "pids")
+	releaseFile := filepath.Join(dir, "release")
 	var pids []int
 	identities := make(map[int]string)
 	run, err := Start(context.Background(), Config{
 		HelperPath: helper, StateDir: state, Tag: "darwin-procargs", Stall: 250 * time.Millisecond,
 		StdoutPath: filepath.Join(dir, "stdout"), StderrPath: filepath.Join(dir, "stderr"),
-		Command: []string{helper, "probe-detached", pidFile, "4"},
+		Command: []string{helper, "probe-detached", pidFile, releaseFile},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		if err := os.WriteFile(releaseFile, nil, 0o600); err != nil {
+			t.Logf("release test-owned detached process fixtures: %v", err)
+		}
 		_ = run.Kill()
 		_ = run.Wait()
 		for _, pid := range pids {
@@ -276,7 +438,7 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if len(pids) != 2 {
-		t.Fatalf("detached shell and sleep PIDs were not recorded: %v", pids)
+		t.Fatalf("detached fixture PIDs were not recorded: %v", pids)
 	}
 	runner := filepath.Join(dir, "kb-runner")
 	buildRunner := exec.Command("go", "build", "-o", runner, ".")
@@ -326,9 +488,17 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 		}
 		listedInPS := false
 		for _, line := range strings.Split(string(output), "\n") {
-			if strings.Contains(line, "\t"+strconv.Itoa(pid)+"\t") || strings.Contains(line, "─ "+strconv.Itoa(pid)+" ") {
-				listedInPS = true
-				if strings.Contains(line, "unverified") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			listedPID, parseErr := strconv.Atoi(fields[1])
+			if parseErr != nil || listedPID != pid {
+				continue
+			}
+			listedInPS = true
+			for _, field := range fields[2:] {
+				if field == "unverified" {
 					t.Fatalf("ps marked proven marker/history PID %d unverified: %s", pid, line)
 				}
 			}

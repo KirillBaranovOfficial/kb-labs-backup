@@ -198,19 +198,50 @@ func allProcesses(runID string) ([]Process, error) {
 		out = append(out, Process{
 			PID: pid, PPID: parsed.PPID, Command: command, StartedAt: started,
 			ElapsedMS: elapsed, Identity: parsed.Identity, uid: statInfo.Uid,
-			RSSBytes:   uint64(parsed.ResidentPages) * uint64(os.Getpagesize()),
-			CPUSeconds: float64(parsed.UserTicks+parsed.SystemTicks) / float64(clockTicks), MetricsAvailable: true,
 		})
 	}
 	candidates := processInspectionCandidates(out, syscall.Getpid(), uid)
-	return applyProcessMarkers(out, candidates, runID, func(pid int, runID string) (bool, bool, error) {
+	return applyCachedProcessMarkers(out, candidates, runID, hostProcessMarkerCache, func(pid int) (string, bool, error) {
 		env, envErr := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "environ"))
-		marker, unverified, gone := processMarkerReadResult(env, envErr, runEnv+"="+runID)
-		if gone {
-			return false, false, envErr
+		if processGone(envErr) {
+			return "", false, envErr
 		}
-		return marker, unverified, nil
+		if envErr != nil {
+			return "", true, envErr
+		}
+		return processMarkerValue(env), false, nil
 	}), nil
+}
+
+func (osProcessSource) Metrics(tree []Process) ([]Process, error) {
+	clockTicks, err := procClockTicks()
+	if err != nil {
+		return nil, err
+	}
+	out := append([]Process(nil), tree...)
+	for index := range out {
+		if out[index].Unverified {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(out[index].PID), "stat"))
+		if err != nil {
+			if processGone(err) {
+				continue
+			}
+			return out, fmt.Errorf("read metrics for process %d: %w", out[index].PID, err)
+		}
+		parsed, err := parseProcStat(string(data))
+		if err != nil {
+			return out, fmt.Errorf("parse metrics for process %d: %w", out[index].PID, err)
+		}
+		if parsed.PID != out[index].PID || parsed.Identity != out[index].Identity || parsed.State == 'Z' {
+			continue
+		}
+		out[index].RSSBytes = uint64(parsed.ResidentPages) * uint64(os.Getpagesize())
+		out[index].CPUSeconds = float64(parsed.UserTicks+parsed.SystemTicks) / float64(clockTicks)
+		out[index].MetricsAvailable = true
+	}
+	return out, nil
 }
 
 func procClockTicks() (int64, error) {

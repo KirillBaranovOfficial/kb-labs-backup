@@ -198,7 +198,7 @@ const baseManifest = {
       },
       // ── Routing ──────────────────────────────────────────────────────
       {
-        path: 'steward who',
+        path: 'steward person search',
         describe:
           'Find who to contact about a topic. With --project, project-scoped members take priority (fallback chain); otherwise matches global competencies across every contact',
         handler: './commands/who.js#default',
@@ -206,7 +206,7 @@ const baseManifest = {
           { name: 'project', type: 'string', description: 'Prefer members of this project' },
           JSON_FLAG,
         ],
-        examples: ['kb steward who "frontend" --project=prj_01H...', 'kb steward who "grafana"'],
+        examples: ['kb steward person search "frontend" --project=prj_01H...', 'kb steward person search "grafana"'],
       },
       // ── Commitment ───────────────────────────────────────────────────
       {
@@ -236,24 +236,24 @@ const baseManifest = {
         examples: ['kb steward commitment list --stale-only'],
       },
       {
-        path: 'steward commitment done',
+        path: 'steward commitment done set',
         describe: 'Mark a commitment fulfilled',
         handler: './commands/commitment-done.js#default',
         flags: [JSON_FLAG],
-        examples: ['kb steward commitment done cmt_01H...'],
+        examples: ['kb steward commitment done set cmt_01H...'],
       },
       {
-        path: 'steward commitment drop',
+        path: 'steward commitment remove',
         describe: 'Cancel a commitment — reason is required and recorded in history',
         handler: './commands/commitment-drop.js#default',
         flags: [
           { name: 'reason', type: 'string', description: 'Why it was dropped', required: true },
           JSON_FLAG,
         ],
-        examples: ['kb steward commitment drop cmt_01H... --reason="No longer relevant"'],
+        examples: ['kb steward commitment remove cmt_01H... --reason="No longer relevant"'],
       },
       {
-        path: 'steward commitment snooze',
+        path: 'steward commitment reminder update',
         describe: 'Postpone a commitment\'s reminder without cancelling it',
         handler: './commands/commitment-snooze.js#default',
         flags: [
@@ -261,7 +261,7 @@ const baseManifest = {
           { name: 'reason', type: 'string', description: 'Why it was postponed' },
           JSON_FLAG,
         ],
-        examples: ['kb steward commitment snooze cmt_01H... --until=2026-09-15 --reason="Waiting on client"'],
+        examples: ['kb steward commitment reminder update cmt_01H... --until=2026-09-15 --reason="Waiting on client"'],
       },
       // ── Event ────────────────────────────────────────────────────────
       {
@@ -310,12 +310,12 @@ const baseManifest = {
       },
       // ── Review ───────────────────────────────────────────────────────
       {
-        path: 'steward review',
+        path: 'steward review show',
         describe:
           'Daily summary: stale commitments, upcoming reminders, active projects, and days since the last successful backup',
         handler: './commands/review.js#default',
         flags: [JSON_FLAG],
-        examples: ['kb steward review'],
+        examples: ['kb steward review show'],
       },
     ],
   },
