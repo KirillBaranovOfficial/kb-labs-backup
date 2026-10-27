@@ -14,6 +14,10 @@ export function nodeVersionSupported(requiredMajor, actualVersion) {
   return actualMajor === Number(requiredMajor);
 }
 
+/**
+ * @param {string} version
+ * @returns {number}
+ */
 function parseNodeMajor(version) {
   if (typeof version !== 'string') throw new Error(`Invalid Node.js version "${version}".`);
   const majorText = version.trim().replace(/^v/, '').split('.')[0];
@@ -36,11 +40,15 @@ export function readNodeEnginePolicy(packageManifest) {
   return parseNodeEnginePolicy(parsed.engines?.node, 'platform');
 }
 
+/**
+ * @param {string} packageManifest
+ * @returns {{ name?: unknown, engines?: { node?: unknown } }}
+ */
 function readManifest(packageManifest) {
   try {
     return JSON.parse(readFileSync(packageManifest, 'utf8'));
   } catch (error) {
-    throw new Error(`Cannot read package manifest ${packageManifest}: ${error.message}`);
+    throw new Error(`Cannot read package manifest ${packageManifest}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -79,7 +87,7 @@ export function selectNodeExecutable(rootManifest, environment = process.env) {
     try {
       version = execFileSync(candidate, ['--version'], { encoding: 'utf8', timeout: 5000 }).trim();
     } catch (error) {
-      rejected.push(`${candidate} (could not read version: ${error.message})`);
+      rejected.push(`${candidate} (could not read version: ${error instanceof Error ? error.message : String(error)})`);
       continue;
     }
     if (nodeVersionSupported(requiredMajor, version)) return candidate;
@@ -98,14 +106,14 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
       const declaration = readNodeEngineDeclaration(process.argv[3]);
       process.stdout.write(`${parseNodeEnginePolicy(declaration, 'platform').requiredMajor}\n`);
     } catch (error) {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       process.exitCode = 2;
     }
   } else {
     try {
       process.stdout.write(`${selectNodeExecutable(process.argv[3])}\n`);
     } catch (error) {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       process.exitCode = 2;
     }
   }

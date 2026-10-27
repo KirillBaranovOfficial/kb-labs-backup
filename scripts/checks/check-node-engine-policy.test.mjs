@@ -6,14 +6,116 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '../../core/plugin-contracts/src/node-engine-policy.ts';
+import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '../../core/plugin-contracts/src/node-engine-policy.mjs';
 import { parseDockerfileFromInstructions } from './node-engine-dockerfiles.mjs';
+import { inspectPrebuildImportGraph } from './prebuild-imports.mjs';
+import { checkAuthoredEsmDeclarationDrift } from './authored-esm-declarations.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const checker = path.join(root, 'scripts/checks/check-node-engine-policy.mjs');
 const generator = path.join(root, 'tools/clikit/toolchain/generate-node-policy.mjs');
 const devkitModule = path.join(root, 'tools/kb-devkit');
 const realDockerfileStatusBeforeTests = dockerfileWorktreeStatus();
+
+test('authored ESM declaration drift names the stale file and regenerate command', async () => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-authored-esm-drift-'));
+  try {
+    const packageRoot = path.join(fixtureRoot, 'fixture-package');
+    const sourceRoot = path.join(packageRoot, 'src');
+    await mkdir(sourceRoot, { recursive: true });
+    await writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@fixture/contracts',
+      exports: {
+        './policy': {
+          types: './src/policy.d.mts',
+          import: './src/policy.mjs',
+        },
+      },
+    }));
+    await writeFile(path.join(packageRoot, 'tsconfig.json'), JSON.stringify({
+      compilerOptions: { rootDir: 'src' },
+      include: ['src'],
+    }));
+    await writeFile(path.join(sourceRoot, 'policy.mjs'), [
+      '/**',
+      ' * @param {string} value',
+      ' * @returns {string}',
+      ' */',
+      'export function normalize(value) { return value.trim(); }',
+      '',
+    ].join('\n'));
+    await writeFile(path.join(sourceRoot, 'policy.d.mts'), 'export declare function normalize(value: number): string;\n');
+
+    const issues = await checkAuthoredEsmDeclarationDrift([{ name: '@fixture/contracts', dir: packageRoot }], root);
+
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].file, path.join(sourceRoot, 'policy.d.mts'));
+    assert.match(issues[0].message, /corepack pnpm exec node scripts\/checks\/generate-authored-esm-declarations\.mjs/);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+// case: S-261.8
+test('Node engine selector runs in a fresh checkout before package builds', async () => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-node-selector-no-dist-'));
+  try {
+    const runtimeDirectory = path.join(fixtureRoot, 'core/plugin-runtime/src/platform-resolve');
+    const packageDirectory = path.join(fixtureRoot, 'core/plugin-runtime/node_modules/@kb-labs/plugin-contracts');
+    await mkdir(runtimeDirectory, { recursive: true });
+    await mkdir(path.join(packageDirectory, 'src'), { recursive: true });
+    await writeFile(path.join(fixtureRoot, 'package.json'), JSON.stringify({ engines: { node: '24.x' } }));
+    await writeFile(path.join(runtimeDirectory, 'node-engine.mjs'), await readFile(path.join(root, 'core/plugin-runtime/src/platform-resolve/node-engine.mjs')));
+    await writeFile(path.join(packageDirectory, 'package.json'), await readFile(path.join(root, 'core/plugin-contracts/package.json')));
+    await writeFile(path.join(packageDirectory, 'src/node-engine-policy.mjs'), await readFile(path.join(root, 'core/plugin-contracts/src/node-engine-policy.mjs')));
+
+    const result = spawnSync(process.execPath, [path.join(runtimeDirectory, 'node-engine.mjs'), '--required-major', path.join(fixtureRoot, 'package.json')], {
+      cwd: fixtureRoot,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), '24');
+    assert.deepEqual(inspectPrebuildImportGraph(path.join(runtimeDirectory, 'node-engine.mjs'), fixtureRoot), []);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('pre-build import rail reports resolved build-output dependencies', async () => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-node-selector-build-import-'));
+  try {
+    const entry = path.join(fixtureRoot, 'selector.mjs');
+    await mkdir(path.join(fixtureRoot, 'node_modules/@fixture/contracts/dist'), { recursive: true });
+    await writeFile(entry, "import { policy } from '@fixture/contracts';\nvoid policy;\n");
+    await writeFile(path.join(fixtureRoot, 'node_modules/@fixture/contracts/package.json'), JSON.stringify({ exports: { '.': './dist/policy.mjs' } }));
+    await writeFile(path.join(fixtureRoot, 'node_modules/@fixture/contracts/dist/policy.mjs'), 'export const policy = 24;\n');
+
+    assert.deepEqual(inspectPrebuildImportGraph(entry, fixtureRoot), [
+      { file: entry, specifier: '@fixture/contracts', resolved: path.join(fixtureRoot, 'node_modules/@fixture/contracts/dist/policy.mjs') },
+    ]);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('pre-build import rail reports dependencies resolved outside the workspace', async () => {
+  const fixtureParent = await mkdtemp(path.join(os.tmpdir(), 'kb-node-selector-outside-import-'));
+  try {
+    const workspaceRoot = path.join(fixtureParent, 'workspace');
+    const entry = path.join(workspaceRoot, 'selector.mjs');
+    const externalModule = path.join(fixtureParent, 'external.mjs');
+    await mkdir(workspaceRoot, { recursive: true });
+    await writeFile(entry, `import ${JSON.stringify(externalModule)};\n`);
+    await writeFile(externalModule, 'export {};\n');
+
+    assert.deepEqual(inspectPrebuildImportGraph(entry, workspaceRoot), [
+      { file: entry, specifier: externalModule, resolved: externalModule },
+    ]);
+  } finally {
+    await rm(fixtureParent, { recursive: true, force: true });
+  }
+});
 
 // case: S-260.2
 test('the shipped Node policy passes the workspace check', () => {

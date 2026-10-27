@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 
-export function parseNodeEnginePolicy(value: unknown, owner = 'workspace') {
+/**
+ * @param {unknown} value
+ * @param {string} [owner]
+ * @returns {{ requiredMajor: number }}
+ */
+export function parseNodeEnginePolicy(value, owner = 'workspace') {
   if (typeof value !== 'string') {
     throw new Error(`The ${owner} must declare engines.node as MAJOR.x.`);
   }
@@ -11,8 +16,13 @@ export function parseNodeEnginePolicy(value: unknown, owner = 'workspace') {
   return { requiredMajor: Number(match[1]) };
 }
 
-export function readNodeEngineDeclaration(packageManifest: string): string | undefined {
-  let parsed: { engines?: { node?: unknown } };
+/**
+ * @param {string} packageManifest
+ * @returns {string | undefined}
+ */
+export function readNodeEngineDeclaration(packageManifest) {
+  /** @type {{ engines?: { node?: unknown } }} */
+  let parsed;
   try {
     parsed = JSON.parse(readFileSync(packageManifest, 'utf8'));
   } catch (error) {
