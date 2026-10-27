@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// case: S-237.123
+// case: S-237.126
 func TestWorktreeEnsureIsSharedByCommandAndScheduler(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")

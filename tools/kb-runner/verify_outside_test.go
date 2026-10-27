@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// case: S-237.121
+// case: S-237.124
 func TestVerifyOutsideIsolatesModulesAndReportsFailingTests(t *testing.T) {
 	home := t.TempDir()
 	worktree := "verify-fixture"

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// case: S-237.111, S-237.129
+// case: S-237.114, S-237.132
 func TestSchedulerRendersProductionEmbeddedReviewMergeAndRoundTemplates(t *testing.T) {
 	state := t.TempDir()
 	options := schedulerRunOptions{store: newSchedulerStore(state), state: state}

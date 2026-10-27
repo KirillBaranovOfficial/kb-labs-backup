@@ -183,7 +183,7 @@ printf '%s\n' "${FAKE_ZCODE_VERDICT:-ACCEPT}" > "$FAKE_ZCODE_REPORT"
 	return fixture
 }
 
-// case: S-237.111
+// case: S-237.114
 func TestSchedulerRenderingLeavesEveryPromptTemplateUnchanged(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	options := schedulerRunOptions{store: newSchedulerStore(f.state), state: f.state}
@@ -209,7 +209,7 @@ func TestSchedulerRenderingLeavesEveryPromptTemplateUnchanged(t *testing.T) {
 	}
 }
 
-// case: S-237.108
+// case: S-237.111
 func TestSnapshotUsesPrivateIndexAndLeavesWorktreeStateUntouched(t *testing.T) {
 	worktree := t.TempDir()
 	runGit := func(args ...string) string {
@@ -263,7 +263,7 @@ func TestSnapshotUsesPrivateIndexAndLeavesWorktreeStateUntouched(t *testing.T) {
 	}
 }
 
-// case: S-237.108
+// case: S-237.111
 func TestSnapshotRefusesUnmergedIndexWithoutChangingIt(t *testing.T) {
 	worktree := t.TempDir()
 	runGit := func(args ...string) string {
@@ -376,7 +376,7 @@ func (f schedulerFixture) addAwaitingRemote(t *testing.T, task SchedulerTask, su
 	}
 }
 
-// case: S-237.74
+// case: S-237.77
 func TestSchedulerTaskBacklogPersistsResolvedWorkdirAndRole(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	worker := f.addTask(t, "worker-a", "worker")
@@ -413,7 +413,7 @@ func TestSchedulerRejectsTransitionsThatWouldLoseRemoteOwnership(t *testing.T) {
 	}
 }
 
-// case: S-237.86
+// case: S-237.89
 func TestSchedulerTaskPersistsExplicitReviewPolicy(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "policy-worker", "worker")
@@ -435,7 +435,7 @@ func TestSchedulerTaskPersistsExplicitReviewPolicy(t *testing.T) {
 	}
 }
 
-// case: S-237.85
+// case: S-237.88
 func TestSchedulerInitialTransitionWritesOneHandoffLine(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	f.addTask(t, "worker-a", "worker")
@@ -445,7 +445,7 @@ func TestSchedulerInitialTransitionWritesOneHandoffLine(t *testing.T) {
 	}
 }
 
-// case: S-237.85, S-237.88
+// case: S-237.88, S-237.91
 func TestSchedulerHandoffProjectionIsIdempotentAndDecisionCausesAreClosed(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "handoff-worker", "worker")
@@ -491,7 +491,7 @@ func TestSchedulerHandoffProjectionIsIdempotentAndDecisionCausesAreClosed(t *tes
 	}
 }
 
-// case: S-237.84
+// case: S-237.87
 func TestSchedulerCandidateFailureBisectsPrefixesAndRevertsFirstFailingMerge(t *testing.T) {
 	f, _, store := newCandidateBisectFixture(t, false)
 	if code, output := f.runOnce(t); code != 0 {
@@ -526,7 +526,7 @@ func TestSchedulerCandidateFailureBisectsPrefixesAndRevertsFirstFailingMerge(t *
 	}
 }
 
-// case: S-237.84
+// case: S-237.87
 func TestSchedulerCandidateBisectUsesInconclusiveOnlyWhenFinalPrefixDisagrees(t *testing.T) {
 	f, task, store := newCandidateBisectFixture(t, true)
 	if code, output := f.runOnce(t); code != 0 {
@@ -559,7 +559,7 @@ func TestSchedulerCandidateBisectUsesInconclusiveOnlyWhenFinalPrefixDisagrees(t 
 	}
 }
 
-// case: S-237.84
+// case: S-237.87
 func TestSchedulerCandidatePrefixOutageRerunsTwiceThenTerminates(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	options := schedulerRunOptions{}
@@ -630,7 +630,7 @@ func (f schedulerFixture) completeBisectPrefixes(t *testing.T, prefixes []Schedu
 	return nil
 }
 
-// case: S-237.113
+// case: S-237.116
 func TestSchedulerRunReplaysMissingHandoffProjectionIdempotently(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "handoff-replay", "worker")
@@ -658,7 +658,7 @@ func TestSchedulerRunReplaysMissingHandoffProjectionIdempotently(t *testing.T) {
 	}
 }
 
-// case: S-237.82
+// case: S-237.85
 func TestSchedulerMissingCommitProposalsStopsWithNamedCause(t *testing.T) {
 	runs := `[{"databaseId":11,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"success"}]`
 	f := newSchedulerFixture(t, runs, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
@@ -677,7 +677,7 @@ func TestSchedulerMissingCommitProposalsStopsWithNamedCause(t *testing.T) {
 	}
 }
 
-// case: S-237.86
+// case: S-237.89
 func TestSchedulerRiskPolicyEscalatesChangedRiskZone(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	t.Setenv("FAKE_CHANGED_FILES", "tools/kb-runner/scheduler.go")
@@ -707,7 +707,7 @@ func TestSchedulerRiskPolicyEscalatesChangedRiskZone(t *testing.T) {
 	}
 }
 
-// case: S-237.83
+// case: S-237.86
 func TestSchedulerMergeConflictQueuesResolverOnlyWithUnmergedFiles(t *testing.T) {
 	runs := `[{"databaseId":11,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"success"}]`
 	f := newSchedulerFixture(t, runs, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
@@ -724,7 +724,7 @@ func TestSchedulerMergeConflictQueuesResolverOnlyWithUnmergedFiles(t *testing.T)
 	}
 }
 
-// case: S-237.87, S-237.88
+// case: S-237.90, S-237.91
 func TestSchedulerCrossReviewDisagreementNamesBothReports(t *testing.T) {
 	runs := `[{"databaseId":11,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"success"}]`
 	f := newSchedulerFixture(t, runs, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
@@ -752,7 +752,7 @@ func TestSchedulerCrossReviewDisagreementNamesBothReports(t *testing.T) {
 	}
 }
 
-// case: S-237.89
+// case: S-237.92
 func TestSchedulerZCodeReviewUsesNativeAgentAndSkipsUnavailableAccount(t *testing.T) {
 	runs := `[{"databaseId":11,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"success"}]`
 	f := newSchedulerFixture(t, runs, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
@@ -800,7 +800,7 @@ func TestSchedulerZCodeReviewUsesNativeAgentAndSkipsUnavailableAccount(t *testin
 	}
 }
 
-// case: S-237.75
+// case: S-237.78
 func TestSchedulerPartialReportStopsAtOrchestrator(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	f.addTask(t, "worker-a", "worker")
@@ -822,7 +822,7 @@ func TestSchedulerPartialReportStopsAtOrchestrator(t *testing.T) {
 	}
 }
 
-// case: S-237.75
+// case: S-237.78
 func TestSchedulerPlanQuestionStopsAtOrchestrator(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	f.addTask(t, "worker-a", "worker")
@@ -840,7 +840,7 @@ func TestSchedulerPlanQuestionStopsAtOrchestrator(t *testing.T) {
 	}
 }
 
-// case: S-237.75, S-237.77
+// case: S-237.78, S-237.80
 func TestSchedulerReleasesWorkerSlotAndOneWatcherCoversPendingRuns(t *testing.T) {
 	runs := `[{"databaseId":11,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"queued","conclusion":null},{"databaseId":12,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-b-0123456","headSha":"` + schedulerTestSHA + `","status":"queued","conclusion":null}]`
 	f := newSchedulerFixture(t, runs, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
@@ -874,7 +874,7 @@ func TestSchedulerReleasesWorkerSlotAndOneWatcherCoversPendingRuns(t *testing.T)
 	}
 }
 
-// case: S-237.76
+// case: S-237.79
 func TestSchedulerRejectedReviewArchivesReportAndResumesWorker(t *testing.T) {
 	runs := `[{"databaseId":11,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"success"}]`
 	verdict := `{"schemaVersion":1,"sha":"` + schedulerTestSHA + `","status":"pass","jobs":[],"diagnostics":[]}`
@@ -916,7 +916,7 @@ func TestSchedulerRejectedReviewArchivesReportAndResumesWorker(t *testing.T) {
 	}
 }
 
-// case: S-237.78
+// case: S-237.81
 func TestSchedulerDeadlinePersistsTimeoutVerdict(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "worker-a", "worker")
@@ -937,7 +937,7 @@ func TestSchedulerDeadlinePersistsTimeoutVerdict(t *testing.T) {
 	}
 }
 
-// case: S-237.79
+// case: S-237.82
 func TestSchedulerOutageRerunsAtMostTwice(t *testing.T) {
 	runs := `[{"databaseId":11,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"failure"}]`
 	verdict := `{"schemaVersion":1,"sha":"` + schedulerTestSHA + `","status":"outage","jobs":[],"diagnostics":["remote outage"]}`
@@ -960,7 +960,7 @@ func TestSchedulerOutageRerunsAtMostTwice(t *testing.T) {
 	}
 }
 
-// case: S-237.80
+// case: S-237.83
 func TestSchedulerSupersedeCancelsOlderRunAndUsesNewSHA(t *testing.T) {
 	oldSHA := strings.Repeat("a", 40)
 	runs := `[{"databaseId":23,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-` + oldSHA[:7] + `","headSha":"` + oldSHA + `","status":"queued","conclusion":null}]`
@@ -989,7 +989,7 @@ func TestSchedulerSupersedeCancelsOlderRunAndUsesNewSHA(t *testing.T) {
 	}
 }
 
-// case: S-237.81
+// case: S-237.84
 func TestSchedulerDependencyReleasesAfterOrchestratorCompletes(t *testing.T) {
 	runs := `[{"databaseId":11,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"success"},{"databaseId":12,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/candidate-worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"success"}]`
 	verdict := `{"schemaVersion":1,"sha":"` + schedulerTestSHA + `","status":"pass","jobs":[],"diagnostics":[]}`
@@ -1034,7 +1034,7 @@ func TestSchedulerDependencyReleasesAfterOrchestratorCompletes(t *testing.T) {
 	}
 }
 
-// case: S-237.76
+// case: S-237.79
 func TestSchedulerFailureVerdictResumesOriginalThreadWithNamedFailures(t *testing.T) {
 	runs := `[{"databaseId":11,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/worker-a-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"failure"}]`
 	verdict := `{"schemaVersion":1,"sha":"` + schedulerTestSHA + `","status":"fail","jobs":[{"name":"unit","status":"fail","failures":["TestSchedulerRegression"],"logTail":"assertion failed"}],"diagnostics":["verification failed"]}`
@@ -1070,7 +1070,7 @@ func TestSchedulerFailureVerdictResumesOriginalThreadWithNamedFailures(t *testin
 	}
 }
 
-// case: S-237.114
+// case: S-237.117
 func TestRoundPromptCombinesMessageAndDefinitionOfDone(t *testing.T) {
 	message := "continue the task\n"
 	definition := "report every proposed commit\n"
@@ -1080,7 +1080,7 @@ func TestRoundPromptCombinesMessageAndDefinitionOfDone(t *testing.T) {
 	}
 }
 
-// case: S-237.115
+// case: S-237.118
 func TestReviewVerdictFallsBackToRunnerLastMessage(t *testing.T) {
 	dir := t.TempDir()
 	last := filepath.Join(dir, "job.last.md")
@@ -1093,7 +1093,7 @@ func TestReviewVerdictFallsBackToRunnerLastMessage(t *testing.T) {
 	}
 }
 
-// case: S-237.120
+// case: S-237.123
 func TestProposedCommitGroupsRejectMissingPopulatedSubjectBeforeCommit(t *testing.T) {
 	commits, err := parseProposedCommits([]byte("## Proposed commits\n```json\n[{\"kind\":\"case\",\"subject\":\"-\"},{\"kind\":\"tests\",\"subject\":\"test: focused\"},{\"kind\":\"code\",\"subject\":\"fix: code\"}]\n```\n"))
 	if err != nil {
@@ -1104,7 +1104,7 @@ func TestProposedCommitGroupsRejectMissingPopulatedSubjectBeforeCommit(t *testin
 	}
 }
 
-// case: S-237.120
+// case: S-237.123
 func TestProposedCommitGroupsAllowMissingSubjectOnlyForEmptyGroup(t *testing.T) {
 	commits := []proposedCommit{{Kind: "case", Subject: "-"}, {Kind: "tests", Subject: "test(runner): cover case"}, {Kind: "code", Subject: "fix(runner): implement behavior"}}
 	groups := [][]string{{}, {"tools/kb-runner/main_test.go"}, {"tools/kb-runner/main.go"}}
@@ -1113,7 +1113,7 @@ func TestProposedCommitGroupsAllowMissingSubjectOnlyForEmptyGroup(t *testing.T) 
 	}
 }
 
-// case: S-237.119
+// case: S-237.122
 func TestSchedulerAgentArgsUsesGovernorAndZCodeReportLocation(t *testing.T) {
 	task := SchedulerTask{Stream: "stream-a", Vendor: "zcode", Effort: "high", Workdir: "/work/stream-a", Role: schedulerWorkerRole, Prompt: "/tmp/prompt"}
 	args := schedulerAgentArgs(task, "/tmp/state", "job-a", 2, "")
@@ -1131,7 +1131,7 @@ func TestSchedulerAgentArgsUsesGovernorAndZCodeReportLocation(t *testing.T) {
 	}
 }
 
-// case: S-237.114, S-237.119
+// case: S-237.117, S-237.122
 func TestAgentLaunchUsesRenderedRoundPromptAndGovernor(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "launch-a", "worker")
@@ -1157,7 +1157,7 @@ func TestAgentLaunchUsesRenderedRoundPromptAndGovernor(t *testing.T) {
 	}
 }
 
-// case: S-237.115
+// case: S-237.118
 func TestResumeRefusesToLaunchWhenSnapshotGateFindsUnmergedIndex(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "resume-a", "worker")
@@ -1186,7 +1186,7 @@ func TestResumeRefusesToLaunchWhenSnapshotGateFindsUnmergedIndex(t *testing.T) {
 	}
 }
 
-// case: S-237.116, S-237.117
+// case: S-237.119, S-237.120
 func TestFinishReviewReadsRunnerLastMessageAndArchivesItForRework(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	worker := f.addTask(t, "review-fallback", "worker")
@@ -1264,7 +1264,7 @@ func TestFinishReviewReadsRunnerLastMessageAndArchivesItForRework(t *testing.T) 
 	}
 }
 
-// case: S-237.118
+// case: S-237.121
 func TestZCodeWorkerReportComesFromReportsStreamPath(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "zcode-report", "worker")
@@ -1301,7 +1301,7 @@ func TestZCodeWorkerReportComesFromReportsStreamPath(t *testing.T) {
 	}
 }
 
-// case: S-237.122
+// case: S-237.125
 func TestZCodeLifecycleUsesPerStreamReportAndResumesSessionAfterSnapshot(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "zcode-lifecycle", "worker")
@@ -1352,7 +1352,7 @@ func TestZCodeLifecycleUsesPerStreamReportAndResumesSessionAfterSnapshot(t *test
 	}
 }
 
-// case: S-237.116
+// case: S-237.119
 func TestAgentReviewDispatchesPersistedReviewTask(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	worker := f.addTask(t, "review-command", "worker")
@@ -1410,7 +1410,7 @@ func TestAgentReviewDispatchesPersistedReviewTask(t *testing.T) {
 	}
 }
 
-// case: S-237.117
+// case: S-237.120
 func TestAgentReworkResumesRejectedWorkerThread(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "rework-command", "worker")
@@ -1436,7 +1436,7 @@ func TestAgentReworkResumesRejectedWorkerThread(t *testing.T) {
 	}
 }
 
-// case: S-237.120, S-237.131
+// case: S-237.123, S-237.134
 func TestLandCreatesOrderedCommitGroupsInNativeGit(t *testing.T) {
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
@@ -1504,7 +1504,7 @@ func TestLandCreatesOrderedCommitGroupsInNativeGit(t *testing.T) {
 	}
 }
 
-// case: S-237.120
+// case: S-237.123
 func TestLandCommandRequiresPassingRemoteAndAcceptedReview(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	f.addTask(t, "land-gate", "worker")

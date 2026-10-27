@@ -1260,7 +1260,7 @@ func TestOwnOutsideRunIsActionablyRefused(t *testing.T) {
 	}
 }
 
-// case: S-237.110
+// case: S-237.113
 func TestSelfInstallAtomicallyReplacesValidatedRunnerBinaries(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
@@ -1324,7 +1324,7 @@ func TestSelfInstallAtomicallyReplacesValidatedRunnerBinaries(t *testing.T) {
 	}
 }
 
-// case: S-237.110
+// case: S-237.113
 func TestRunnerVersionContract(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	status := executeInvocation("kb-runner", []string{"--version"}, &stdout, &stderr)
@@ -1333,7 +1333,7 @@ func TestRunnerVersionContract(t *testing.T) {
 	}
 }
 
-// case: S-237.110
+// case: S-237.113
 func TestSelfInstallRejectsInvalidVersionWithoutChangingInstalledBinaries(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source")

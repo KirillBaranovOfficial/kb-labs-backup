@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// case: S-237.124
+// case: S-237.127
 func TestWorkerCandidateAndBisectPushCallSitesUseOnlyVerifyHeads(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	t.Setenv("FAKE_CHANGED_FILES", "")

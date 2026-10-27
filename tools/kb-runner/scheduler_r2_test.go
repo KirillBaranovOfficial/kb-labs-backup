@@ -14,7 +14,7 @@ import (
 
 const r2CommitReport = "## Proposed commits\n```json\n[{\"kind\":\"case\",\"subject\":\"docs(qa): case\"},{\"kind\":\"tests\",\"subject\":\"test(kb-runner): test\"},{\"kind\":\"code\",\"subject\":\"fix(kb-runner): code\"}]\n```\n"
 
-// case: S-237.130
+// case: S-237.133
 func TestSchedulerAutoLandRequiresEveryReviewerToAccept(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "r2-review-gate", "worker")
@@ -65,7 +65,7 @@ func TestSchedulerAutoLandRequiresEveryReviewerToAccept(t *testing.T) {
 	}
 }
 
-// case: S-237.130
+// case: S-237.133
 func TestSchedulerReviewSkipWithoutAnotherConfiguredVendorRequestsDecision(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "r2-review-unavailable", "worker")
@@ -100,7 +100,7 @@ func TestSchedulerReviewSkipWithoutAnotherConfiguredVendorRequestsDecision(t *te
 	}
 }
 
-// case: S-237.131
+// case: S-237.134
 func TestSchedulerSubmissionPersistsTreeAndLandIgnoresLaterWorktreeChanges(t *testing.T) {
 	realGit, err := exec.LookPath("git")
 	if err != nil {
@@ -228,7 +228,7 @@ func TestSchedulerSubmissionPersistsTreeAndLandIgnoresLaterWorktreeChanges(t *te
 	}
 }
 
-// case: S-237.132
+// case: S-237.135
 func TestSchedulerStateDirectoryRejectsTasksFromAnotherRepository(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	first := f.addTask(t, "r2-repo-first", "worker")

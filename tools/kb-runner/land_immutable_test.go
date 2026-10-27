@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// case: S-237.133
+// case: S-237.136
 func TestLandingCommitObjectsExcludePostVerificationWorktreeEdits(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -51,7 +51,7 @@ func TestLandingCommitObjectsExcludePostVerificationWorktreeEdits(t *testing.T) 
 	}
 }
 
-// case: S-237.133
+// case: S-237.136
 func TestSchedulerMergeUsesImmutableLandingCommitAfterBranchAmendment(t *testing.T) {
 	repo, git := newImmutableLandRepo(t)
 	if err := os.WriteFile(filepath.Join(repo, "tools", "kb-runner", "scheduler-policy.json"), []byte(`{"integration_branch":"agent/integration","risk_zones":["tools/kb-runner/**"]}`), 0o600); err != nil {
@@ -169,7 +169,7 @@ exec "$REAL_GIT" "$@"
 	}
 }
 
-// case: S-237.133
+// case: S-237.136
 func TestLandingRefCompareAndSwapRefusesAmendmentAndResubmits(t *testing.T) {
 	repo, git := newImmutableLandRepo(t)
 	if err := os.WriteFile(filepath.Join(repo, "tools", "kb-runner", "scheduler-policy.json"), []byte(`{"integration_branch":"agent/integration","risk_zones":["tools/kb-runner/**"]}`), 0o600); err != nil {
@@ -282,7 +282,7 @@ exec "$REAL_GIT" "$@"
 	}
 }
 
-// case: S-237.133
+// case: S-237.136
 func TestIntegrationCASRefusesConcurrentAdvanceWithoutPushingIt(t *testing.T) {
 	repo, git := newImmutableLandRepo(t)
 	if err := os.WriteFile(filepath.Join(repo, "tools", "kb-runner", "scheduler-policy.json"), []byte(`{"integration_branch":"agent/integration","risk_zones":["tools/kb-runner/**"]}`), 0o600); err != nil {

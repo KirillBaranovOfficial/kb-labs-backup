@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// case: S-237.126
+// case: S-237.129
 func TestIndependentReviewCannotConsumeSharedReport(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	worker := f.addTask(t, "private-review", "worker")
@@ -92,7 +92,7 @@ func TestIndependentReviewCannotConsumeSharedReport(t *testing.T) {
 	}
 }
 
-// case: S-237.127
+// case: S-237.130
 func TestPublicLandRefusesPartialPersistedCrossReview(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "partial-cross-land", "worker")
@@ -135,7 +135,7 @@ func TestPublicLandRefusesPartialPersistedCrossReview(t *testing.T) {
 	}
 }
 
-// case: S-237.128
+// case: S-237.131
 func TestWatchRemotePropagatesOutageHandlerPersistenceFailure(t *testing.T) {
 	runs := `[{"databaseId":51,"event":"push","path":".github/workflows/remote-verify.yml","headBranch":"verify/outage-stream-0123456","headSha":"` + schedulerTestSHA + `","status":"completed","conclusion":"failure"}]`
 	f := newSchedulerFixture(t, runs, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"outage","jobs":[],"diagnostics":[]}`)

@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// case: S-237.83
+// case: S-237.86
 func TestMergeResolutionIsReverifiedAndPublishedThroughSharedLanding(t *testing.T) {
 	for _, race := range []string{"publish-resolved-merge", "integration-cas-refusal", "worker-cas-refusal"} {
 		t.Run(race, func(t *testing.T) {

@@ -19,7 +19,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 )
 
-// case: S-237.125
+// case: S-237.128
 func TestSchedulerReadyClaimIsAtomicAcrossStoreInstances(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "atomic-claim", "worker")
@@ -64,7 +64,7 @@ func TestSchedulerLeaseSubprocess(t *testing.T) {
 	os.Exit(status.Code())
 }
 
-// case: S-237.125
+// case: S-237.128
 func TestTwoSchedulerProcessesShareOneRunLeaseAndWatcher(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	task := f.addTask(t, "lease-owner", "worker")
@@ -156,7 +156,7 @@ func TestTwoSchedulerProcessesShareOneRunLeaseAndWatcher(t *testing.T) {
 	<-firstDone
 }
 
-// case: S-237.127
+// case: S-237.130
 func TestPublicLandRefusesWhileSchedulerOwnsRunLease(t *testing.T) {
 	state := t.TempDir()
 	lease, err := newSchedulerStore(state).acquireRunLease()
