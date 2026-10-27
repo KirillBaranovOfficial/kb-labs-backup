@@ -10,7 +10,6 @@ export default defineConfig({
     'src/manifest.ts',
     'src/commands/page.ts',
   ],
-  dts: { resolve: true, skipLibCheck: true },
   clean: true,
   sourcemap: true,
 });
