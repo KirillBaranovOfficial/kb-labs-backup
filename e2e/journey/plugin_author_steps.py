@@ -4,17 +4,24 @@ from __future__ import annotations
 
 from kb_invocation import kb_command
 from installed_fixture import layout_relative, layout_value
+from marketplace_sync_fixture import (
+    marketplace_sync_request_count,
+    start_marketplace_sync_fixture,
+    stop_marketplace_sync_fixture,
+)
 
 import json
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
 from invocations import (
     CompletedProcess,
+    decode_ux_error_result,
     decode_ux_success_result,
     invocation_context,
     read_ux_cli_result,
@@ -55,6 +62,40 @@ def _plugins(kb: Path, *, cwd: Path, env: dict[str, str], command_runner) -> lis
     if not isinstance(entries, list):
         raise RuntimeError("kb marketplace plugins list --json returned no entries array")
     return entries
+
+
+def _record_local_anonymous_scope_step(journey: Journey, project: Path, kb_path: Path,
+                                       env: dict[str, str], command_runner) -> None:
+    """Prove local commands and the newly linked plugin work without a saved session."""
+    session_path = Path(env.get("HOME", Path.home())) / ".kb/session.json"
+
+    def local_commands_and_plugin_work() -> str | None:
+        if session_path.exists():
+            return f"local anonymous command fixture unexpectedly has a saved human session at {session_path}"
+        for arguments in (["workflow", "defs", "list", "--json"],
+                          ["marketplace", "plugins", "list", "--json"]):
+            command = [str(kb_path), *arguments]
+            with invocation_context(step_id="S-041.10"):
+                result = run_with_runner(command_runner, command, cwd=project, env=env,
+                                         timeout=120)
+            try:
+                payload = read_ux_cli_result(result)
+            except ValueError as error:
+                return f"{' '.join(command)} returned an invalid UX result: {error}"
+            if result.returncode != 0 or payload.get("ok") is not True:
+                return f"{' '.join(command)} did not pass the local auth gate: {payload}"
+
+        command = [str(kb_path), "demo", "hello"]
+        with invocation_context(step_id="S-041.10"):
+            result = run_with_runner(command_runner, command, cwd=project, env=env,
+                                     timeout=120)
+        output = (result.stdout or "") + (result.stderr or "")
+        if result.returncode != 0 or "Hello, World from demo!" not in output:
+            return f"{' '.join(command)} did not pass local authorization and invoke the linked plugin: {output.strip()}"
+        return None
+
+    journey.step("run local platform and linked-plugin commands without a saved session",
+                 "plugin-author", local_commands_and_plugin_work, cases=["S-041.10"])
 
 
 def _lock_entry(project: Path) -> tuple[dict, str, dict]:
@@ -503,6 +544,67 @@ def run_plugin_author_flow(
         if lock_entry.get("source") != "local" or lock_entry.get("link") != str(ENTRY_DIR):
             raise RuntimeError("project marketplace.lock does not record demo's local relative link path")
 
+    def _docs_reference() -> None:
+        docs_dir = project / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        output_path = docs_dir / "CLI-REFERENCE.md"
+        output_path.unlink(missing_ok=True)
+        command = kb_command(["docs", "generate-cli-reference", "--output", "docs/CLI-REFERENCE.md"],
+                             executable=str(kb_path))
+        with invocation_context(step_id="S-003.7"):
+            result = _invoke(command, cwd=project, env=child_env, command_runner=command_runner)
+        if result.returncode != 0 or not output_path.is_file():
+            raise RuntimeError("kb docs generate-cli-reference did not write docs/CLI-REFERENCE.md from the registered project")
+        if "# KB Labs CLI Reference" not in output_path.read_text(encoding="utf-8"):
+            raise RuntimeError("generated docs/CLI-REFERENCE.md does not contain the CLI reference")
+
+        with tempfile.TemporaryDirectory(prefix="kb-cli-reference-unregistered-") as outside:
+            outside_project = Path(outside)
+            (outside_project / "docs").mkdir()
+            outside_output = outside_project / "docs/CLI-REFERENCE.md"
+            with invocation_context(step_id="S-003.7"):
+                outside_result = _invoke(command, cwd=outside_project, env=child_env,
+                                         command_runner=command_runner)
+            if outside_result.returncode == 0 or outside_output.exists():
+                raise RuntimeError("kb docs generate-cli-reference succeeded or wrote output outside a registered project")
+            try:
+                error = read_ux_cli_result(outside_result).get("error", {})
+            except ValueError as parse_error:
+                raise RuntimeError(f"outside-project docs command returned an invalid UX result: {parse_error}") from parse_error
+            if not isinstance(error, dict) or error.get("code") != "KB_PROJECT_UNKNOWN":
+                raise RuntimeError("outside-project docs command did not return KB_PROJECT_UNKNOWN")
+
+    def _reject_absolute_plugin_link() -> None:
+        fixture_process, marketplace_url, startup_error = start_marketplace_sync_fixture(
+            project, child_env, request_recorder=True)
+        if startup_error or fixture_process is None or marketplace_url is None:
+            raise RuntimeError(startup_error or "Marketplace request recorder did not start")
+        try:
+            lock_path = project / layout_value('versionStatePaths.kb_marketplace_lock')
+            before = lock_path.read_bytes()
+            command = kb_command(["marketplace", "plugins", "add", "--link", str(entry.resolve())],
+                                 executable=str(kb_path))
+            command_env = child_env.copy()
+            command_env["KB_MARKETPLACE_URL"] = marketplace_url
+            with invocation_context(step_id="S-003.8"):
+                result = _invoke(command, cwd=project, env=command_env, command_runner=command_runner)
+            request_count = marketplace_sync_request_count(marketplace_url, command_env)
+        finally:
+            cleanup_error = stop_marketplace_sync_fixture(fixture_process)
+        if cleanup_error:
+            raise RuntimeError(cleanup_error)
+        try:
+            payload = read_ux_cli_result(result)
+            failure = decode_ux_error_result(payload)
+        except ValueError as error:
+            raise RuntimeError(f"absolute plugin link returned an invalid UX result: {error}") from error
+        message = failure["message"]
+        if (result.returncode == 0 or failure["code"] != "KB_RUNTIME_INPUT_INVALID"
+                or "The --link path must be relative to the selected scope directory." not in message
+                or request_count != 0
+                or lock_path.read_bytes() != before):
+            raise RuntimeError("absolute --link path was not rejected with its catalog code before Marketplace access or project registration mutation")
+
     def _invoke_original() -> None:
         help_output = _run(kb_command([ "--help"], executable=str(kb_path)), cwd=project, env=child_env,
                            command_runner=command_runner)
@@ -573,6 +675,13 @@ def run_plugin_author_flow(
             journey.blocked("remove plugin registration", "plugin-author", "plugin was not added")
         shutil.rmtree(plugin_root, ignore_errors=True)
         return
+
+    if journey.mode == "local":
+        _record_local_anonymous_scope_step(journey, project, kb_path, child_env, command_runner)
+    record("generate CLI reference in registered plugin workspace", cases=["S-003.7"],
+           check=_docs_reference)
+    record("reject absolute local plugin link", cases=["S-003.8"],
+           check=_reject_absolute_plugin_link)
 
     try:
         record("invoke generated plugin", cases=["S-003.4", "S-210.1"], check=_invoke_original)

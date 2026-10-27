@@ -33,7 +33,6 @@ export default defineConfig({
     'react',
     'react-dom'
   ],
-  dts: true,
   esbuildOptions(options) {
     options.jsx = 'automatic';
     return options;

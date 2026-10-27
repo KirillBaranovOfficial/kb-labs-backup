@@ -8,6 +8,7 @@ import {
   gitWorkflowPreset,
   kbPlatformPreset,
 } from '@kb-labs/sdk';
+import type { ManifestV3 } from '@kb-labs/sdk';
 import { runFlags } from './commands/flags.js';
 
 /**
@@ -34,7 +35,7 @@ const pluginPermissions = combinePermissions()
   })
   .build();
 
-export const manifest = {
+export const manifest: ManifestV3 = {
   schema: 'kb.plugin/3',
   id: '@kb-labs/review',
   version: '0.1.0',

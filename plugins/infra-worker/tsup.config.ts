@@ -16,5 +16,4 @@ export default defineConfig({
     'react',
     'react-dom',
   ],
-  dts: true,
 });

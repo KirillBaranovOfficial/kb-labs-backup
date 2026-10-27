@@ -921,6 +921,12 @@ custom_checks:
     scope: package
     categories: [plugin-entry]
 
+  - name: plugin-dts-policy
+    run: node scripts/checks/check-plugin-dts-policy.mjs
+    on: [check]
+    scope: package
+    categories: [plugin-entry]
+
   - name: studio-widget-output-path
     run: node scripts/checks/check-studio-widget-output-path.mjs
     on: [check]
