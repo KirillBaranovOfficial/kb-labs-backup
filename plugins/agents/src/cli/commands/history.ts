@@ -50,7 +50,7 @@ export default defineCommand({
         }
         return listAllSessions(ctx, manager, Boolean(flags.json));
       } catch (error) {
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error instanceof Error ? error.message : String(error), hint: 'Check the session ID and stored agent history, then rerun `kb agents history`.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error instanceof Error ? error.message : String(error), hint: 'Check the session ID and stored agent history, then rerun `kb agent history list`.' } };
       }
     },
   },
@@ -64,7 +64,7 @@ async function showSessionHistory(
 ): Promise<HistoryResult> {
   const info = await manager.getSessionInfo(sessionId);
   if (!info) {
-    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Session not found: ${sessionId}`, hint: 'Check the stored agent session data, then rerun `kb agents history`.' } };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Session not found: ${sessionId}`, hint: 'Check the stored agent session data, then rerun `kb agent history list`.' } };
   }
 
   const turns = await manager.getTurns(sessionId);

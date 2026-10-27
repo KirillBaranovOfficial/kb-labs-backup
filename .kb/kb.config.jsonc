@@ -204,7 +204,7 @@
                 },
                 {
                   "id": "pack-install-per-package",
-                  "name": "LEGACY per-package pack + clean install (debug: kb release checks --only pack-install-per-package)",
+                  "name": "LEGACY per-package pack + clean install (debug: kb release checks run --only pack-install-per-package)",
                   "command": "bash",
                   "args": ["scripts/gates/check-pack-install.sh"],
                   "timeoutMs": 120000,
@@ -325,7 +325,7 @@
             },
             {
               "id": "pack-install-per-package",
-              "name": "LEGACY per-package pack + clean install (debug: kb release checks --only pack-install-per-package)",
+              "name": "LEGACY per-package pack + clean install (debug: kb release checks run --only pack-install-per-package)",
               "command": "bash",
               "args": ["scripts/gates/check-pack-install.sh"],
               "timeoutMs": 120000,

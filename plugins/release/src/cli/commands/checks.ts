@@ -113,7 +113,7 @@ export default defineCommand({
             hint: finding.hint,
           }));
           const outcome = failure
-            ? { ok: false as const, error: { code: failure.code, message: failure.message, hint: failure.hint ?? 'Resolve the failed preflight check, then retry `kb release checks`.', diagnostics } }
+            ? { ok: false as const, error: { code: failure.code, message: failure.message, hint: failure.hint ?? 'Resolve the failed preflight check, then retry `kb release checks run`.', diagnostics } }
             : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release preflight failed.', hint: "Run `kb release doctor` to see the failed preflight checks and exact recovery steps.", diagnostics } };
           if (flags.json) {
           }
@@ -134,7 +134,7 @@ export default defineCommand({
       const scopePath = await resolveScopePath(repoRoot, flags.scope ?? 'root');
       const packagePaths = plan.packages.map(p => p.path);
 
-      // Tarballs come from the Stage step (`release stage plan`), never re-packed here.
+      // Tarballs come from the Stage step (`release candidate publish`), never re-packed here.
       const needsStaged = checks.some(c => c.builtin);
       const pack = needsStaged
         ? {
@@ -180,7 +180,7 @@ export default defineCommand({
       }));
       const outcome = ok
         ? { ok: true, failed, results, report: runReport }
-        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release checks failed.', hint: "Run `kb release doctor` to verify the environment, then inspect the failed checks and rerun `kb release checks`.", diagnostics } };
+        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release checks failed.', hint: "Run `kb release doctor` to verify the environment, then inspect the failed checks and rerun `kb release checks run`.", diagnostics } };
 
       if (ok) {
         checksLoader.succeed(`All ${results.length} check(s) passed`);

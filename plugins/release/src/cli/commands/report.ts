@@ -37,7 +37,7 @@ function buildReportSections(report: ReleaseReport): Array<{ header?: string; it
 
 function handleReportNotFound(ctx: PluginCommandContextV3): ReleaseReportResult {
   ctx.platform?.logger?.warn?.('No release report found');
-  return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No release report found', hint: "Run `kb release report --help` to review its inputs and recovery steps, then retry." } };
+  return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No release report found', hint: "Run `kb release report show --help` to review its inputs and recovery steps, then retry." } };
 }
 
 // ── command ────────────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ export default defineCommand({
         });
 
         if (!report.result.ok) {
-          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release report --help` to review its inputs and recovery steps, then retry." } };
+          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release report show --help` to review its inputs and recovery steps, then retry." } };
         }
 
         if (flags.json) {

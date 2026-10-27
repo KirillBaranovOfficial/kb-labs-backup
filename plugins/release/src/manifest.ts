@@ -173,7 +173,7 @@ export const manifest = {
           'skip-verify': { type: 'boolean', description: 'Skip artifact verification (npm pack check)' },
           'skip-publish': {
             type: 'boolean',
-            description: 'Prepare-only: build, version, changelog, git commit/tag — never publish to npm. No npm credentials required. Pair with a tag-triggered CI job running `kb release promote`.',
+            description: 'Prepare-only: build, version, changelog, git commit/tag — never publish to npm. No npm credentials required. Pair with a tag-triggered CI job running `kb release stable publish`.',
           },
           'no-verify': { type: 'boolean', description: 'Pass --no-verify to git push (bypasses pre-push hooks)' },
           yes: { type: 'boolean', description: 'Skip confirmation prompt — for CI/headless mode' },
@@ -229,15 +229,15 @@ export const manifest = {
 
       // release:stage - Pack the currently-committed versions into real tarballs, once
       {
-        path: 'release stage',
+        path: 'release artifact create',
         category: 'Publish',
-        describe: 'Pack the currently-committed package versions for a flow into real npm tarballs, once, for `release deliver` to ship',
+        describe: 'Pack the currently-committed package versions for a flow into real npm tarballs, once, for `release artifact publish` to ship',
         operationType: 'execute' as const,
         longDescription:
           'Produces the actual npm tarball artifacts for a flow\'s already-committed package.json versions ' +
           '— no re-bump, no rebuild. Writes a manifest.json (name/version/tarball/sha256) alongside the tarballs. ' +
-          'Intended to run once in CI right after checking out a release tag; every `release deliver` target then ' +
-          'ships these exact bytes instead of re-packing independently. Not the same command as `release pack` ' +
+          'Intended to run once in CI right after checking out a release tag; every `release artifact publish` target then ' +
+          'ships these exact bytes instead of re-packing independently. Not the same command as `release pack validate` ' +
           '(that one verifies proposed packages before a release is decided; this one packs an already-decided one).',
 
         handler: './cli/commands/stage.js#default',
@@ -250,16 +250,16 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release stage --flow platform',
-          'kb release stage --release-tag platform-v2.105.0',
-          'kb release stage --flow sdk --out-dir .kb/release/artifacts',
+          'kb release artifact create --flow platform',
+          'kb release artifact create --release-tag platform-v2.105.0',
+          'kb release artifact create --flow sdk --out-dir .kb/release/artifacts',
         ],
       },
 
       // release:stage-plan - Publish a release plan's PLANNED versions to a
       // local staging registry, before Bump versions has run
       {
-        path: 'release stage plan',
+        path: 'release candidate publish',
         category: 'Publish',
         describe: 'Publish a release plan\'s planned package versions to a local staging registry (Verdaccio)',
         operationType: 'execute' as const,
@@ -267,7 +267,7 @@ export const manifest = {
           'Runs BEFORE version bump, off the in-memory plan `release plan` already computed. Publishes each plan ' +
           'package at its PLANNED nextVersion — internal sibling dependencies rewritten to `^nextVersion` too — to ' +
           '--registry, so the `pack-install` Checks gate can verify cross-package dependencies against the version ' +
-          'this release is about to ship instead of whatever is already live on npm. Distinct from `release stage`, ' +
+          'this release is about to ship instead of whatever is already live on npm. Distinct from `release artifact create`, ' +
           'which packs already-committed, already-bumped versions for CI delivery after approval.',
 
         handler: './cli/commands/stage-plan.js#default',
@@ -282,12 +282,12 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release stage plan --flow platform --plan-path .kb/release/plans/root/current/plan.json --registry http://localhost:4873',
+          'kb release candidate publish --flow platform --plan-path .kb/release/plans/root/current/plan.json --registry http://localhost:4873',
         ],
       },
 
       // release:clean-install - Shared install-verification used by both
-      // check-pack-install.sh and `release stage`
+      // check-pack-install.sh and `release artifact create`
       {
         path: 'release clean install',
         category: 'Publish',
@@ -295,7 +295,7 @@ export const manifest = {
         operationType: 'execute' as const,
         longDescription:
           'Installs --tarball into a fresh, outside-the-workspace consumer project and confirms --name can be ' +
-          'imported afterward. Shared by check-pack-install.sh (local release gate) and `release stage` (CI publish ' +
+          'imported afterward. Shared by check-pack-install.sh (local release gate) and `release artifact create` (CI publish ' +
           'path) so both use identical verification — catches an already-published PEER dependency that is itself ' +
           'broken, which static manifest checks cannot see. Surfaces the real failure reason via @npmcli/arborist ' +
           'directly; plain `npm install` swallows this exact failure class as an unhandled rejection with no usable error.',
@@ -329,14 +329,14 @@ export const manifest = {
 
       // release:promote - Promote an already-released version to npm
       {
-        path: 'release promote',
+        path: 'release stable publish',
         category: 'Publish',
         describe: 'Promote already-released package versions to npm (no re-bump, no rebuild)',
         operationType: 'execute' as const,
         longDescription:
           'Publishes the CURRENT on-disk package.json versions to npm — no version bump, no rebuild. ' +
           'Intended to run after `release run --channel stable` (typically targeting Verdaccio via ' +
-          'config.registry): once that run is verified, `release promote` pushes the exact same, ' +
+          'config.registry): once that run is verified, `release stable publish` pushes the exact same, ' +
           'already-committed versions to npm under the stable dist-tag.',
 
         handler: './cli/commands/promote.js#default',
@@ -358,24 +358,24 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release promote',
-          'kb release promote --flow platform',
-          'kb release promote --flow sdk',
-          'kb release promote --scope @kb-labs/core',
-          'kb release promote --dry-run',
-          'kb release promote --tag next',
+          'kb release stable publish',
+          'kb release stable publish --flow platform',
+          'kb release stable publish --flow sdk',
+          'kb release stable publish --scope @kb-labs/core',
+          'kb release stable publish --dry-run',
+          'kb release stable publish --tag next',
         ],
       },
 
-      // release:deliver - Ship a `release stage`d artifact to a target (npm)
+      // release:deliver - Ship a `release artifact create`d artifact to a target (npm)
       {
-        path: 'release deliver',
+        path: 'release artifact publish',
         category: 'Publish',
-        describe: 'Ship the tarballs `release stage` already packed to a target — no packing, no rebuild',
+        describe: 'Ship the tarballs `release artifact create` already packed to a target — no packing, no rebuild',
         operationType: 'execute' as const,
         longDescription:
           'CI-side half of the "plugin prepares, CI delivers" release flow: reads manifest.json written by ' +
-          '`release stage` and ships those exact tarballs to --target (only "npm" is implemented this pass). ' +
+          '`release artifact create` and ships those exact tarballs to --target (only "npm" is implemented this pass). ' +
           'Resolves {flow, channel} from --release-tag via release.flows[*].tagPattern so CI never needs to ' +
           'guess the flow itself — just pass the tag. Verifies the delivery against the real registry ' +
           'afterwards (with retry, since real npm has propagation lag); never attempts npm unpublish on a ' +
@@ -387,7 +387,7 @@ export const manifest = {
           'release-tag': { type: 'string', description: 'Git tag to resolve {flow, channel} from (via release.flows[*].tagPattern) — alternative to --flow' },
           flow: { type: 'string', description: 'Named flow — alternative to --release-tag' },
           target: { type: 'string', choices: ['npm'] as const, description: 'Delivery target (default: npm — the only target implemented this pass)' },
-          'artifacts-dir': { type: 'string', description: 'Where `release stage` wrote tarballs + manifest.json (default: .kb/release/artifacts)' },
+          'artifacts-dir': { type: 'string', description: 'Where `release artifact create` wrote tarballs + manifest.json (default: .kb/release/artifacts)' },
           tag: { type: 'string', description: 'npm dist-tag override (default: config.publish.stableTag, falls back to "latest")' },
           registry: { type: 'string', description: 'Registry override (default: config.publish.npmRegistry, falls back to real npm)' },
           otp: { type: 'string', description: 'One-time password (optional, will prompt if needed)' },
@@ -402,9 +402,9 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release deliver --release-tag platform-v2.105.0 --target npm',
-          'kb release deliver --flow sdk --target npm',
-          'kb release deliver --release-tag sdk-v3.2.0 --dry-run',
+          'kb release artifact publish --release-tag platform-v2.105.0 --target npm',
+          'kb release artifact publish --flow sdk --target npm',
+          'kb release artifact publish --release-tag sdk-v3.2.0 --dry-run',
         ],
       },
 
@@ -427,7 +427,7 @@ export const manifest = {
 
       // release:report - Show last release report
       {
-        path: 'release report',
+        path: 'release report show',
         category: 'Utilities',
         describe: 'Show last release report',
         operationType: 'read' as const,
@@ -439,7 +439,7 @@ export const manifest = {
           json: { type: 'boolean', description: 'Output in JSON format' },
         }),
 
-        examples: ['kb release report', 'kb release report --json'],
+        examples: ['kb release report show', 'kb release report show --json'],
       },
 
       // release:status - What is actually stable vs. candidate right now
@@ -463,7 +463,7 @@ export const manifest = {
 
       // release:changelog - Generate changelog
       {
-        path: 'release changelog',
+        path: 'release changelog show',
         category: 'Utilities',
         describe: 'Generate changelog from conventional commits',
         operationType: 'read' as const,
@@ -505,18 +505,18 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release changelog',
-          'kb release changelog --from v1.0.0',
-          'kb release changelog --format md --level detailed',
-          'kb release changelog --template corporate-ai',
-          'kb release changelog --template ./my-template.ts',
-          'kb release changelog --breaking-only',
+          'kb release changelog show',
+          'kb release changelog show --from v1.0.0',
+          'kb release changelog show --format md --level detailed',
+          'kb release changelog show --template corporate-ai',
+          'kb release changelog show --template ./my-template.ts',
+          'kb release changelog show --breaking-only',
         ],
       },
 
       // release:verify - Validate release readiness
       {
-        path: 'release verify',
+        path: 'release validate',
         category: 'Validation',
         describe: 'Validate release readiness',
         operationType: 'analyze' as const,
@@ -535,15 +535,15 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release verify',
-          'kb release verify --fail-if-empty',
-          'kb release verify --allow-types feat,fix',
+          'kb release validate',
+          'kb release validate --fail-if-empty',
+          'kb release validate --allow-types feat,fix',
         ],
       },
 
       // release:checks - Run pre-release checks
       {
-        path: 'release checks',
+        path: 'release checks run',
         category: 'Validation',
         describe: 'Run pre-release checks from release config',
         operationType: 'analyze' as const,
@@ -561,9 +561,9 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release checks',
-          'kb release checks --scope @my-org/core',
-          'kb release checks --json',
+          'kb release checks run',
+          'kb release checks run --scope @my-org/core',
+          'kb release checks run --json',
         ],
       },
 
@@ -595,7 +595,7 @@ export const manifest = {
 
       // release:build - Build packages
       {
-        path: 'release build',
+        path: 'release build run',
         category: 'Publish',
         describe: 'Build packages from release plan',
         operationType: 'execute' as const,
@@ -610,15 +610,15 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release build',
-          'kb release build --scope platform',
-          'kb release build --json',
+          'kb release build run',
+          'kb release build run --scope platform',
+          'kb release build run --json',
         ],
       },
 
       // release:pack - Verify npm artifacts
       {
-        path: 'release pack',
+        path: 'release pack validate',
         category: 'Publish',
         describe: 'Verify built package artifacts via npm pack',
         operationType: 'execute' as const,
@@ -632,15 +632,15 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release pack',
-          'kb release pack --scope @my-org/core',
-          'kb release pack --json',
+          'kb release pack validate',
+          'kb release pack validate --scope @my-org/core',
+          'kb release pack validate --json',
         ],
       },
 
       // release:version - Bump package.json versions
       {
-        path: 'release version',
+        path: 'release version update',
         category: 'Publish',
         describe: 'Bump package.json versions per release plan',
         operationType: 'mutate' as const,
@@ -668,17 +668,17 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release version',
-          'kb release version --bump minor',
-          'kb release version --channel canary',
-          'kb release version --dry-run',
-          'kb release version --scope platform --json',
+          'kb release version update',
+          'kb release version update --bump minor',
+          'kb release version update --channel canary',
+          'kb release version update --dry-run',
+          'kb release version update --scope platform --json',
         ],
       },
 
       // release:git - Commit, tag, push
       {
-        path: 'release git',
+        path: 'release git commit',
         category: 'Publish',
         describe: 'Commit, tag, and push release changes',
         operationType: 'mutate' as const,
@@ -698,7 +698,7 @@ export const manifest = {
             type: 'string',
             choices: ['stable', 'canary'] as const,
             default: 'stable',
-            description: 'Release channel — must match the channel `release plan`/`release version` used, so a stale/rejected persisted plan is recomputed under the same channel instead of silently falling back to stable',
+            description: 'Release channel — must match the channel `release plan`/`release version update` used, so a stale/rejected persisted plan is recomputed under the same channel instead of silently falling back to stable',
           },
           'dry-run': { type: 'boolean', description: 'Skip git operations' },
           'no-verify': { type: 'boolean', description: 'Pass --no-verify to git push' },
@@ -706,10 +706,10 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release git',
-          'kb release git --scope platform',
-          'kb release git --dry-run',
-          'kb release git --no-verify --json',
+          'kb release git commit',
+          'kb release git commit --scope platform',
+          'kb release git commit --dry-run',
+          'kb release git commit --no-verify --json',
         ],
       },
     ],

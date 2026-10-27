@@ -119,7 +119,7 @@ export function BaselineDiffCard() {
           variant="info"
           showIcon
           message="No check snapshot"
-          description="Run 'kb qa check --save' to generate a check snapshot."
+          description="Run 'kb qa check run --save' to generate a check snapshot."
         />
       );
     }
@@ -128,7 +128,7 @@ export function BaselineDiffCard() {
         variant="info"
         showIcon
         message="No stats snapshot"
-        description="Run 'kb qa stats --save' to generate a stats snapshot."
+        description="Run 'kb qa stats show --save' to generate a stats snapshot."
       />
     );
   }

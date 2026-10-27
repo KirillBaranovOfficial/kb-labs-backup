@@ -23,7 +23,7 @@ function getHint(code: InboxErrorCode, message: string): string | undefined {
     case 'ENV_MISSING':
       return 'Set INBOX_ACCOUNTS=work,personal and account vars (INBOX_ACCOUNT_WORK_USER, _PASS, _IMAP_HOST, _SMTP_HOST)';
     case 'ACCOUNT_NOT_FOUND':
-      return `Use kb inbox accounts to see configured accounts, then pass the name with --account`;
+      return `Use kb inbox account list to see configured accounts, then pass the name with --account`;
     case 'IMAP_AUTH_FAILED':
       return 'Create an app-password in Yandex ID settings (yandex.ru/id) and set it as INBOX_ACCOUNT_<NAME>_PASS';
     case 'IMAP_CONNECT_FAILED':
@@ -31,7 +31,7 @@ function getHint(code: InboxErrorCode, message: string): string | undefined {
     case 'IMAP_TIMEOUT':
       return 'Server did not respond in time — try again in a moment';
     case 'IMAP_MAILBOX_NOT_FOUND':
-      return 'Run kb inbox folders --account <name> to see available folders';
+      return 'Run kb inbox folder list --account <name> to see available folders';
     case 'MESSAGE_NOT_FOUND':
       return 'The uid may be stale — refresh with: kb inbox list';
     case 'SMTP_AUTH_FAILED':

@@ -503,13 +503,13 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 if args[:3] == ["workflow", "runs", "view"]:
                     run_id = args[3]
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"id": run_id, "status": "success"}}), "")
-                if args[:2] == ["commit", "generate"]:
+                if args[:3] == ["commit", "plan", "create"]:
                     error = {"code": "KB_ADAPTER_CREDENTIALS_MISSING", "message": "Adapter llm is missing OPENAI_API_KEY.",
                              "hint": "Set OPENAI_API_KEY or run `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env`. No request was sent.",
                              "retryable": False, "correlationId": "adapter-missing-credentials",
                              "details": {"adapter": "llm", "credential": "OPENAI_API_KEY"}}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
-                if args[:2] == ["commit", "reset"]:
+                if args[:3] == ["commit", "plan", "delete"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:2] == ["mind", "search"]:
                     error = {"code": "KB_ADAPTER_NOT_CONFIGURED", "message": "Adapter is not configured.",
@@ -632,7 +632,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn(("kb", "adapter", "unbind", "storage", "--json"), calls)
             self.assertIn(("kb", "config", "get", "--scope", "platform", "platform.adapterOptions.storage", "--json"), calls)
             self.assertNotIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)
-            self.assertIn(("kb", "commit", "generate", "--json"), calls)
+            self.assertIn(("kb", "commit", "plan", "create", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"), calls)

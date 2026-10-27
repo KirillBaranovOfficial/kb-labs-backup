@@ -134,7 +134,7 @@ export default defineCommand({
         } else {
           ctx.ui?.write?.(msg);
         }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release promote --help` to review its inputs and recovery steps, then retry." } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release stable publish --help` to review its inputs and recovery steps, then retry." } };
       }
 
       let rawResult: ProgrammaticPublishResult | PublishWithOTPResult;
@@ -165,7 +165,7 @@ export default defineCommand({
 
       const response = promoteResult.success
         ? promoteResult
-        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Promotion failed', hint: 'Inspect the failed package details, resolve registry errors, then rerun `kb release promote`.' } };
+        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Promotion failed', hint: 'Inspect the failed package details, resolve registry errors, then rerun `kb release stable publish`.' } };
 
       if (json) {
         return response;

@@ -26,11 +26,13 @@ func psJSONRecords(t *testing.T, state string) []map[string]any {
 	if status.Code() != 0 {
 		t.Fatalf("ps --json exit = %d; stderr=%s", status.Code(), stderr.String())
 	}
-	var records []map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &records); err != nil {
+	var listing struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &listing); err != nil {
 		t.Fatalf("decode ps --json output %q: %v", stdout.String(), err)
 	}
-	return records
+	return listing.Runs
 }
 
 func psLeftoversJSONEntries(t *testing.T, state string) []map[string]any {
@@ -65,7 +67,7 @@ func assertNoJSONStringContains(t *testing.T, value any, forbidden string, path 
 	}
 }
 
-// case: S-237.66
+// case: S-237.75
 // Script-level record consumers (the orchestration event daemon and any
 // future reader) must read run records only through this JSON contract. The
 // test runs a real run to a terminal record and asserts every field such
@@ -93,7 +95,7 @@ func TestPSJSONCarriesEveryRecordFieldRecordConsumersRead(t *testing.T) {
 	for {
 		records := psJSONRecords(t, state)
 		if len(records) == 1 {
-			if records[0]["status"] == "dead" {
+			if records[0]["status"] == "completed" {
 				record = records[0]
 				break
 			}
@@ -101,16 +103,16 @@ func TestPSJSONCarriesEveryRecordFieldRecordConsumersRead(t *testing.T) {
 			t.Fatalf("ps --json listed %d records for one finished run: %v", len(records), records)
 		}
 		if !time.Now().Before(deadline) {
-			t.Fatalf("ps --json never listed the finished run as dead: %v", records)
+			t.Fatalf("ps --json never listed the finished run as completed: %v", records)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	for field, want := range map[string]any{
-		"run_id":   run.RunID,
-		"tag":      "contract-check",
-		"status":   "dead",
+		"run_id":    run.RunID,
+		"tag":       "contract-check",
+		"status":    "completed",
 		"exit_code": float64(0),
-		"stall_ms": float64(30 * time.Minute / time.Millisecond),
+		"stall_ms":  float64(30 * time.Minute / time.Millisecond),
 	} {
 		got, ok := record[field]
 		if !ok {
@@ -128,7 +130,7 @@ func TestPSJSONCarriesEveryRecordFieldRecordConsumersRead(t *testing.T) {
 	assertNoJSONStringContains(t, record, state, "$")
 }
 
-// case: S-237.66
+// case: S-237.75
 // The leftovers JSON contract attributes every uncleaned owned resource to
 // its owning run, so outcome publishers never compose resource ledger paths.
 func TestPSLeftoversJSONAttributesEveryLeftoverToItsRun(t *testing.T) {
@@ -155,7 +157,7 @@ func TestPSLeftoversJSONAttributesEveryLeftoverToItsRun(t *testing.T) {
 		for _, child := range run.Tree {
 			killOwnedProcess(child.PID, child.Identity)
 		}
-		killOwnedProcess(run.PID, run.StartedAt)
+		killOwnedProcess(run.PID, run.Identity)
 		_ = runCommand.Process.Kill()
 		_ = runCommand.Wait()
 	})
@@ -196,7 +198,7 @@ func TestPSLeftoversJSONAttributesEveryLeftoverToItsRun(t *testing.T) {
 	if err := os.WriteFile(ownedPath, []byte("replacement"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	killOwnedProcess(run.PID, run.StartedAt)
+	killOwnedProcess(run.PID, run.Identity)
 	terminalDeadline := time.Now().Add(5 * time.Second)
 	runID := ""
 	for time.Now().Before(terminalDeadline) {
@@ -239,13 +241,16 @@ func TestPSLeftoversJSONAttributesEveryLeftoverToItsRun(t *testing.T) {
 	assertNoJSONStringContains(t, entries, state+string(filepath.Separator)+"runs", "$")
 }
 
-// case: S-237.66
-func TestPSJSONContractsAreEmptyArraysOnAnUnusedStateDirectory(t *testing.T) {
+// case: S-237.75
+func TestPSJSONContractsAreEmptyOnAnUnusedStateDirectory(t *testing.T) {
 	state := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	status := executeInvocation("kb-runner", []string{"ps", "--state", state, "--json"}, &stdout, &stderr)
-	if status.Code() != 0 || strings.TrimSpace(stdout.String()) != "[]" {
-		t.Fatalf("ps --json on an unused state directory = %d %q, want 0 %q; stderr=%s", status.Code(), stdout.String(), "[]", stderr.String())
+	var listing struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if status.Code() != 0 || json.Unmarshal(stdout.Bytes(), &listing) != nil || len(listing.Runs) != 0 {
+		t.Fatalf("ps --json on an unused state directory = %d %q, want 0 with an empty runs array; stderr=%s", status.Code(), stdout.String(), stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()

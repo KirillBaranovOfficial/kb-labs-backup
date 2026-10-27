@@ -116,7 +116,7 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         loader.fail(`No packages found matching scope: ${flags.scope || 'all'}`);
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release changelog --help` to review its inputs and recovery steps, then retry." } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release changelog show --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const gitCwd = await resolveGitCwd(flags.scope, plan.packages, repoRoot);

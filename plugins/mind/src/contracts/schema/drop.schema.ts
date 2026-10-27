@@ -1,5 +1,5 @@
 /**
- * `drop` wire contract (CLI `mind drop` / REST `DELETE /index`).
+ * `drop` wire contract (CLI `mind index delete` / REST `DELETE /index`).
  *
  * Removes an entire index: all its vectors (by namespace=indexId) plus its
  * manifest. Distinct from `sync delete` (which removes specific documents) and

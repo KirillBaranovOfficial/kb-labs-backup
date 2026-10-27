@@ -40,7 +40,7 @@ export default defineCommand({
       outputCycles(cycles, flags, ui);
 
       return cycles.length > 0
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Circular dependencies found', hint: 'Review the dependency cycles, then rerun `kb quality cycles`.', diagnostics: cycles.map((cycle) => ({ code: 'KB_QUALITY_DEPENDENCY_CYCLE', severity: 'error', message: cycle.join(' -> ') })) } }
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Circular dependencies found', hint: 'Review the dependency cycles, then rerun `kb quality cycles list`.', diagnostics: cycles.map((cycle) => ({ code: 'KB_QUALITY_DEPENDENCY_CYCLE', severity: 'error', message: cycle.join(' -> ') })) } }
         : { cycles };
     },
   },

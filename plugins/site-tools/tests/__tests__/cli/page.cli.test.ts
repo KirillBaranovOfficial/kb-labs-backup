@@ -34,7 +34,7 @@ describe('site-tools:page', () => {
 
     if (result.ok) { throw new Error('expected missing page segment to fail'); }
     expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
-    expect(result.error.hint).toContain('kb site page pricing');
+    expect(result.error.hint).toContain('kb site page create pricing');
     expect(writeFileSync).not.toHaveBeenCalled();
   });
 

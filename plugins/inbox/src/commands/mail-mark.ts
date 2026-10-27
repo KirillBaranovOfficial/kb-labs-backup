@@ -21,7 +21,7 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<MarkFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        return validationError('uid is required', 'Usage: kb inbox mark <uid> --read|--unread|--spam|--flagged|--unflagged');
+        return validationError('uid is required', 'Usage: kb inbox message set <uid> --read|--unread|--spam|--flagged|--unflagged');
       }
 
       const uid = parseInt(rawUid, 10);

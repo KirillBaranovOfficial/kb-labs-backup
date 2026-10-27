@@ -14,7 +14,7 @@ export interface DailyReview {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Summary for the daily cron artifact and the `steward review` command.
+ * Summary for the daily cron artifact and the `steward review show` command.
  * First field is `lastBackupDaysAgo` on purpose (ADR-0001 §Артефакты) — a
  * silent backup failure must be the loudest line, not a swallowed log.
  */

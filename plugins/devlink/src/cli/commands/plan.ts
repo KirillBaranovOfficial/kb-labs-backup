@@ -94,7 +94,7 @@ export default defineCommand<unknown, PlanInput, DevlinkPlan>({
             },
             sections: [
               ...sections,
-              { header: 'Next step', items: [`kb devlink switch --mode=${targetMode}`] },
+              { header: 'Next step', items: [`kb devlink mode set --mode=${targetMode}`] },
             ],
             timing: tracker.total(),
           });

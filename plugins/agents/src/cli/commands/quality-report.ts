@@ -2,10 +2,10 @@
  * agent:quality:report - Agent execution quality control report
  *
  * Usage:
- *   pnpm kb agent quality report
- *   pnpm kb agent quality report --days=3
- *   pnpm kb agent quality report --session-id=session-123
- *   pnpm kb agent quality report --json
+ *   pnpm kb agent quality report show
+ *   pnpm kb agent quality report show --days=3
+ *   pnpm kb agent quality report show --session-id=session-123
+ *   pnpm kb agent quality report show --json
  */
 
 import { defineCommand, type PluginCommandContextV3 } from '@kb-labs/sdk';

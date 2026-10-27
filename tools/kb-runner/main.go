@@ -180,8 +180,8 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	latestTag := fs.String("latest-tag", "", "stable stream key used to resolve the newest run record")
 	state := fs.String("state", "", "directory for run records and events")
 	stall := fs.Duration("stall", 0, "report no-output intervals at this duration")
-	stdoutPath := fs.String("stdout", "", "tee stdout to this file")
-	stderrPath := fs.String("stderr", "", "tee stderr to this file")
+	stdoutPath := fs.String("stdout", "", "tee command stdout to this file and the terminal")
+	stderrPath := fs.String("stderr", "", "tee command stderr to this file and the terminal")
 	stdinPath := fs.String("stdin", "", "read command stdin from this file")
 	slotGroup := fs.String("slot-group", "", "serialize starts within this capacity group")
 	slots := fs.Int("slots", 0, "maximum live runs allowed in the slot group")
@@ -189,6 +189,8 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	holdGate := fs.String("hold-gate", "", "hold this named gate for the command tree lifetime")
 	minFree := fs.String("min-free", "", "minimum free bytes on the state filesystem")
 	costKey := fs.String("cost-key", "", "key used to learn completed run resource costs")
+	cost := fs.String("cost", "light", "expected resource cost class: light or heavy")
+	priority := fs.Int("priority", 0, "run priority; lower values are paused first under hard pressure")
 	memory := fs.String("mem", "", "declared memory reservation, for example 2G")
 	cpus := fs.String("cpus", "", "minimum or minimum..maximum CPU cores")
 	disk := fs.String("disk", "", "declared disk growth reservation, for example 3G")
@@ -209,8 +211,11 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	if *tag == "" || *state == "" || *stall <= 0 || *stdoutPath == "" || *stderrPath == "" {
 		return 2, fmt.Errorf("%s run: --tag, --state, positive --stall, --stdout, and --stderr are required; next: %s run --help", root.Name(), root.InvocationCommand())
 	}
+	costClass, err := proc.ParseCostClass(*cost)
+	if err != nil {
+		return 2, fmt.Errorf("%s run: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
+	}
 	var minFreeBytes uint64
-	var err error
 	if *minFree == "" {
 		minFreeBytes = 0
 	} else {
@@ -246,7 +251,7 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 		return 1, fmt.Errorf("kb-runner run: locate keeper executable: %w", err)
 	}
 	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
-	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
+	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("%s run: %w\nInspect state directory access before retrying:\nnext: ls -ld %s\nnext: %s", root.Name(), err, shellQuote(*state), shellJoin(os.Args))
 	}
@@ -260,6 +265,13 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 			return code, supervisedCommandFailure(root, *state, code)
 		}
 		return 1, keeperWaitFailure(root, *state, err)
+	}
+	completed, err := proc.WaitTag(context.Background(), *state, *tag)
+	if err != nil {
+		return 1, keeperWaitFailure(root, *state, err)
+	}
+	if completed.Status != proc.StatusCompleted {
+		return renderWaitOutcome(completed, *state, stdout, root.Invocation())
 	}
 	if _, err := fmt.Fprintf(stdout, "run %s completed\n", *tag); err != nil {
 		return 1, fmt.Errorf("%s: write completion output: %w", root.Name(), err)
@@ -384,13 +396,16 @@ func (values *pathListFlag) Set(value string) error {
 func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
 	state := fs.String("state", "", "directory containing run records")
+	jsonOutput := fs.Bool("json", false, "write run and host resource state as JSON")
 	leftovers := fs.Bool("leftovers", false, "list every uncleaned owned resource")
-	jsonOutput := fs.Bool("json", false, "emit the machine-readable JSON contract")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
 	if *state == "" {
 		return 2, fmt.Errorf("%s ps: --state is required; next: %s ps --help", root.Name(), root.InvocationCommand())
+	}
+	if err := reconcileJobsForState(*state); err != nil {
+		return 1, fmt.Errorf("%s ps: reconcile agent jobs: %w; next: %s status --state %s --json", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 	}
 	if *leftovers {
 		entries, err := proc.Leftovers(*state)
@@ -422,8 +437,8 @@ func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 		return 1, fmt.Errorf("%s ps: read run state: %w\nnext: ls -ld %s", root.Name(), listing.Error, shellQuote(*state))
 	}
 	if *jsonOutput {
-		if err := json.NewEncoder(output).Encode(listing.Runs); err != nil {
-			return 1, fmt.Errorf("kb-runner ps: write JSON: %w", err)
+		if err := json.NewEncoder(output).Encode(listing); err != nil {
+			return 1, fmt.Errorf("%s ps: write JSON: %w", root.Name(), err)
 		}
 		return 0, nil
 	}
@@ -499,6 +514,9 @@ func eventsCommand(root runnerRoot, args []string, output io.Writer) (int, error
 	filters, err := proc.ParseEventFilter(*filter)
 	if err != nil {
 		return 2, fmt.Errorf("%s events: %w; next: %s events --help", root.Name(), err, root.InvocationCommand())
+	}
+	if err := reconcileJobsForState(*state); err != nil {
+		return 1, fmt.Errorf("%s events: reconcile agent jobs: %w; next: %s status --state %s --json", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 	}
 	if err := proc.Events(ctx, *state, *follow, filters, *offset, output); err != nil && !errors.Is(err, context.Canceled) {
 		return 1, fmt.Errorf("%s events: %w\nnext: ls -l %s", root.Name(), err, shellQuote(filepath.Join(*state, "events.jsonl")))
@@ -602,7 +620,7 @@ func renderWaitOutcome(run proc.RunInfo, state string, stdout io.Writer, executa
 		return 1, waitDiagnosticError{diagnostic: diagnostic}
 	}
 	switch run.Status {
-	case proc.StatusDead:
+	case proc.StatusCompleted, proc.StatusFailed, proc.StatusDead:
 		if _, err := fmt.Fprintf(stdout, "run %s exited after %dms\n", run.Tag, run.DurationMS); err != nil {
 			return 1, fmt.Errorf("kb-runner wait: write output: %w", err)
 		}

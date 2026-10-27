@@ -113,7 +113,7 @@ export interface BuildRunReportInput {
  * next step. Keep this in one place so R2.2 can swap it.
  */
 export function resumeCommandFor(flow?: string, scope?: string): string {
-  const parts = ['pnpm', 'kb', 'release', 'checks'];
+  const parts = ['pnpm', 'kb', 'release', 'checks', 'run'];
   if (flow) { parts.push('--flow', flow); }
   if (scope) { parts.push('--scope', scope); }
   return parts.join(' ');

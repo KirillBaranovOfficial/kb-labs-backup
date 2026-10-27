@@ -41,7 +41,7 @@ export default defineCommand({
       const { list, name, desc, status, priority, assignee, due, parent, json, full } = input.flags;
 
       if (!list) {
-        return validationError('--list is required', 'Use `kb clickup list tasks <listId>` to find the list ID');
+        return validationError('--list is required', 'Use `kb clickup task list <listId>` to find the list ID');
       }
       if (!name) {
         return validationError('--name is required');

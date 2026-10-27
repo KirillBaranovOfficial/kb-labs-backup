@@ -4,7 +4,7 @@
  * cross-package dependencies against the version this release is about to
  * ship instead of whatever is already live on npm.
  *
- * Not to be confused with `release stage` (stage.ts): that command packs
+ * Not to be confused with `release artifact create` (stage.ts): that command packs
  * already-committed, already-bumped versions for CI delivery AFTER human
  * approval — this one runs BEFORE Bump versions, off the in-memory plan
  * `Preview` already computed, and publishes to a throwaway local registry
@@ -104,7 +104,7 @@ export default defineCommand({
         plan = JSON.parse(readFileSync(planPath, 'utf-8')) as ReleasePlan;
       } catch (err) {
         const msg = `release:stage-plan could not read plan at ${planPath}: ${err instanceof Error ? err.message : String(err)}`;
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Check the plan path and JSON contents, then rerun `kb release stage plan`.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Check the plan path and JSON contents, then rerun `kb release candidate publish`.' } };
       }
 
       if (plan.packages.length === 0) {
@@ -158,7 +158,7 @@ export default defineCommand({
       } catch (err) {
         packLoader.fail('Packing failed');
         const msg = err instanceof Error ? err.message : String(err);
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Packing failed: ${msg}`, hint: 'Inspect the release plan and package build output, then retry `kb release stage plan`.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Packing failed: ${msg}`, hint: 'Inspect the release plan and package build output, then retry `kb release candidate publish`.' } };
       }
       writeFileSync(
         join(outDir, 'manifest.json'),
@@ -179,7 +179,7 @@ export default defineCommand({
 
       if (result.failed.length > 0) {
         stageLoader.fail(`${result.failed.length}/${packagesToPublish.length} package(s) failed to stage`);
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release stage plan --help` to review its inputs and recovery steps, then retry." } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release candidate publish --help` to review its inputs and recovery steps, then retry." } };
       }
 
       stageLoader.succeed(`Staged ${result.published.length} package(s) (${result.alreadyPublished.length} already staged)`);

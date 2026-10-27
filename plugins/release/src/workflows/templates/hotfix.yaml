@@ -29,7 +29,7 @@ jobs:
 
       - name: Bump versions
         if: ${{ steps.approve.outputs.approved }}
-        run: pnpm kb release version --scope ${{ inputs.scope }} --bump patch --json
+        run: pnpm kb release version update --scope ${{ inputs.scope }} --bump patch --json
 
       - name: Publish
         if: ${{ steps.approve.outputs.approved }}
@@ -37,4 +37,4 @@ jobs:
 
       - name: Git commit & tag
         if: ${{ steps.approve.outputs.approved }}
-        run: pnpm kb release git --scope ${{ inputs.scope }} --bump patch --json
+        run: pnpm kb release git commit --scope ${{ inputs.scope }} --bump patch --json

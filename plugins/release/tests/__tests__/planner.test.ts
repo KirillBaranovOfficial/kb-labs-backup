@@ -309,7 +309,7 @@ describe('planRelease — idempotent re-plan after external bump', () => {
 //
 // Regression for the real incident this reproduces: `release-build-candidate.yml`
 // checks out the EXACT commit `release-prepare` already committed and tagged
-// (e.g. `platform-v2.119.0`), then runs `pnpm kb release version --flow
+// (e.g. `platform-v2.119.0`), then runs `pnpm kb release version update --flow
 // platform --json` with NO `--bump` flag (defaults to 'auto') to "apply
 // planned package versions". At that checkout, HEAD's package.json and disk's
 // package.json are identical (nothing to trust-disk-over), and the newest

@@ -147,7 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          pnpm kb release deliver \
+          pnpm kb release artifact publish \
             --flow "$FLOW" \
             --release-tag "${FLOW}-v${VERSION}" \
             --artifacts-dir .kb/release/bundle/npm \

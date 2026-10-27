@@ -17,7 +17,7 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<MoveFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        return validationError('uid is required', 'Usage: kb inbox move <uid> --folder Work');
+        return validationError('uid is required', 'Usage: kb inbox message update <uid> --folder Work');
       }
       if (!input.flags.folder) {
         return validationError('--folder is required');

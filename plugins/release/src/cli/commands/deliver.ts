@@ -1,5 +1,5 @@
 /**
- * Deliver command — ships the tarballs `release stage` already packed to a
+ * Deliver command — ships the tarballs `release artifact create` already packed to a
  * destination ("target"), by name. This is the thin-CI half of the
  * "plugin prepares, CI delivers" release plan: CI's only job is to have
  * the right target credentials and call this one command with the tag —
@@ -7,11 +7,11 @@
  * verification all live here, not in CI YAML.
  *
  * Deliberately reads `manifest.json` from `--artifacts-dir` (written by
- * `release stage`) instead of rediscovering or rebuilding packages — the
+ * `release artifact create`) instead of rediscovering or rebuilding packages — the
  * whole point is to ship the exact bytes that were already packed and
  * validated, not a fresh equivalent pack.
  *
- * Not to be confused with `release promote` (`promote.ts`) — that command
+ * Not to be confused with `release stable publish` (`promote.ts`) — that command
  * still re-packs from the working tree at publish time (the older,
  * Verdaccio-pre-flight flow from ADR-0001) and remains in place unchanged.
  */
@@ -68,7 +68,7 @@ function loadManifest(artifactsDir: string): StagedArtifact[] | { error: string 
   try {
     return JSON.parse(readFileSync(manifestPath, 'utf-8')) as StagedArtifact[];
   } catch {
-    return { error: `No manifest.json found at ${manifestPath} — run \`kb release stage\` first` };
+    return { error: `No manifest.json found at ${manifestPath} — run \`kb release artifact create\` first` };
   }
 }
 
@@ -91,7 +91,7 @@ function writeGithubStepSummary(markdown: string): void {
 
 function buildFailureSummaryMarkdown(target: string, publishedCount: number, failed: DeliverFailure[]): string {
   const lines: string[] = [
-    `## ❌ \`release deliver --target ${target}\` — ${failed.length} package(s) failed`,
+    `## ❌ \`release artifact publish --target ${target}\` — ${failed.length} package(s) failed`,
     '',
     `${publishedCount} package(s) delivered successfully; ${failed.length} did not.`,
     '',
@@ -106,7 +106,7 @@ function buildFailureSummaryMarkdown(target: string, publishedCount: number, fai
 
 export default defineCommand({
   id: 'release:deliver',
-  description: 'Ship the tarballs `release stage` already packed to a target (npm) — no packing, no rebuild',
+  description: 'Ship the tarballs `release artifact create` already packed to a target (npm) — no packing, no rebuild',
 
   handler: {
     async execute(ctx: PluginCommandContextV3, input: CLIInput<DeliverFlags>): Promise<CommandResult<DeliverPayload>> {
@@ -115,7 +115,7 @@ export default defineCommand({
 
       if (target !== 'npm') {
         const msg = `release:deliver --target ${target} is not implemented — only "npm" ships this pass (see release plan's out-of-scope section for github-release/mirror)`;
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Use `kb release deliver --target npm` after the release plan is ready.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Use `kb release artifact publish --target npm` after the release plan is ready.' } };
       }
 
       const cwd = ctx.cwd || process.cwd();
@@ -127,18 +127,18 @@ export default defineCommand({
       const flowResult = resolveFlowName(baseConfig, flags);
       if (typeof flowResult !== 'string') {
         const msg = `release:deliver ${flowResult.error}`;
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Check the release flow configuration, then rerun `kb release deliver`.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Check the release flow configuration, then rerun `kb release artifact publish`.' } };
       }
       const config: ReleaseConfig = mergeConfigWithFlow(baseConfig, flowResult);
 
       const artifactsDir = join(repoRoot, flags['artifacts-dir'] ?? '.kb/release/artifacts');
       const manifest = loadManifest(artifactsDir);
       if (!Array.isArray(manifest)) {
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: manifest.error, hint: 'Run `kb release stage` to create artifacts, then retry delivery.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: manifest.error, hint: 'Run `kb release artifact create` to create artifacts, then retry delivery.' } };
       }
       if (manifest.length === 0) {
         const msg = `manifest.json at ${artifactsDir} lists no packages`;
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Run `kb release stage` to create package artifacts, then retry delivery.' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Run `kb release artifact create` to create package artifacts, then retry delivery.' } };
       }
 
       const dryRun = flags['dry-run'];
@@ -207,7 +207,7 @@ export default defineCommand({
       }
 
       // Post-delivery verification against the real registry — this is the
-      // gap `release promote` always had (it never verified anything after
+      // gap `release stable publish` always had (it never verified anything after
       // publishing). Real npm has propagation lag Verdaccio doesn't, hence
       // the retry budget here instead of a single-shot check.
       const verifyLoader = useLoader('Verifying delivery against the registry...');
@@ -233,7 +233,7 @@ export default defineCommand({
         // npm unpublish here. Surface loudly and let a human decide.
         verifyLoader.fail(`Delivery verification found ${verifyIssues.length} issue(s) — packages are published, verification failed`);
         writeGithubStepSummary([
-          `## ⚠️ \`release deliver --target ${target}\` — publish succeeded, verification found ${verifyIssues.length} issue(s)`,
+          `## ⚠️ \`release artifact publish --target ${target}\` — publish succeeded, verification found ${verifyIssues.length} issue(s)`,
           '',
           'Packages are already live on the registry — this is a verification problem, not a publish failure, and nothing was rolled back (npm unpublish is never attempted automatically).',
           '',
@@ -246,7 +246,7 @@ export default defineCommand({
       if (flags.json) {
         const response = verifyIssues.length === 0
           ? result
-          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: 'Delivery verification failed after publish completed', hint: 'Packages were published; inspect verification issues and rerun `kb release deliver` to confirm.' } };
+          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: 'Delivery verification failed after publish completed', hint: 'Packages were published; inspect verification issues and rerun `kb release artifact publish` to confirm.' } };
         return response;
       }
 
@@ -261,7 +261,7 @@ export default defineCommand({
 
       return verifyIssues.length === 0
         ? result
-        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery verification failed', hint: "Run `kb release deliver --help` to review its inputs and recovery steps, then retry." } };
+        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery verification failed', hint: "Run `kb release artifact publish --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

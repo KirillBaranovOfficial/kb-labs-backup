@@ -135,7 +135,7 @@ export async function computeFlowReleaseStatus(opts: ComputeFlowReleaseStatusOpt
   const tagPattern = config.flows?.[flow]?.tagPattern ?? DEFAULT_TAG_PATTERN;
 
   const packages = await discoverCurrentPackages(cwd, undefined, flowConfig);
-  // Real npm — canary always publishes here, and `release promote` publishes
+  // Real npm — canary always publishes here, and `release stable publish` publishes
   // the stable dist-tag here too (config.registry is the pre-promote
   // Verdaccio target, not what end users resolve).
   const registry = resolvePublishRegistry(config, 'canary');

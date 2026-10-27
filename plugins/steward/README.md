@@ -90,7 +90,7 @@ All commands accept `--json` for structured output. Full flag reference: `kb ste
 
 | Command | Description |
 |---------|-------------|
-| `kb steward who <topic> [--project]` | Find who to contact about a topic. With `--project`, project-scoped members take priority (fallback chain); otherwise matches global competencies across every contact |
+| `kb steward person search <topic> [--project]` | Find who to contact about a topic. With `--project`, project-scoped members take priority (fallback chain); otherwise matches global competencies across every contact |
 
 ### Commitment
 
@@ -98,9 +98,9 @@ All commands accept `--json` for structured output. Full flag reference: `kb ste
 |---------|-------------|
 | `kb steward commitment add --text=... [--person] [--project] [--remind-at] [--stale-after-days]` | Record a promise made to a person, with an optional soft reminder date |
 | `kb steward commitment list [--status] [--project] [--stale-only]` | List commitments, optionally only the stale (overdue, unsnoozed) ones |
-| `kb steward commitment done <id>` | Mark a commitment fulfilled |
-| `kb steward commitment drop <id> --reason=...` | Cancel a commitment — reason is required and recorded in history |
-| `kb steward commitment snooze <id> --until=... [--reason]` | Postpone a commitment's reminder without cancelling it |
+| `kb steward commitment done set <id>` | Mark a commitment fulfilled |
+| `kb steward commitment remove <id> --reason=...` | Cancel a commitment — reason is required and recorded in history |
+| `kb steward commitment reminder update <id> --until=... [--reason]` | Postpone a commitment's reminder without cancelling it |
 
 ### Event
 
@@ -120,7 +120,7 @@ All commands accept `--json` for structured output. Full flag reference: `kb ste
 
 | Command | Description |
 |---------|-------------|
-| `kb steward review` | Daily summary: stale commitments, upcoming reminders, active projects, and days since the last successful backup |
+| `kb steward review show` | Daily summary: stale commitments, upcoming reminders, active projects, and days since the last successful backup |
 
 ---
 
