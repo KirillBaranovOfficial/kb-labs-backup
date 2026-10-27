@@ -20,7 +20,8 @@
     "KB_PLATFORM_ROOT",
     "KB_PROJECT_ROOT",
     "KB_SOCKET_HASH",
-    "KB_SOCKET_PATH"
+    "KB_SOCKET_PATH",
+    "KB_TEST_DEADLINE_SCALE"
   ],
   "codes": [
     {
@@ -346,6 +347,31 @@
       "structuredDetailFields": [
         "reason"
       ]
+    },
+    {
+      "code": "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE",
+      "area": "runtime",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The current executable path could not be determined.",
+      "hint": "Check that the current executable is available on disk, then retry the command.",
+      "structuredDetailFields": [
+        "reason"
+      ],
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE",
+      "httpStatus": 400,
+      "area": "runtime",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "Process supervision requires a cancellable context.",
+      "hint": "Pass a context with a non-nil Done channel, such as one returned by context.WithCancel or signal.NotifyContext."
     },
     {
       "code": "KB_RUNTIME_RUN_DIRTY",
