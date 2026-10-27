@@ -13,10 +13,6 @@ export default defineConfig({
   external: [
     '@kb-labs/sdk',
   ],
-  dts: {
-    resolve: true,
-    skipLibCheck: true,
-  },
   clean: true,
   sourcemap: true,
 });
