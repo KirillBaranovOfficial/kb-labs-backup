@@ -762,6 +762,19 @@
       "httpStatus": 500
     },
     {
+      "code": "KB_RUNNER_SCHEDULER_ALREADY_RUNNING",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "Another scheduler process owns this state directory.",
+      "hint": "Wait for it to exit, then run `{nextCommand}`.",
+      "templateParameters": ["nextCommand"],
+      "requiredTemplateParameters": ["nextCommand"],
+      "httpStatus": 409
+    },
+    {
       "code": "KB_HOST_CONTROL_UNAUTHORIZED",
       "area": "host",
       "stage": "run",
