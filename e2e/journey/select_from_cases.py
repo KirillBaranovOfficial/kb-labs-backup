@@ -71,6 +71,8 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
         prerequisites = keywords.get("requires")
         role = keywords.get("role")
+        plan_after_phase = keywords.get("plan_after_phase")
+        plan_phase = keywords.get("plan_phase")
         runners_node = keywords.get("runners")
         runners = []
         if runners_node is not None:
@@ -103,6 +105,15 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         else:
             raise ValueError(f"step {name!r} in {source} must declare prerequisites as a literal sequence")
         role_name = role.value if isinstance(role, ast.Constant) else None
+        if plan_after_phase is not None and (
+                not isinstance(plan_after_phase, ast.Constant)
+                or plan_after_phase.value != "all-steps"):
+            raise ValueError(f"{source}:{call.lineno}: plan_after_phase must be 'all-steps'")
+        if plan_phase is not None and (
+                not isinstance(plan_phase, ast.Constant)
+                or plan_phase.value != "teardown"
+                or role_name != "lifecycle"):
+            raise ValueError(f"{source}:{call.lineno}: plan_phase must be 'teardown' on a lifecycle step")
         provides_node = keywords.get("provides")
         if provides_node is None:
             provides = []
@@ -116,7 +127,9 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         declaration = {"name": name, "kind": "flow" if function == "flow" else "step",
                        "capability": capability,
                        "requires": required, "provides": provides,
-                       "role": role_name, "runners": runners}
+                       "role": role_name, "runners": runners,
+                       "plan_after_phase": plan_after_phase.value if plan_after_phase is not None else None,
+                       "plan_phase": plan_phase.value if plan_phase is not None else None}
         cases_node = keywords.get("cases")
         if isinstance(cases_node, (ast.Tuple, ast.List)) and all(
                 isinstance(item, ast.Constant) and isinstance(item.value, str)
@@ -355,7 +368,8 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
                 forwarding_call_sites[call_name(node)].append((source, node))
 
     def add_declaration(source: str, line: int, kind: str, name: str | None,
-                        required: list[str], role: str | None, runners: list[str]) -> None:
+                        required: list[str], role: str | None, runners: list[str],
+                        plan_after_phase: str | None = None, plan_phase: str | None = None) -> None:
         # Dynamic step names can carry checked edges, but are not selector
         # producers. Only a literal name or a statically resolved wrapper
         # call site can enter the producer graph.
@@ -363,6 +377,7 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
             key = f"@dynamic:{source}:{line}"
             declarations[key] = {"name": None, "kind": kind, "requires": required,
                                  "sources": {source}, "role": role, "runners": runners,
+                                 "plan_after_phase": plan_after_phase, "plan_phase": plan_phase,
                                  "locations": [(source, line, required)],
                                  "producer": False}
             return
@@ -373,6 +388,12 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
         declaration["requires"] = sorted(set(declaration["requires"]) | set(required))
         declaration["sources"].add(source)
         declaration["locations"].append((source, line, required))
+        for field, value in (("plan_after_phase", plan_after_phase), ("plan_phase", plan_phase)):
+            if value is not None:
+                existing = declaration.get(field)
+                if existing is not None and existing != value:
+                    raise ValueError(f"{source}:{line}: conflicting plan ordering for {name!r}")
+                declaration[field] = value
         if role is not None:
             declaration["role"] = role
         declaration["runners"] = sorted(set(declaration.get("runners", [])) | set(runners))
@@ -452,11 +473,18 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
             kind = "flow" if call_name(node) == "flow" else "step"
             role_node = keywords.get("role")
             role = role_node.value if isinstance(role_node, ast.Constant) else None
+            plan_after_node = keywords.get("plan_after_phase")
+            plan_after_phase = (plan_after_node.value if isinstance(plan_after_node, ast.Constant)
+                                else None)
+            plan_phase_node = keywords.get("plan_phase")
+            plan_phase = (plan_phase_node.value if isinstance(plan_phase_node, ast.Constant)
+                          else None)
             runners_node = keywords.get("runners")
             runners = [item.value for item in runners_node.elts
                        if isinstance(item, ast.Constant) and isinstance(item.value, str)] \
                 if isinstance(runners_node, (ast.Tuple, ast.List)) else []
-            add_declaration(source, node.lineno, kind, name, required, role, runners)
+            add_declaration(source, node.lineno, kind, name, required, role, runners,
+                            plan_after_phase, plan_phase)
     return declarations
 
 
@@ -720,11 +748,31 @@ def full_runner_plans(root: Path) -> dict[str, list[str]]:
         sources = set().union(*(_imported_journey_sources({source}, root)
                                 for source in runner.journey_sources))
         registrations = _source_step_declarations(sources, root)
-        plans[selector] = [
-            declaration["name"] for declaration in registrations.values()
+        selected = [
+            declaration for declaration in registrations.values()
             if declaration.get("name") is not None
             and (not declaration.get("runners") or selector in declaration["runners"])
         ]
+        barriers = [declaration for declaration in selected
+                    if declaration.get("plan_after_phase") == "all-steps"]
+        teardowns = [declaration for declaration in selected
+                     if declaration.get("plan_phase") == "teardown"]
+        if len(barriers) != 1 or len(teardowns) != 1:
+            raise ValueError(
+                f"{selector}: expected exactly one plan_after_phase='all-steps' barrier "
+                f"(found {len(barriers)}) and exactly one plan_phase='teardown' step "
+                f"(found {len(teardowns)}). Correct the journey declarations, then run "
+                "python3 e2e/journey/select_from_cases.py --write-plan-baseline")
+        barrier, teardown = barriers[0], teardowns[0]
+        if barrier is teardown or teardown.get("role") != "lifecycle":
+            raise ValueError(f"{selector}: plan barrier and teardown must be distinct, with lifecycle teardown")
+        ordered = [declaration for declaration in selected
+                   if declaration is not barrier and declaration is not teardown]
+        ordered.extend((barrier, teardown))
+        if ordered[-2] is not barrier or ordered[-1] is not teardown:
+            raise ValueError(f"{selector}: lifecycle plan barrier was not placed before teardown")
+        selected = ordered
+        plans[selector] = [declaration["name"] for declaration in selected]
     return plans
 
 

@@ -692,6 +692,33 @@ def _diagnostic(result: CompletedProcess, label: str) -> tuple[dict, dict]:
     return envelope, error
 
 
+def add_installed_host_stop_case_step(journey: Journey, platform_root: Path,
+                                     env: dict[str, str], *,
+                                     runner: CommandRunner = evidence_run_command) -> None:
+    """Claim the installed host stop lifecycle after the PC-002 start journey."""
+    root = Path(platform_root).resolve()
+
+    def stop_and_confirm() -> None:
+        stop_command = ["kb-create", "stop", "--platform-root", str(root), "--json"]
+        stopped = runner(stop_command, cwd=str(root), env=env, capture_output=True,
+                         text=True, check=False, timeout=120)
+        stop_data = _data(stopped, "kb-create stop")
+        if stop_data.get("operation") != "stop":
+            raise RuntimeError("kb-create stop JSON did not report operation stop")
+
+        status_command = ["kb-create", "status", "--platform-root", str(root), "--json"]
+        status = _data(runner(status_command, cwd=str(root), env=env, capture_output=True,
+                              text=True, check=False, timeout=120), "status after kb-create stop")
+        host = status.get("host")
+        if (status.get("running") is not False or not isinstance(host, dict)
+                or host.get(layout_value("sharedStateDirectory")) != "stopped"):
+            raise RuntimeError("kb-create status did not report host.state stopped and running false after stop")
+
+    journey.step("stop the installed host after start and service checks", "platform.host",
+                 stop_and_confirm, cases=["PC-002.4"],
+                 plan_after_phase="all-steps")
+
+
 def _commands_in_hint(hint: str) -> list[list[str]]:
     """Read the shell commands the diagnostic offers as executable argv."""
     commands = [shlex.split(command) for command in re.findall(r"`([^`]+)`", hint)]
