@@ -28,7 +28,7 @@ class HostBashTests(unittest.TestCase):
             journey.mkdir(parents=True)
             (repo / "e2e/verdaccio").mkdir(parents=True)
             shutil.copy2(ROOT / "e2e/verdaccio/clear-candidates.sh", repo / "e2e/verdaccio/clear-candidates.sh")
-            for name in ("run.sh", "compose-owner.sh", "candidate-services.sh", "runner-toolchain.sh", "teardown-compose.sh",
+            for name in ("run.sh", "../compose-owner.sh", "candidate-services.sh", "runner-toolchain.sh", "teardown-compose.sh",
                          "container_outcomes.py", "jsonl.py"):
                 shutil.copy2(JOURNEY / name, journey / name)
 
