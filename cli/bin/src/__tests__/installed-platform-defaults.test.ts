@@ -517,7 +517,21 @@ describe('installed platform adapter defaults', () => {
     await writeFile(path.join(installedCommitRoot, 'package.json'), commitPackageJSON);
     expect(await realpath(path.join(installedCommitRoot, 'node_modules', '@kb-labs', 'sdk')))
       .toBe(await realpath(path.join(versionRoot, 'node_modules', '@kb-labs', 'sdk')));
-    const commitPackage = JSON.parse(commitPackageJSON.toString('utf8')) as { version: string };
+    const commitPackage = JSON.parse(commitPackageJSON.toString('utf8')) as {
+      version: string;
+      dependencies: Record<string, string>;
+    };
+    for (const dependency of Object.keys(commitPackage.dependencies)) {
+      const dependencyPath = path.join(installedCommitRoot, 'node_modules', dependency);
+      try {
+        await access(dependencyPath);
+        continue;
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      await mkdir(path.dirname(dependencyPath), { recursive: true });
+      await symlink(path.join(commitRoot, 'node_modules', dependency), dependencyPath, 'dir');
+    }
     await writeFile(path.join(versionRoot, '.kb', 'marketplace.lock'), JSON.stringify({
       schema: 'kb.marketplace/3',
       plugins: {
