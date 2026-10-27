@@ -3,12 +3,19 @@ import os
 import subprocess
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
 from plugin_author_steps import run_commit_case_steps, run_plugin_author_flow
 from service_steps import Journey
+from invocations import open_http
+from marketplace_sync_fixture import (
+    marketplace_sync_request_count,
+    start_marketplace_sync_fixture,
+    stop_marketplace_sync_fixture,
+)
 
 
 FAKE_KB = r'''#!/usr/bin/env python3
@@ -40,9 +47,19 @@ if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and
 elif args[:3] == ["marketplace", "plugins", "add"]:
     link_path = args[args.index("--link") + 1]
     if link_path.startswith("/"):
-        print(json.dumps({"ok": False, "error": {"code": "KB_INPUT_INVALID",
+        request_log = os.environ.get("FAKE_MARKETPLACE_URL_LOG")
+        if request_log:
+            Path(request_log).write_text(os.environ.get("KB_MARKETPLACE_URL", ""), encoding="utf-8")
+        print(json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_INPUT_INVALID",
             "message": "The --link path must be relative to the selected scope directory."}}))
         raise SystemExit(1)
+    if os.environ.get("KB_MARKETPLACE_URL"):
+        import urllib.request
+        request = urllib.request.Request(
+            os.environ["KB_MARKETPLACE_URL"].rstrip("/") + "/api/v1/marketplace/packages/link",
+            data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=10):
+            pass
     if os.environ.get("FAIL_MARKETPLACE_ADD"):
         print("simulated marketplace plugins add failure")
         raise SystemExit(1)
@@ -201,6 +218,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             "HOME": str(self.home),
             "PATH": f"{self.bin}:{self.env.get('PATH', '')}",
             "FAKE_JOURNEY_LOG": str(self.log),
+            "FAKE_MARKETPLACE_URL_LOG": str(self.root / "marketplace-url.log"),
         })
 
     def tearDown(self):
@@ -213,6 +231,22 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         run_plugin_author_flow(journey, self.project, self.kb, "http://verdaccio:4873",
                                command_runner=subprocess.run, base_env=self.env)
         return journey.result()
+
+    def test_marketplace_sync_fixture_records_marketplace_requests(self):
+        process, marketplace_url, startup_error = start_marketplace_sync_fixture(
+            self.project, self.env, request_recorder=True)
+        self.assertIsNone(startup_error, startup_error)
+        self.assertIsNotNone(process)
+        self.assertIsNotNone(marketplace_url)
+        self.addCleanup(stop_marketplace_sync_fixture, process)
+
+        request = urllib.request.Request(
+            f"{marketplace_url}/api/v1/marketplace/packages/link",
+            data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        status, _, _ = open_http(urllib.request.urlopen, request, timeout=10, env=self.env)
+        self.assertEqual(status, 204)
+
+        self.assertEqual(marketplace_sync_request_count(marketplace_url, self.env), 1)
 
     # case: S-014.1
     def test_commit_and_review_case_steps_are_claimed_from_fake_cli_responses(self):
@@ -317,6 +351,8 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             | {"S-041.10": ("journey", "PASS"), "S-210.1": ("journey", "PASS")},
         )
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
+        marketplace_url = (self.root / "marketplace-url.log").read_text(encoding="utf-8")
+        self.assertTrue(marketplace_url.startswith("http://127.0.0.1:"))
         commands = self.log.read_text().splitlines()
         self.assertEqual(commands[:15], [
             "kb scaffold run plugin demo --mode standalone --yes",
