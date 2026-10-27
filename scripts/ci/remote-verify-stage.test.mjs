@@ -75,22 +75,26 @@ test('failed kb-devkit task contributes the task log tail identified by structur
     execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(repoRoot, 'tools/kb-devkit'), stdio: 'pipe' });
 
     let invocation;
+    let nodeOptions;
     const result = await runStage({
       stage: profile.buildStage,
       packages: ['@fixture/site'],
       selectedPackageCount: 1,
-      runCommand: async (command, args) => {
+      buildLimits: { cpuCount: 2, memoryBudgetBytes: 1_000_000, concurrency: 2, nodeHeapMb: 512 },
+      runCommand: async (command, args, options) => {
         invocation = [command, args];
+        nodeOptions = options.env.NODE_OPTIONS;
         return spawnSync(binary, ['--config', configPath, ...args], {
           cwd: fixtureRoot,
           encoding: 'utf8',
-          env: { ...process.env, HOME: home },
+          env: { ...process.env, ...options.env, HOME: home },
         });
       },
       now: (() => { let value = 0; return () => value += 10; })(),
     });
 
-    assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', '@fixture/site', '--json']]);
+    assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', '@fixture/site', '--concurrency', '2', '--json']]);
+    assert.equal(nodeOptions, '--max-old-space-size=512');
     assert.equal(result.status, 'fail');
     assert.ok(result.failures.some((line) => line.includes('ENOENT: no such file or directory, mkdir .next/export')));
     assert.ok(result.taskFailures[0].logTail.includes('Error occurred prerendering page /404'));

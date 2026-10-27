@@ -19,11 +19,18 @@ test('remote verification builds once and fans out independent and artifact-depe
   const independent = workflow.jobs['independent-test-shards'];
   const dependent = workflow.jobs['build-dependent-test-shards'];
   const finalize = workflow.jobs.verdict;
+  const prepareResultUpload = prepare.steps.find((step) => step.name === 'Upload prepare stage result');
+  const aggregateStep = finalize.steps.find((step) => step.name === 'Aggregate commit-bound verdict');
   const prepareSteps = prepare.steps;
   const buildSteps = build.steps;
   const independentSteps = independent.steps;
   const dependentSteps = dependent.steps;
 
+  assert.ok(prepare.steps.some((step) => step.run === 'node scripts/ci/run-remote-prepare.mjs'));
+  assert.equal(prepareResultUpload.if, 'always()');
+  assert.equal(prepareResultUpload.with.name, 'remote-result-prepare');
+  assert.equal(prepareResultUpload.with.path, 'stage-result-prepare.json');
+  assert.equal(aggregateStep.env.PREPARE_JOB_RESULT, '${{ needs.prepare.result }}');
   assert.equal(build.needs, 'prepare');
   assert.equal(independent.needs, 'prepare');
   assert.equal(independent.strategy.matrix, '${{ fromJSON(needs.prepare.outputs.independent_matrix) }}');
@@ -38,9 +45,11 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(build.outputs.selected_package_count, '${{ needs.prepare.outputs.selected_package_count }}');
   assert.equal(independent.env.REMOTE_SELECTED_PACKAGE_COUNT, '${{ needs.prepare.outputs.selected_package_count }}');
   assert.equal(dependent.env.REMOTE_SELECTED_PACKAGE_COUNT, '${{ needs.build.outputs.selected_package_count }}');
-  assert.equal(finalize.steps.find((step) => step.name === 'Aggregate commit-bound verdict').env.REMOTE_SELECTED_PACKAGE_COUNT, '${{ needs.prepare.outputs.selected_package_count }}');
-  assert.equal(buildSteps.find((step) => step.name === 'Build selected workspace packages once').env.REMOTE_STAGE, '${{ needs.prepare.outputs.build_stage }}');
-  assert.ok(prepareSteps.some((step) => step.name === 'Resolve affected packages and test matrix'));
+  assert.equal(aggregateStep.env.REMOTE_SELECTED_PACKAGE_COUNT, "${{ needs.prepare.outputs.selected_package_count || '0' }}");
+  const buildRun = buildSteps.find((step) => step.name === 'Build selected workspace packages once');
+  assert.equal(buildRun.env.REMOTE_STAGE, '${{ needs.prepare.outputs.build_stage }}');
+  assert.equal(buildRun.env.REMOTE_RESOURCE_SAMPLES, 'stage-resource-samples.jsonl');
+  assert.ok(!prepareSteps.some((step) => step.name === 'Install workspace dependencies'));
   assert.ok(buildSteps.some((step) => step.uses === './.github/actions/devkit-cas'));
   assert.ok(independentSteps.some((step) => step.uses === './.github/actions/devkit-cas'));
   assert.ok(dependentSteps.some((step) => step.uses === './.github/actions/devkit-cas'));
@@ -48,6 +57,11 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.ok(dependentSteps.some((step) => step.uses?.startsWith('actions/download-artifact@')));
   assert.ok(dependentSteps.some((step) => step.run === 'tar xf workspace-dist.tar'));
   assert.ok(buildSteps.some((step) => step.uses?.startsWith('actions/upload-artifact@')));
+  const resourceUpload = buildSteps.find((step) => step.name === 'Upload build result and resource evidence');
+  assert.equal(resourceUpload.if, 'always()');
+  assert.equal(resourceUpload.with.path, 'stage-result-build.json\nstage-resource-samples.jsonl\n');
+  assert.equal(aggregateStep.env.BUILD_JOB_RESULT, '${{ needs.build.result }}');
+  assert.equal(aggregateStep.env.BUILD_RESOURCE_SAMPLES, 'remote-results/stage-resource-samples.jsonl');
   assert.ok(finalize.needs.includes('independent-test-shards'));
   assert.ok(finalize.needs.includes('build-dependent-test-shards'));
   assert.equal(buildSteps.filter((step) => step.name === 'Build selected workspace packages once').length, 1);
@@ -74,11 +88,10 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
 });
 
 // case: S-262.7
-test('workflow base-ref wiring selects real workspace packages without origin/HEAD', () => {
+test('workflow base-ref wiring selects real workspace packages without origin/HEAD or laptop refs', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');
   const checkout = workflow.jobs.prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
-  const selectorStep = workflow.jobs.prepare.steps.find((step) => step.name === 'Resolve affected packages and test matrix');
-  const event = { repository: { default_branch: 'main' } };
+  const event = { repository: { default_branch: 'fixture-default' } };
   const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-hosted-shape-'));
   const checkoutRoot = path.join(temporaryRoot, 'checkout');
   const binary = path.join(temporaryRoot, 'kb-devkit');
@@ -86,16 +99,18 @@ test('workflow base-ref wiring selects real workspace packages without origin/HE
     assert.equal(checkout.with['fetch-depth'], 0);
     assert.equal(workflow.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
     assert.equal(workflow.jobs.prepare.env.VERIFICATION_PROFILE, "${{ github.event.inputs.profile || 'stream' }}");
-    assert.match(selectorStep.run, /resolve-remote-selection\.mjs/);
 
     execFileSync('git', ['clone', '--shared', '--no-checkout', root, checkoutRoot], { stdio: 'pipe' });
     execFileSync('git', ['checkout', '--detach', 'HEAD'], { cwd: checkoutRoot, stdio: 'pipe' });
-    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkoutRoot, encoding: 'utf8' }).trim();
-    const baseline = execFileSync('git', ['rev-parse', 'local/main'], { cwd: root, encoding: 'utf8' }).trim();
+    const baseline = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkoutRoot, encoding: 'utf8' }).trim();
     execFileSync('git', ['update-ref', `refs/remotes/origin/${event.repository.default_branch}`, baseline], { cwd: checkoutRoot });
     execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/HEAD'], { cwd: checkoutRoot });
     assert.equal(spawnSync('git', ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/HEAD'], { cwd: checkoutRoot }).status, 1);
-    assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkoutRoot, encoding: 'utf8' }).trim(), head);
+    execFileSync('git', ['config', 'user.name', 'Remote verification fixture'], { cwd: checkoutRoot });
+    execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: checkoutRoot });
+    execFileSync('sh', ['-c', 'printf "\\n" >> core/types/package.json'], { cwd: checkoutRoot });
+    execFileSync('git', ['add', 'core/types/package.json'], { cwd: checkoutRoot });
+    execFileSync('git', ['commit', '-m', 'fixture change'], { cwd: checkoutRoot, stdio: 'pipe' });
 
     cpSync(path.join(root, 'scripts/ci/resolve-remote-selection.mjs'), path.join(checkoutRoot, 'scripts/ci/resolve-remote-selection.mjs'));
     cpSync(path.join(root, 'scripts/ci/remote-changed-files.mjs'), path.join(checkoutRoot, 'scripts/ci/remote-changed-files.mjs'));
