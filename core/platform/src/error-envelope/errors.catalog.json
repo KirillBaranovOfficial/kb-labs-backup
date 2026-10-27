@@ -629,8 +629,8 @@
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "Workspace check {check} could not complete.",
-      "hint": "Rerun this check alone with `kb-devkit check --only {check}`, then correct the check's execution problem.",
+      "message": "Workspace check {check} exited with status {exitCode}. Stderr tail: {stderrTail}",
+      "hint": "Rerun the check with `{nextCommand}`.",
       "httpStatus": 500
     },
     {

@@ -9,18 +9,15 @@
 # journey entry (e2e/journey/run.sh).
 
 journey_toolchain_ensure() {
-  local root="$1" derivation toolchain_image toolchain_label
-  if ! derivation="$(python3 "$root/e2e/journey/journey_resources.py" --toolchain-image)"; then
+  local root="$1" contract toolchain_image toolchain_label image_argument
+  if ! contract="$(python3 "$root/e2e/journey/journey_resources.py" --toolchain-contract)"; then
     return 1
   fi
-  # Read by line: bash 3.2 (macOS host bash) does not honor $'\n' inside
-  # parameter-expansion patterns, which would empty the image reference.
-  {
-    read -r toolchain_image || true
-    read -r toolchain_label || true
-  } <<< "$derivation"
-  if [[ -z "$toolchain_image" || -z "$toolchain_label" ]]; then
-    echo "Journey runner toolchain derivation returned no image reference and label. Next: python3 e2e/journey/journey_resources.py --toolchain-image" >&2
+  toolchain_image="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["imageReference"])' <<< "$contract")"
+  toolchain_label="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["imageLabel"])' <<< "$contract")"
+  image_argument="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["imageArgument"])' <<< "$contract")"
+  if [[ -z "$toolchain_image" || -z "$toolchain_label" || -z "$image_argument" ]]; then
+    echo "Journey runner toolchain derivation returned an incomplete contract. Next: python3 e2e/journey/journey_resources.py --toolchain-contract" >&2
     return 1
   fi
   if [[ -z "$(docker images -q "$toolchain_image")" ]]; then
@@ -36,7 +33,7 @@ journey_toolchain_ensure() {
     echo "==> journey runner toolchain $toolchain_image reused"
   fi
   journey_toolchain_reclaim "$toolchain_label" "$toolchain_image"
-  export KB_JOURNEY_TOOLCHAIN_IMAGE="$toolchain_image"
+  export "$image_argument=$toolchain_image"
 }
 
 journey_toolchain_reclaim() {

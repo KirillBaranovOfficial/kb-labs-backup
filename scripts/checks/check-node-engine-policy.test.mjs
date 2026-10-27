@@ -6,7 +6,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '../../core/plugin-runtime/src/platform-resolve/node-engine.mjs';
+import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '../../core/plugin-contracts/src/node-engine-policy.ts';
+import { parseDockerfileFromInstructions } from './node-engine-dockerfiles.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const checker = path.join(root, 'scripts/checks/check-node-engine-policy.mjs');
@@ -142,7 +143,31 @@ test('tracked Node image with an unresolved ARG fails with file and line', async
 
   assert.equal(issues.length, 1);
   assert.equal(issues[0].file, 'Dockerfile:1');
-  assert.match(issues[0].message, /unresolved ARG or variable/);
+  assert.match(issues[0].message, /undeclared ARG or variable/);
+});
+
+// case: S-260.5
+test('Dockerfile parsing preserves declared external base arguments', () => {
+  const source = 'ARG BASE_IMAGE\nFROM ${BASE_IMAGE} AS runner\n';
+  const parsed = parseDockerfileFromInstructions(source);
+  assert.deepEqual(parsed, [{ line: 2, externalImage: '${BASE_IMAGE}', externalArgs: ['BASE_IMAGE'], stage: 'runner' }]);
+});
+
+// case: S-260.5
+test('a declared external FROM ARG is refused unless it consumes the derived runner toolchain image', async (t) => {
+  const declaration = readNodeEngineDeclaration(path.join(root, 'package.json'));
+  const requiredMajor = parseNodeEnginePolicy(declaration).requiredMajor;
+  const { repositoryRoot } = await createTrackedDockerfileRepo(
+    t,
+    `ARG KB_JOURNEY_TOOLCHAIN_IMAGE\nARG BASE_IMAGE\nFROM node:${requiredMajor}-bookworm AS toolchain\nFROM \${BASE_IMAGE}\n`,
+    'e2e/journey/Dockerfile.runner',
+  );
+  const result = runCheck(repositoryRoot, []);
+  const issues = JSON.parse(result.stdout).issues;
+
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].file, 'e2e/journey/Dockerfile.runner:4');
+  assert.match(issues[0].message, /not derived from the checked runner toolchain stage/);
 });
 
 // case: S-260.5
@@ -168,14 +193,16 @@ async function fixtureWorkspace(policy) {
   return workspaceRoot;
 }
 
-async function createTrackedDockerfileRepo(t, dockerfile) {
+async function createTrackedDockerfileRepo(t, dockerfile, dockerfilePath = 'Dockerfile') {
   const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-node-docker-policy-'));
   t.after(() => rm(repositoryRoot, { recursive: true, force: true }));
   const declaration = readNodeEngineDeclaration(path.join(root, 'package.json'));
   const workspacePackageManager = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).packageManager;
   await writeFile(path.join(repositoryRoot, 'package.json'), JSON.stringify({ packageManager: workspacePackageManager, engines: { node: declaration } }));
-  await writeFile(path.join(repositoryRoot, 'Dockerfile'), dockerfile);
-  await initializeTemporaryGit(repositoryRoot, ['package.json', 'Dockerfile']);
+  const dockerfileFullPath = path.join(repositoryRoot, dockerfilePath);
+  await mkdir(path.dirname(dockerfileFullPath), { recursive: true });
+  await writeFile(dockerfileFullPath, dockerfile);
+  await initializeTemporaryGit(repositoryRoot, ['package.json', dockerfilePath]);
   const generated = spawnSync(process.execPath, [generator, '--root', repositoryRoot], { encoding: 'utf8' });
   assert.equal(generated.status, 0, generated.stderr || generated.stdout);
 

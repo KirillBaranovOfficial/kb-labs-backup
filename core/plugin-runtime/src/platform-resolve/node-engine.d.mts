@@ -1,10 +1,24 @@
-export interface NodeEnginePolicy {
-  requiredMajor: number;
-}
-
-export declare function parseNodeEnginePolicy(value: unknown): NodeEnginePolicy;
-export declare function nodeVersionSupported(requiredMajor: number, actualVersion: string): boolean;
-export declare function readNodeEnginePolicy(packageManifest: string): NodeEnginePolicy;
-export declare function readNodeEngineDeclaration(packageManifest: string): string | undefined;
-export declare function runtimePackageManifest(moduleURL: string | URL): string;
-export declare function selectNodeExecutable(rootManifest: string, environment?: NodeJS.ProcessEnv): string;
+/**
+ * @param {number | string} requiredMajor
+ * @param {string} actualVersion
+ * @returns {boolean}
+ */
+export function nodeVersionSupported(requiredMajor: number | string, actualVersion: string): boolean;
+/**
+ * @param {string} packageManifest
+ * @returns {{ requiredMajor: number }}
+ */
+export function readNodeEnginePolicy(packageManifest: string): {
+    requiredMajor: number;
+};
+/**
+ * @param {string | URL} moduleURL
+ * @returns {string}
+ */
+export function runtimePackageManifest(moduleURL: string | URL): string;
+/**
+ * @param {string} rootManifest
+ * @param {NodeJS.ProcessEnv} [environment]
+ * @returns {string}
+ */
+export function selectNodeExecutable(rootManifest: string, environment?: NodeJS.ProcessEnv): string;

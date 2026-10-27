@@ -22,6 +22,7 @@ export const ERROR_AREAS = [
   'project',
   'config',
   'plugin',
+  'toolchain',
   'update',
   'runtime',
   'product',

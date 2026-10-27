@@ -17,6 +17,11 @@
       "types": "./dist/project-service-path.d.ts",
       "import": "./dist/project-service-path.js",
       "require": "./dist/project-service-path.cjs"
+    },
+    "./node-engine-policy": {
+      "types": "./dist/node-engine-policy.d.ts",
+      "import": "./dist/node-engine-policy.js",
+      "require": "./dist/node-engine-policy.cjs"
     }
   },
   "files": [

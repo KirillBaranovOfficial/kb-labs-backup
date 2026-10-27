@@ -136,4 +136,3 @@ export {
   type PlatformResolveHook,
   type PlatformResolveHookOptions,
 } from './platform-resolve/index.js';
-export { parseNodeEnginePolicy } from './platform-resolve/node-engine.mjs';
