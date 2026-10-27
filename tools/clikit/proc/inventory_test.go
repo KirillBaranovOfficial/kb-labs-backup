@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kb-labs/clikit/internal/testdeadline"
 )
 
 func TestInventoryKeepsUnobservableArgvVisible(t *testing.T) {
@@ -160,7 +162,7 @@ func startZombieChild(t *testing.T) (*exec.Cmd, func() error) {
 			t.Errorf("reap zombie fixture child during cleanup: %v", err)
 		}
 	})
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		_, alive, err := ProcessIdentity(child.Process.Pid)
 		if err != nil {
@@ -301,7 +303,7 @@ func TestProcessInventoryDuringRealForkExecExitStorm(t *testing.T) {
 
 	select {
 	case <-firstReady:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		t.Fatal("real fork/exec/exit storm did not start its first child")
 	}
 	observedStormRows := 0

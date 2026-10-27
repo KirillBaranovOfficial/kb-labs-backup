@@ -12,7 +12,6 @@ import (
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
 	"golang.org/x/sys/unix"
 )
 
@@ -193,8 +192,6 @@ func run(args []string) diag.ExitStatus {
 		if err := os.WriteFile(args[1], append(first, second...), 0o600); err != nil {
 			return fail(err)
 		}
-	case "__keeper":
-		return diag.ProcessExitStatus(proc.KeeperMain())
 	default:
 		return diag.ProcessExitStatus(2)
 	}

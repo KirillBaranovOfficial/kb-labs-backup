@@ -4,6 +4,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"io"
 	"os"
 	"os/exec"
@@ -57,7 +58,7 @@ func TestInteractionPromptIsVisibleBeforePTYAnswer(t *testing.T) {
 	}()
 
 	var transcript strings.Builder
-	timer := time.NewTimer(10 * time.Second)
+	timer := time.NewTimer(testdeadline.Budget(t))
 	defer timer.Stop()
 	for !strings.Contains(transcript.String(), "PTY-CONFIRM> ") {
 		select {

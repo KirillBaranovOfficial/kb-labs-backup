@@ -43,9 +43,6 @@ func executeInvocation(invocation string, args []string, stdout, stderr io.Write
 		}
 		return diag.SuccessStatus()
 	}
-	if len(args) > 0 && args[0] == "__keeper" {
-		return diag.ProcessExitStatus(proc.KeeperMain())
-	}
 	if len(args) > 0 && args[0] == "__agent_worker" {
 		code, err := agentStartCommand(root, args[1:], stdout, stderr)
 		if err != nil {
@@ -260,12 +257,8 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	helper, err := os.Executable()
-	if err != nil {
-		return 1, fmt.Errorf("kb-runner run: locate keeper executable: %w", err)
-	}
 	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
-	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
+	run, err := proc.Start(ctx, proc.Config{StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("%s run: %w\nInspect state directory access before retrying:\nnext: ls -ld %s\nnext: %s", root.Name(), err, shellQuote(*state), shellJoin(os.Args))
 	}

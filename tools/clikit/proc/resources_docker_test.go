@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kb-labs/clikit/internal/testdeadline"
 )
 
 // Run only with `go test -tags docker ./proc -run '^TestDockerComposeCleanupRemovesOnlyUniqueProject$'`.
@@ -37,7 +39,7 @@ func TestDockerComposeCleanupRemovesOnlyUniqueProject(t *testing.T) {
 		}
 	})
 	args := []string{"-p", project, "-f", composeFile, "up", "-d"}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	output, err := composeCommand(ctx, prefix, args...)
 	cancel()
 	if err != nil {
@@ -56,7 +58,7 @@ func TestDockerComposeCleanupRemovesOnlyUniqueProject(t *testing.T) {
 		{"network", "ls", "-q", "--filter", "label=com.docker.compose.project=" + project},
 		{"volume", "ls", "-q", "--filter", "label=com.docker.compose.project=" + project},
 	} {
-		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), testdeadline.Budget(t))
 		remaining, err := dockerCommand(ctx, args...)
 		cancel()
 		if err != nil {

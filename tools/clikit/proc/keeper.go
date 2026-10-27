@@ -46,6 +46,13 @@ func runKeeper(cfg keeperConfig) int {
 	if ready == nil {
 		return 2
 	}
+	return runKeeperWithReady(cfg, ready)
+}
+
+func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
+	// The readiness descriptor belongs only to the keeper. Prevent commands
+	// started below this boundary from inheriting it across exec.
+	syscall.CloseOnExec(int(ready.Fd()))
 	defer func() {
 		if ready != nil {
 			if err := ready.Close(); err != nil {
