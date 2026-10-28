@@ -15,6 +15,152 @@ import (
 	"time"
 )
 
+const MaxJSONLLineBytes = 16 * 1024
+const jsonlWriterSafetyMarginBytes = 1024
+
+type JSONLLineErrorKind string
+
+const (
+	JSONLLineTooLong JSONLLineErrorKind = "line-too-long"
+	JSONLLineInvalid JSONLLineErrorKind = "invalid-json"
+)
+
+type JSONLLineError struct {
+	Line int
+	Kind JSONLLineErrorKind
+	Err  error
+}
+
+// OlderEventFormatError identifies an event shape written by an older runner.
+type OlderEventFormatError struct {
+	Type  EventType
+	Field string
+}
+
+func (e *OlderEventFormatError) Error() string {
+	return fmt.Sprintf("event %q field %q was written by an older kb-runner format", e.Type, e.Field)
+}
+
+func (e *JSONLLineError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("proc: JSONL line %d %s: %v", e.Line, e.Kind, e.Err)
+	}
+	return fmt.Sprintf("proc: JSONL line %d %s", e.Line, e.Kind)
+}
+
+func (e *JSONLLineError) Unwrap() error { return e.Err }
+
+// JSONLDecoder bounds buffered partial records and validates each complete line.
+// Feed is safe for append-only streams whose records may cross read boundaries.
+type JSONLDecoder struct {
+	pending []byte
+	line    int
+}
+
+func (d *JSONLDecoder) Feed(chunk []byte, consume func([]byte) error) error {
+	data := append(d.pending, chunk...)
+	d.pending = nil
+	for {
+		lineEnd := bytes.IndexByte(data, '\n')
+		if lineEnd < 0 {
+			if len(data) > MaxJSONLLineBytes {
+				return &JSONLLineError{Line: d.line + 1, Kind: JSONLLineTooLong}
+			}
+			d.pending = append(d.pending[:0], data...)
+			return nil
+		}
+		if lineEnd > MaxJSONLLineBytes {
+			return &JSONLLineError{Line: d.line + 1, Kind: JSONLLineTooLong}
+		}
+		line := data[:lineEnd]
+		d.line++
+		if !json.Valid(line) {
+			return &JSONLLineError{Line: d.line, Kind: JSONLLineInvalid, Err: errors.New("record is not valid JSON")}
+		}
+		if err := consume(line); err != nil {
+			var lineErr *JSONLLineError
+			if errors.As(err, &lineErr) {
+				return err
+			}
+			return &JSONLLineError{Line: d.line, Kind: JSONLLineInvalid, Err: err}
+		}
+		data = data[lineEnd+1:]
+	}
+}
+
+func (d *JSONLDecoder) Finish() error {
+	if len(d.pending) != 0 {
+		return &JSONLLineError{Line: d.line + 1, Kind: JSONLLineInvalid, Err: errors.New("event stream ends with an incomplete JSONL record")}
+	}
+	return nil
+}
+
+// ReadJSONL validates a JSONL stream and passes each bounded JSON record to consume.
+func ReadJSONL(reader io.Reader, consume func([]byte) error) error {
+	decoder := JSONLDecoder{}
+	buffer := make([]byte, 4096)
+	for {
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			if feedErr := decoder.Feed(buffer[:n], consume); feedErr != nil {
+				return feedErr
+			}
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return err
+			}
+			return decoder.Finish()
+		}
+		if n == 0 {
+			return io.ErrNoProgress
+		}
+	}
+}
+
+// ReadEvents decodes bounded lifecycle records from the shared event stream.
+func ReadEvents(reader io.Reader, consume func(Event) error) error {
+	return ReadJSONL(reader, func(line []byte) error {
+		var event Event
+		if err := json.Unmarshal(line, &event); err != nil {
+			var raw map[string]json.RawMessage
+			if json.Unmarshal(line, &raw) == nil {
+				var kind EventType
+				if err := json.Unmarshal(raw["type"], &kind); err != nil {
+					return err
+				}
+				if kind == "" {
+					return errors.New("event record has no kind")
+				}
+				var resources []json.RawMessage
+				if json.Unmarshal(raw["resources"], &resources) == nil && resources != nil {
+					return &OlderEventFormatError{Type: kind, Field: "resources"}
+				}
+			}
+			return err
+		}
+		return consume(event)
+	})
+}
+
+func validateEventStream(stateDir string) error {
+	path := filepath.Join(stateDir, "events.jsonl")
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open event stream: %w", err)
+	}
+	readErr := ReadEvents(file, func(Event) error { return nil })
+	var lineErr *JSONLLineError
+	var oldFormat *OlderEventFormatError
+	if errors.As(readErr, &lineErr) && errors.As(lineErr, &oldFormat) {
+		readErr = fmt.Errorf("%s line %d record kind %q: %w", path, lineErr.Line, oldFormat.Type, oldFormat)
+	}
+	return errors.Join(readErr, file.Close())
+}
+
 func ParseEventFilter(value string) ([]EventType, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
@@ -22,7 +168,7 @@ func ParseEventFilter(value string) ([]EventType, error) {
 	allowed := map[EventType]bool{
 		EventQueued: true, EventBlocked: true, EventIdle: true, EventStart: true,
 		EventStall: true, EventExit: true, EventLost: true, EventTeardown: true,
-		EventPressure: true, EventOverBudget: true,
+		EventPressure: true, EventOverBudget: true, EventUngatedHeavy: true,
 	}
 	parts := strings.Split(value, ",")
 	filters := make([]EventType, 0, len(parts))
@@ -54,7 +200,7 @@ func Events(ctx context.Context, stateDir string, follow bool, filter []EventTyp
 	}
 	path := filepath.Join(stateDir, "events.jsonl")
 	offset := startOffset
-	var pending []byte
+	decoder := JSONLDecoder{}
 	allowed := make(map[EventType]bool, len(filter))
 	for _, kind := range filter {
 		allowed[kind] = true
@@ -86,26 +232,26 @@ func Events(ctx context.Context, stateDir string, follow bool, filter []EventTyp
 				}
 				offset += int64(n)
 				remaining -= int64(n)
-				data := append(pending, chunk[:n]...)
-				for {
-					lineEnd := bytes.IndexByte(data, '\n')
-					if lineEnd < 0 {
-						break
-					}
+				if err := decoder.Feed(chunk[:n], func(line []byte) error {
 					var event Event
-					if err := json.Unmarshal(data[:lineEnd], &event); err != nil {
-						_ = file.Close()
-						return fmt.Errorf("proc: decode event: %w", err)
+					if err := json.Unmarshal(line, &event); err != nil {
+						return &JSONLLineError{Line: decoder.line, Kind: JSONLLineInvalid, Err: err}
 					}
 					if len(allowed) == 0 || allowed[event.Type] {
-						if _, err := output.Write(data[:lineEnd+1]); err != nil {
-							_ = file.Close()
+						if _, err := output.Write(append(append([]byte(nil), line...), '\n')); err != nil {
 							return err
 						}
 					}
-					data = data[lineEnd+1:]
+					return nil
+				}); err != nil {
+					_ = file.Close()
+					var lineErr *JSONLLineError
+					var oldFormat *OlderEventFormatError
+					if errors.As(err, &lineErr) && errors.As(lineErr, &oldFormat) {
+						return fmt.Errorf("%s line %d record kind %q: %w", path, lineErr.Line, oldFormat.Type, oldFormat)
+					}
+					return err
 				}
-				pending = data
 				if n == 0 {
 					break
 				}
@@ -119,10 +265,7 @@ func Events(ctx context.Context, stateDir string, follow bool, filter []EventTyp
 			}
 		}
 		if !follow {
-			if len(pending) != 0 {
-				return errors.New("proc: event stream ends with an incomplete JSONL record")
-			}
-			return nil
+			return decoder.Finish()
 		}
 		select {
 		case <-ctx.Done():

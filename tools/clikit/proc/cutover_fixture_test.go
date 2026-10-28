@@ -4,6 +4,7 @@ package proc
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -12,8 +13,9 @@ import (
 // event stream through the same append owner used by real runner events.
 func TestWriteCutoverEventFixture(t *testing.T) {
 	stateDir := os.Getenv("X53_CUTOVER_EVENT_STATE")
+	fixtureRequested := stateDir != ""
 	if stateDir == "" {
-		t.Skip("orchestration proof did not request an event fixture")
+		stateDir = t.TempDir()
 	}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatalf("create temporary event fixture state: %v", err)
@@ -53,6 +55,26 @@ func TestWriteCutoverEventFixture(t *testing.T) {
 	for _, event := range events {
 		if err := appendEvent(stateDir, event); err != nil {
 			t.Fatalf("write temporary runner event fixture: %v", err)
+		}
+	}
+	if !fixtureRequested {
+		file, err := os.Open(filepath.Join(stateDir, "events.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		count := 0
+		if err := ReadEvents(file, func(event Event) error {
+			count++
+			if event.Type != EventStall {
+				t.Errorf("default fixture event = %q, want %q", event.Type, EventStall)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("default fixture event count = %d, want one", count)
 		}
 	}
 }

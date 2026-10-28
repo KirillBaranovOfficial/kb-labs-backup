@@ -3,12 +3,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/kb-labs/clikit/proc"
 )
 
 // writeZcodeFake writes a fake ZCode CLI whose runs are driven by a call
@@ -277,8 +284,233 @@ func TestVendorFailureTablesClassifyEveryRegisteredVendor(t *testing.T) {
 	if failure, ok := vendorRegistry["zcode"].failures.classifyStderr("Error: provider code 3009 exceeded"); !ok || failure != transientRateLimitFailure {
 		t.Fatalf("zcode stderr classification = %+v, %v; want the structured provider code", failure, ok)
 	}
-	if failure, ok := vendorRegistry["codex"].failures.classifyStderr("provider exited: rate limit exceeded"); !ok || failure != transientRateLimitFailure {
+	if failure, ok := vendorRegistry["codex"].failures.classifyStderr("provider exited: rate limit exceeded"); !ok || failure.class != transientRateLimitFailure.class || failure.reason != transientRateLimitFailure.reason {
 		t.Fatalf("codex stderr classification = %+v, %v; want the rate-limit phrase", failure, ok)
+	}
+}
+
+// case: S-237.61
+func TestCodexUsageLimitMessageCarriesLocalResetTime(t *testing.T) {
+	utc := time.UTC
+	msk := time.FixedZone("MSK", 3*60*60)
+	nepal := time.FixedZone("NPT", 5*60*60+45*60)
+	for _, tc := range []struct {
+		name     string
+		location *time.Location
+		now      time.Time
+		message  string
+		want     time.Time
+	}{
+		{
+			name:     "same day",
+			location: msk,
+			now:      time.Date(2026, time.October, 27, 10, 38, 0, 0, msk),
+			message:  "You've hit your usage limit … try again at 11:01 AM",
+			want:     time.Date(2026, time.October, 27, 11, 1, 0, 0, msk),
+		},
+		{
+			name:     "rollover past midnight",
+			location: utc,
+			now:      time.Date(2026, time.October, 27, 23, 50, 0, 0, utc),
+			message:  "You've hit your usage limit … try again at 12:05 AM",
+			want:     time.Date(2026, time.October, 28, 0, 5, 0, 0, utc),
+		},
+		{
+			name:     "non-UTC local zone",
+			location: nepal,
+			now:      time.Date(2026, time.October, 27, 10, 30, 0, 0, nepal),
+			message:  "You've hit your usage limit … try again at 11:01 AM",
+			want:     time.Date(2026, time.October, 27, 11, 1, 0, 0, nepal),
+		},
+		{
+			name:     "equal time rolls to tomorrow",
+			location: time.FixedZone("EDT", -4*60*60),
+			now:      time.Date(2026, time.October, 27, 11, 1, 0, 0, time.FixedZone("EDT", -4*60*60)),
+			message:  "You've hit your usage limit … try again at 11:01 AM",
+			want:     time.Date(2026, time.October, 28, 11, 1, 0, 0, time.FixedZone("EDT", -4*60*60)),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := vendorRegistry["codex"].failures.classifyAt(
+				VendorEvent{Kind: EventRateLimited, Message: tc.message}, tc.now, tc.location,
+			)
+			if failure.class != failureTransient || failure.reason != ReasonRateLimited || failure.resetAt == nil || !failure.resetAt.Equal(tc.want) {
+				t.Fatalf("Codex usage-limit failure = %+v; want rate-limited with reset %s", failure, tc.want)
+			}
+		})
+	}
+}
+
+// case: S-237.61
+func TestRecordedCodexLimitProducesOneNamedEventAndBlocksLaterJobs(t *testing.T) {
+	location := time.FixedZone("MSK", 3*60*60)
+	now := time.Date(2026, time.October, 27, 10, 38, 0, 0, location)
+	reset := time.Date(2026, time.October, 27, 11, 1, 0, 0, location)
+	clock := func() time.Time { return now }
+	state := t.TempDir()
+	limits := newVendorLimitStateStore(state, clock)
+	changed, err := limits.Record("codex", reset, "You've hit your usage limit … try again at 11:01 AM")
+	if err != nil || !changed {
+		t.Fatalf("record Codex limit = changed %t, err %v", changed, err)
+	}
+	changed, err = limits.Record("codex", reset, "duplicate Codex usage-limit failure")
+	if err != nil || changed {
+		t.Fatalf("duplicate Codex limit = changed %t, err %v; want one named transition", changed, err)
+	}
+	events, err := os.ReadFile(limits.eventsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event vendorLimitEvent
+	if err := proc.ReadJSONL(bytes.NewReader(events), func(line []byte) error {
+		return json.Unmarshal(line, &event)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if event.Kind != "vendor_limit.recorded" || event.Vendor != "codex" || !event.ResetAt.Equal(reset) {
+		t.Fatalf("limit event = %+v; want one named Codex event with reset %s", event, reset)
+	}
+	if bytes.Count(events, []byte("vendor_limit.recorded")) != 1 {
+		t.Fatalf("limit event log = %q; want exactly one recorded event", events)
+	}
+	merged, err := limitsWithRecordedVendorState(nil, limits, "codex")
+	blockedReset := nextBlockedReset(merged, 95, 98)
+	if err != nil || !quotaBlocked(merged, 95, 98) || blockedReset == nil || !blockedReset.Equal(reset) {
+		t.Fatalf("later-job Codex limits = %+v, err=%v; want blocked through %s", merged, err, reset)
+	}
+	now = reset.Add(time.Second)
+	merged, err = limitsWithRecordedVendorState(nil, limits, "codex")
+	if err != nil || quotaBlocked(merged, 95, 98) {
+		t.Fatalf("expired Codex limit = %+v, err=%v; want admission unblocked", merged, err)
+	}
+}
+
+type controlledQuotaAdmissionClock struct {
+	mu      sync.Mutex
+	now     time.Time
+	waiting chan time.Time
+	wake    chan struct{}
+}
+
+func (c *controlledQuotaAdmissionClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *controlledQuotaAdmissionClock) WaitUntil(ctx context.Context, deadline time.Time) error {
+	select {
+	case c.waiting <- deadline:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-c.wake:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *controlledQuotaAdmissionClock) Tick() {
+	c.wake <- struct{}{}
+}
+
+func (c *controlledQuotaAdmissionClock) Advance(now time.Time) {
+	c.mu.Lock()
+	c.now = now
+	c.mu.Unlock()
+	c.wake <- struct{}{}
+}
+
+type observedQuotaLimitProvider struct {
+	calls  atomic.Int32
+	called chan struct{}
+	limits []VendorLimit
+}
+
+func (p *observedQuotaLimitProvider) Limits(context.Context) ([]VendorLimit, error) {
+	p.calls.Add(1)
+	p.called <- struct{}{}
+	return p.limits, nil
+}
+
+// case: S-237.61
+func TestQuotaAdmissionWaitsForRecordedCodexResetBeforeProbing(t *testing.T) {
+	state := t.TempDir()
+	jobs := newJobStore(state)
+	job, err := jobs.Create(Job{ID: "later-codex", Stream: "later", Vendor: "codex", State: JobQueued, Phase: PhaseAdmission})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, time.October, 27, 10, 38, 0, 0, time.UTC)
+	reset := start.Add(time.Hour)
+	clock := &controlledQuotaAdmissionClock{
+		now: start, waiting: make(chan time.Time, 2), wake: make(chan struct{}, 2),
+	}
+	if _, err := newVendorLimitStateStore(state, clock.Now).Record("codex", reset, "usage limited"); err != nil {
+		t.Fatal(err)
+	}
+	provider := &observedQuotaLimitProvider{
+		called: make(chan struct{}, 1),
+		limits: []VendorLimit{{Vendor: "codex", Window: "5h", UsedPercent: 44, Confidence: "vendor"}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- waitForQuotaAdmission(ctx, nil, provider, jobs, job.ID, 95, 98, clock)
+	}()
+
+	select {
+	case deadline := <-clock.waiting:
+		if !deadline.Equal(reset) {
+			t.Fatalf("admission wait deadline = %s, want recorded reset %s", deadline, reset)
+		}
+	case err := <-result:
+		t.Fatalf("admission returned before waiting through the recorded reset: %v", err)
+	}
+	assertQuotaAdmissionPending(t, result, provider, jobs, job.ID)
+
+	clock.Tick()
+	select {
+	case <-clock.waiting:
+	case err := <-result:
+		t.Fatalf("admission returned after a wake before the reset: %v", err)
+	}
+	assertQuotaAdmissionPending(t, result, provider, jobs, job.ID)
+
+	clock.Advance(reset.Add(time.Nanosecond))
+	select {
+	case <-provider.called:
+	case err := <-result:
+		t.Fatalf("admission returned without rechecking provider limits after reset: %v", err)
+	}
+	if got := provider.calls.Load(); got != 1 {
+		t.Fatalf("provider probes after reset = %d, want exactly one", got)
+	}
+	if err := <-result; err != nil {
+		t.Fatalf("admission after reset: %v", err)
+	}
+	got, err := jobs.Get(job.ID)
+	if err != nil || got.State != JobRunning || got.Reason != ReasonNone {
+		t.Fatalf("admitted Codex job = %+v, err=%v; want running after post-reset probe", got, err)
+	}
+}
+
+func assertQuotaAdmissionPending(t *testing.T, result <-chan error, provider *observedQuotaLimitProvider, jobs *jobStore, id string) {
+	t.Helper()
+	select {
+	case err := <-result:
+		t.Fatalf("quota admission returned before reset: %v", err)
+	default:
+	}
+	if got := provider.calls.Load(); got != 0 {
+		t.Fatalf("provider probes before reset = %d, want zero", got)
+	}
+	job, err := jobs.Get(id)
+	if err != nil || job.State != JobQuotaWait || job.Reason != ReasonQuota {
+		t.Fatalf("later Codex job = %+v, err=%v; want persisted quota-wait", job, err)
 	}
 }
 
@@ -294,7 +526,7 @@ func mustListJobs(t *testing.T, store *jobStore) []Job {
 func TestProviderRecoveryWaitsOnlyWhereVendorLimitsExist(t *testing.T) {
 	// Ledger vendors have no vendor-confidence limits source; the wait must
 	// complete on backoff alone instead of failing its probes.
-	if err := waitForProviderRecovery(context.Background(), commandAdapter{vendor: "zcode"}, "zcode", ReasonProviderUnreachable, 1, 95, 98); err != nil {
+	if err := waitForProviderRecovery(context.Background(), commandAdapter{vendor: "zcode"}, "zcode", ReasonProviderUnreachable, 1, 95, 98, nil); err != nil {
 		t.Fatalf("zcode recovery wait: %v", err)
 	}
 }

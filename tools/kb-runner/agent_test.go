@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func TestClaudeAdapterFakeStartResumeAndInterrupt(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter := commandAdapter{vendor: "claude", binary: fake}
-	request := AgentRequest{Prompt: "safe test prompt", Workdir: work}
+	request := AgentRequest{Prompt: "safe test prompt", Workdir: work, StateDir: t.TempDir(), JobID: "adapter-start"}
 	start, err := adapter.Start(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +90,79 @@ func TestClaudeAdapterFakeStartResumeAndInterrupt(t *testing.T) {
 	}
 }
 
+func TestCodexAdapterArgumentsMatchRecordedExecHelp(t *testing.T) {
+	workdir := filepath.Join(t.TempDir(), "work dir")
+	addDir := filepath.Join(t.TempDir(), "add dir")
+	request := AgentRequest{
+		Workdir: workdir, WritableDirs: []string{addDir}, SessionID: "session-1",
+		Effort: "high", Model: "gpt-test", FinalPath: filepath.Join(t.TempDir(), "final.txt"),
+		StateDir: t.TempDir(), JobID: "codex-resume-contract",
+	}
+	adapter := commandAdapter{vendor: "codex", binary: "codex"}
+	start, err := adapter.Start(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume, err := adapter.Resume(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execHelp, err := os.ReadFile("testdata/codex/exec-help.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumeHelp, err := os.ReadFile("testdata/codex/exec-resume-help.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertArgumentsSupportedByHelp(t, "codex exec", start.Args[1:], execHelp)
+	assertArgumentsSupportedByHelp(t, "codex exec resume", resume.Args[2:], resumeHelp)
+
+	if got := resume.Args[len(resume.Args)-2:]; got[0] != request.SessionID || got[1] != "-" {
+		t.Fatalf("resume positional arguments = %q, want session ID then stdin marker", got)
+	}
+	for _, want := range []string{
+		`sandbox_mode="workspace-write"`,
+		"sandbox_workspace_write.network_access=true",
+		"sandbox_workspace_write.writable_roots=[" + strconv.Quote(workdir) + "," + strconv.Quote(addDir) + "]",
+	} {
+		if !slices.Contains(resume.Args, want) {
+			t.Errorf("Codex resume args %q omit config value %q", resume.Args, want)
+		}
+	}
+}
+
+func assertArgumentsSupportedByHelp(t *testing.T, command string, args []string, help []byte) {
+	t.Helper()
+	options := make(map[string]struct{})
+	readingOptions := false
+	for _, line := range strings.Split(string(help), "\n") {
+		if line == "Options:" {
+			readingOptions = true
+			continue
+		}
+		if !readingOptions {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			if strings.HasPrefix(field, "-") {
+				options[strings.TrimRight(field, ",")] = struct{}{}
+			}
+		}
+	}
+	if !readingOptions {
+		t.Fatalf("recorded %s help has no Options section", command)
+	}
+	for _, arg := range args {
+		if arg == "-" || !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if _, ok := options[arg]; !ok {
+			t.Errorf("%s does not document emitted flag %q", command, arg)
+		}
+	}
+}
+
 func TestVendorAdapterChildEnvironmentExcludesParentSession(t *testing.T) {
 	for _, name := range []string{"CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_OTHER_PARENT_FLAG", "CODEX_PARENT_SESSION"} {
 		t.Setenv(name, "parent-session-secret")
@@ -100,7 +174,7 @@ func TestVendorAdapterChildEnvironmentExcludesParentSession(t *testing.T) {
 				t.Fatal(err)
 			}
 			adapter := commandAdapter{vendor: vendor, binary: fake, childEnv: []string{"VENDOR_REQUIRED=test-required"}}
-			cmd, err := adapter.Start(context.Background(), AgentRequest{Workdir: t.TempDir(), Prompt: "safe"})
+			cmd, err := adapter.Start(context.Background(), AgentRequest{Workdir: t.TempDir(), Prompt: "safe", StateDir: t.TempDir(), JobID: "adapter-start"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -508,7 +582,7 @@ func TestQuotaWaitSurvivesUntilResetThenRechecksAndAdmits(t *testing.T) {
 	provider := &sequenceLimitProvider{results: [][]VendorLimit{
 		{{Vendor: "codex", Window: "5h", UsedPercent: 44, Confidence: "vendor"}},
 	}}
-	if err := waitForQuotaAdmission(context.Background(), initial, provider, store, job.ID, 95, 98); err != nil {
+	if err := waitForQuotaAdmission(context.Background(), initial, provider, store, job.ID, 95, 98, realQuotaAdmissionClock{}); err != nil {
 		t.Fatal(err)
 	}
 	if provider.calls != 1 {

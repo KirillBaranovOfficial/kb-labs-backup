@@ -16,7 +16,47 @@ import (
 const (
 	scratchSocketPathMax = 104
 	scratchSocketNameLen = 40
+	runTokenFileName     = ".run-token"
 )
+
+func createRunToken(scratch string) (*os.File, error) {
+	file, err := os.OpenFile(filepath.Join(scratch, runTokenFileName), os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("create run ownership token: %w", err)
+	}
+	return file, nil
+}
+
+func runTokenIdentity(runID string) (fileIdentity, bool, error) {
+	scratch, err := runScratchPath(runID)
+	if err != nil {
+		return fileIdentity{}, false, err
+	}
+	path := filepath.Join(scratch, runTokenFileName)
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fileIdentity{}, false, nil
+	}
+	if err != nil {
+		return fileIdentity{}, false, fmt.Errorf("inspect run ownership token: %w", err)
+	}
+	identity, err := resourceIdentity(path, info)
+	if err != nil {
+		return fileIdentity{}, false, fmt.Errorf("identify run ownership token: %w", err)
+	}
+	return identity, true, nil
+}
+
+func removeRunToken(runID string) error {
+	scratch, err := runScratchPath(runID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(scratch, runTokenFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove run ownership token: %w", err)
+	}
+	return nil
+}
 
 func runScratchPath(runID string) (string, error) {
 	root, err := scratchRoot()

@@ -192,6 +192,7 @@ export type CatalogErrorCode =
   | "KB_RELEASE_TREE_DIRTY"
   | "KB_RELEASE_VERSION_CONFLICT"
   | "KB_RESTART_WORK_IN_FLIGHT"
+  | "KB_RUNNER_LAND_BASE_REPORT_TRACKED"
   | "KB_RUNNER_SCHEDULER_ALREADY_RUNNING"
   | "KB_RUNNER_ZAI_KEY_FILE_INVALID"
   | "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE"
@@ -211,6 +212,7 @@ export type CatalogErrorCode =
   | "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE"
   | "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION"
   | "KB_RUNTIME_DISK_FULL"
+  | "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE"
   | "KB_RUNTIME_FRAME_TOO_LARGE"
   | "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE"
   | "KB_RUNTIME_INPUT_INVALID"
@@ -233,6 +235,7 @@ export type CatalogErrorCode =
   | "KB_RUNTIME_RUN_DIRTY"
   | "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED"
   | "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG"
+  | "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE"
   | "KB_RUNTIME_TIMEOUT"
   | "KB_RUNTIME_UNEXPECTED"
   | "KB_RUNTIME_UNKNOWN_COMMAND"
@@ -469,6 +472,7 @@ export interface CatalogTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": { "nextCommand": string; "paths": string };
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": { "nextCommand": string };
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string };
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
@@ -488,6 +492,7 @@ export interface CatalogTemplateParameters {
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -510,6 +515,7 @@ export interface CatalogTemplateParameters {
   "KB_RUNTIME_RUN_DIRTY": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": { "path": string };
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": { "maxBytes": string; "pathBytes": string; "root": string; "socketNameBytes": string };
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": Record<never, never>;
   "KB_RUNTIME_TIMEOUT": { "correlationId": string };
   "KB_RUNTIME_UNEXPECTED": { "correlationId": string };
   "KB_RUNTIME_UNKNOWN_COMMAND": { "binary": string };
@@ -746,6 +752,7 @@ export interface CatalogDetailsFor {
   "KB_RELEASE_TREE_DIRTY": { "check"?: string; "classification"?: string; "changes"?: string; "toolGenerated"?: string };
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string; "items": readonly { "kind": string; "id": string; "owningService": string }[] };
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": { "nextCommand": string; "paths": string };
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": { "nextCommand": string };
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string; "keyFile"?: string };
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
@@ -765,6 +772,7 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": Record<string, never>;
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string; "field"?: string; "observedType"?: string; "observedValuePreview"?: string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": { "reason"?: string };
   "KB_RUNTIME_FRAME_TOO_LARGE": { "actualBytes"?: string; "maximumBytes"?: string };
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": { "gatewayUrl"?: string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string; "remoteCode"?: string; "fields"?: string };
   "KB_RUNTIME_INPUT_INVALID": { "candidates"?: string; "field"?: string; "inboxCode"?: string; "waitingSteps"?: string };
@@ -787,6 +795,7 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_RUN_DIRTY": Record<string, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": { "path": string; "creationError"?: string; "removalError"?: string };
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": { "maxBytes": string; "pathBytes": string; "root": string; "socketNameBytes": string };
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": Record<string, never>;
   "KB_RUNTIME_TIMEOUT": { "serviceId"?: string; "timeoutMs"?: string };
   "KB_RUNTIME_UNEXPECTED": { "dep"?: string; "remoteCorrelationId"?: string; "target"?: string };
   "KB_RUNTIME_UNKNOWN_COMMAND": { "command"?: string; "pluginDiagnostics"?: string; "suggestions"?: string };
@@ -853,6 +862,7 @@ export const catalogEnvironmentVariables = {
   "KB_PROJECT_ROOT": "KB_PROJECT_ROOT",
   "KB_SOCKET_HASH": "KB_SOCKET_HASH",
   "KB_SOCKET_PATH": "KB_SOCKET_PATH",
+  "KB_TEST_DEADLINE_SCALE": "KB_TEST_DEADLINE_SCALE",
 } as const;
 
 export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
@@ -1045,6 +1055,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["nextCommand","paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
@@ -1064,6 +1075,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1086,6 +1098,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": ["maxBytes","pathBytes","root","socketNameBytes"],
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": [],
   "KB_RUNTIME_TIMEOUT": [],
   "KB_RUNTIME_UNEXPECTED": [],
   "KB_RUNTIME_UNKNOWN_COMMAND": ["binary"],
@@ -1322,6 +1335,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": [],
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": [],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": [],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
@@ -1341,6 +1355,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1363,6 +1378,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": [],
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": [],
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": [],
   "KB_RUNTIME_TIMEOUT": [],
   "KB_RUNTIME_UNEXPECTED": [],
   "KB_RUNTIME_UNKNOWN_COMMAND": [],
@@ -1599,6 +1615,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["nextCommand"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
@@ -1618,6 +1635,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
   "KB_RUNTIME_DISK_FULL": [],
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1640,6 +1658,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": ["maxBytes","pathBytes","root","socketNameBytes"],
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": [],
   "KB_RUNTIME_TIMEOUT": [],
   "KB_RUNTIME_UNEXPECTED": [],
   "KB_RUNTIME_UNKNOWN_COMMAND": ["binary"],
@@ -1876,6 +1895,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["nextCommand","paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
@@ -1895,6 +1915,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1917,6 +1938,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": ["maxBytes","pathBytes","root","socketNameBytes"],
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": [],
   "KB_RUNTIME_TIMEOUT": ["correlationId"],
   "KB_RUNTIME_UNEXPECTED": ["correlationId"],
   "KB_RUNTIME_UNKNOWN_COMMAND": ["binary"],
@@ -2153,6 +2175,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
   "KB_RESTART_WORK_IN_FLIGHT": [],
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": [],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": [],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
@@ -2172,6 +2195,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -2194,6 +2218,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": [],
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": [],
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": [],
   "KB_RUNTIME_TIMEOUT": [],
   "KB_RUNTIME_UNEXPECTED": [],
   "KB_RUNTIME_UNKNOWN_COMMAND": [],
@@ -2430,6 +2455,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_TREE_DIRTY": [],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["nextCommand"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
@@ -2449,6 +2475,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
   "KB_RUNTIME_DISK_FULL": [],
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -2471,6 +2498,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": ["maxBytes","pathBytes","root","socketNameBytes"],
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": [],
   "KB_RUNTIME_TIMEOUT": ["correlationId"],
   "KB_RUNTIME_UNEXPECTED": ["correlationId"],
   "KB_RUNTIME_UNKNOWN_COMMAND": ["binary"],
@@ -2707,6 +2735,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_TREE_DIRTY": ["check","classification","changes","toolGenerated"],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RESTART_WORK_IN_FLIGHT": ["items"],
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": [],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["keyFile"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
@@ -2726,6 +2755,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["field","observedType","observedValuePreview"],
   "KB_RUNTIME_DISK_FULL": [],
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": ["reason"],
   "KB_RUNTIME_FRAME_TOO_LARGE": ["actualBytes","maximumBytes"],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": ["gatewayUrl","requestStage","httpStatus","remoteCorrelationId","remoteCode","fields"],
   "KB_RUNTIME_INPUT_INVALID": ["candidates","field","inboxCode","waitingSteps"],
@@ -2748,6 +2778,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["creationError","removalError"],
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": [],
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": [],
   "KB_RUNTIME_TIMEOUT": ["serviceId","timeoutMs"],
   "KB_RUNTIME_UNEXPECTED": ["dep","remoteCorrelationId","target"],
   "KB_RUNTIME_UNKNOWN_COMMAND": ["command","pluginDiagnostics","suggestions"],
@@ -2984,6 +3015,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
   "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": { "paths": string };
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": Record<never, never>;
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": Record<never, never>;
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": Record<never, never>;
@@ -3003,6 +3035,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -3025,6 +3058,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RUNTIME_RUN_DIRTY": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": Record<never, never>;
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": Record<never, never>;
   "KB_RUNTIME_TIMEOUT": Record<never, never>;
   "KB_RUNTIME_UNEXPECTED": Record<never, never>;
   "KB_RUNTIME_UNKNOWN_COMMAND": Record<never, never>;
@@ -3261,6 +3295,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": Record<never, never>;
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": { "nextCommand": string };
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": { "nextCommand": string };
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string };
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
@@ -3280,6 +3315,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": Record<never, never>;
   "KB_RUNTIME_DISK_FULL": Record<never, never>;
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -3302,6 +3338,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RUNTIME_RUN_DIRTY": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": { "path": string };
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": { "maxBytes": string; "pathBytes": string; "root": string; "socketNameBytes": string };
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": Record<never, never>;
   "KB_RUNTIME_TIMEOUT": Record<never, never>;
   "KB_RUNTIME_UNEXPECTED": Record<never, never>;
   "KB_RUNTIME_UNKNOWN_COMMAND": Record<never, never>;
@@ -3538,6 +3575,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RELEASE_TREE_DIRTY": Record<never, never>;
   "KB_RELEASE_VERSION_CONFLICT": Record<never, never>;
   "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
+  "KB_RUNNER_LAND_BASE_REPORT_TRACKED": Record<never, never>;
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": Record<never, never>;
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": Record<never, never>;
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": Record<never, never>;
@@ -3557,6 +3595,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": Record<never, never>;
   "KB_RUNTIME_DISK_FULL": Record<never, never>;
+  "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -3579,6 +3618,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RUNTIME_RUN_DIRTY": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": Record<never, never>;
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": Record<never, never>;
+  "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE": Record<never, never>;
   "KB_RUNTIME_TIMEOUT": { "correlationId"?: string };
   "KB_RUNTIME_UNEXPECTED": { "correlationId"?: string };
   "KB_RUNTIME_UNKNOWN_COMMAND": { "binary": string };

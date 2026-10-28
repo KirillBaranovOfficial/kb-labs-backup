@@ -57,27 +57,42 @@ func TestIdleQueueEventComesFromProductionAdmissionPath(t *testing.T) {
 		t.Fatal("production admission did not persist its queued run record")
 	}
 
+	var queued map[string]json.RawMessage
+	blockedDeadline := time.NewTimer(5 * time.Second)
+	blockedPoll := time.NewTicker(10 * time.Millisecond)
+	defer blockedDeadline.Stop()
+	defer blockedPoll.Stop()
+	for {
+		data, err := os.ReadFile(recordPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &queued); err != nil {
+			t.Fatal(err)
+		}
+		var status string
+		if err := json.Unmarshal(queued["status"], &status); err != nil {
+			t.Fatal(err)
+		}
+		if status == string(proc.StatusBlocked) {
+			break
+		}
+		select {
+		case startErr := <-done:
+			t.Fatalf("production admission returned before blocked state: %v", startErr)
+		case <-blockedDeadline.C:
+			t.Fatalf("production admission did not transition from queued to blocked; last status=%q", status)
+		case <-blockedPoll.C:
+		}
+	}
+
 	// The real admission path creates this record; advancing its persisted enqueue
 	// time models the ten-minute clock boundary without a test hook in production.
-	var queued map[string]json.RawMessage
-	data, err := os.ReadFile(recordPath)
+	enqueuedAt, err := json.Marshal(time.Now().UTC().Add(-11 * time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(data, &queued); err != nil {
-		t.Fatal(err)
-	}
-	var status string
-	if err := json.Unmarshal(queued["status"], &status); err != nil {
-		t.Fatal(err)
-	}
-	if status != string(proc.StatusBlocked) {
-		t.Fatalf("production admission status = %q, want blocked", status)
-	}
-	queued["enqueued_at"], err = json.Marshal(time.Now().UTC().Add(-11 * time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	queued["enqueued_at"] = enqueuedAt
 	updated, err := json.Marshal(queued)
 	if err != nil {
 		t.Fatal(err)
@@ -183,15 +198,11 @@ func readAdmissionEvents(t *testing.T, state string) []proc.Event {
 		t.Fatal(err)
 	}
 	var events []proc.Event
-	for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n")) {
-		if len(line) == 0 {
-			continue
-		}
-		var event proc.Event
-		if err := json.Unmarshal(line, &event); err != nil {
-			t.Fatal(err)
-		}
+	if err := proc.ReadEvents(bytes.NewReader(output.Bytes()), func(event proc.Event) error {
 		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	return events
 }

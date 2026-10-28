@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -447,14 +448,7 @@ func (a commandAdapter) Start(ctx context.Context, r AgentRequest) (*exec.Cmd, e
 }
 func (a commandAdapter) Resume(ctx context.Context, r AgentRequest) (*exec.Cmd, error) {
 	if a.vendor == "codex" {
-		args := []string{"exec", "resume", "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"}
-		for _, dir := range r.WritableDirs {
-			args = append(args, "--add-dir", dir)
-		}
-		if r.FinalPath != "" {
-			args = append(args, "-o", r.FinalPath)
-		}
-		args = append(args, "--json", r.SessionID, "-")
+		args := codexResumeArgs(r)
 		cmd := exec.CommandContext(ctx, a.binary, args...)
 		cmd.Dir = r.Workdir
 		var err error
@@ -481,6 +475,24 @@ func (a commandAdapter) Resume(ctx context.Context, r AgentRequest) (*exec.Cmd, 
 		return nil, err
 	}
 	return cmd, nil
+}
+
+func codexResumeArgs(r AgentRequest) []string {
+	roots := append([]string{r.Workdir}, r.WritableDirs...)
+	encodedRoots := make([]string, 0, len(roots))
+	for _, root := range roots {
+		encodedRoots = append(encodedRoots, strconv.Quote(root))
+	}
+	args := []string{
+		"exec", "resume",
+		"-c", `sandbox_mode="workspace-write"`,
+		"-c", "sandbox_workspace_write.network_access=true",
+		"-c", "sandbox_workspace_write.writable_roots=[" + strings.Join(encodedRoots, ",") + "]",
+	}
+	if r.FinalPath != "" {
+		args = append(args, "-o", r.FinalPath)
+	}
+	return append(args, "--json", r.SessionID, "-")
 }
 func (a commandAdapter) Interrupt(p *os.Process) error { return p.Signal(os.Interrupt) }
 func (a commandAdapter) Parse(line []byte) (VendorEvent, error) {

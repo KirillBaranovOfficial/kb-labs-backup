@@ -4,6 +4,24 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-27
+
+### macOS process ownership uses an inherited run-token descriptor
+
+macOS does not expose environment strings for Apple platform binaries through
+`kern.procargs2`, so the run environment marker cannot prove ownership of
+commands such as `/bin/sh` and `/bin/sleep` after exec and detachment. Each
+supervised command therefore inherits a run-unique file descriptor; the process
+owner matches the descriptor's vnode device and inode for same-UID processes
+across process inventory snapshots. This survives exec of platform binaries,
+setsid, and reparenting. A readable environment marker and recorded PID/start
+identity remain additional evidence. Foreign-UID unreadable candidates remain
+visible as potential setuid owners but are not accepted without other ownership
+proof. A recorded process that closes the token and loses its marker remains
+visible as unverified. A process that closes every inherited descriptor before
+it is observed and then detaches cannot be attributed after that point. Cases:
+S-237.1, S-237.7.
+
 ## 2026-10-23
 
 ### Built-in scenario plugins are Marketplace install specs

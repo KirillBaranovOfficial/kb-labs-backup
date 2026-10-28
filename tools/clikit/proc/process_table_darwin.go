@@ -4,9 +4,12 @@ package proc
 
 /*
 #cgo LDFLAGS: -lproc
+#include <errno.h>
 #include <libproc.h>
 #include <sys/proc.h>
+#include <sys/proc_info.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 static int kb_proc_metrics(pid_t pid, uint64_t *rss, uint64_t *cpu_ns) {
 	struct rusage_info_v2 usage;
@@ -14,6 +17,51 @@ static int kb_proc_metrics(pid_t pid, uint64_t *rss, uint64_t *cpu_ns) {
 	*rss = usage.ri_resident_size;
 	*cpu_ns = usage.ri_user_time + usage.ri_system_time;
 	return 1;
+}
+
+static int kb_process_has_vnode(pid_t pid, uint64_t device, uint64_t inode, int *error_code) {
+	for (int capacity = 32; capacity <= (1 << 16); capacity *= 2) {
+		struct proc_fdinfo *fds = calloc((size_t)capacity, sizeof(*fds));
+		if (fds == NULL) { *error_code = ENOMEM; return -1; }
+		errno = 0;
+		int bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, fds, capacity * (int)sizeof(*fds));
+		int list_error = errno;
+		if (bytes <= 0) {
+			free(fds);
+			*error_code = list_error == 0 ? EIO : list_error;
+			return -1;
+		}
+		int count = bytes / (int)sizeof(*fds);
+		if (bytes % (int)sizeof(*fds) != 0) {
+			free(fds);
+			*error_code = EPROTO;
+			return -1;
+		}
+		int matched = 0;
+		int inspect_error = 0;
+		for (int index = 0; index < count; index++) {
+			if (fds[index].proc_fdtype != PROX_FDTYPE_VNODE) continue;
+			struct vnode_fdinfo vnode;
+			errno = 0;
+			int got = proc_pidfdinfo(pid, fds[index].proc_fd, PROC_PIDFDVNODEINFO, &vnode, sizeof(vnode));
+			if (got != sizeof(vnode)) {
+				if (errno != 0) inspect_error = errno;
+				continue;
+			}
+			if ((uint64_t)vnode.pvi.vi_stat.vst_dev == device && (uint64_t)vnode.pvi.vi_stat.vst_ino == inode) {
+				matched = 1;
+				break;
+			}
+		}
+		free(fds);
+		if (matched) { *error_code = 0; return 1; }
+		if (bytes < capacity * (int)sizeof(*fds)) {
+			*error_code = inspect_error;
+			return inspect_error == 0 ? 0 : -1;
+		}
+	}
+	*error_code = EOVERFLOW;
+	return -1;
 }
 */
 import "C"
@@ -39,15 +87,34 @@ func darwinProcessSnapshot(runID string) ([]Process, error) {
 			continue
 		}
 		started := time.Unix(info.Proc.P_starttime.Sec, int64(info.Proc.P_starttime.Usec)*1000)
+		sessionID, sidErr := unix.Getsid(int(info.Proc.P_pid))
+		sidError := ""
+		if sidErr != nil {
+			sidError = sidErr.Error()
+		}
 		processes = append(processes, Process{
 			PID: int(info.Proc.P_pid), PPID: int(info.Eproc.Ppid), processGroupID: int(info.Eproc.Pgid),
+			sessionID: sessionID, sessionIDError: sidError,
 			Command:   darwinCommandName(info.Proc.P_comm[:]),
 			StartedAt: started, ElapsedMS: max(int64(0), time.Since(started).Milliseconds()),
 			Identity: formatStart(&info), uid: info.Eproc.Ucred.Uid,
 		})
 	}
-	candidates := processInspectionCandidates(processes, syscall.Getpid(), uint32(unix.Getuid()))
-	return applyCachedProcessMarkers(processes, candidates, runID, hostProcessMarkerCache, inspectProcessMarker), nil
+	candidates := processInspectionCandidates(processes, syscall.Getpid())
+	processes = applyCachedProcessMarkers(processes, candidates, runID, hostProcessMarkerCache, inspectProcessMarker)
+	return applyRunTokenDescriptors(processes, runID, processHasRunTokenDescriptor)
+}
+
+func processHasRunTokenDescriptor(pid int, token fileIdentity) (bool, error) {
+	var errorCode C.int
+	matched := C.kb_process_has_vnode(C.pid_t(pid), C.uint64_t(token.Device), C.uint64_t(token.Inode), &errorCode)
+	if matched < 0 {
+		if errorCode == 0 {
+			return false, fmt.Errorf("inspect process %d run-token descriptors: libproc returned no match status", pid)
+		}
+		return false, fmt.Errorf("inspect process %d run-token descriptors: %w", pid, syscall.Errno(errorCode))
+	}
+	return matched == 1, nil
 }
 
 func (osProcessSource) Metrics(tree []Process) ([]Process, error) {
@@ -100,7 +167,7 @@ func inspectProcessMarker(pid int) (string, bool, error) {
 		if processGone(err) {
 			return "", false, err
 		}
-		return "", true, nil
+		return "", true, err
 	}
 	_, position, err := parseProcargs2(args)
 	if err != nil {

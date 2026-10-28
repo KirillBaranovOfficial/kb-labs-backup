@@ -202,6 +202,17 @@ func ShowQuota(stateDir string) (QuotaStatus, error) {
 	return status, err
 }
 
+// CPUCommandTokenCapacity returns the configured host token count used by
+// heavy command admission. The effective quota remains the single owner of
+// host defaults, cgroup limits, and the optional quota.json override.
+func CPUCommandTokenCapacity(stateDir string) (int, error) {
+	quota, err := effectiveQuota(stateDir, systemHostResourceSource())
+	if err != nil {
+		return 0, fmt.Errorf("read CPU command token capacity: %w", err)
+	}
+	return quota.CPUs, nil
+}
+
 func SetQuota(stateDir, memory, cpus, minFree string) error {
 	if stateDir == "" {
 		return fmt.Errorf("state directory is required")
@@ -288,8 +299,7 @@ func pressureLevelBlocks(level pressureLevel, class CostClass) bool {
 	}
 }
 
-func pressureAdmissionWait(level pressureLevel, levelSince time.Time, hysteresis bool) string {
-	current := string(level)
+func pressureAdmissionWait(level pressureLevel, levelSince time.Time, hysteresis bool, signalReason string) string {
 	since := levelSince.UTC().Format(time.RFC3339)
 	if level == pressureUnknown {
 		return fmt.Sprintf("waiting for pressure sample; current: pressure unknown since %s", since)
@@ -298,12 +308,12 @@ func pressureAdmissionWait(level pressureLevel, levelSince time.Time, hysteresis
 		if level == pressureWarn {
 			return fmt.Sprintf("waiting for memory pressure to drop below warn; hysteresis current: warn since %s", since)
 		}
-		return fmt.Sprintf("waiting for host pressure to return to normal; hysteresis current: %s since %s", current, since)
+		return fmt.Sprintf("waiting for host pressure to return to normal; hysteresis current: %s since %s", signalReason, since)
 	}
 	if level == pressureWarn {
 		return fmt.Sprintf("waiting for memory pressure to drop below warn; current: warn since %s", since)
 	}
-	return fmt.Sprintf("waiting for memory pressure to return to normal; current: %s since %s", current, since)
+	return fmt.Sprintf("waiting for host pressure to return to normal; current: %s since %s", signalReason, since)
 }
 
 func isElevatedPressure(sample HostResourceSnapshot) bool {
