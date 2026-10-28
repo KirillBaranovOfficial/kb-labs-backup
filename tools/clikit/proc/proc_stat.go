@@ -14,6 +14,7 @@ type procStat struct {
 	State          byte
 	PPID           int
 	ProcessGroupID int
+	SessionID      int
 	StartTicks     int64
 	UserTicks      int64
 	SystemTicks    int64
@@ -46,6 +47,10 @@ func parseProcStat(data string) (procStat, error) {
 	if err != nil || processGroupID < 0 {
 		return procStat{}, errors.New("parse proc stat process group: invalid value")
 	}
+	sessionID, err := strconv.Atoi(fields[3])
+	if err != nil || sessionID < 0 {
+		return procStat{}, errors.New("parse proc stat session: invalid value")
+	}
 	startTicks, err := strconv.ParseInt(fields[19], 10, 64)
 	if err != nil || startTicks < 0 {
 		return procStat{}, errors.New("parse proc stat start ticks: invalid value")
@@ -56,7 +61,7 @@ func parseProcStat(data string) (procStat, error) {
 	if uErr != nil || sErr != nil || rErr != nil || residentPages < 0 {
 		return procStat{}, errors.New("proc stat has invalid CPU or resident memory fields")
 	}
-	return procStat{PID: pid, Comm: data[open+1 : close], State: fields[0][0], PPID: ppid, ProcessGroupID: processGroupID, StartTicks: startTicks, UserTicks: userTicks, SystemTicks: systemTicks, ResidentPages: residentPages, Identity: strconv.FormatInt(startTicks, 10)}, nil
+	return procStat{PID: pid, Comm: data[open+1 : close], State: fields[0][0], PPID: ppid, ProcessGroupID: processGroupID, SessionID: sessionID, StartTicks: startTicks, UserTicks: userTicks, SystemTicks: systemTicks, ResidentPages: residentPages, Identity: strconv.FormatInt(startTicks, 10)}, nil
 }
 
 func parseProcBootTime(data string) (time.Time, error) {

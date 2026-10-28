@@ -146,12 +146,10 @@ func (options schedulerRunOptions) landAccepted(task SchedulerTask, stream Sched
 		stream.Cause = "no-proposed-commits"
 		return false, "", options.store.transition(stream, SchedulerAwaitingOrchestrator, "land proposals", "add a parseable Proposed commits section, then resume")
 	}
-	object, err := buildLandingObjects(task.RepoRoot, task.Stream, verifiedTree, stream.Submission.ExpectedRefSHA, commits, filepath.Join(options.state, "jobs", task.ID, "tmp"))
+	nextCommand := fmt.Sprintf("%s land %s --state %q", options.root.InvocationCommand(), task.Stream, options.state)
+	object, err := buildLandingObjects(task.RepoRoot, task.Stream, verifiedTree, stream.Submission.ExpectedRefSHA, commits, filepath.Join(options.state, "jobs", task.ID, "tmp"), nextCommand)
 	if err != nil {
 		return false, "", fmt.Errorf("build verified landing objects for %s: %w; next: %s land %s --state %q", task.Stream, err, options.root.InvocationCommand(), task.Stream, options.state)
-	}
-	if object.TreeSHA != verifiedTree {
-		return false, "", fmt.Errorf("landing objects have tree %s, expected verified tree %s", object.TreeSHA, verifiedTree)
 	}
 	if err := moveLandingRef(task.RepoRoot, task.Stream, object, stream.Submission.ExpectedRefSHA); err != nil {
 		var conflict *landingRefConflict
@@ -227,8 +225,8 @@ func (options schedulerRunOptions) landAccepted(task SchedulerTask, stream Sched
 	if err != nil {
 		return false, "", fmt.Errorf("verify immutable integration merge input: %w", err)
 	}
-	if mergeInputTree != verifiedTree {
-		return false, "", fmt.Errorf("integration merge input tree %s differs from verified tree %s", mergeInputTree, verifiedTree)
+	if mergeInputTree != object.TreeSHA {
+		return false, "", fmt.Errorf("integration merge input tree %s differs from sanitized landing tree %s", mergeInputTree, object.TreeSHA)
 	}
 	mergeCommitTree, err := treeSHAForCommit(task.RepoRoot, mergeSHA)
 	if err != nil {
@@ -913,21 +911,18 @@ func (options schedulerRunOptions) resolveReviewOutcome(workerTask SchedulerTask
 			return options.store.transition(workerStream, SchedulerAwaitingOrchestrator, strings.Join(workerStream.ReviewReports, ","), "decide after three rejected review rounds")
 		}
 	}
-	archive := filepath.Join(workerTask.Workdir, "reviews", "archive", workerTask.Stream+"-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".md")
-	if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
-		return fmt.Errorf("create review archive: %w", err)
-	}
 	var reports []string
+	var artifacts []reviewReportArtifact
 	for _, reportPath := range workerStream.ReviewReports {
 		report, err := os.ReadFile(reportPath)
 		if err != nil {
 			return fmt.Errorf("read review report %s for archive: %w", reportPath, err)
 		}
-		archived := strings.TrimSuffix(archive, ".md") + "-" + filepath.Base(reportPath)
-		if err := writeAtomicFile(archived, report); err != nil {
-			return fmt.Errorf("archive review report: %w", err)
-		}
-		reports = append(reports, archived)
+		artifacts = append(artifacts, reviewReportArtifact{Path: reportPath, Contents: report})
+	}
+	reports, err := archiveReviewReports(workerTask.Workdir, workerTask.Stream, artifacts)
+	if err != nil {
+		return err
 	}
 	prompt := filepath.Join(options.state, "sched", "prompts", workerTask.ID+"-resume.md")
 	promptBody := fmt.Sprintf("The review rejected stream %s. Read the archived reviews at %s, address their findings, and update .agent-report.md.\n", workerTask.Stream, strings.Join(reports, ", "))
@@ -942,6 +937,30 @@ func (options schedulerRunOptions) resolveReviewOutcome(workerTask SchedulerTask
 	workerStream.ReviewResults = nil
 	workerStream.ReviewReports = nil
 	return options.store.transition(workerStream, SchedulerReady, "", "resume the original agent thread")
+}
+
+type reviewReportArtifact struct {
+	Path     string
+	Contents []byte
+}
+
+func archiveReviewReports(workdir, stream string, reports []reviewReportArtifact) ([]string, error) {
+	if len(reports) == 0 {
+		return nil, nil
+	}
+	archive := filepath.Join(workdir, "reviews", "archive", stream+"-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".md")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
+		return nil, fmt.Errorf("create review archive: %w", err)
+	}
+	var paths []string
+	for _, report := range reports {
+		archived := strings.TrimSuffix(archive, ".md") + "-" + filepath.Base(report.Path)
+		if err := writeAtomicFile(archived, report.Contents); err != nil {
+			return nil, fmt.Errorf("archive report %s: %w", report.Path, err)
+		}
+		paths = append(paths, archived)
+	}
+	return paths, nil
 }
 
 func (options schedulerRunOptions) finishMerge(task SchedulerTask, mergeStream SchedulerStream) error {
@@ -977,6 +996,10 @@ func (options schedulerRunOptions) finishMerge(task SchedulerTask, mergeStream S
 	if !fullGitSHA.MatchString(workerHead) || !fullGitSHA.MatchString(integrationSHA) {
 		return fmt.Errorf("merge resolver requires full worker and integration parent SHAs")
 	}
+	nextCommand := fmt.Sprintf("%s sched run --state %q", options.root.InvocationCommand(), options.state)
+	if err := excludeLandingReportsFromIndex(task.Workdir, workerHead, nextCommand); err != nil {
+		return fmt.Errorf("exclude merge-resolution report files: %w", err)
+	}
 	resolvedTree, err := schedulerCommandOutput(task.Workdir, "git", "-C", task.Workdir, "write-tree")
 	if err != nil {
 		return fmt.Errorf("write merge-resolution tree: %w", err)
@@ -996,7 +1019,14 @@ func (options schedulerRunOptions) finishMerge(task SchedulerTask, mergeStream S
 		}
 		return fmt.Errorf("publish merge-resolution commit with worker-ref compare-and-swap: %w", err)
 	}
-	submission, err := options.submitWorkerCommit(worker, resolvedSHA, resolvedSHA)
+	if _, err := schedulerCommandOutput(task.Workdir, "git", "-C", task.Workdir, "reset", "--mixed", resolvedSHA); err != nil {
+		return fmt.Errorf("refresh merge-resolution worktree before report snapshot: %w", err)
+	}
+	verifiedSHA, _, err := snapshotWorktree(task.Workdir, worker.Stream)
+	if err != nil {
+		return fmt.Errorf("snapshot merge-resolution worktree: %w", err)
+	}
+	submission, err := options.submitWorkerCommit(worker, verifiedSHA, resolvedSHA)
 	if err != nil {
 		return fmt.Errorf("submit immutable merge-resolution commit for remote verification: %w", err)
 	}

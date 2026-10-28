@@ -84,6 +84,11 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	if *stream == "" || *workdir == "" || *promptFile == "" {
 		return 2, fmt.Errorf("%s agent start: --stream, --workdir, and --prompt-file are required; next: %s agent --help", root.Name(), root.InvocationCommand())
 	}
+	canonicalState, err := proc.CanonicalStateDir(*state)
+	if err != nil {
+		return 1, fmt.Errorf("%s agent start: resolve --state: %w; next: %s agent start --help", root.Name(), err, root.InvocationCommand())
+	}
+	*state = canonicalState
 	costClass, err := proc.ParseCostClass(*cost)
 	if err != nil {
 		return 2, fmt.Errorf("%s agent start: %w; next: %s agent start --help", root.Name(), err, root.InvocationCommand())
@@ -223,10 +228,11 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		limitCtx, limitCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		limits, limitErr := adapter.Limits(limitCtx)
 		limitCancel()
-		if limitErr == nil {
-			if err := waitForQuotaAdmission(context.Background(), limits, adapter, store, id, *fiveHour, *week); err != nil {
-				return failAgentJob(store, id, PhaseAdmission, ReasonQuota, root, finalPath, err)
-			}
+		if limitErr != nil {
+			limits = nil
+		}
+		if err := waitForQuotaAdmission(context.Background(), limits, adapter, store, id, *fiveHour, *week, realQuotaAdmissionClock{}); err != nil {
+			return failAgentJob(store, id, PhaseAdmission, ReasonQuota, root, finalPath, err)
 		}
 	}
 	if err = store.Update(id, func(j *Job) error { j.State = JobRunning; j.Phase = PhaseRun; return nil }); err != nil {
@@ -370,6 +376,11 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 			failure = classified
 		}
 	}
+	if failure.resetAt != nil {
+		if _, err := newVendorLimitStateStore(*state, time.Now).Record(*vendor, *failure.resetAt, adapter.Redact(failure.message)); err != nil {
+			return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record vendor limit reset: %w", err))
+		}
+	}
 	if waitErr != nil && failure.class == failureTransient && completedJob.SessionID != "" && *recoveryAttempt < maxProviderRecoveryAttempts {
 		nextAttempt := *recoveryAttempt + 1
 		if updateErr := closeProviderAttempt(store, id, completedJob.SessionID, "paused", failure.reason, attemptUsageFor(*vendor, "paused")); updateErr != nil {
@@ -382,7 +393,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}); err != nil {
 			return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record paused provider state: %w", err))
 		}
-		if err := waitForProviderRecovery(context.Background(), adapter, *vendor, failure.reason, nextAttempt, *fiveHour, *week); err != nil {
+		if err := waitForProviderRecovery(context.Background(), adapter, *vendor, failure.reason, nextAttempt, *fiveHour, *week, failure.resetAt); err != nil {
 			return failAgentJob(store, id, PhaseRun, failure.reason, root, finalPath, err)
 		}
 		retryArgs, err := continuationRetryArgs(root, args, *state, id, completedJob.SessionID, nextAttempt)
@@ -560,7 +571,40 @@ func failAgentJob(store *jobStore, id string, phase JobPhase, reason JobReason, 
 	return 1, fmt.Errorf("%v; next: %s", cause, next)
 }
 
-func waitForQuotaAdmission(ctx context.Context, limits []VendorLimit, provider limitsProvider, store *jobStore, id string, fiveHour, week float64) error {
+type quotaAdmissionClock interface {
+	Now() time.Time
+	WaitUntil(context.Context, time.Time) error
+}
+
+type realQuotaAdmissionClock struct{}
+
+func (realQuotaAdmissionClock) Now() time.Time { return time.Now() }
+
+func (realQuotaAdmissionClock) WaitUntil(ctx context.Context, deadline time.Time) error {
+	delay := time.Until(deadline)
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func waitForQuotaAdmission(ctx context.Context, limits []VendorLimit, provider limitsProvider, store *jobStore, id string, fiveHour, week float64, clock quotaAdmissionClock) error {
+	job, err := store.Get(id)
+	if err != nil {
+		return fmt.Errorf("read job before quota admission: %w", err)
+	}
+	limitStore := newVendorLimitStateStore(filepath.Dir(store.dir), clock.Now)
+	limits, err = limitsWithRecordedVendorState(limits, limitStore, job.Vendor)
+	if err != nil {
+		return fmt.Errorf("read recorded vendor limit: %w", err)
+	}
 	for quotaBlocked(limits, fiveHour, week) {
 		if err := store.Update(id, func(job *Job) error {
 			job.State = JobQuotaWait
@@ -574,14 +618,9 @@ func waitForQuotaAdmission(ctx context.Context, limits []VendorLimit, provider l
 		if reset == nil {
 			return nil
 		}
-		delay := time.Until(*reset)
-		if delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
+		for clock.Now().Before(*reset) {
+			if err := clock.WaitUntil(ctx, *reset); err != nil {
+				return err
 			}
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -590,7 +629,10 @@ func waitForQuotaAdmission(ctx context.Context, limits []VendorLimit, provider l
 		if err != nil {
 			return nil
 		}
-		limits = refreshed
+		limits, err = limitsWithRecordedVendorState(refreshed, limitStore, job.Vendor)
+		if err != nil {
+			return fmt.Errorf("refresh recorded vendor limit: %w", err)
+		}
 	}
 	return store.Update(id, func(job *Job) error {
 		job.State = JobRunning
@@ -615,14 +657,22 @@ func nextBlockedReset(limits []VendorLimit, fiveHour, week float64) *time.Time {
 	return next
 }
 
-func waitForProviderRecovery(ctx context.Context, adapter AgentAdapter, vendor string, reason JobReason, attempt int, fiveHour, week float64) error {
+func waitForProviderRecovery(ctx context.Context, adapter AgentAdapter, vendor string, reason JobReason, attempt int, fiveHour, week float64, recordedReset *time.Time) error {
 	delay := time.Duration(1<<min(attempt-1, 5)) * time.Second
 	if reason == ReasonRateLimited {
+		var reset *time.Time
+		if recordedReset != nil {
+			value := *recordedReset
+			reset = &value
+		}
 		limits, err := adapter.Limits(ctx)
 		if err == nil {
-			if reset := nextBlockedReset(limits, fiveHour, week); reset != nil && time.Until(*reset) > delay {
-				delay = time.Until(*reset)
+			if providerReset := nextBlockedReset(limits, fiveHour, week); providerReset != nil && (reset == nil || providerReset.After(*reset)) {
+				reset = providerReset
 			}
+		}
+		if reset != nil && time.Until(*reset) > delay {
+			delay = time.Until(*reset)
 		}
 		timer := time.NewTimer(delay)
 		defer timer.Stop()

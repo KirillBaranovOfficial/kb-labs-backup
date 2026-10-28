@@ -5,11 +5,50 @@ package proc
 import (
 	"strings"
 	"sync"
+	"syscall"
 )
 
+func applyRunTokenDescriptors(processes []Process, runID string, inspect func(int, fileIdentity) (bool, error)) ([]Process, error) {
+	token, exists, err := runTokenIdentity(runID)
+	if err != nil {
+		return processes, err
+	}
+	if !exists {
+		return processes, nil
+	}
+	out := append([]Process(nil), processes...)
+	currentUID := uint32(syscall.Getuid())
+	for index := range out {
+		if out[index].uid != currentUID {
+			out[index].tokenResult = "out-of-scope"
+			continue
+		}
+		matched, inspectErr := inspect(out[index].PID, token)
+		if processGone(inspectErr) {
+			out[index].tokenResult = "gone-during-token-scan"
+			out[index].tokenReadError = inspectErr.Error()
+			continue
+		}
+		if inspectErr != nil {
+			out[index].tokenResult = "unreadable"
+			out[index].tokenReadError = inspectErr.Error()
+			continue
+		}
+		if matched {
+			out[index].runToken = true
+			out[index].tokenResult = "match"
+		} else {
+			out[index].tokenResult = "absent"
+		}
+	}
+	return out, nil
+}
+
 type processMarkerResult struct {
-	runID      string
-	unverified bool
+	runID        string
+	unverified   bool
+	markerResult string
+	markerError  string
 }
 
 type processMarkerCache struct {
@@ -32,37 +71,30 @@ func (cache *processMarkerCache) lookup(process Process, inspect func(int) (stri
 	}
 	marker, unverified, err := inspect(process.PID)
 	if processGone(err) {
-		return processMarkerResult{}
+		return processMarkerResult{markerResult: "gone-during-marker-read", markerError: err.Error()}
 	}
 	if err != nil {
 		unverified = true
 	}
-	result := processMarkerResult{runID: marker, unverified: unverified}
+	markerResult := "absent"
+	if err != nil || unverified {
+		markerResult = "unreadable"
+	} else if marker != "" {
+		markerResult = "other-run"
+	}
+	markerError := ""
+	if err != nil {
+		markerError = err.Error()
+	}
+	result := processMarkerResult{runID: marker, unverified: unverified, markerResult: markerResult, markerError: markerError}
 	cache.entries[key] = result
 	return result
 }
 
-func processInspectionCandidates(processes []Process, rootPID int, uid uint32) map[int]bool {
-	children := make(map[int][]int)
-	for _, process := range processes {
-		children[process.PPID] = append(children[process.PPID], process.PID)
-	}
-	ancestry := make(map[int]bool)
-	queue := []int{rootPID}
-	ancestry[rootPID] = true
-	for len(queue) > 0 {
-		pid := queue[0]
-		queue = queue[1:]
-		for _, child := range children[pid] {
-			if !ancestry[child] {
-				ancestry[child] = true
-				queue = append(queue, child)
-			}
-		}
-	}
+func processInspectionCandidates(processes []Process, rootPID int) map[int]bool {
 	candidates := make(map[int]bool)
 	for _, process := range processes {
-		if process.uid == uid && !ancestry[process.PID] {
+		if process.PID != rootPID {
 			candidates[process.PID] = true
 		}
 	}
@@ -81,7 +113,20 @@ func applyCachedProcessMarkers(processes []Process, candidates map[int]bool, run
 		}
 		result := cache.lookup(process, inspect)
 		process.runMarker = result.runID == runID
+		switch {
+		case result.markerResult == "gone-during-marker-read":
+			process.markerResult = result.markerResult
+		case result.unverified:
+			process.markerResult = "unreadable"
+		case result.runID == runID:
+			process.markerResult = "match"
+		case result.runID == "":
+			process.markerResult = "absent"
+		default:
+			process.markerResult = "other-run"
+		}
 		process.Unverified = process.Unverified || result.unverified
+		process.markerReadError = result.markerError
 		out = append(out, process)
 	}
 	return out

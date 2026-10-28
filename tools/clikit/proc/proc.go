@@ -12,7 +12,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,21 +30,26 @@ const (
 	runEnv      = "KBLABS_CLIPROC_RUN"
 )
 
+type OwnershipUnverifiedReason string
+
+const OwnershipUnverifiedRunTokenClosed OwnershipUnverifiedReason = "run-token-closed-after-observation"
+
 type EventType string
 
 const (
-	EventQueued     EventType = "queued"
-	EventBlocked    EventType = "blocked"
-	EventIdle       EventType = "idle"
-	EventPressure   EventType = "pressure"
-	EventPaused     EventType = "paused"
-	EventResumed    EventType = "resumed"
-	EventOverBudget EventType = "over-budget"
-	EventStart      EventType = "start"
-	EventStall      EventType = "stall"
-	EventExit       EventType = "exit"
-	EventLost       EventType = "lost"
-	EventTeardown   EventType = "teardown"
+	EventQueued       EventType = "queued"
+	EventBlocked      EventType = "blocked"
+	EventIdle         EventType = "idle"
+	EventPressure     EventType = "pressure"
+	EventPaused       EventType = "paused"
+	EventResumed      EventType = "resumed"
+	EventOverBudget   EventType = "over-budget"
+	EventUngatedHeavy EventType = "ungated-heavy"
+	EventStart        EventType = "start"
+	EventStall        EventType = "stall"
+	EventExit         EventType = "exit"
+	EventLost         EventType = "lost"
+	EventTeardown     EventType = "teardown"
 )
 
 type Config struct {
@@ -56,6 +63,7 @@ type Config struct {
 	StdinPath   string
 	SlotGroup   string
 	Slots       int
+	SlotWeight  int
 	WaitGate    string
 	HoldGate    string
 	MinFree     uint64
@@ -76,47 +84,64 @@ type Config struct {
 }
 
 type Event struct {
-	Schema             string               `json:"schema"`
-	At                 time.Time            `json:"at"`
-	Type               EventType            `json:"type"`
-	Status             RunStatus            `json:"status,omitempty"`
-	RunID              string               `json:"run_id"`
-	Tag                string               `json:"tag"`
-	KeeperPID          int                  `json:"keeper_pid"`
-	Command            string               `json:"command,omitempty"`
-	ExitCode           *int                 `json:"exit_code,omitempty"`
-	Signal             string               `json:"signal,omitempty"`
-	Error              string               `json:"error,omitempty"`
-	Reason             string               `json:"reason,omitempty"`
-	WaitingItems       []string             `json:"waiting_items,omitempty"`
-	Position           int                  `json:"position,omitempty"`
-	DiskNeedBytes      uint64               `json:"disk_need_bytes,omitempty"`
-	DiskFreeBytes      uint64               `json:"disk_free_bytes,omitempty"`
-	DurationMS         int64                `json:"duration_ms,omitempty"`
-	Leaves             []Process            `json:"leaves,omitempty"`
-	Reaped             []Process            `json:"reaped,omitempty"`
-	Unverified         []Process            `json:"unverified,omitempty"`
-	MemoryBytes        uint64               `json:"memory_bytes,omitempty"`
-	CPUsMin            int                  `json:"cpus_min,omitempty"`
-	CPUsMax            int                  `json:"cpus_max,omitempty"`
-	DiskBytes          uint64               `json:"disk_bytes,omitempty"`
-	GrantedCPUs        int                  `json:"granted_cpus,omitempty"`
-	PeakRSSBytes       uint64               `json:"peak_rss_bytes,omitempty"`
-	AverageCPU         float64              `json:"average_cpu,omitempty"`
-	MeasurementPartial bool                 `json:"measurement_partial,omitempty"`
-	LimitsAdvisory     string               `json:"limits_advisory,omitempty"`
-	OverBudget         bool                 `json:"over_budget,omitempty"`
-	ResourceNotice     string               `json:"resource_notice,omitempty"`
-	CostClass          CostClass            `json:"cost_class,omitempty"`
-	PausedMS           int64                `json:"paused_ms,omitempty"`
-	GovernorDecision   string               `json:"governor_decision,omitempty"`
-	Pressure           HostResourceSnapshot `json:"pressure,omitempty"`
-	Remaining          []Process            `json:"remaining,omitempty"`
-	Resources          []ResourceOutcome    `json:"resources,omitempty"`
+	Schema                   string                       `json:"schema"`
+	At                       time.Time                    `json:"at"`
+	Type                     EventType                    `json:"type"`
+	Status                   RunStatus                    `json:"status,omitempty"`
+	RunID                    string                       `json:"run_id"`
+	Tag                      string                       `json:"tag"`
+	KeeperPID                int                          `json:"keeper_pid"`
+	Command                  string                       `json:"command,omitempty"`
+	Binary                   string                       `json:"binary,omitempty"`
+	ProcessTree              []Process                    `json:"process_tree,omitempty"`
+	ExitCode                 *int                         `json:"exit_code,omitempty"`
+	Signal                   string                       `json:"signal,omitempty"`
+	Error                    string                       `json:"error,omitempty"`
+	Reason                   string                       `json:"reason,omitempty"`
+	WaitingItems             []string                     `json:"waiting_items,omitempty"`
+	Position                 int                          `json:"position,omitempty"`
+	DiskNeedBytes            uint64                       `json:"disk_need_bytes,omitempty"`
+	DiskFreeBytes            uint64                       `json:"disk_free_bytes,omitempty"`
+	DurationMS               int64                        `json:"duration_ms,omitempty"`
+	Leaves                   []Process                    `json:"leaves,omitempty"`
+	Reaped                   []Process                    `json:"reaped,omitempty"`
+	Unverified               []Process                    `json:"unverified,omitempty"`
+	TeardownHistory          []ProcessIdentityEvidence    `json:"teardown_history,omitempty"`
+	TeardownInventory        []ProcessTreeInventorySample `json:"teardown_inventory,omitempty"`
+	TeardownInventoryOmitted int                          `json:"teardown_inventory_omitted,omitempty"`
+	TeardownEvidenceOmitted  int                          `json:"teardown_evidence_omitted,omitempty"`
+	MemoryBytes              uint64                       `json:"memory_bytes,omitempty"`
+	CPUsMin                  int                          `json:"cpus_min,omitempty"`
+	CPUsMax                  int                          `json:"cpus_max,omitempty"`
+	DiskBytes                uint64                       `json:"disk_bytes,omitempty"`
+	GrantedCPUs              int                          `json:"granted_cpus,omitempty"`
+	PeakRSSBytes             uint64                       `json:"peak_rss_bytes,omitempty"`
+	AverageCPU               float64                      `json:"average_cpu,omitempty"`
+	MeasurementPartial       bool                         `json:"measurement_partial,omitempty"`
+	LimitsAdvisory           string                       `json:"limits_advisory,omitempty"`
+	OverBudget               bool                         `json:"over_budget,omitempty"`
+	ResourceNotice           string                       `json:"resource_notice,omitempty"`
+	CostClass                CostClass                    `json:"cost_class,omitempty"`
+	PausedMS                 int64                        `json:"paused_ms,omitempty"`
+	GovernorDecision         string                       `json:"governor_decision,omitempty"`
+	Pressure                 HostResourceSnapshot         `json:"pressure,omitempty"`
+	Remaining                []Process                    `json:"remaining,omitempty"`
+	Resources                ResourceOutcomeSummary       `json:"resources,omitempty"`
+}
+
+type ResourceOutcomeSummary struct {
+	Counts    map[string]int               `json:"counts,omitempty"`
+	Remaining []ResourceOutcomeSummaryItem `json:"remaining,omitempty"`
+	Omitted   int                          `json:"omitted,omitempty"`
+}
+
+type ResourceOutcomeSummaryItem struct {
+	Resource Resource `json:"resource"`
+	Outcome  string   `json:"outcome"`
 }
 
 type Run struct {
-	PID       int
+	PID       RecordedKeeperPID
 	RunID     string
 	StartedAt string
 	stateDir  string
@@ -124,6 +149,22 @@ type Run struct {
 	once      sync.Once
 	err       error
 	done      chan struct{}
+}
+
+type KeeperSignalOutcome string
+
+const (
+	KeeperSignalRefusedCaller       KeeperSignalOutcome = "refused: caller"
+	KeeperSignalRefusedUnverifiable KeeperSignalOutcome = "refused: caller ancestry unverifiable"
+)
+
+type KeeperSignalError struct {
+	Outcome KeeperSignalOutcome
+	PID     int
+}
+
+func (err *KeeperSignalError) Error() string {
+	return fmt.Sprintf("proc: keeper signal %s for pid %d", err.Outcome, err.PID)
 }
 
 type RunStatus string
@@ -155,56 +196,71 @@ func (status RunStatus) Terminal() bool {
 }
 
 type Process struct {
-	PID              int `json:"pid"`
-	PPID             int `json:"ppid"`
-	processGroupID   int
-	Command          string    `json:"command"` // OS process command name, never the argument vector.
-	StartedAt        time.Time `json:"started_at"`
-	ElapsedMS        int64     `json:"elapsed_ms"`
-	Identity         string    `json:"identity"`
-	runMarker        bool
-	Unverified       bool `json:"unverified,omitempty"`
-	uid              uint32
-	RSSBytes         uint64  `json:"rss_bytes,omitempty"`
-	CPUSeconds       float64 `json:"cpu_seconds,omitempty"`
-	MetricsAvailable bool    `json:"metrics_available,omitempty"`
+	PID                       int `json:"pid"`
+	PPID                      int `json:"ppid"`
+	processGroupID            int
+	sessionID                 int
+	sessionIDError            string
+	Command                   string    `json:"command"` // OS process command name, never the argument vector.
+	StartedAt                 time.Time `json:"started_at"`
+	ElapsedMS                 int64     `json:"elapsed_ms"`
+	Identity                  string    `json:"identity"`
+	runMarker                 bool
+	markerResult              string
+	markerReadError           string
+	Unverified                bool                      `json:"unverified,omitempty"`
+	OwnershipUnverifiedReason OwnershipUnverifiedReason `json:"ownership_unverified_reason,omitempty"`
+	uid                       uint32
+	runToken                  bool
+	tokenResult               string
+	tokenReadError            string
+	RSSBytes                  uint64  `json:"rss_bytes,omitempty"`
+	CPUSeconds                float64 `json:"cpu_seconds,omitempty"`
+	MetricsAvailable          bool    `json:"metrics_available,omitempty"`
 }
 
 type RunInfo struct {
-	RunID              string     `json:"run_id"`
-	Tag                string     `json:"tag"`
-	PID                int        `json:"pid"`
-	StartedAt          *time.Time `json:"started_at,omitempty"`
-	Identity           string     `json:"identity"`
-	Status             RunStatus  `json:"status"`
-	Command            []string   `json:"command"`
-	Tree               []Process  `json:"tree"`
-	SlotGroup          string     `json:"slot_group,omitempty"`
-	QueuePosition      int        `json:"queue_position,omitempty"`
-	WaitReason         string     `json:"wait_reason,omitempty"`
-	ElapsedMS          int64      `json:"elapsed_ms,omitempty"`
-	StallMS            int64      `json:"stall_ms,omitempty"`
-	ExitCode           *int       `json:"exit_code,omitempty"`
-	Signal             string     `json:"signal,omitempty"`
-	Error              string     `json:"error,omitempty"`
-	CostKey            string     `json:"cost_key,omitempty"`
-	CostClass          CostClass  `json:"cost_class"`
-	Priority           int        `json:"priority"`
-	MemoryBytes        uint64     `json:"memory_bytes,omitempty"`
-	CPUsMin            int        `json:"cpus_min,omitempty"`
-	CPUsMax            int        `json:"cpus_max,omitempty"`
-	DiskBytes          uint64     `json:"disk_bytes,omitempty"`
-	GrantedCPUs        int        `json:"granted_cpus,omitempty"`
-	PeakRSSBytes       uint64     `json:"peak_rss_bytes"`
-	AverageCPU         float64    `json:"average_cpu"`
-	Paused             bool       `json:"paused"`
-	PausedMS           int64      `json:"paused_ms,omitempty"`
-	MeasurementPartial bool       `json:"measurement_partial,omitempty"`
-	LimitsAdvisory     string     `json:"limits_advisory,omitempty"`
-	OverBudget         bool       `json:"over_budget,omitempty"`
-	ResourceNotice     string     `json:"resource_notice,omitempty"`
-	DurationMS         int64      `json:"duration_ms,omitempty"`
+	RunID              string            `json:"run_id"`
+	Tag                string            `json:"tag"`
+	PID                RecordedKeeperPID `json:"pid"`
+	StartedAt          *time.Time        `json:"started_at,omitempty"`
+	Identity           string            `json:"identity"`
+	Status             RunStatus         `json:"status"`
+	Command            []string          `json:"command"`
+	Tree               []Process         `json:"tree"`
+	SlotGroup          string            `json:"slot_group,omitempty"`
+	SlotWeight         int               `json:"slot_weight,omitempty"`
+	QueuePosition      int               `json:"queue_position,omitempty"`
+	WaitReason         string            `json:"wait_reason,omitempty"`
+	ElapsedMS          int64             `json:"elapsed_ms,omitempty"`
+	StallMS            int64             `json:"stall_ms,omitempty"`
+	ExitCode           *int              `json:"exit_code,omitempty"`
+	Signal             string            `json:"signal,omitempty"`
+	Error              string            `json:"error,omitempty"`
+	CostKey            string            `json:"cost_key,omitempty"`
+	CostClass          CostClass         `json:"cost_class"`
+	Priority           int               `json:"priority"`
+	MemoryBytes        uint64            `json:"memory_bytes,omitempty"`
+	CPUsMin            int               `json:"cpus_min,omitempty"`
+	CPUsMax            int               `json:"cpus_max,omitempty"`
+	DiskBytes          uint64            `json:"disk_bytes,omitempty"`
+	GrantedCPUs        int               `json:"granted_cpus,omitempty"`
+	PeakRSSBytes       uint64            `json:"peak_rss_bytes"`
+	AverageCPU         float64           `json:"average_cpu"`
+	Paused             bool              `json:"paused"`
+	PausedMS           int64             `json:"paused_ms,omitempty"`
+	MeasurementPartial bool              `json:"measurement_partial,omitempty"`
+	LimitsAdvisory     string            `json:"limits_advisory,omitempty"`
+	OverBudget         bool              `json:"over_budget,omitempty"`
+	ResourceNotice     string            `json:"resource_notice,omitempty"`
+	DurationMS         int64             `json:"duration_ms,omitempty"`
+	ResourceOutcomes   []Resource        `json:"resource_outcomes,omitempty"`
 }
+
+// RecordedKeeperPID is the keeper identity stored in a run record. Keeping it
+// distinct from an arbitrary OS pid makes direct signaling of RunInfo.PID a
+// compile-time error; callers use the proc signal owner instead.
+type RecordedKeeperPID int
 
 type Listing struct {
 	Runs             []RunInfo            `json:"runs"`
@@ -215,10 +271,71 @@ type Listing struct {
 }
 
 type treeCleanup struct {
-	Reaped     []Process
-	Unverified []Process
-	Remaining  []Process
-	err        error
+	Reaped                  []Process
+	Unverified              []Process
+	Remaining               []Process
+	History                 []ProcessIdentityEvidence
+	Inventory               []ProcessTreeInventorySample
+	InventorySamplesOmitted int
+	err                     error
+}
+
+type ProcessIdentityEvidence struct {
+	PID      int    `json:"pid"`
+	PPID     int    `json:"ppid"`
+	PGID     int    `json:"pgid"`
+	SID      int    `json:"sid"`
+	UID      uint32 `json:"uid"`
+	Identity string `json:"identity"`
+}
+
+type cleanupClock interface {
+	Now() time.Time
+	Wait(time.Duration)
+}
+
+type wallCleanupClock struct{}
+
+func (wallCleanupClock) Now() time.Time              { return time.Now() }
+func (wallCleanupClock) Wait(duration time.Duration) { time.Sleep(duration) }
+
+type ProcessTreeInventorySample struct {
+	Index             int                                 `json:"index"`
+	SnapshotErr       string                              `json:"snapshot_error,omitempty"`
+	Processes         []ProcessTreeInventoryEvidence      `json:"processes"`
+	RejectedCounts    []ProcessTreeInventoryRejectedCount `json:"rejected_counts,omitempty"`
+	RejectedExamples  []ProcessTreeInventoryEvidence      `json:"rejected_examples,omitempty"`
+	OmittedProcesses  int                                 `json:"omitted_processes,omitempty"`
+	MembershipChanged bool                                `json:"membership_changed,omitempty"`
+}
+
+const maxTeardownInventorySamples = 4
+const maxTeardownProcessesPerSample = 6
+const maxTeardownRejectedExamples = 2
+
+type ProcessTreeInventoryRejectedCount struct {
+	Membership           string `json:"membership"`
+	MarkerResult         string `json:"marker_result,omitempty"`
+	TokenResult          string `json:"token_result,omitempty"`
+	UIDClass             string `json:"uid_class"`
+	PotentialSetuidOwner bool   `json:"potential_setuid_owner,omitempty"`
+	Count                int    `json:"count"`
+}
+
+type ProcessTreeInventoryEvidence struct {
+	PID                       int                       `json:"pid"`
+	PPID                      int                       `json:"ppid"`
+	PGID                      int                       `json:"pgid"`
+	SID                       int                       `json:"sid"`
+	SIDError                  string                    `json:"sid_error,omitempty"`
+	UID                       uint32                    `json:"uid"`
+	Identity                  string                    `json:"identity"`
+	MarkerResult              string                    `json:"marker_result"`
+	MarkerError               string                    `json:"marker_error,omitempty"`
+	TokenResult               string                    `json:"token_result,omitempty"`
+	TokenError                string                    `json:"token_error,omitempty"`
+	OwnershipUnverifiedReason OwnershipUnverifiedReason `json:"ownership_unverified_reason,omitempty"`
+	Membership                string                    `json:"membership"`
 }
 
 // processSource is the OS observation and signalling boundary used by every
@@ -246,16 +363,13 @@ func ProcessExists(pid int) (bool, error) {
 	return alive, err
 }
 
-func killTree(root int, runID string) error {
-	return killTreeWithHistory(root, runID, nil).err
-}
-
-func killTreeWithHistory(root int, runID string, observed []Process) treeCleanup {
-	return cleanupTreeWithSource(root, runID, observed, osProcessSource{})
+func killTreeWithProtectedAncestors(root int, runID string, observed []Process, protected []ProcessIdentityEvidence) treeCleanup {
+	return cleanupTreeWithProtectedSource(root, runID, observed, protected, osProcessSource{})
 }
 
 func cleanupLostRun(rec record, source processSource) treeCleanup {
-	cleanup := cleanupTreeWithSource(rec.PID, rec.RunID, rec.Observed, source)
+	cleanup := cleanupTreeWithProtectedSource(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors, source)
+	cleanup.err = errors.Join(cleanup.err, removeRunToken(rec.RunID))
 	if len(rec.Observed) == 0 && len(cleanup.Reaped) == 0 && len(cleanup.Unverified) == 0 && len(cleanup.Remaining) == 0 {
 		cleanup.err = errors.Join(cleanup.err, errors.New("unverified/failed observation: lost run has no persisted owned process identity"))
 	}
@@ -263,51 +377,54 @@ func cleanupLostRun(rec record, source processSource) treeCleanup {
 }
 
 type record struct {
-	RunID              string    `json:"run_id"`
-	Tag                string    `json:"tag"`
-	LatestTag          string    `json:"latest_tag,omitempty"`
-	PID                int       `json:"pid"`
-	StartedAt          string    `json:"started_at"`
-	Command            []string  `json:"command"`
-	StateDir           string    `json:"state_dir"`
-	Status             RunStatus `json:"status,omitempty"`
-	Error              string    `json:"error,omitempty"`
-	SlotGroup          string    `json:"slot_group,omitempty"`
-	Slots              int       `json:"slots,omitempty"`
-	QueueOrder         uint64    `json:"queue_order,omitempty"`
-	EnqueuedAt         time.Time `json:"enqueued_at,omitempty"`
-	IdleReported       bool      `json:"idle_reported,omitempty"`
-	WaitReason         string    `json:"wait_reason,omitempty"`
-	WaitGate           string    `json:"wait_gate,omitempty"`
-	HoldGate           string    `json:"hold_gate,omitempty"`
-	MinFree            uint64    `json:"min_free,omitempty"`
-	StartedAtTime      time.Time `json:"started_at_time,omitempty"`
-	LastOutputAt       time.Time `json:"last_output_at,omitempty"`
-	StallMS            int64     `json:"stall_ms,omitempty"`
-	ExitCode           *int      `json:"exit_code,omitempty"`
-	Signal             string    `json:"signal,omitempty"`
-	DurationMS         int64     `json:"duration_ms,omitempty"`
-	Observed           []Process `json:"observed,omitempty"`
-	CostKey            string    `json:"cost_key,omitempty"`
-	CostClass          CostClass `json:"cost_class"`
-	Priority           int       `json:"priority,omitempty"`
-	MemoryBytes        uint64    `json:"memory_bytes,omitempty"`
-	CPUsMin            int       `json:"cpus_min,omitempty"`
-	CPUsMax            int       `json:"cpus_max,omitempty"`
-	DiskBytes          uint64    `json:"disk_bytes,omitempty"`
-	GrantedCPUs        int       `json:"granted_cpus,omitempty"`
-	PeakRSSBytes       uint64    `json:"peak_rss_bytes,omitempty"`
-	AverageCPU         float64   `json:"average_cpu,omitempty"`
-	MeasurementPartial bool      `json:"measurement_partial,omitempty"`
-	LimitsAdvisory     string    `json:"limits_advisory,omitempty"`
-	OverBudget         bool      `json:"over_budget,omitempty"`
-	ResourceNotice     string    `json:"resource_notice,omitempty"`
-	PausedAt           time.Time `json:"paused_at,omitempty"`
-	PausedMS           int64     `json:"paused_ms,omitempty"`
-	Scratch            string    `json:"scratch,omitempty"`
-	ScratchDevice      uint64    `json:"scratch_device,omitempty"`
-	ScratchInode       uint64    `json:"scratch_inode,omitempty"`
-	Keep               []string  `json:"keep,omitempty"`
+	RunID              string                    `json:"run_id"`
+	Tag                string                    `json:"tag"`
+	LatestTag          string                    `json:"latest_tag,omitempty"`
+	PID                int                       `json:"pid"`
+	StartedAt          string                    `json:"started_at"`
+	Command            []string                  `json:"command"`
+	StateDir           string                    `json:"state_dir"`
+	Status             RunStatus                 `json:"status,omitempty"`
+	Error              string                    `json:"error,omitempty"`
+	SlotGroup          string                    `json:"slot_group,omitempty"`
+	Slots              int                       `json:"slots,omitempty"`
+	SlotWeight         int                       `json:"slot_weight,omitempty"`
+	QueueOrder         uint64                    `json:"queue_order,omitempty"`
+	EnqueuedAt         time.Time                 `json:"enqueued_at,omitempty"`
+	IdleReported       bool                      `json:"idle_reported,omitempty"`
+	WaitReason         string                    `json:"wait_reason,omitempty"`
+	WaitGate           string                    `json:"wait_gate,omitempty"`
+	HoldGate           string                    `json:"hold_gate,omitempty"`
+	MinFree            uint64                    `json:"min_free,omitempty"`
+	StartedAtTime      time.Time                 `json:"started_at_time,omitempty"`
+	LastOutputAt       time.Time                 `json:"last_output_at,omitempty"`
+	StallMS            int64                     `json:"stall_ms,omitempty"`
+	ExitCode           *int                      `json:"exit_code,omitempty"`
+	Signal             string                    `json:"signal,omitempty"`
+	DurationMS         int64                     `json:"duration_ms,omitempty"`
+	Observed           []Process                 `json:"observed,omitempty"`
+	ProtectedAncestors []ProcessIdentityEvidence `json:"protected_ancestors,omitempty"`
+	CostKey            string                    `json:"cost_key,omitempty"`
+	CostClass          CostClass                 `json:"cost_class"`
+	Priority           int                       `json:"priority,omitempty"`
+	MemoryBytes        uint64                    `json:"memory_bytes,omitempty"`
+	CPUsMin            int                       `json:"cpus_min,omitempty"`
+	CPUsMax            int                       `json:"cpus_max,omitempty"`
+	DiskBytes          uint64                    `json:"disk_bytes,omitempty"`
+	GrantedCPUs        int                       `json:"granted_cpus,omitempty"`
+	PeakRSSBytes       uint64                    `json:"peak_rss_bytes,omitempty"`
+	AverageCPU         float64                   `json:"average_cpu,omitempty"`
+	MeasurementPartial bool                      `json:"measurement_partial,omitempty"`
+	LimitsAdvisory     string                    `json:"limits_advisory,omitempty"`
+	OverBudget         bool                      `json:"over_budget,omitempty"`
+	ResourceNotice     string                    `json:"resource_notice,omitempty"`
+	PausedAt           time.Time                 `json:"paused_at,omitempty"`
+	PausedMS           int64                     `json:"paused_ms,omitempty"`
+	Scratch            string                    `json:"scratch,omitempty"`
+	ScratchDevice      uint64                    `json:"scratch_device,omitempty"`
+	ScratchInode       uint64                    `json:"scratch_inode,omitempty"`
+	Keep               []string                  `json:"keep,omitempty"`
+	Resources          []Resource                `json:"resources,omitempty"`
 }
 
 type keeperConfig struct {
@@ -328,12 +445,27 @@ func Start(ctx context.Context, cfg Config) (*Run, error) {
 	return StartWithHostResourceSource(ctx, cfg, systemHostResourceSource())
 }
 
+// CanonicalStateDir resolves a command-line state path before any keeper is started.
+func CanonicalStateDir(stateDir string) (string, error) {
+	if stateDir == "" {
+		return "", errors.New("proc: state directory is required")
+	}
+	canonical, err := filepath.Abs(stateDir)
+	if err != nil {
+		return "", fmt.Errorf("proc: resolve state directory %q: %w", stateDir, err)
+	}
+	return canonical, nil
+}
+
 // StartWithHostResourceSource launches a run using the supplied host resource
 // reader for admission. All clients sharing a state directory should use the
 // same source so their decisions observe the same host contract.
 func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostResourceSource) (*Run, error) {
 	if ctx == nil {
 		return nil, errors.New("proc: context is required")
+	}
+	if !filepath.IsAbs(cfg.StateDir) {
+		return nil, errors.New("proc: state directory must be absolute before starting a keeper")
 	}
 	if source == nil {
 		return nil, errors.New("proc: resource source is required")
@@ -428,7 +560,7 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 		ready, err = result.record, result.err
 	case <-ctx.Done():
 		killErr := cmd.Process.Signal(syscall.SIGTERM)
-		cleanupErr := killTree(cmd.Process.Pid, runID)
+		cleanupErr := killTreeWithProtectedAncestors(cmd.Process.Pid, runID, nil, []ProcessIdentityEvidence{{PID: os.Getpid(), Identity: parentIdentity}}).err
 		killErr = errors.Join(killErr, cmd.Process.Kill())
 		closeErr := readReady.Close()
 		<-readyCh
@@ -448,7 +580,7 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake reader: %w", err), cmd.Process.Kill(), cmd.Wait())
 	}
 	admissionPending = false
-	run := &Run{PID: cmd.Process.Pid, RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, done: make(chan struct{})}
+	run := &Run{PID: RecordedKeeperPID(cmd.Process.Pid), RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, done: make(chan struct{})}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -477,7 +609,7 @@ func (r *Run) Wait() error {
 	return r.err
 }
 
-// Kill asks the keeper to reap the tree before exiting.
+// Kill asks the keeper to reap the descendants it can attribute before exiting.
 func (r *Run) Kill() error {
 	if r.cmd == nil || r.cmd.Process == nil {
 		return errors.New("proc: run has no keeper process")
@@ -487,7 +619,24 @@ func (r *Run) Kill() error {
 		return nil
 	default:
 	}
-	return signalKeeper(r.cmd.Process.Pid, r.StartedAt)
+	return SignalRecordedKeeper(r.stateDir, r.RunID, syscall.SIGTERM)
+}
+
+// SignalRecordedKeeper sends a signal to the keeper named by the run record.
+// It refuses to signal the calling process or any of its ancestors.
+func SignalRecordedKeeper(stateDir, runID string, signal syscall.Signal) error {
+	if signal != syscall.SIGTERM && signal != syscall.SIGKILL {
+		return fmt.Errorf("proc: unsupported keeper signal %s", signal)
+	}
+	var rec record
+	if err := withStateLock(stateDir, func() error {
+		var err error
+		rec, err = readRecordLocked(stateDir, runID)
+		return err
+	}); err != nil {
+		return fmt.Errorf("proc: resolve keeper for run %s: %w", runID, err)
+	}
+	return signalKeeper(rec.PID, rec.StartedAt, runID, signal, osProcessSource{})
 }
 
 // KeeperMain is the helper entry point. Call it only for the private __keeper
@@ -527,6 +676,9 @@ func List(stateDir string) Listing {
 	}
 	if !info.IsDir() {
 		return Listing{Error: fmt.Errorf("proc: state path %q is not a directory", stateDir)}
+	}
+	if err := validateEventStream(stateDir); err != nil {
+		return Listing{Error: fmt.Errorf("proc: read event stream: %w", err)}
 	}
 	var records []record
 	if err := withStateLock(stateDir, func() error {
@@ -591,20 +743,20 @@ func List(stateDir string) Listing {
 			position = queuePosition(rec, records)
 		}
 		info := RunInfo{
-			RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: runStartedAt(rec), Identity: rec.StartedAt,
-			Status: status, Command: rec.Command, SlotGroup: rec.SlotGroup,
+			RunID: rec.RunID, Tag: rec.Tag, PID: RecordedKeeperPID(rec.PID), StartedAt: runStartedAt(rec), Identity: rec.StartedAt,
+			Status: status, Command: rec.Command, SlotGroup: rec.SlotGroup, SlotWeight: rec.SlotWeight,
 			QueuePosition: position, WaitReason: rec.WaitReason, ElapsedMS: elapsed, StallMS: rec.StallMS,
 			ExitCode: rec.ExitCode, Signal: rec.Signal, DurationMS: rec.DurationMS,
 			Error: rec.Error, CostKey: rec.CostKey, CostClass: rec.CostClass, Priority: rec.Priority, MemoryBytes: rec.MemoryBytes, CPUsMin: rec.CPUsMin, CPUsMax: rec.CPUsMax,
 			DiskBytes: rec.DiskBytes, GrantedCPUs: rec.GrantedCPUs, PeakRSSBytes: rec.PeakRSSBytes, AverageCPU: rec.AverageCPU,
 			MeasurementPartial: rec.MeasurementPartial, LimitsAdvisory: rec.LimitsAdvisory, OverBudget: rec.OverBudget, ResourceNotice: hostResourceNoticeNow,
-			Paused: status == StatusPaused, PausedMS: rec.PausedMS,
+			Paused: status == StatusPaused, PausedMS: rec.PausedMS, ResourceOutcomes: rec.Resources,
 		}
 		if status == StatusPaused {
 			info.WaitReason = gov.Reason
 		}
 		if live && identity == rec.StartedAt && status != StatusQueued && status != StatusBlocked {
-			tree, treeErr := ProcessTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
+			tree, treeErr := processTreeWithKnownAncestors(osProcessSource{}, rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
 			info.Tree = tree
 			if treeErr != nil {
 				observationErr := fmt.Errorf("unverified/failed observation: %w", treeErr)
@@ -648,31 +800,59 @@ func wrapSnapshotError(err error) error {
 }
 
 func processTreeFromSnapshot(all []Process, root int) []Process {
+	tree, _ := processTreeFromSnapshotWithMembership(all, root)
+	return tree
+}
+
+func processTreeFromSnapshotWithMembership(all []Process, root int) ([]Process, map[string]string) {
 	children := make(map[int][]int)
 	byPID := make(map[int]Process, len(all))
 	for _, process := range all {
 		children[process.PPID] = append(children[process.PPID], process.PID)
 		byPID[process.PID] = process
 	}
-	seen := map[int]bool{root: true}
+	ancestry := map[int]bool{root: true}
 	queue := []int{root}
 	for len(queue) > 0 {
 		pid := queue[0]
 		queue = queue[1:]
 		for _, child := range children[pid] {
-			if !seen[child] {
-				seen[child] = true
+			if process, exists := byPID[child]; exists && processBelongsToAnotherRun(process) {
+				continue
+			}
+			if !ancestry[child] {
+				ancestry[child] = true
 				queue = append(queue, child)
 			}
 		}
 	}
+	membership := make(map[string]string)
 	for _, process := range all {
-		if process.runMarker {
-			seen[process.PID] = true
+		key := processObservationKey(process)
+		switch {
+		case process.PID == root:
+			membership[key] = "root:keeper-run-owner"
+		case process.runToken:
+			membership[key] = "accepted:run-token-fd"
+		case process.runMarker:
+			membership[key] = "accepted:run-marker"
+		case processBelongsToAnotherRun(process):
+			membership[key] = "rejected:other-run-marker"
+		case process.PID != root && ancestry[process.PID]:
+			membership[key] = "accepted:parent-ancestry"
+		case process.markerResult == "unreadable":
+			membership[key] = "rejected:marker-unreadable-without-parent-history"
+		default:
+			membership[key] = "rejected:no-run-marker-or-parent-history"
 		}
 	}
-	out := make([]Process, 0, len(seen))
-	for pid := range seen {
+	for _, process := range all {
+		if process.runMarker || process.runToken {
+			ancestry[process.PID] = true
+		}
+	}
+	out := make([]Process, 0, len(membership))
+	for pid := range ancestry {
 		if pid == root {
 			continue
 		}
@@ -682,7 +862,11 @@ func processTreeFromSnapshot(all []Process, root int) []Process {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
-	return out
+	return out, membership
+}
+
+func processBelongsToAnotherRun(process Process) bool {
+	return process.markerResult == "other-run" && !process.runMarker && !process.runToken
 }
 
 func ProcessTreeWithHistory(root int, runID string, observed []Process) ([]Process, error) {
@@ -690,10 +874,35 @@ func ProcessTreeWithHistory(root int, runID string, observed []Process) ([]Proce
 }
 
 func processTreeWithHistorySource(source processSource, root int, runID string, observed []Process) ([]Process, error) {
+	return processTreeWithKnownAncestors(source, root, runID, observed, nil)
+}
+
+func processTreeWithKnownAncestors(source processSource, root int, runID string, observed []Process, knownAncestors []ProcessIdentityEvidence) ([]Process, error) {
 	snapshot, err := source.Snapshot(runID)
-	snapshotErr := wrapSnapshotError(err)
+	tree, _, historyErr := processTreeWithHistorySnapshot(source, root, observed, snapshot, knownAncestors)
+	return tree, errors.Join(wrapSnapshotError(err), historyErr)
+}
+
+func processTreeWithHistorySnapshot(source processSource, root int, observed, snapshot []Process, knownAncestors ...[]ProcessIdentityEvidence) ([]Process, map[string]string, error) {
+	tree, membership := processTreeFromSnapshotWithMembership(snapshot, root)
+	protected := keeperAncestry(root, snapshot)
+	for _, ancestors := range knownAncestors {
+		for _, process := range ancestors {
+			key := processObservationKey(Process{PID: process.PID, Identity: process.Identity})
+			protected[key] = "protected:recorded-supervisor-ancestor"
+		}
+	}
+	filteredTree := tree[:0]
+	for _, process := range tree {
+		if _, isProtected := protected[processObservationKey(process)]; isProtected {
+			membership[processObservationKey(process)] = "rejected:keeper-ancestor"
+			continue
+		}
+		filteredTree = append(filteredTree, process)
+	}
+	tree = filteredTree
+	var snapshotErr error
 	byPID := make(map[int]Process)
-	tree := processTreeFromSnapshot(snapshot, root)
 	for _, process := range tree {
 		byPID[process.PID] = process
 	}
@@ -702,35 +911,246 @@ func processTreeWithHistorySource(source processSource, root int, runID string, 
 		currentProcesses[process.PID] = process
 	}
 	for _, previous := range observed {
+		key := processObservationKey(previous)
 		identity, alive, err := source.Identity(previous.PID)
 		if err != nil {
 			if processGone(err) {
+				membership[key] = "rejected:recorded-process-gone"
 				continue
 			}
 			previous.Unverified = true
 			byPID[previous.PID] = previous
+			membership[key] = "accepted:recorded-pid-start-identity-unverified"
 			snapshotErr = errors.Join(snapshotErr, fmt.Errorf("inspect observed process %d: %w", previous.PID, err))
 			continue
 		}
-		if !alive || identity != previous.Identity {
+		if !alive {
+			membership[key] = "rejected:recorded-process-gone"
+			continue
+		}
+		if identity != previous.Identity {
+			membership[key] = "rejected:recorded-start-identity-mismatch"
 			continue
 		}
 		current, ok := currentProcesses[previous.PID]
 		if ok && current.Identity != previous.Identity {
+			membership[key] = "rejected:inventory-start-identity-mismatch"
+			continue
+		}
+		if ok && processBelongsToAnotherRun(current) {
+			membership[key] = "rejected:other-run-marker"
 			continue
 		}
 		if !ok {
 			current = previous
 		}
 		current.Unverified = false
+		if previous.runToken && !current.runToken && current.tokenResult == "absent" && current.markerResult != "match" {
+			current.OwnershipUnverifiedReason = OwnershipUnverifiedRunTokenClosed
+		}
 		byPID[current.PID] = current
+		membership[processObservationKey(current)] = "accepted:recorded-pid-start-identity"
+	}
+	for pid, process := range byPID {
+		if _, isProtected := protected[processObservationKey(process)]; isProtected {
+			delete(byPID, pid)
+			membership[processObservationKey(process)] = "rejected:keeper-ancestor"
+		}
 	}
 	out := make([]Process, 0, len(byPID))
 	for _, process := range byPID {
 		out = append(out, process)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
-	return out, snapshotErr
+	return out, membership, snapshotErr
+}
+
+func processIdentityEvidence(process Process) ProcessIdentityEvidence {
+	return ProcessIdentityEvidence{PID: process.PID, PPID: process.PPID, PGID: process.processGroupID, SID: process.sessionID, UID: process.uid, Identity: process.Identity}
+}
+
+func processTreeInventorySample(index int, processes, observed []Process, targets map[string]Process, membership map[string]string, snapshotErr error) ProcessTreeInventorySample {
+	sample := ProcessTreeInventorySample{Index: index, Processes: make([]ProcessTreeInventoryEvidence, 0)}
+	if snapshotErr != nil {
+		sample.SnapshotErr = snapshotErr.Error()
+	}
+	seen := make(map[string]bool, len(processes)+len(observed)+len(targets))
+	currentIncluded := make(map[string]bool)
+	importanceByKey := make(map[string]int)
+	rejectedCounts := make(map[string]ProcessTreeInventoryRejectedCount)
+	var rejectedExamples []ProcessTreeInventoryEvidence
+	currentUID := uint32(os.Getuid())
+	appendEvidence := func(process Process, reason, markerResult string) ProcessTreeInventoryEvidence {
+		return ProcessTreeInventoryEvidence{
+			PID: process.PID, PPID: process.PPID, PGID: process.processGroupID, SID: process.sessionID,
+			SIDError: process.sessionIDError, UID: process.uid, Identity: process.Identity,
+			MarkerResult: markerResult, MarkerError: process.markerReadError,
+			TokenResult: process.tokenResult, TokenError: process.tokenReadError,
+			OwnershipUnverifiedReason: process.OwnershipUnverifiedReason, Membership: reason,
+		}
+	}
+	appendProcess := func(process Process, missing bool) {
+		reason := membership[processObservationKey(process)]
+		key := processObservationKey(process)
+		_, isTarget := targets[key]
+		if reason == "" {
+			reason = "accepted:cleanup-target"
+		}
+		markerResult := process.markerResult
+		if missing {
+			markerResult = "not-in-current-inventory"
+		}
+		full := reason == "root:keeper-run-owner" || strings.HasPrefix(reason, "accepted:") || isTarget
+		if !full {
+			if strings.HasPrefix(reason, "rejected:") {
+				uidClass := "foreign"
+				if process.uid == currentUID {
+					uidClass = "same"
+				}
+				countKey := reason + "\x00" + markerResult + "\x00" + process.tokenResult + "\x00" + uidClass
+				count := rejectedCounts[countKey]
+				count.Membership, count.MarkerResult, count.TokenResult, count.UIDClass = reason, markerResult, process.tokenResult, uidClass
+				count.PotentialSetuidOwner = uidClass == "foreign" && markerResult == "unreadable"
+				count.Count++
+				rejectedCounts[countKey] = count
+				rejectedExamples = append(rejectedExamples, appendEvidence(process, reason, markerResult))
+			}
+			return
+		}
+		sample.Processes = append(sample.Processes, appendEvidence(process, reason, markerResult))
+		importance := 2
+		if reason == "root:keeper-run-owner" {
+			importance = 0
+		} else if isTarget {
+			importance = 1
+		}
+		importanceByKey[key] = importance
+		seen[key] = true
+		if !missing {
+			currentIncluded[key] = true
+		}
+	}
+	for _, process := range processes {
+		appendProcess(process, false)
+	}
+	for _, process := range observed {
+		key := processObservationKey(process)
+		if !seen[key] {
+			if _, target := targets[key]; target {
+				appendProcess(process, true)
+			}
+		}
+	}
+	for _, process := range targets {
+		key := processObservationKey(process)
+		if !seen[key] {
+			appendProcess(process, true)
+		}
+	}
+	sort.Slice(sample.Processes, func(i, j int) bool { return sample.Processes[i].PID < sample.Processes[j].PID })
+	sort.SliceStable(sample.Processes, func(i, j int) bool {
+		left := processEvidenceKey(sample.Processes[i])
+		right := processEvidenceKey(sample.Processes[j])
+		if importanceByKey[left] != importanceByKey[right] {
+			return importanceByKey[left] < importanceByKey[right]
+		}
+		return sample.Processes[i].PID < sample.Processes[j].PID
+	})
+	includedOmitted := len(sample.Processes) - maxTeardownProcessesPerSample
+	if includedOmitted > 0 {
+		sample.Processes = sample.Processes[:maxTeardownProcessesPerSample]
+	} else {
+		includedOmitted = 0
+	}
+	for _, count := range rejectedCounts {
+		sample.RejectedCounts = append(sample.RejectedCounts, count)
+	}
+	sort.Slice(sample.RejectedCounts, func(i, j int) bool {
+		if sample.RejectedCounts[i].Membership != sample.RejectedCounts[j].Membership {
+			return sample.RejectedCounts[i].Membership < sample.RejectedCounts[j].Membership
+		}
+		if sample.RejectedCounts[i].MarkerResult != sample.RejectedCounts[j].MarkerResult {
+			return sample.RejectedCounts[i].MarkerResult < sample.RejectedCounts[j].MarkerResult
+		}
+		if sample.RejectedCounts[i].TokenResult != sample.RejectedCounts[j].TokenResult {
+			return sample.RejectedCounts[i].TokenResult < sample.RejectedCounts[j].TokenResult
+		}
+		return sample.RejectedCounts[i].UIDClass < sample.RejectedCounts[j].UIDClass
+	})
+	sort.Slice(rejectedExamples, func(i, j int) bool {
+		priority := func(process ProcessTreeInventoryEvidence) int {
+			if process.MarkerResult != "unreadable" {
+				return 2
+			}
+			if process.UID == uint32(os.Getuid()) {
+				return 0
+			}
+			return 1
+		}
+		left, right := priority(rejectedExamples[i]), priority(rejectedExamples[j])
+		if left != right {
+			return left < right
+		}
+		return rejectedExamples[i].PID < rejectedExamples[j].PID
+	})
+	if len(rejectedExamples) > maxTeardownRejectedExamples {
+		rejectedExamples = rejectedExamples[:maxTeardownRejectedExamples]
+	}
+	sample.RejectedExamples = rejectedExamples
+	sample.OmittedProcesses = len(processes) - len(currentIncluded) + includedOmitted
+	return sample
+}
+
+func processEvidenceKey(process ProcessTreeInventoryEvidence) string {
+	return processObservationKey(Process{PID: process.PID, Identity: process.Identity})
+}
+
+func appendTeardownInventorySample(samples []ProcessTreeInventorySample, sample ProcessTreeInventorySample) []ProcessTreeInventorySample {
+	if len(samples) == 0 {
+		return append(samples, sample)
+	}
+	sample.MembershipChanged = inventoryMembershipKey(samples[len(samples)-1]) != inventoryMembershipKey(sample)
+	if len(samples) < maxTeardownInventorySamples {
+		return append(samples, sample)
+	}
+	all := append(append([]ProcessTreeInventorySample(nil), samples...), sample)
+	first := all[0]
+	last := all[len(all)-1]
+	transitions := make([]ProcessTreeInventorySample, 0, len(all)-2)
+	for _, candidate := range all[1 : len(all)-1] {
+		if candidate.MembershipChanged {
+			transitions = append(transitions, candidate)
+		}
+	}
+	transitionLimit := maxTeardownInventorySamples - 2
+	if len(transitions) > transitionLimit {
+		transitions = transitions[len(transitions)-transitionLimit:]
+	}
+	retained := make([]ProcessTreeInventorySample, 0, maxTeardownInventorySamples)
+	retained = append(retained, first)
+	retained = append(retained, transitions...)
+	retained = append(retained, last)
+	return retained
+}
+
+func (cleanup *treeCleanup) appendInventory(sample ProcessTreeInventorySample) {
+	if len(cleanup.Inventory) >= maxTeardownInventorySamples {
+		cleanup.InventorySamplesOmitted++
+	}
+	cleanup.Inventory = appendTeardownInventorySample(cleanup.Inventory, sample)
+}
+
+func inventoryMembershipKey(sample ProcessTreeInventorySample) string {
+	var builder strings.Builder
+	for _, process := range sample.Processes {
+		builder.WriteString(strconv.Itoa(process.PID))
+		builder.WriteByte(':')
+		builder.WriteString(process.Identity)
+		builder.WriteByte(':')
+		builder.WriteString(process.Membership)
+		builder.WriteByte(';')
+	}
+	return builder.String()
 }
 
 func ProcessLeaves(root int, runID string) ([]Process, error) {
@@ -758,7 +1178,28 @@ func processLeaves(processes []Process) []Process {
 }
 
 func cleanupTreeWithSource(root int, runID string, observed []Process, source processSource) treeCleanup {
-	result := treeCleanup{Reaped: make([]Process, 0), Unverified: make([]Process, 0), Remaining: make([]Process, 0)}
+	return cleanupTreeWithClock(root, runID, observed, source, wallCleanupClock{})
+}
+
+func cleanupTreeWithProtectedSource(root int, runID string, observed []Process, protected []ProcessIdentityEvidence, source processSource) treeCleanup {
+	return cleanupTreeWithProtectedClock(root, runID, observed, protected, source, wallCleanupClock{})
+}
+
+const (
+	cleanupBound = 3 * time.Second
+	cleanupPoll  = 20 * time.Millisecond
+	termGrace    = 250 * time.Millisecond
+)
+
+func cleanupTreeWithClock(root int, runID string, observed []Process, source processSource, clock cleanupClock) treeCleanup {
+	return cleanupTreeWithProtectedClock(root, runID, observed, nil, source, clock)
+}
+
+func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, protectedAncestors []ProcessIdentityEvidence, source processSource, clock cleanupClock) treeCleanup {
+	result := treeCleanup{Reaped: make([]Process, 0), Unverified: make([]Process, 0), Remaining: make([]Process, 0), History: make([]ProcessIdentityEvidence, 0, len(observed)), Inventory: make([]ProcessTreeInventorySample, 0)}
+	for _, process := range observed {
+		result.History = append(result.History, processIdentityEvidence(process))
+	}
 	var failures []error
 	seenFailures := make(map[string]bool)
 	recordFailure := func(err error) {
@@ -767,10 +1208,7 @@ func cleanupTreeWithSource(root int, runID string, observed []Process, source pr
 			failures = append(failures, err)
 		}
 	}
-	const cleanupBound = 3 * time.Second
-	const cleanupPoll = 20 * time.Millisecond
-	const termGrace = 250 * time.Millisecond
-	deadline := time.Now().Add(cleanupBound)
+	deadline := clock.Now().Add(cleanupBound)
 	targets := make(map[string]Process, len(observed))
 	for _, process := range observed {
 		targets[processObservationKey(process)] = process
@@ -781,8 +1219,19 @@ func cleanupTreeWithSource(root int, runID string, observed []Process, source pr
 	emptySnapshots := 0
 	var lastSnapshotErr error
 	snapshotFailureRecorded := false
-	for time.Now().Before(deadline) {
-		tree, snapshotErr := processTreeWithHistorySource(source, root, runID, observedTree)
+	inventoryIndex := 0
+	for clock.Now().Before(deadline) {
+		inventoryIndex++
+		snapshot, inventoryErr := source.Snapshot(runID)
+		protected := keeperAncestry(root, snapshot)
+		tree, membership, historyErr := processTreeWithHistorySnapshot(source, root, observedTree, snapshot, protectedAncestors)
+		for _, process := range protectedAncestors {
+			key := processObservationKey(Process{PID: process.PID, Identity: process.Identity})
+			protected[key] = "protected:recorded-supervisor-ancestor"
+		}
+		snapshotErr := errors.Join(wrapSnapshotError(inventoryErr), historyErr)
+		sample := processTreeInventorySample(inventoryIndex, snapshot, observedTree, targets, membership, snapshotErr)
+		result.appendInventory(sample)
 		if snapshotErr != nil {
 			if !snapshotFailureRecorded {
 				recordFailure(fmt.Errorf("unverified/failed observation: %w", snapshotErr))
@@ -805,12 +1254,22 @@ func cleanupTreeWithSource(root int, runID string, observed []Process, source pr
 			targets[key] = process
 			if !process.Unverified && !containsProcess(observedTree, process) {
 				observedTree = append(observedTree, process)
+				result.History = append(result.History, processIdentityEvidence(process))
 			}
+		}
+		if !clock.Now().Before(deadline) {
+			break
 		}
 		allGone := true
 		verifiedLive := false
 		unverifiedFound := false
+		deadlineReached := false
 		for key, process := range targets {
+			if reason, isProtected := protected[key]; isProtected {
+				fmt.Fprintf(os.Stderr, "proc: teardown skipped signal pid=%d identity=%q reason=%s\n", process.PID, process.Identity, reason)
+				delete(targets, key)
+				continue
+			}
 			if process.Unverified {
 				allGone = false
 				unverifiedFound = true
@@ -830,25 +1289,42 @@ func cleanupTreeWithSource(root int, runID string, observed []Process, source pr
 			}
 			allGone = false
 			verifiedLive = true
+			if !clock.Now().Before(deadline) {
+				deadlineReached = true
+				break
+			}
 			if firstSignal, signaled := termSent[key]; !signaled {
+				reason := membership[key]
+				if reason == "" {
+					reason = "accepted:recorded-pid-start-identity"
+				}
+				fmt.Fprintf(os.Stderr, "proc: teardown signal pid=%d identity=%q signal=SIGTERM attribution=%s\n", process.PID, process.Identity, reason)
 				if signalErr := source.Signal(process.PID, syscall.SIGTERM); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
 					recordFailure(fmt.Errorf("send SIGTERM to process %d: %w", process.PID, signalErr))
 				}
-				termSent[key] = time.Now()
-			} else if time.Since(firstSignal) >= termGrace && !killSent[key] {
+				termSent[key] = clock.Now()
+			} else if clock.Now().Sub(firstSignal) >= termGrace && !killSent[key] {
+				reason := membership[key]
+				if reason == "" {
+					reason = "accepted:recorded-pid-start-identity"
+				}
+				fmt.Fprintf(os.Stderr, "proc: teardown signal pid=%d identity=%q signal=SIGKILL attribution=%s\n", process.PID, process.Identity, reason)
 				if signalErr := source.Signal(process.PID, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
 					recordFailure(fmt.Errorf("send SIGKILL to process %d: %w", process.PID, signalErr))
 				}
 				killSent[key] = true
 			}
 		}
-		if allGone && emptySnapshots >= 2 && lastSnapshotErr == nil {
+		if deadlineReached || !clock.Now().Before(deadline) {
+			break
+		}
+		if canFinishTreeCleanup(allGone, emptySnapshots, lastSnapshotErr) {
 			break
 		}
 		if unverifiedFound && !verifiedLive {
 			break
 		}
-		time.Sleep(cleanupPoll)
+		clock.Wait(cleanupPoll)
 	}
 	for _, process := range targets {
 		if process.Unverified {
@@ -870,11 +1346,34 @@ func cleanupTreeWithSource(root int, runID string, observed []Process, source pr
 			result.Reaped = append(result.Reaped, process)
 		}
 	}
-	if len(result.Remaining) > 0 && !time.Now().Before(deadline) {
+	if len(result.Remaining) > 0 && !clock.Now().Before(deadline) {
 		recordFailure(errors.New("tree cleanup deadline expired with owned processes remaining"))
 	}
 	result.err = errors.Join(failures...)
 	return result
+}
+
+func keeperAncestry(root int, snapshot []Process) map[string]string {
+	byPID := make(map[int]Process, len(snapshot))
+	for _, process := range snapshot {
+		byPID[process.PID] = process
+	}
+	protected := make(map[string]string)
+	seen := make(map[int]bool)
+	for pid, reason := root, "protected:keeper"; pid > 0 && !seen[pid]; {
+		seen[pid] = true
+		process, exists := byPID[pid]
+		if !exists {
+			break
+		}
+		protected[processObservationKey(process)] = reason
+		pid, reason = process.PPID, "protected:keeper-ancestor"
+	}
+	return protected
+}
+
+func canFinishTreeCleanup(allGone bool, emptySnapshots int, snapshotErr error) bool {
+	return allGone && emptySnapshots >= 2 && snapshotErr == nil
 }
 
 func containsProcess(processes []Process, candidate Process) bool {

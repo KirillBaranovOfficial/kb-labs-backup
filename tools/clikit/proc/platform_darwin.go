@@ -85,6 +85,16 @@ type osProcessSource struct{}
 
 func (osProcessSource) Snapshot(runID string) ([]Process, error) { return allProcesses(runID) }
 func (osProcessSource) Identity(pid int) (string, bool, error)   { return readProcessIdentity(pid) }
+func (osProcessSource) ParentPID(pid int) (int, error) {
+	info, alive, err := readProcessInfo(pid)
+	if err != nil {
+		return 0, err
+	}
+	if !alive || info == nil {
+		return 0, fmt.Errorf("process %d exited while reading its parent", pid)
+	}
+	return int(info.Eproc.Ppid), nil
+}
 func (osProcessSource) Signal(pid int, signal syscall.Signal) error {
 	return syscall.Kill(pid, signal)
 }
