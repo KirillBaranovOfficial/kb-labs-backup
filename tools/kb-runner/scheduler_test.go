@@ -1483,7 +1483,7 @@ func TestLandCreatesOrderedCommitGroupsInNativeGit(t *testing.T) {
 	task := SchedulerTask{Stream: "land-a", Workdir: repo}
 	expectedOld := run("rev-parse", "HEAD")
 	commits := []proposedCommit{{Kind: "case", Subject: "docs(qa): add case"}, {Kind: "tests", Subject: "test(runner): cover case"}, {Kind: "code", Subject: "fix(runner): implement behavior", Body: "details"}}
-	object, err := buildLandingObjects(repo, task.Stream, verifiedTree, expectedOld, commits, t.TempDir())
+	object, err := buildLandingObjects(repo, task.Stream, verifiedTree, expectedOld, commits, t.TempDir(), "kb-runner land land-a --state /tmp/state")
 	if err != nil {
 		t.Fatal(err)
 	}

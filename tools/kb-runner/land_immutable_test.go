@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kb-labs/clikit/diag"
 )
 
 // case: S-237.136
@@ -43,11 +45,85 @@ func TestLandingCommitObjectsExcludePostVerificationWorktreeEdits(t *testing.T) 
 			}
 			test.edit(t, repo)
 			commits := []proposedCommit{{Kind: "case", Subject: "docs(qa): case"}, {Kind: "tests", Subject: "test(kb-runner): tests"}, {Kind: "code", Subject: "fix(kb-runner): code"}}
-			object, err := buildLandingObjects(repo, "immutable-"+test.name, verifiedTree, git("rev-parse", "HEAD"), commits, t.TempDir())
+			object, err := buildLandingObjects(repo, "immutable-"+test.name, verifiedTree, git("rev-parse", "HEAD"), commits, t.TempDir(), "kb-runner land immutable --state /tmp/state")
 			if err != nil || object.TreeSHA != verifiedTree {
 				t.Fatalf("landing object included post-verification %s edit: commit=%s tree=%s verified tree=%s err=%v", test.name, object.CommitSHA, object.TreeSHA, verifiedTree, err)
 			}
 		})
+	}
+}
+
+// case: S-237.123
+func TestLandingArchivesVerifiedReportFilesOutsideCommitTree(t *testing.T) {
+	repo, git := newImmutableLandRepo(t)
+	for path, body := range map[string]string{
+		"src.go":                        "verified change\n",
+		".agent-report.md":              "worker report\n",
+		".review-report.adversarial.md": "review report\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repo, path), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verifiedSHA, _, err := snapshotWorktree(repo, "report-artifacts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiedTree, err := treeSHAForCommit(repo, verifiedSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commits := []proposedCommit{{Kind: "case", Subject: "docs(qa): case"}, {Kind: "tests", Subject: "test(kb-runner): tests"}, {Kind: "code", Subject: "fix(kb-runner): code"}}
+	object, err := buildLandingObjects(repo, "report-artifacts", verifiedTree, git("rev-parse", "HEAD"), commits, t.TempDir(), "kb-runner land report-artifacts --state /tmp/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := landingTreeEntries(repo, object.TreeSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{".agent-report.md", ".review-report.adversarial.md"} {
+		if _, exists := entries[path]; exists {
+			t.Errorf("landing tree includes report artifact %q", path)
+		}
+	}
+	archives, err := filepath.Glob(filepath.Join(repo, "reviews", "archive", "report-artifacts-*.md"))
+	if err != nil || len(archives) != 2 {
+		t.Fatalf("report archives = %v, err=%v; want both verified report files archived", archives, err)
+	}
+	for _, archived := range archives {
+		contents, err := os.ReadFile(archived)
+		if err != nil || (string(contents) != "worker report\n" && string(contents) != "review report\n") {
+			t.Errorf("archived report %s = %q, err=%v", archived, contents, err)
+		}
+	}
+}
+
+// case: S-237.123
+func TestLandingRefusesBaseTrackedReportFilesWithCataloguedDiagnostic(t *testing.T) {
+	repo, git := newImmutableLandRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".review-report.md"), []byte("base report\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".review-report.md")
+	git("commit", "-m", "chore: base report")
+	git("checkout", "-b", "agent/base-report")
+	if err := os.WriteFile(filepath.Join(repo, "src.go"), []byte("verified change\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	verifiedSHA, _, err := snapshotWorktree(repo, "base-report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiedTree, err := treeSHAForCommit(repo, verifiedSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commits := []proposedCommit{{Kind: "case", Subject: "docs(qa): case"}, {Kind: "tests", Subject: "test(kb-runner): tests"}, {Kind: "code", Subject: "fix(kb-runner): code"}}
+	_, err = buildLandingObjects(repo, "base-report", verifiedTree, git("rev-parse", "HEAD"), commits, t.TempDir(), "kb-runner land base-report --state /tmp/state")
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) || diagnostic.Code != "KB_RUNNER_LAND_BASE_REPORT_TRACKED" || !strings.Contains(diagnostic.Message, ".review-report.md") {
+		t.Fatalf("base tracked report refusal = %v, want catalogued path-specific diagnostic", err)
 	}
 }
 
@@ -150,8 +226,18 @@ exec "$REAL_GIT" "$@"
 		t.Fatal(err)
 	}
 	mergedTree, err := treeSHAForCommit(integration, mergeSHA)
-	if err != nil || mergedTree != verifiedTree {
-		t.Fatalf("integration merged a mutable branch amendment: merged tree=%s verified tree=%s err=%v", mergedTree, verifiedTree, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergedEntries, err := landingTreeEntries(integration, mergedTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := mergedEntries["intruder.txt"]; exists {
+		t.Fatal("integration merge included a mutable branch amendment")
+	}
+	if _, exists := mergedEntries[".agent-report.md"]; exists {
+		t.Fatal("integration merge included the worker report artifact")
 	}
 	stream, err = store.stream(task.Stream)
 	if err != nil || stream.Submission == nil || stream.Submission.SHA != mergeSHA {

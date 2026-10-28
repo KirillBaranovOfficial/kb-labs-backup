@@ -3,15 +3,13 @@
 package proc
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,18 +23,13 @@ func countResourceEvents(t *testing.T, state string, kind EventType) int {
 	if err := Events(context.Background(), state, false, []EventType{kind}, 0, &stream); err != nil {
 		t.Fatal(err)
 	}
-	scanner := bufio.NewScanner(&stream)
 	count := 0
-	for scanner.Scan() {
-		var event Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatal(err)
-		}
+	if err := ReadEvents(&stream, func(event Event) error {
 		if event.Type == kind {
 			count++
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return count
@@ -79,6 +72,10 @@ type mutableHostResourceSource struct {
 	mu     sync.RWMutex
 	sample HostResourceSnapshot
 }
+
+type fixedAdmissionClock struct{ now time.Time }
+
+func (clock fixedAdmissionClock) Now() time.Time { return clock.now }
 
 func (source *mutableHostResourceSource) Snapshot() HostResourceSnapshot {
 	source.mu.RLock()
@@ -229,153 +226,309 @@ func TestSecondHeavyAdmissionWaitsWithVisibleHostPressureReason(t *testing.T) {
 	}
 }
 
-// case: S-237.70
-func TestGovernorSelectsLowestPriorityHeavyRun(t *testing.T) {
-	records := []record{
-		{RunID: "light", CostClass: CostLight, Status: StatusRunning, Priority: -1, EnqueuedAt: time.Unix(1, 0)},
-		{RunID: "low", CostClass: CostHeavy, Status: StatusRunning, Priority: 1, QueueOrder: 1, EnqueuedAt: time.Unix(3, 0)},
-		{RunID: "high", CostClass: CostHeavy, Status: StatusRunning, Priority: 10, QueueOrder: 2, EnqueuedAt: time.Unix(2, 0)},
+// case: S-237.69
+func TestObservedAgentTreeCPUDoesNotConsumeAdmissionTokens(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	got := lowestPriorityHeavy(records)
-	if got == nil || got.RunID != "low" {
-		t.Fatalf("lowest priority run = %+v, want priority 1 heavy run", got)
+	if err := SetQuota(state, "", "2", ""); err != nil {
+		t.Fatal(err)
+	}
+	tree := metricsProcessSource{processes: []Process{
+		{PID: 700, PPID: 1, Identity: "agent", MetricsAvailable: true},
+		{PID: 701, PPID: 700, Identity: "node-build", Command: "node", CPUSeconds: 0.8, MetricsAvailable: true},
+		{PID: 702, PPID: 701, Identity: "vitest", Command: "vitest", CPUSeconds: 0.9, MetricsAvailable: true},
+		{PID: 703, PPID: 700, Identity: "tsc", Command: "tsc", CPUSeconds: 0.8, MetricsAvailable: true},
+		{PID: 704, PPID: 700, Identity: "go-test", Command: "go", CPUSeconds: 1.1, MetricsAvailable: true},
+	}}
+	_, treeCPU, partial, err := sampleRunMetricsWithSource(record{PID: 700, RunID: "agent"}, tree)
+	if err != nil || partial || math.Abs(treeCPU-3.6) > 0.0001 {
+		t.Fatalf("observed agent tree CPU = %.2f, partial=%t err=%v; want 3.60 complete", treeCPU, partial, err)
+	}
+	writeAdmissionFixtureRecord(t, state, record{
+		RunID: "agent", Tag: "agent", Status: StatusRunning, CostClass: CostLight,
+		AverageCPU: treeCPU, MeasurementPartial: partial,
+	})
+	sample := HostResourceSnapshot{LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}
+	candidate := record{RunID: "queued", Tag: "queued", QueueOrder: 2, CostClass: CostLight, CPUsMin: 1}
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
+	decision, err := admissionStateLockedWithSampleAndClock(state, candidate, fakeHostResourceSource{sample}, sample, clock)
+	if err != nil || decision.Status != StatusStarting {
+		t.Fatalf("admission with observed agent tree = %+v, err=%v; want token admission independent of observed tree CPU", decision, err)
+	}
+	observed, err := readAdmissionRecord(state, "agent")
+	if err != nil || math.Abs(observed.AverageCPU-treeCPU) > 0.0001 {
+		t.Fatalf("process-tree observation missing from run record: %+v, err=%v", observed, err)
+	}
+	partialRun := record{RunID: "partial-agent", Tag: "partial-agent", Status: StatusRunning, MeasurementPartial: true}
+	writeAdmissionFixtureRecord(t, state, partialRun)
+	partialDecision, err := admissionStateLockedWithSampleAndClock(state, candidate, fakeHostResourceSource{sample}, sample, clock)
+	if err != nil || partialDecision.Status != StatusStarting {
+		t.Fatalf("admission with incomplete observation = %+v, err=%v; want token admission", partialDecision, err)
 	}
 }
 
-// case: S-237.71
-func TestGovernorPausesLowestPriorityRunAndResumesAfterDiskFloorRestored(t *testing.T) {
+// case: S-237.69
+func TestAdmissionDoesNotReserveCPUForAnUnwrappedAgent(t *testing.T) {
 	state := t.TempDir()
-	owned := make([]*exec.Cmd, 0, 2)
+	identity, alive, err := ProcessIdentity(os.Getpid())
+	if err != nil || !alive {
+		t.Fatalf("identify test process: alive=%t err=%v", alive, err)
+	}
+	sample := HostResourceSnapshot{LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}
+	cfg := Config{StateDir: state, Tag: "default-cpu", Command: []string{"/bin/true"}}
+	if err := reserveAdmission(context.Background(), cfg, "default-cpu", os.Getpid(), identity, fakeHostResourceSource{sample}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readAdmissionRecord(state, "default-cpu")
+	if err != nil || got.Status != StatusStarting || got.CPUsMin != 0 {
+		t.Fatalf("unwrapped agent CPU reservation = %+v, err=%v; want starting with no CPU token", got, err)
+	}
+}
+
+// case: S-237.69
+func TestThreeHeavyCommandsAcquireOneCPUOwnerAtCapacityOne(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetQuota(state, "", "8", ""); err != nil {
+		t.Fatal(err)
+	}
+	sample := HostResourceSnapshot{LogicalCPUs: 10, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}
+	source := fakeHostResourceSource{sample}
+	first := record{RunID: "go-test-1", SlotGroup: "cpu", Slots: 1, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 1}
+	decision, err := admissionStateLockedWithSample(state, first, source, sample)
+	if err != nil || decision.Status != StatusStarting {
+		t.Fatalf("first heavy admission = %+v, err=%v", decision, err)
+	}
+	first.Status = StatusRunning
+	writeAdmissionFixtureRecord(t, state, first)
+	for index, id := range []string{"go-test-2", "go-test-3"} {
+		candidate := record{RunID: id, SlotGroup: "cpu", Slots: 1, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: uint64(index + 2)}
+		decision, err = admissionStateLockedWithSample(state, candidate, source, sample)
+		if err != nil || decision.Status != StatusQueued {
+			t.Fatalf("%s admission while first is active = %+v, err=%v; want queued", id, decision, err)
+		}
+	}
+	first.Status = StatusCompleted
+	writeAdmissionFixtureRecord(t, state, first)
+	second := record{RunID: "go-test-2", SlotGroup: "cpu", Slots: 1, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 2}
+	decision, err = admissionStateLockedWithSample(state, second, source, sample)
+	if err != nil || decision.Status != StatusStarting {
+		t.Fatalf("second heavy admission after first exits = %+v, err=%v", decision, err)
+	}
+	second.Status = StatusRunning
+	writeAdmissionFixtureRecord(t, state, second)
+	third := record{RunID: "go-test-3", SlotGroup: "cpu", Slots: 1, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 3}
+	decision, err = admissionStateLockedWithSample(state, third, source, sample)
+	if err != nil || decision.Status != StatusQueued {
+		t.Fatalf("third heavy admission while second is active = %+v, err=%v; want queued", decision, err)
+	}
+}
+
+// case: S-237.69
+func TestTokenAdmissionLetsFittingWorkBypassAndAgesLargeWaiter(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sample := HostResourceSnapshot{LogicalCPUs: 8, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
+	writeAdmissionFixtureRecord(t, state, record{RunID: "active", SlotGroup: "cpu", Slots: 4, SlotWeight: 2, Status: StatusRunning, QueueOrder: 1})
+	writeAdmissionFixtureRecord(t, state, record{RunID: "older", SlotGroup: "cpu", Slots: 4, SlotWeight: 3, Status: StatusQueued, QueueOrder: 2, EnqueuedAt: clock.now.Add(-time.Second)})
+	candidate := record{RunID: "small", SlotGroup: "cpu", Slots: 4, SlotWeight: 2, Status: StatusQueued, QueueOrder: 3, EnqueuedAt: clock.now}
+	decision, err := admissionStateLockedWithSampleAndClock(state, candidate, fakeHostResourceSource{sample}, sample, clock)
+	if err != nil || decision.Status != StatusStarting {
+		t.Fatalf("fitting request behind non-fitting younger waiter = %+v, err=%v; want admitted", decision, err)
+	}
+	clock.now = clock.now.Add(slotAgingThreshold)
+	decision, err = admissionStateLockedWithSampleAndClock(state, candidate, fakeHostResourceSource{sample}, sample, clock)
+	if err != nil || decision.Status != StatusQueued || !strings.Contains(decision.Reason, "aged") {
+		t.Fatalf("request after older waiter ages = %+v, err=%v; want priority held for aged waiter", decision, err)
+	}
+}
+
+// case: S-237.51
+func TestGateBlockedTokenWaiterDoesNotBlockUnrelatedHeavyCommand(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sample := HostResourceSnapshot{LogicalCPUs: 8, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}
+	if err := writeGateLocked(state, gateRecord{Name: "maintenance", RunID: "gate-holder", PID: os.Getpid(), Identity: "holder"}); err != nil {
+		t.Fatal(err)
+	}
+	writeAdmissionFixtureRecord(t, state, record{RunID: "gate-holder", Status: StatusRunning, HoldGate: "maintenance"})
+	writeAdmissionFixtureRecord(t, state, record{RunID: "blocked-heavy", SlotGroup: "cpu", Slots: 1, SlotWeight: 1, Status: StatusBlocked, WaitGate: "maintenance", QueueOrder: 1})
+	candidate := record{RunID: "unrelated-heavy", SlotGroup: "cpu", Slots: 1, SlotWeight: 1, Status: StatusQueued, QueueOrder: 2}
+	decision, err := admissionStateLockedWithSample(state, candidate, fakeHostResourceSource{sample}, sample)
+	if err != nil || decision.Status != StatusStarting {
+		t.Fatalf("unrelated heavy admission behind gate-blocked waiter = %+v, err=%v; want admitted", decision, err)
+	}
+}
+
+// case: S-237.69
+func TestHeavyAdmissionLoadHoldUsesInjectedClockUntilRecovery(t *testing.T) {
+	state := t.TempDir()
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
+	quotaSample := HostResourceSnapshot{LogicalCPUs: 8, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}
+	if err := SetQuota(state, "", "6", ""); err != nil {
+		t.Fatal(err)
+	}
+	candidate := record{RunID: "heavy", CostClass: CostHeavy, CPUsMin: 1, QueueOrder: 1}
+	heavyLoad := quotaSample
+	heavyLoad.Load1 = 99
+	decision, err := admissionStateLockedWithSampleAndClock(state, candidate, fakeHostResourceSource{heavyLoad}, heavyLoad, clock)
+	if err != nil || decision.Status != StatusBlocked || !strings.Contains(decision.Reason, "load 99") {
+		t.Fatalf("heavy admission under injected load = %+v, err=%v", decision, err)
+	}
+	clock.now = clock.now.Add(time.Second)
+	decision, err = admissionStateLockedWithSampleAndClock(state, candidate, fakeHostResourceSource{quotaSample}, quotaSample, clock)
+	if err != nil || decision.Status != StatusBlocked {
+		t.Fatalf("heavy admission escaped pressure hysteresis = %+v, err=%v", decision, err)
+	}
+	clock.now = clock.now.Add(11 * time.Second)
+	decision, err = admissionStateLockedWithSampleAndClock(state, candidate, fakeHostResourceSource{quotaSample}, quotaSample, clock)
+	if err != nil || decision.Status != StatusStarting {
+		t.Fatalf("heavy admission after injected pressure recovery = %+v, err=%v", decision, err)
+	}
+}
+
+// case: S-237.70
+func TestGovernorSelectsMostRecentlyAdmittedHeavyTokenRun(t *testing.T) {
+	records := []record{
+		{RunID: "light", CostClass: CostLight, Status: StatusRunning, Priority: -1, EnqueuedAt: time.Unix(1, 0)},
+		{RunID: "old", CostClass: CostHeavy, SlotGroup: CPUCommandTokenGroup, SlotWeight: 1, Status: StatusRunning, Priority: 10, QueueOrder: 1},
+		{RunID: "new", CostClass: CostHeavy, SlotGroup: CPUCommandTokenGroup, SlotWeight: 1, Status: StatusRunning, Priority: 1, QueueOrder: 2},
+	}
+	got := newestRunningTokenRun(records)
+	if got == nil || got.RunID != "new" {
+		t.Fatalf("most recently admitted heavy token run = %+v, want queue order 2", got)
+	}
+}
+
+type capturedSignal struct {
+	pid    int
+	signal syscall.Signal
+}
+
+type governorFixtureProcessSource struct {
+	processes []Process
+	signals   []capturedSignal
+	signalErr error
+}
+
+func (source *governorFixtureProcessSource) Snapshot(string) ([]Process, error) {
+	return source.processes, nil
+}
+
+func (source *governorFixtureProcessSource) Identity(pid int) (string, bool, error) {
+	for _, process := range source.processes {
+		if process.PID == pid {
+			return process.Identity, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func (source *governorFixtureProcessSource) Metrics(tree []Process) ([]Process, error) {
+	metrics := make(map[int]Process, len(source.processes))
+	for _, process := range source.processes {
+		metrics[process.PID] = process
+	}
+	out := append([]Process(nil), tree...)
+	for index := range out {
+		if process, ok := metrics[out[index].PID]; ok {
+			out[index].CPUSeconds = process.CPUSeconds
+			out[index].MetricsAvailable = process.MetricsAvailable
+			out[index].Command = process.Command
+		}
+	}
+	return out, nil
+}
+
+func (source *governorFixtureProcessSource) Signal(pid int, signal syscall.Signal) error {
+	source.signals = append(source.signals, capturedSignal{pid: pid, signal: signal})
+	return source.signalErr
+}
+
+// case: S-237.69
+func TestGovernorPausesMostRecentTokenRunAndResumesAfterPressureClears(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
 	var processes []Process
-	records := make([]record, 0, 2)
-	for index, priority := range []int{1, 10} {
-		pidPath := filepath.Join(state, fmt.Sprintf("child-%d.pid", index))
-		cmd := exec.Command("/bin/sh", "-c", `sleep 30 & echo $! > "$1"; wait`, "governor-fixture", pidPath)
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		owned = append(owned, cmd)
-		identity, alive, err := ProcessIdentity(cmd.Process.Pid)
-		if err != nil || !alive {
-			t.Fatalf("inspect shell identity: alive=%t err=%v", alive, err)
-		}
-		var childPID int
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			data, readErr := os.ReadFile(pidPath)
-			if readErr == nil {
-				childPID, _ = strconv.Atoi(strings.TrimSpace(string(data)))
-				if childPID > 0 {
-					break
-				}
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		if childPID <= 0 {
-			t.Fatalf("shell %d did not report its child PID", cmd.Process.Pid)
-		}
-		childIdentity, childAlive, err := ProcessIdentity(childPID)
-		if err != nil || !childAlive {
-			t.Fatalf("inspect child identity: alive=%t err=%v", childAlive, err)
-		}
-		root := Process{PID: cmd.Process.Pid, PPID: os.Getpid(), Identity: identity}
-		child := Process{PID: childPID, PPID: cmd.Process.Pid, Identity: childIdentity}
+	var records []record
+	for index := range 2 {
+		rootPID, childPID := 100+index*10, 101+index*10
+		root := Process{PID: rootPID, PPID: 1, Identity: fmt.Sprintf("root-%d", index)}
+		child := Process{PID: childPID, PPID: rootPID, Identity: fmt.Sprintf("child-%d", index)}
 		processes = append(processes, root, child)
 		rec := record{RunID: fmt.Sprintf("heavy-%d", index), Tag: fmt.Sprintf("heavy-%d", index), StateDir: state,
-			PID: cmd.Process.Pid, StartedAt: identity, Status: StatusRunning, CostClass: CostHeavy, Priority: priority,
-			MinFree: 100, StartedAtTime: time.Now().Add(-time.Minute), Observed: []Process{child}}
+			PID: rootPID, StartedAt: root.Identity, Status: StatusRunning, CostClass: CostHeavy, Priority: 10 - index,
+			SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, QueueOrder: uint64(index + 1),
+			StartedAtTime: clock.now.Add(-time.Minute), Observed: []Process{child}}
 		records = append(records, rec)
 		if err := writeRecordAtomic(rec); err != nil {
 			t.Fatal(err)
 		}
 	}
-	t.Cleanup(func() {
-		for _, cmd := range owned {
-			_ = cmd.Process.Signal(syscall.SIGCONT)
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-		}
-	})
-	procSource := ownedProcessTreeSource{processes: processes}
+	processSource := &governorFixtureProcessSource{processes: processes}
 	pressure := mutableHostResourceSource{sample: HostResourceSnapshot{PhysicalMemory: 1 << 30, AvailableMemory: 1 << 29, MemoryAvailableKnown: true,
-		Pressure: "normal", PressureAvailable: true, LoadAvailable: true, LogicalCPUs: 4, FreeDiskKnown: true, FreeDiskBytes: 0}}
-	if err := reconcileHostGovernorWithProcessSource(state, &pressure, procSource); err != nil {
-		t.Fatalf("pause under fake pressure: %v", err)
+		Pressure: "normal", PressureAvailable: true, LoadAvailable: true, Load1: 99, LogicalCPUs: 4, FreeDiskKnown: true, FreeDiskBytes: 1 << 30}}
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, processSource, clock); err != nil {
+		t.Fatalf("pause under external load: %v", err)
 	}
-	paused, err := readRecordLocked(state, records[0].RunID)
+	paused, err := readRecordLocked(state, records[1].RunID)
 	if err != nil || paused.Status != StatusPaused {
-		t.Fatalf("priority 1 record = %+v, err=%v", paused, err)
+		t.Fatalf("most recent token record = %+v, err=%v", paused, err)
 	}
-	listing := List(state)
-	if listing.Error != nil {
-		t.Fatalf("list governor state as ps JSON: %v", listing.Error)
+	active, err := readRecordLocked(state, records[0].RunID)
+	if err != nil || active.Status != StatusRunning {
+		t.Fatalf("older token record = %+v, err=%v", active, err)
 	}
-	psJSON, err := json.Marshal(listing)
-	if err != nil {
-		t.Fatal(err)
+	if len(processSource.signals) != 1 || processSource.signals[0].signal != syscall.SIGSTOP {
+		t.Fatalf("external pressure signals = %+v; want SIGSTOP for only the newest tree", processSource.signals)
 	}
-	t.Logf("ps --json governor snapshot: %s", psJSON)
-	var lowPriorityRun *RunInfo
-	for index := range listing.Runs {
-		if listing.Runs[index].RunID == records[0].RunID {
-			lowPriorityRun = &listing.Runs[index]
-			break
-		}
+	clock.now = clock.now.Add(time.Second)
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, processSource, clock); err != nil {
+		t.Fatalf("hold one paused tree under sustained load: %v", err)
 	}
-	if lowPriorityRun == nil || !lowPriorityRun.Paused || lowPriorityRun.WaitReason == "" || listing.GovernorDecision != "paused heavy-0" {
-		t.Fatalf("ps listing did not expose paused run and pressure decision: %+v", listing)
+	if len(processSource.signals) != 1 {
+		t.Fatalf("sustained pressure paused a second tree: %+v", processSource.signals)
 	}
-	higher, err := readRecordLocked(state, records[1].RunID)
-	if err != nil || higher.Status != StatusRunning {
-		t.Fatalf("priority 10 record = %+v, err=%v", higher, err)
+	pressure.sample.Load1 = 0
+	clock.now = clock.now.Add(time.Second)
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, processSource, clock); err != nil {
+		t.Fatalf("observe start of pressure recovery: %v", err)
 	}
-	pressure.sample.FreeDiskBytes = 1000
-	if err := reconcileHostGovernorWithProcessSource(state, &pressure, procSource); err != nil {
-		t.Fatalf("observe restored disk floor: %v", err)
+	paused, err = readRecordLocked(state, records[1].RunID)
+	if err != nil || paused.Status != StatusPaused {
+		t.Fatalf("paused tree resumed before pressure hysteresis: %+v, err=%v", paused, err)
 	}
-	higher, err = readRecordLocked(state, records[1].RunID)
-	if err != nil || higher.Status != StatusRunning {
-		t.Fatalf("governor paused another run during recovery: %+v, err=%v", higher, err)
+	clock.now = clock.now.Add(pressureNormalDuration + time.Second)
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, processSource, clock); err != nil {
+		t.Fatalf("resume after pressure clears: %v", err)
 	}
-	gov, err := readGovernorState(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gov.Decision != "recovering" {
-		t.Fatalf("governor recovery decision = %q, want recovering", gov.Decision)
-	}
-	gov.Hold.NormalAt = time.Now().Add(-pressureNormalDuration - time.Second)
-	if err := writeGovernorState(state, gov); err != nil {
-		t.Fatal(err)
-	}
-	paused, err = readRecordLocked(state, records[0].RunID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	paused.PausedAt = time.Now().Add(-time.Second)
-	if err := writeRecordAtomic(paused); err != nil {
-		t.Fatal(err)
-	}
-	if err := reconcileHostGovernorWithProcessSource(state, &pressure, procSource); err != nil {
-		t.Fatalf("resume after disk floor restores: %v", err)
-	}
-	resumed, err := readRecordLocked(state, records[0].RunID)
-	if err != nil || resumed.Status != StatusRunning || resumed.PausedMS < 900 {
+	resumed, err := readRecordLocked(state, records[1].RunID)
+	if err != nil || resumed.Status != StatusRunning || resumed.PausedMS < pressureNormalDuration.Milliseconds() {
 		t.Fatalf("resumed record = %+v, err=%v", resumed, err)
+	}
+	if len(processSource.signals) != 2 || processSource.signals[1].signal != syscall.SIGCONT {
+		t.Fatalf("resume signals = %+v; want paired SIGCONT for the paused tree", processSource.signals)
 	}
 	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	scanner := bufio.NewScanner(bytes.NewReader(data))
 	var pausedEvent, resumedEvent Event
-	for scanner.Scan() {
-		var event Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatal(err)
-		}
-		if event.RunID != records[0].RunID {
-			continue
+	if err := ReadEvents(bytes.NewReader(data), func(event Event) error {
+		if event.RunID != records[1].RunID {
+			return nil
 		}
 		if event.Type == EventPaused {
 			pausedEvent = event
@@ -383,11 +536,11 @@ func TestGovernorPausesLowestPriorityRunAndResumesAfterDiskFloorRestored(t *test
 		if event.Type == EventResumed {
 			resumedEvent = event
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if pausedEvent.Type != EventPaused || !strings.Contains(pausedEvent.Reason, "free disk") || pausedEvent.DiskFreeBytes != 0 || pausedEvent.DiskNeedBytes != 100 || resumedEvent.Type != EventResumed || resumedEvent.DurationMS < 900 {
+	if pausedEvent.Type != EventPaused || !strings.Contains(pausedEvent.Reason, "host load") || resumedEvent.Type != EventResumed || resumedEvent.DurationMS < pressureNormalDuration.Milliseconds() {
 		t.Fatalf("pause/resume events missing pressure reason or duration: paused=%+v resumed=%+v", pausedEvent, resumedEvent)
 	}
 }
@@ -571,7 +724,7 @@ func TestAdmissionFIFOOnlyOrdersMatchingResourceBudgets(t *testing.T) {
 	}{
 		{name: "same memory budget", candidate: record{MemoryBytes: 10}, earlier: record{MemoryBytes: 10}, want: true},
 		{name: "different budget dimensions", candidate: record{CPUsMin: 1}, earlier: record{MemoryBytes: 10}},
-		{name: "same slot group", candidate: record{SlotGroup: "workers"}, earlier: record{SlotGroup: "workers"}, want: true},
+		{name: "slot capacity uses fit and age, not resource FIFO", candidate: record{SlotGroup: "workers"}, earlier: record{SlotGroup: "workers"}},
 		{name: "same gate", candidate: record{WaitGate: "batch"}, earlier: record{HoldGate: "batch"}, want: true},
 		{name: "global min-free disk budget", candidate: record{}, earlier: record{DiskBytes: 10}, globalMinFree: 1, want: true},
 		{name: "unrelated run", candidate: record{}, earlier: record{WaitGate: "batch"}},
@@ -982,7 +1135,7 @@ func TestUnknownPressureWaitIsVisibleInRecordAndEvent(t *testing.T) {
 		<-finished
 	})
 	blocked := waitForAdmissionRecord(t, state, "unknown-pressure", func(rec record) bool { return rec.Status == StatusBlocked })
-	wantWait := pressureAdmissionWait(pressureUnknown, lastKnownAt.Add(pressureStateStalenessBound), false)
+	wantWait := pressureAdmissionWait(pressureUnknown, lastKnownAt.Add(pressureStateStalenessBound), false, "")
 	if blocked.WaitReason != wantWait {
 		cancel()
 		<-result
@@ -1014,17 +1167,15 @@ func TestUnknownPressureWaitIsVisibleInRecordAndEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var blockedEvent *Event
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var event Event
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			cancel()
-			<-result
-			t.Fatal(err)
-		}
+	if err := ReadEvents(bytes.NewReader(data), func(event Event) error {
 		if event.Type == EventBlocked {
 			blockedEvent = &event
-			break
 		}
+		return nil
+	}); err != nil {
+		cancel()
+		<-result
+		t.Fatal(err)
 	}
 	if blockedEvent == nil || blockedEvent.Reason != wantWait || blockedEvent.Pressure.PressureAvailable || blockedEvent.Pressure.LoadAvailable || blockedEvent.Pressure.MemoryAvailableKnown {
 		cancel()
@@ -1077,15 +1228,13 @@ func TestInitialQueuedEventUsesFirstAdmissionSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	var queued *Event
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var event Event
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatal(err)
-		}
+	if err := ReadEvents(bytes.NewReader(data), func(event Event) error {
 		if event.Type == EventQueued {
 			queued = &event
-			break
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if queued == nil {
 		t.Fatal("initial queued event was not recorded")
@@ -1151,14 +1300,13 @@ func TestBlockedPressureEventKeepsDecisionSampleAndWaitCondition(t *testing.T) {
 		t.Fatal(err)
 	}
 	var events []Event
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var event Event
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatal(err)
-		}
+	if err := ReadEvents(bytes.NewReader(data), func(event Event) error {
 		if event.Type == EventBlocked {
 			events = append(events, event)
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if len(events) != 1 || (events[0].Pressure.Pressure != sample.Pressure || events[0].Pressure.SwapUsedBytes != sample.SwapUsedBytes || !events[0].Pressure.MemoryAvailableKnown) || !strings.Contains(events[0].Reason, "current: warn since") {
 		cancel()
@@ -1246,5 +1394,263 @@ func TestPartialMeasurementNeverEntersCompleteLearningHistory(t *testing.T) {
 	records := []record{{CostKey: "build", Status: StatusCompleted, PeakRSSBytes: 12, AverageCPU: 1, MeasurementPartial: true}}
 	if learned := learnedUsage(records, "build"); learned.MemoryBytes != 0 {
 		t.Fatalf("partial observation learned as complete: %+v", learned)
+	}
+}
+
+// case: S-237.69
+func TestGovernorSignalFailureRollsBackPausedIntent(t *testing.T) {
+	state := t.TempDir()
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
+	rec := record{RunID: "signal-failure", Tag: "signal-failure", StateDir: state, PID: 100, StartedAt: "root", Status: StatusRunning, SlotGroup: CPUCommandTokenGroup, Slots: 1, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 1, StartedAtTime: clock.now.Add(-time.Minute), Observed: []Process{{PID: 101, PPID: 100, Identity: "child", MetricsAvailable: true}}}
+	if err := writeRecordAtomic(rec); err != nil {
+		t.Fatal(err)
+	}
+	source := &governorFixtureProcessSource{processes: []Process{{PID: 100, Identity: "root", MetricsAvailable: true}, {PID: 101, PPID: 100, Identity: "child", MetricsAvailable: true}}, signalErr: fmt.Errorf("injected SIGSTOP failure")}
+	pressure := mutableHostResourceSource{sample: HostResourceSnapshot{LogicalCPUs: 3, Pressure: "memory critical", PressureAvailable: true, LoadAvailable: true, FreeDiskKnown: true, FreeDiskBytes: 1 << 30}}
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, source, clock); err == nil {
+		t.Fatal("expected injected signal failure")
+	}
+	got, err := readRecordLocked(state, rec.RunID)
+	if err != nil || got.Status != StatusRunning {
+		t.Fatalf("record after failed SIGSTOP=%+v err=%v; want running", got, err)
+	}
+}
+
+// case: S-237.69
+func TestAdmissionChargesMeasuredUngatedCPUAgainstTokenCapacity(t *testing.T) {
+	state := t.TempDir()
+	if err := SetQuota(state, "", "2", ""); err != nil {
+		t.Fatal(err)
+	}
+	active := record{RunID: "token", Tag: "token", StateDir: state, PID: 100, StartedAt: "token-root", Status: StatusRunning, SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 1}
+	if err := writeRecordAtomic(active); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeGovernorState(state, governorState{UngatedCPUTokens: 1}); err != nil {
+		t.Fatal(err)
+	}
+	sample := HostResourceSnapshot{LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true, FreeDiskKnown: true, FreeDiskBytes: 1 << 30}
+	decision, err := admissionStateLockedWithSampleAndClock(state, record{RunID: "next", SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 2}, fakeHostResourceSource{sample}, sample, fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)})
+	if err != nil || decision.Status != StatusQueued || !strings.Contains(decision.Reason, "measured ungated CPU token") {
+		t.Fatalf("admission with measured ungranted CPU=%+v err=%v; want held", decision, err)
+	}
+}
+
+// case: S-237.69
+func TestGovernorUngatedAbsoluteHeavyTreeIsPausedBeforeGrantedWork(t *testing.T) {
+	state := t.TempDir()
+	if err := SetQuota(state, "", "2", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
+	pressure := mutableHostResourceSource{sample: HostResourceSnapshot{LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true, FreeDiskKnown: true, FreeDiskBytes: 1 << 30}}
+	token := record{RunID: "token", Tag: "token", StateDir: state, PID: 100, StartedAt: "root-token", Status: StatusRunning, SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 1, StartedAtTime: clock.now.Add(-time.Minute)}
+	ungated := record{RunID: "agent", Tag: "agent", StateDir: state, PID: 200, StartedAt: "root-agent", Status: StatusRunning, CostClass: CostLight, QueueOrder: 2, Command: []string{"/abs/toolchain/go", "test", "-p=8", "./..."}, StartedAtTime: clock.now.Add(-time.Minute), Observed: []Process{{PID: 201, PPID: 200, Identity: "go-identity", Command: "go", MetricsAvailable: true}}}
+	for _, rec := range []record{token, ungated} {
+		if err := writeRecordAtomic(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	processes := []Process{{PID: 100, Identity: "root-token", MetricsAvailable: true}, {PID: 200, Identity: "root-agent", MetricsAvailable: true}, {PID: 201, PPID: 200, Identity: "go-identity", Command: "go", CPUSeconds: 0, MetricsAvailable: true}}
+	source := &governorFixtureProcessSource{processes: processes}
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, source, clock); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(time.Second)
+	source.processes[2].CPUSeconds = 1
+	pressure.sample.Load1 = 99
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, source, clock); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readRecordLocked(state, "agent")
+	if err != nil || got.Status != StatusPaused {
+		t.Fatalf("untokened absolute go tree=%+v err=%v; want paused", got, err)
+	}
+	if len(source.signals) == 0 || source.signals[0].pid != 201 || source.signals[0].signal != syscall.SIGSTOP {
+		t.Fatalf("signals=%+v; want untokened go process paused before token run", source.signals)
+	}
+	var events []Event
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReadEvents(bytes.NewReader(data), func(event Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Type == EventUngatedHeavy && event.RunID == "agent" && event.Binary == "go" && len(event.ProcessTree) > 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("typed ungated-heavy event did not name agent tree and binary: %+v", events)
+	}
+}
+
+// case: S-237.8
+func TestSlotAdmissionPreservesOldestFittingWaiter(t *testing.T) {
+	state := t.TempDir()
+	if err := SetQuota(state, "", "2", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
+	sample := HostResourceSnapshot{LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true, FreeDiskKnown: true, FreeDiskBytes: 1 << 30}
+	active := record{RunID: "active", Tag: "active", StateDir: state, PID: 100, StartedAt: "active-root", Status: StatusRunning, SlotGroup: "workers", Slots: 2, SlotWeight: 1, QueueOrder: 1}
+	earlier := record{RunID: "earlier", Tag: "worker-4", StateDir: state, Status: StatusQueued, SlotGroup: "workers", Slots: 2, SlotWeight: 1, QueueOrder: 2, EnqueuedAt: clock.now}
+	later := record{RunID: "later", Tag: "worker-3", StateDir: state, Status: StatusQueued, SlotGroup: "workers", Slots: 2, SlotWeight: 1, QueueOrder: 3, EnqueuedAt: clock.now}
+	for _, rec := range []record{active, earlier, later} {
+		writeAdmissionFixtureRecord(t, state, rec)
+	}
+	decision, err := admissionStateLockedWithSampleAndClock(state, later, fakeHostResourceSource{sample}, sample, clock)
+	if err != nil || decision.Status != StatusQueued || !strings.Contains(decision.Reason, "worker-4") {
+		t.Fatalf("later fitting waiter admission=%+v err=%v; want queued behind oldest fitting worker-4", decision, err)
+	}
+	decision, err = admissionStateLockedWithSampleAndClock(state, earlier, fakeHostResourceSource{sample}, sample, clock)
+	if err != nil || decision.Status != StatusStarting {
+		t.Fatalf("oldest fitting waiter admission=%+v err=%v; want starting", decision, err)
+	}
+}
+
+// case: S-237.69
+func TestGovernorPauseEventFailureContinuesTreeAndRollsBack(t *testing.T) {
+	state := t.TempDir()
+	if err := SetQuota(state, "", "1", ""); err != nil {
+		t.Fatal(err)
+	}
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
+	rec := record{RunID: "pause-failure", Tag: "pause-failure", StateDir: state, PID: 100, StartedAt: "root", Status: StatusRunning, SlotGroup: CPUCommandTokenGroup, Slots: 1, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 1, StartedAtTime: clock.now.Add(-time.Minute), Observed: []Process{{PID: 101, PPID: 100, Identity: "child", MetricsAvailable: true}}}
+	if err := writeRecordAtomic(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(state, "events.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := &governorFixtureProcessSource{processes: []Process{{PID: 100, Identity: "root", MetricsAvailable: true}, {PID: 101, PPID: 100, Identity: "child", MetricsAvailable: true}}}
+	pressure := mutableHostResourceSource{sample: HostResourceSnapshot{LogicalCPUs: 3, Pressure: "memory critical", PressureAvailable: true, LoadAvailable: true, Load1: 99, FreeDiskKnown: true, FreeDiskBytes: 1 << 30}}
+	err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, source, clock)
+	if err == nil {
+		t.Fatal("expected real event append failure")
+	}
+	got, readErr := readRecordLocked(state, rec.RunID)
+	if readErr != nil || got.Status != StatusRunning {
+		t.Fatalf("record after failed pause event=%+v err=%v; want running", got, readErr)
+	}
+	if len(source.signals) != 2 || source.signals[0].signal != syscall.SIGSTOP || source.signals[1].signal != syscall.SIGCONT {
+		t.Fatalf("rollback signals=%+v; want STOP then CONT", source.signals)
+	}
+}
+
+// case: S-237.69
+func TestPausedTokenReleasesCapacityAndReacquiresAheadOfNewArrival(t *testing.T) {
+	state := t.TempDir()
+	if err := SetQuota(state, "", "2", ""); err != nil {
+		t.Fatal(err)
+	}
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
+	active := record{RunID: "active", Tag: "active", StateDir: state, PID: 100, StartedAt: "active-root", Status: StatusRunning, SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 1, StartedAtTime: clock.now.Add(-time.Minute)}
+	paused := record{RunID: "paused", Tag: "paused", StateDir: state, PID: 200, StartedAt: "paused-root", Status: StatusPaused, PausedAt: clock.now.Add(-time.Minute), EnqueuedAt: clock.now, Observed: []Process{{PID: 201, PPID: 200, Identity: "paused-child", MetricsAvailable: true}}, SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 2, StartedAtTime: clock.now.Add(-time.Minute)}
+	sample := HostResourceSnapshot{LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true, FreeDiskKnown: true, FreeDiskBytes: 1 << 30}
+	for _, rec := range []record{active, paused} {
+		if err := writeRecordAtomic(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	decision, err := admissionStateLockedWithSampleAndClock(state, record{RunID: "waiter", Tag: "waiter", SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 3}, fakeHostResourceSource{sample}, sample, clock)
+	if err != nil || decision.Status != StatusStarting || decision.Position != 1 {
+		t.Fatalf("admission while one token run paused=%+v err=%v; want token available and no paused waiter position", decision, err)
+	}
+	if err := writeRecordAtomic(record{RunID: "waiter", Tag: "waiter", StateDir: state, PID: 300, StartedAt: "waiter-root", Status: StatusRunning, SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "new-arrival", Tag: "new-arrival", StateDir: state, PID: 400, StartedAt: "new-root", Status: StatusQueued, SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 4, EnqueuedAt: clock.now}); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(slotAgingThreshold + time.Second)
+	active.Status = StatusCompleted
+	if err := writeRecordAtomic(active); err != nil {
+		t.Fatal(err)
+	}
+	if decision, err := admissionStateLockedWithSampleAndClock(state, record{RunID: "new-arrival", SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 4, EnqueuedAt: clock.now}, fakeHostResourceSource{sample}, sample, clock); err != nil || decision.Status != StatusQueued {
+		t.Fatalf("new arrival before aged resume=%+v err=%v; want queued", decision, err)
+	}
+	source := &governorFixtureProcessSource{processes: []Process{{PID: 100, Identity: "active-root", MetricsAvailable: true}, {PID: 200, Identity: "paused-root", MetricsAvailable: true}, {PID: 201, PPID: 200, Identity: "paused-child", MetricsAvailable: true}, {PID: 300, Identity: "waiter-root", MetricsAvailable: true}, {PID: 400, Identity: "new-root", MetricsAvailable: true}}}
+	pressure := mutableHostResourceSource{sample: HostResourceSnapshot{LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true, FreeDiskKnown: true, FreeDiskBytes: 1 << 30}}
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, source, clock); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readRecordLocked(state, "paused")
+	if err != nil || got.Status != StatusRunning {
+		t.Fatalf("aged paused run=%+v err=%v; want resumed ahead of new arrival", got, err)
+	}
+	if decision, err := admissionStateLockedWithSample(state, record{RunID: "new-arrival", SlotGroup: CPUCommandTokenGroup, Slots: 2, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: 4, EnqueuedAt: clock.now}, fakeHostResourceSource{HostResourceSnapshot{LogicalCPUs: 4}}, HostResourceSnapshot{LogicalCPUs: 4}); err != nil || decision.Status != StatusQueued {
+		t.Fatalf("new arrival admission=%+v err=%v; want queued behind reacquired token", decision, err)
+	}
+}
+
+// case: S-237.69
+func TestGovernorRebalancesCapacitySixToTwoAndBack(t *testing.T) {
+	state := t.TempDir()
+	clock := fixedAdmissionClock{now: time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)}
+	var processes []Process
+	for i := range 6 {
+		pid := 100 + i*10
+		rec := record{RunID: fmt.Sprintf("grant-%d", i), Tag: fmt.Sprintf("grant-%d", i), StateDir: state, PID: pid, StartedAt: fmt.Sprintf("root-%d", i), Status: StatusRunning, SlotGroup: CPUCommandTokenGroup, Slots: 6, SlotWeight: 1, CostClass: CostHeavy, QueueOrder: uint64(i + 1), StartedAtTime: clock.now.Add(-time.Minute), Observed: []Process{{PID: pid + 1, PPID: pid, Identity: fmt.Sprintf("child-%d", i), MetricsAvailable: true}}}
+		if err := writeRecordAtomic(rec); err != nil {
+			t.Fatal(err)
+		}
+		processes = append(processes, Process{PID: pid, Identity: rec.StartedAt, MetricsAvailable: true}, Process{PID: pid + 1, PPID: pid, Identity: fmt.Sprintf("child-%d", i), MetricsAvailable: true})
+	}
+	source := &governorFixtureProcessSource{processes: processes}
+	pressure := mutableHostResourceSource{sample: HostResourceSnapshot{LogicalCPUs: 8, Pressure: "normal", PressureAvailable: true, LoadAvailable: true, FreeDiskKnown: true, FreeDiskBytes: 1 << 30}}
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, source, clock); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetQuota(state, "", "2", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, source, clock); err != nil {
+		t.Fatal(err)
+	}
+	paused := 0
+	for i := range 6 {
+		rec, err := readRecordLocked(state, fmt.Sprintf("grant-%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Status == StatusPaused {
+			paused++
+		}
+	}
+	if paused != 4 {
+		t.Fatalf("paused after capacity 6->2 = %d; want four newest grants", paused)
+	}
+	if err := SetQuota(state, "", "6", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileHostGovernorWithProcessSourceAndClock(state, &pressure, source, clock); err != nil {
+		t.Fatal(err)
+	}
+	paused = 0
+	for i := range 6 {
+		rec, err := readRecordLocked(state, fmt.Sprintf("grant-%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Status == StatusPaused {
+			paused++
+		}
+	}
+	if paused != 0 {
+		t.Fatalf("paused after capacity 2->6 = %d; want none", paused)
 	}
 }
