@@ -51,6 +51,7 @@ TOOLCHAIN_STAGE_INPUTS = (
 RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("tools/kb-create/install.sh", "/usr/local/share/kb-create/install.sh"),
     RunnerImageResource("e2e/journey", "/opt/kb-journey/e2e/journey"),
+    RunnerImageResource("e2e/compose-owner.sh", "/opt/kb-journey/e2e/compose-owner.sh"),
     CONFIG_JSONC_RESOURCE,
     RunnerImageResource(
         ".journey/runner-inputs/project-service-path.js",

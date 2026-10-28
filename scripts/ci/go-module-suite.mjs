@@ -225,7 +225,14 @@ function runSuite({ root = workspaceRoot, registry, go = 'go', modules = [] } = 
       const moduleDir = path.join(root, module);
       const home = mkdtempSync(path.join(directory, 'h-'));
       homes.push(home);
-      const env = { ...process.env, HOME: home, TMPDIR: directory, GOMODCACHE: moduleCache, GOCACHE: buildCache };
+      const env = {
+        ...process.env,
+        HOME: home,
+        TMPDIR: directory,
+        GOMODCACHE: moduleCache,
+        GOCACHE: buildCache,
+        KB_TEST_DEADLINE_SCALE: process.env.KB_TEST_DEADLINE_SCALE ?? '2',
+      };
       for (const name of ['KB_PLATFORM_ROOT', 'KB_HOME', 'KB_NET_OFFSET', 'GOFLAGS']) delete env[name];
       const label = `${module} [TMPDIR ${variant}]`;
       try {

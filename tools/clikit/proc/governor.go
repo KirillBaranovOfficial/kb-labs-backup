@@ -192,6 +192,11 @@ func reconcileHostGovernorWithProcessSourceAndClock(stateDir string, source Host
 					return err
 				}
 				state.Decision = "paused " + target.Tag
+			} else if target := lowestPriorityHeavy(records); target != nil {
+				if err := pauseRunLocked(stateDir, target, now, reason, EventPaused, "", nil, sample, free, floor, processSource); err != nil {
+					return err
+				}
+				state.Decision = "paused " + target.Tag
 			}
 		} else if !recovering {
 			if err := resumePausedRunsLocked(stateDir, records, quota.CPUs, now, sample, processSource); err != nil {
@@ -297,6 +302,23 @@ func tokenUsage(records []record) int {
 		}
 	}
 	return used
+}
+
+func lowestPriorityHeavy(records []record) *record {
+	var target *record
+	for index := range records {
+		rec := &records[index]
+		if rec.CostClass != CostHeavy || rec.SlotGroup == CPUCommandTokenGroup || rec.Status == StatusPaused ||
+			(rec.Status != StatusRunning && rec.Status != StatusStalled && rec.Status != StatusStarting) {
+			continue
+		}
+		if target == nil || rec.Priority < target.Priority ||
+			(rec.Priority == target.Priority && (rec.QueueOrder > target.QueueOrder ||
+				(rec.QueueOrder == target.QueueOrder && rec.EnqueuedAt.After(target.EnqueuedAt)))) {
+			target = rec
+		}
+	}
+	return target
 }
 
 func newestRunningTokenRun(records []record) *record {

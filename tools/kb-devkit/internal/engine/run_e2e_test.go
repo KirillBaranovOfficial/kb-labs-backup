@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/devkit/internal/testdeadline"
 	"io"
 	"os"
 	"os/exec"
@@ -916,7 +917,7 @@ func TestRunEmitsTaskResultBeforeSlowPeerCompletes(t *testing.T) {
 		}
 	case <-done:
 		t.Fatal("Run completed without emitting the fast task result while the slow task was still running")
-	case <-time.After(8 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		t.Fatal("fast task completion output was not emitted before the slow subprocess completed")
 	}
 	<-done
@@ -949,7 +950,7 @@ func TestExecutorEmitsHeartbeatBeforeSlowSubprocessCompletes(t *testing.T) {
 		}
 	case <-done:
 		t.Fatal("slow subprocess completed before its heartbeat")
-	case <-time.After(700 * time.Millisecond):
+	case <-time.After(testdeadline.Budget(t)):
 		t.Fatal("heartbeat was not emitted before the slow subprocess completed")
 	}
 	<-done

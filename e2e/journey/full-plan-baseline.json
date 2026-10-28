@@ -1,6 +1,8 @@
 {
   "agent:explore": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -244,7 +246,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -360,10 +361,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "agent:commit": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -610,7 +615,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -726,10 +730,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "agent-secured:commit": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -975,7 +983,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -1091,10 +1098,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "agent-input:commit": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -1338,7 +1349,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -1454,10 +1464,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "agent-relative:commit": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -1701,7 +1715,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -1817,10 +1830,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "human:default": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -2064,7 +2081,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -2180,10 +2196,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "human:nondefault": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -2427,7 +2447,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -2543,10 +2562,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "negative:wrong-node": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -2790,7 +2813,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -2906,10 +2928,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "negative:occupied-port": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -3153,7 +3179,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -3269,10 +3294,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "service-local:explore": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -3519,7 +3548,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -3642,10 +3670,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "service-secured:explore": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -3893,7 +3925,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -4027,10 +4058,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "service-marketplace-registry:local": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -4283,7 +4318,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -4399,10 +4433,14 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ],
   "service-marketplace-registry:secured": [
     "list fresh-install built-in adapter defaults",
+    "list installed defaults without project adapter config",
+    "report missing host gateway address for workflow dispatch",
     "fresh install retains optional OpenAI warning metadata",
     "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
@@ -4655,7 +4693,6 @@
     "agent JSON install",
     "human install doctor",
     "post-restart doctor",
-    "uninstall platform",
     "installed platform bootstrap",
     "start platform host",
     "platform update prerequisites",
@@ -4771,6 +4808,8 @@
     "diagnose an unbuilt locked workspace plugin",
     "keep host and project agent command namespaces distinct",
     "verify synced workspace plugins and adapters in the v3 lock",
-    "resolve owner identity and platform tools inside isolated git worktrees"
+    "resolve owner identity and platform tools inside isolated git worktrees",
+    "stop the installed host after start and service checks",
+    "uninstall platform"
   ]
 }

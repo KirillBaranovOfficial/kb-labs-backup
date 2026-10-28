@@ -43,9 +43,6 @@ func executeInvocation(invocation string, args []string, stdout, stderr io.Write
 		}
 		return diag.SuccessStatus()
 	}
-	if len(args) > 0 && args[0] == "__keeper" {
-		return diag.ProcessExitStatus(proc.KeeperMain())
-	}
 	if len(args) > 0 && args[0] == "__agent_worker" {
 		code, err := agentStartCommand(root, args[1:], stdout, stderr)
 		if err != nil {
@@ -128,6 +125,7 @@ var runnerCommands = []runnerCommand{
 	{name: "agent", execute: agentCommand},
 	{name: "verify", execute: verifyCommand},
 	{name: "worktree", execute: worktreeCommand},
+	{name: "hygiene", execute: hygieneCommand},
 	{name: "land", execute: landCommand},
 	{name: "sched", execute: schedulerCommand},
 	{name: "self-install", execute: selfInstallCommand},
@@ -266,12 +264,16 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	helper, err := os.Executable()
+	workdir, err := os.Getwd()
 	if err != nil {
-		return 1, fmt.Errorf("kb-runner run: locate keeper executable: %w", err)
+		return 1, fmt.Errorf("%s run: inspect current workdir for lease: %w", root.Name(), err)
+	}
+	leasePaths, err := runnerWorktreeLeasePaths(workdir)
+	if err != nil {
+		return 1, fmt.Errorf("%s run: acquire owned-worktree lease: %w", root.Name(), err)
 	}
 	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
-	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, SlotWeight: *slotWeight, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
+	run, err := proc.Start(ctx, proc.Config{StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, SlotWeight: *slotWeight, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, SharedLeasePaths: leasePaths, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("%s run: %w\nInspect state directory access before retrying:\nnext: ls -ld %s\nnext: %s", root.Name(), err, shellQuote(*state), shellJoin(os.Args))
 	}

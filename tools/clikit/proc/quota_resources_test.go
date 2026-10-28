@@ -3,13 +3,17 @@
 package proc
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -101,7 +105,7 @@ func readAdmissionRecord(state, runID string) (record, error) {
 
 func waitForAdmissionRecord(t *testing.T, state, runID string, check func(record) bool) record {
 	t.Helper()
-	timer := time.NewTimer(3 * time.Second)
+	timer := time.NewTimer(testdeadline.Budget(t))
 	ticker := time.NewTicker(admissionPollInterval)
 	defer timer.Stop()
 	defer ticker.Stop()
@@ -202,7 +206,7 @@ func TestSecondHeavyAdmissionWaitsWithVisibleHostPressureReason(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { result <- reserveAdmission(ctx, cfg, "second-heavy", os.Getpid(), identity, &pressure) }()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	var waiting record
 	for time.Now().Before(deadline) {
 		waiting, err = readAdmissionRecord(state, "second-heavy")
@@ -545,6 +549,156 @@ func TestGovernorPausesMostRecentTokenRunAndResumesAfterPressureClears(t *testin
 	}
 }
 
+// case: S-237.71
+func TestGovernorPausesLowestPriorityRunAndResumesAfterDiskFloorRestored(t *testing.T) {
+	state := t.TempDir()
+	owned := make([]*exec.Cmd, 0, 2)
+	var processes []Process
+	records := make([]record, 0, 2)
+	for index, priority := range []int{1, 10} {
+		pidPath := filepath.Join(state, fmt.Sprintf("child-%d.pid", index))
+		cmd := exec.Command("/bin/sh", "-c", `sleep 30 & echo $! > "$1"; wait`, "governor-fixture", pidPath)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		owned = append(owned, cmd)
+		identity, alive, err := ProcessIdentity(cmd.Process.Pid)
+		if err != nil || !alive {
+			t.Fatalf("inspect shell identity: alive=%t err=%v", alive, err)
+		}
+		var childPID int
+		deadline := time.Now().Add(testdeadline.Budget(t))
+		for time.Now().Before(deadline) {
+			data, readErr := os.ReadFile(pidPath)
+			if readErr == nil {
+				childPID, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+				if childPID > 0 {
+					break
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if childPID <= 0 {
+			t.Fatalf("shell %d did not report its child PID", cmd.Process.Pid)
+		}
+		childIdentity, childAlive, err := ProcessIdentity(childPID)
+		if err != nil || !childAlive {
+			t.Fatalf("inspect child identity: alive=%t err=%v", childAlive, err)
+		}
+		root := Process{PID: cmd.Process.Pid, PPID: os.Getpid(), Identity: identity}
+		child := Process{PID: childPID, PPID: cmd.Process.Pid, Identity: childIdentity}
+		processes = append(processes, root, child)
+		rec := record{RunID: fmt.Sprintf("heavy-%d", index), Tag: fmt.Sprintf("heavy-%d", index), StateDir: state,
+			PID: cmd.Process.Pid, StartedAt: identity, Status: StatusRunning, CostClass: CostHeavy, Priority: priority,
+			MinFree: 100, StartedAtTime: time.Now().Add(-time.Minute), Observed: []Process{child}}
+		records = append(records, rec)
+		if err := writeRecordAtomic(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, cmd := range owned {
+			_ = cmd.Process.Signal(syscall.SIGCONT)
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	procSource := ownedProcessTreeSource{processes: processes}
+	pressure := mutableHostResourceSource{sample: HostResourceSnapshot{PhysicalMemory: 1 << 30, AvailableMemory: 1 << 29, MemoryAvailableKnown: true,
+		Pressure: "normal", PressureAvailable: true, LoadAvailable: true, LogicalCPUs: 4, FreeDiskKnown: true, FreeDiskBytes: 0}}
+	if err := reconcileHostGovernorWithProcessSource(state, &pressure, procSource); err != nil {
+		t.Fatalf("pause under fake pressure: %v", err)
+	}
+	paused, err := readRecordLocked(state, records[0].RunID)
+	if err != nil || paused.Status != StatusPaused {
+		t.Fatalf("priority 1 record = %+v, err=%v", paused, err)
+	}
+	listing := List(state)
+	if listing.Error != nil {
+		t.Fatalf("list governor state as ps JSON: %v", listing.Error)
+	}
+	psJSON, err := json.Marshal(listing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("ps --json governor snapshot: %s", psJSON)
+	var lowPriorityRun *RunInfo
+	for index := range listing.Runs {
+		if listing.Runs[index].RunID == records[0].RunID {
+			lowPriorityRun = &listing.Runs[index]
+			break
+		}
+	}
+	if lowPriorityRun == nil || !lowPriorityRun.Paused || lowPriorityRun.WaitReason == "" || listing.GovernorDecision != "paused heavy-0" {
+		t.Fatalf("ps listing did not expose paused run and pressure decision: %+v", listing)
+	}
+	higher, err := readRecordLocked(state, records[1].RunID)
+	if err != nil || higher.Status != StatusRunning {
+		t.Fatalf("priority 10 record = %+v, err=%v", higher, err)
+	}
+	pressure.sample.FreeDiskBytes = 1000
+	if err := reconcileHostGovernorWithProcessSource(state, &pressure, procSource); err != nil {
+		t.Fatalf("observe restored disk floor: %v", err)
+	}
+	higher, err = readRecordLocked(state, records[1].RunID)
+	if err != nil || higher.Status != StatusRunning {
+		t.Fatalf("governor paused another run during recovery: %+v, err=%v", higher, err)
+	}
+	gov, err := readGovernorState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gov.Decision != "recovering" {
+		t.Fatalf("governor recovery decision = %q, want recovering", gov.Decision)
+	}
+	gov.Hold.NormalAt = time.Now().Add(-pressureNormalDuration - time.Second)
+	if err := writeGovernorState(state, gov); err != nil {
+		t.Fatal(err)
+	}
+	paused, err = readRecordLocked(state, records[0].RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused.PausedAt = time.Now().Add(-time.Second)
+	if err := writeRecordAtomic(paused); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileHostGovernorWithProcessSource(state, &pressure, procSource); err != nil {
+		t.Fatalf("resume after disk floor restores: %v", err)
+	}
+	resumed, err := readRecordLocked(state, records[0].RunID)
+	if err != nil || resumed.Status != StatusRunning || resumed.PausedMS < 900 {
+		t.Fatalf("resumed record = %+v, err=%v", resumed, err)
+	}
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	var pausedEvent, resumedEvent Event
+	for scanner.Scan() {
+		var event Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.RunID != records[0].RunID {
+			continue
+		}
+		if event.Type == EventPaused {
+			pausedEvent = event
+		}
+		if event.Type == EventResumed {
+			resumedEvent = event
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if pausedEvent.Type != EventPaused || !strings.Contains(pausedEvent.Reason, "free disk") || pausedEvent.DiskFreeBytes != 0 || pausedEvent.DiskNeedBytes != 100 || resumedEvent.Type != EventResumed || resumedEvent.DurationMS < 900 {
+		t.Fatalf("pause/resume events missing pressure reason or duration: paused=%+v resumed=%+v", pausedEvent, resumedEvent)
+	}
+}
+
 func TestResourceAdmissionAllowsOversizedAlone(t *testing.T) {
 	if !quotaFits(quotaUsage{}, quotaUsage{MemoryBytes: 16, MinCPUs: 8}, hostQuota{MemoryBytes: 4, CPUs: 2}) {
 		t.Fatal("oversized run should be admitted when no resource-costed run is active")
@@ -578,7 +732,7 @@ func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T
 	t.Run("normal pressure admits despite quota and live-memory shortfall", func(t *testing.T) {
 		state := t.TempDir()
 		cfg := quotaAndCost(state)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 		defer cancel()
 		if err := reserveAdmission(ctx, cfg, "alone-normal", os.Getpid(), identity, fakeHostResourceSource{sample: normal}); err != nil {
 			t.Fatalf("admission with no active costed run: %v", err)
@@ -596,7 +750,7 @@ func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T
 		elevated := normal
 		elevated.Pressure = "memory warn"
 		source := &mutableHostResourceSource{sample: elevated}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 		defer cancel()
 		done := make(chan error, 1)
 		go func() { done <- reserveAdmission(ctx, cfg, "alone-elevated", os.Getpid(), identity, source) }()
@@ -610,7 +764,7 @@ func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T
 		select {
 		case err := <-done:
 			t.Fatalf("run admitted before pressure hysteresis elapsed: %v", err)
-		case <-time.After(300 * time.Millisecond):
+		case <-time.After(testdeadline.Scale(t, pressureNormalDuration/10)):
 		}
 		duringHold, err := readAdmissionRecord(state, "alone-elevated")
 		if err != nil || duringHold.Status != StatusBlocked || !strings.Contains(duringHold.WaitReason, "hysteresis current: warn since") {
@@ -1200,7 +1354,7 @@ func TestInitialQueuedEventUsesFirstAdmissionSample(t *testing.T) {
 	warn := normal
 	warn.Pressure = "memory warn"
 	source := &sequenceHostResourceSource{samples: []HostResourceSnapshot{normal, warn}}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	finished := make(chan struct{})
 	defer func() {
 		cancel()

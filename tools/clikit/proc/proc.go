@@ -3,12 +3,14 @@
 package proc
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -20,19 +22,29 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/proc/child"
 )
 
 const (
-	EventSchema = "kb.proc-event/v2"
-	stateEnv    = "KBLABS_CLIPROC_CONFIG"
-	readyEnv    = "KBLABS_CLIPROC_READY_FD"
-	runEnv      = "KBLABS_CLIPROC_RUN"
+	EventSchema         = "kb.proc-event/v2"
+	stateEnv            = "KBLABS_CLIPROC_CONFIG"
+	readyEnv            = "KBLABS_CLIPROC_READY_FD"
+	keeperDispatchEnv   = "KBLABS_INTERNAL_PROC_KEEPER"
+	keeperDispatchValue = "start-v1"
+	runEnv              = "KBLABS_CLIPROC_RUN"
 )
 
 type OwnershipUnverifiedReason string
 
 const OwnershipUnverifiedRunTokenClosed OwnershipUnverifiedReason = "run-token-closed-after-observation"
+
+func init() {
+	if os.Getenv(keeperDispatchEnv) == keeperDispatchValue {
+		command.Exit(keeperMain())
+	}
+}
 
 type EventType string
 
@@ -53,31 +65,32 @@ const (
 )
 
 type Config struct {
-	HelperPath  string
-	StateDir    string
-	Tag         string
-	LatestTag   string
-	Stall       time.Duration
-	StdoutPath  string
-	StderrPath  string
-	StdinPath   string
-	SlotGroup   string
-	Slots       int
-	SlotWeight  int
-	WaitGate    string
-	HoldGate    string
-	MinFree     uint64
-	CostKey     string
-	CostClass   CostClass
-	Priority    int
-	MemoryBytes uint64
-	CPUsMin     int
-	CPUsMax     int
-	DiskBytes   uint64
-	GrantedCPUs int
-	Command     []string
-	Dir         string
-	Env         []string
+	StateDir         string
+	Tag              string
+	LatestTag        string
+	Stall            time.Duration
+	StdoutPath       string
+	StderrPath       string
+	StdinPath        string
+	SlotGroup        string
+	Slots            int
+	SlotWeight       int
+	WaitGate         string
+	HoldGate         string
+	MinFree          uint64
+	CostKey          string
+	CostClass        CostClass
+	Priority         int
+	MemoryBytes      uint64
+	CPUsMin          int
+	CPUsMax          int
+	DiskBytes        uint64
+	GrantedCPUs      int
+	Command          []string
+	Dir              string
+	Env              []string
+	CostKeyLeaseMode LeaseMode
+	SharedLeasePaths []string
 	// CleanEnv makes Env the complete environment for both the keeper and its command.
 	CleanEnv bool
 	Keep     []string
@@ -146,9 +159,40 @@ type Run struct {
 	StartedAt string
 	stateDir  string
 	cmd       *exec.Cmd
+	wait      *processWait
 	once      sync.Once
 	err       error
 	done      chan struct{}
+	leases    []*FileLease
+}
+
+type processWait struct {
+	done   chan struct{}
+	result processWaitResult
+}
+
+// processWaitResult is published by the sole goroutine that calls Cmd.Wait.
+// No other goroutine reads Cmd.ProcessState.
+type processWaitResult struct {
+	err    error
+	status string
+}
+
+func startProcessWait(cmd *exec.Cmd) *processWait {
+	wait := &processWait{done: make(chan struct{})}
+	go func() {
+		wait.result.err = cmd.Wait()
+		if state := cmd.ProcessState; state != nil {
+			wait.result.status = state.String()
+		}
+		close(wait.done)
+	}()
+	return wait
+}
+
+func (wait *processWait) outcome() processWaitResult {
+	<-wait.done
+	return wait.result
 }
 
 type KeeperSignalOutcome string
@@ -439,8 +483,60 @@ type readyMessage struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// Start launches this executable as the keeper helper. The executable must
-// dispatch the hidden __keeper argument to KeeperMain before normal CLI parsing.
+type readyResult struct {
+	record record
+	err    error
+}
+
+type startupOutcomeKind uint8
+
+const (
+	startupReady startupOutcomeKind = iota
+	startupKeeperExited
+	startupCanceled
+)
+
+type startupOutcome struct {
+	kind          startupOutcomeKind
+	result        readyResult
+	readyConsumed bool
+}
+
+// Cancellation wins when it arrives with readiness, so Start never publishes
+// a Run after its caller has canceled.
+func selectStartupOutcome(ctx context.Context, ready <-chan readyResult, keeperExited <-chan struct{}) startupOutcome {
+	select {
+	case <-ctx.Done():
+		return startupOutcome{kind: startupCanceled}
+	case result := <-ready:
+		if ctx.Err() != nil {
+			return startupOutcome{kind: startupCanceled, result: result, readyConsumed: true}
+		}
+		return startupOutcome{kind: startupReady, result: result}
+	case <-keeperExited:
+		return startupOutcome{kind: startupKeeperExited}
+	}
+}
+
+// KeeperExitError reports that the keeper process exited before a valid ready
+// handshake was observed.
+type KeeperExitError struct {
+	Status string
+	Err    error
+}
+
+func (e *KeeperExitError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("proc: keeper exited before ready: %s: %v", e.Status, e.Err)
+	}
+	return fmt.Sprintf("proc: keeper exited before ready: %s", e.Status)
+}
+
+func (e *KeeperExitError) Unwrap() error {
+	return e.Err
+}
+
+// Start launches this executable as the keeper helper.
 func Start(ctx context.Context, cfg Config) (*Run, error) {
 	return StartWithHostResourceSource(ctx, cfg, systemHostResourceSource())
 }
@@ -461,17 +557,36 @@ func CanonicalStateDir(stateDir string) (string, error) {
 // reader for admission. All clients sharing a state directory should use the
 // same source so their decisions observe the same host contract.
 func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostResourceSource) (*Run, error) {
-	if ctx == nil {
-		return nil, errors.New("proc: context is required")
+	if err := validateStartContext(ctx); err != nil {
+		return nil, err
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, diag.New("KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE", "The current executable path could not be determined.", diag.WithReason(err.Error()))
 	}
 	if !filepath.IsAbs(cfg.StateDir) {
 		return nil, errors.New("proc: state directory must be absolute before starting a keeper")
 	}
+	return startWithExecutable(ctx, cfg, source, executable)
+}
+
+func validateStartContext(ctx context.Context) error {
+	if ctx != nil && ctx.Done() != nil {
+		return nil
+	}
+	diagnostic, err := diag.FromCatalog("KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE", nil)
+	if err != nil {
+		return err
+	}
+	return diagnostic
+}
+
+func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSource, executable string) (startedRun *Run, returnErr error) {
 	if source == nil {
 		return nil, errors.New("proc: resource source is required")
 	}
-	if cfg.HelperPath == "" || cfg.StateDir == "" || cfg.Tag == "" || cfg.Stall <= 0 || cfg.StdoutPath == "" || cfg.StderrPath == "" || len(cfg.Command) == 0 {
-		return nil, errors.New("proc: helper path, state directory, tag, positive stall duration, output paths, and command are required")
+	if executable == "" || cfg.StateDir == "" || cfg.Tag == "" || cfg.Stall <= 0 || cfg.StdoutPath == "" || cfg.StderrPath == "" || len(cfg.Command) == 0 {
+		return nil, errors.New("proc: executable path, state directory, tag, positive stall duration, output paths, and command are required")
 	}
 	if cfg.CostClass == "" {
 		cfg.CostClass = CostLight
@@ -479,6 +594,16 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 	if cfg.CostClass != CostLight && cfg.CostClass != CostHeavy {
 		return nil, errors.New("proc: cost class must be light or heavy")
 	}
+	leases, err := acquireConfigLeases(cfg)
+	if err != nil {
+		return nil, err
+	}
+	leaseOwnershipTransferred := false
+	defer func() {
+		if !leaseOwnershipTransferred {
+			returnErr = errors.Join(returnErr, closeFileLeases(leases))
+		}
+	}()
 	if err := os.MkdirAll(liveRecordsDir(cfg.StateDir), 0o700); err != nil {
 		return nil, fmt.Errorf("proc: create state directory: %w", err)
 	}
@@ -528,9 +653,9 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(fmt.Errorf("proc: start canceled: %w", err), readReady.Close(), writeReady.Close())
 	}
-	cmd := exec.Command(cfg.HelperPath, "__keeper")
+	cmd := exec.Command(executable)
 	keeperEnv := environmentFor(cfg, os.Environ())
-	cmd.Env = append(keeperEnv, stateEnv+"="+base64.RawStdEncoding.EncodeToString(encoded), readyEnv+"=3")
+	cmd.Env = append(keeperEnv, stateEnv+"="+base64.RawStdEncoding.EncodeToString(encoded), readyEnv+"=3", keeperDispatchEnv+"="+keeperDispatchValue)
 	cmd.ExtraFiles = []*os.File{writeReady}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -538,49 +663,103 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 	if err := cmd.Start(); err != nil {
 		return nil, errors.Join(fmt.Errorf("proc: start keeper: %w", err), readReady.Close(), writeReady.Close())
 	}
+	keeperWait := startProcessWait(cmd)
 	if err := writeReady.Close(); err != nil {
-		killErr := cmd.Process.Kill()
-		waitErr := cmd.Wait()
-		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake: %w", err), killErr, waitErr, readReady.Close())
-	}
-	type readyResult struct {
-		record record
-		err    error
+		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake: %w", err), cleanupStartedKeeper(cmd, keeperWait, runID), readReady.Close())
 	}
 	readyCh := make(chan readyResult, 1)
+	readerDone := make(chan struct{})
 	go func() {
+		defer close(readerDone)
 		rec, err := decodeReady(readReady)
 		readyCh <- readyResult{record: rec, err: err}
 	}()
-	timer := time.NewTimer(2 * time.Second)
-	defer timer.Stop()
 	var ready record
-	select {
-	case result := <-readyCh:
-		ready, err = result.record, result.err
-	case <-ctx.Done():
-		killErr := cmd.Process.Signal(syscall.SIGTERM)
-		cleanupErr := killTreeWithProtectedAncestors(cmd.Process.Pid, runID, nil, []ProcessIdentityEvidence{{PID: os.Getpid(), Identity: parentIdentity}}).err
-		killErr = errors.Join(killErr, cmd.Process.Kill())
-		closeErr := readReady.Close()
-		<-readyCh
-		waitErr := cmd.Wait()
-		return nil, errors.Join(fmt.Errorf("proc: keeper startup canceled: %w", ctx.Err()), cleanupErr, killErr, closeErr, waitErr)
-	case <-timer.C:
-		killErr := cmd.Process.Kill()
-		closeErr := readReady.Close()
-		<-readyCh
-		waitErr := cmd.Wait()
-		return nil, errors.Join(errors.New("proc: keeper did not become ready within 2s; HelperPath must dispatch __keeper"), killErr, closeErr, waitErr)
+	var readerResult *readyResult
+	readReadyClosed := false
+	for {
+		switch outcome := selectStartupOutcome(ctx, readyCh, keeperWait.done); outcome.kind {
+		case startupReady:
+			result := outcome.result
+			readerResult = &result
+			readyCh = nil
+			ready, err = result.record, result.err
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				// EOF is only a transport event. A live keeper may still produce
+				// readiness through another writer; wait for process exit or ctx.
+				readyCh = nil
+				continue
+			}
+			if err != nil {
+				select {
+				case <-keeperWait.done:
+					cleanupErr := cleanupStartedKeeper(cmd, keeperWait, runID)
+					closeErr := readReady.Close()
+					<-readerDone
+					return nil, errors.Join(keeperExitError(keeperWait, result.err), cleanupErr, closeErr)
+				default:
+				}
+				cleanupErr := cleanupStartedKeeper(cmd, keeperWait, runID)
+				closeErr := readReady.Close()
+				<-readerDone
+				return nil, errors.Join(fmt.Errorf("proc: keeper startup failed: %w", err), closeErr, cleanupErr)
+			}
+			<-readerDone
+			goto keeperReady
+		case startupKeeperExited:
+			// Expire and join the reader before tree cleanup: a writer outside the
+			// discoverable tree must not make keeper-exit resolution wait for EOF.
+			var result readyResult
+			var closeErr error
+			if readerResult != nil {
+				result = *readerResult
+				<-readerDone
+				closeErr = readReady.Close()
+				readReadyClosed = true
+			} else {
+				result, closeErr = resolveReadyAfterKeeperExit(readReady, readyCh, readerDone)
+				readReadyClosed = true
+			}
+			treeErr := cleanupStartedKeeperTree(cmd.Process.Pid, runID)
+			readyCh = nil
+			if result.err == nil {
+				if treeErr != nil || closeErr != nil {
+					return nil, errors.Join(fmt.Errorf("proc: finish exited keeper startup: %w", errors.Join(treeErr, closeErr)))
+				}
+				ready, err = result.record, nil
+				goto keeperReady
+			}
+			exitErr := keeperExitError(keeperWait, result.err)
+			return nil, errors.Join(exitErr, treeErr, closeErr)
+		case startupCanceled:
+			if outcome.readyConsumed {
+				// The selector consumed readiness before observing cancellation;
+				// cleanup must join the reader without waiting for a second result.
+				readyCh = nil
+			}
+			cleanupErr := cleanupStartedKeeper(cmd, keeperWait, runID)
+			closeErr := readReady.Close()
+			if readyCh != nil {
+				<-readyCh
+			}
+			<-readerDone
+			return nil, errors.Join(fmt.Errorf("proc: keeper startup canceled: %w", ctx.Err()), cleanupErr, closeErr)
+		}
 	}
+
+keeperReady:
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("proc: keeper helper did not complete the __keeper handshake; HelperPath must dispatch __keeper: %w", err), cmd.Process.Kill(), cmd.Wait(), readReady.Close())
+		cleanupErr := cleanupStartedKeeper(cmd, keeperWait, runID)
+		return nil, errors.Join(fmt.Errorf("proc: keeper startup failed: %w", err), readReady.Close(), cleanupErr)
 	}
-	if err := readReady.Close(); err != nil {
-		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake reader: %w", err), cmd.Process.Kill(), cmd.Wait())
+	if !readReadyClosed {
+		if err := readReady.Close(); err != nil {
+			return nil, errors.Join(fmt.Errorf("proc: close keeper handshake reader: %w", err), cleanupStartedKeeper(cmd, keeperWait, runID))
+		}
 	}
 	admissionPending = false
-	run := &Run{PID: RecordedKeeperPID(cmd.Process.Pid), RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, done: make(chan struct{})}
+	run := &Run{PID: RecordedKeeperPID(cmd.Process.Pid), RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, wait: keeperWait, done: make(chan struct{}), leases: leases}
+	leaseOwnershipTransferred = true
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -596,14 +775,69 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 	return run, nil
 }
 
+func keeperExitError(wait *processWait, handshakeErr error) *KeeperExitError {
+	outcome := wait.outcome()
+	if outcome.status == "" {
+		outcome.status = "unknown exit status"
+	}
+	return &KeeperExitError{Status: outcome.status, Err: errors.Join(outcome.err, handshakeErr)}
+}
+
+func resolveReadyAfterKeeperExit(readReady *os.File, results <-chan readyResult, readerDone <-chan struct{}) (readyResult, error) {
+	// Wait returning makes the descriptor terminal: expire reads immediately
+	// so a surviving writer cannot hold startup open while the decoder joins.
+	if err := readReady.SetReadDeadline(time.Now()); err != nil {
+		closeErr := readReady.Close()
+		result := <-results
+		<-readerDone
+		return result, errors.Join(fmt.Errorf("proc: expire keeper readiness read: %w", err), closeErr)
+	}
+	result := <-results
+	<-readerDone
+	return result, readReady.Close()
+}
+
+func cleanupStartedKeeper(cmd *exec.Cmd, wait *processWait, runID string) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	cleanupErr := cleanupStartedKeeperTree(cmd.Process.Pid, runID)
+	identity, alive, identityErr := ProcessIdentity(cmd.Process.Pid)
+	if identityErr != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("proc: inspect starting keeper before cleanup: %w", identityErr))
+	} else if alive {
+		if err := signalKeeper(RecordedKeeperPID(cmd.Process.Pid), identity, runID, syscall.SIGKILL, osProcessSource{}); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("proc: signal starting keeper through recorded keeper owner: %w", err))
+		}
+	}
+	if wait != nil {
+		// ErrProcessDone means the waiter already owns the terminal outcome.
+		cleanupErr = errors.Join(cleanupErr, wait.outcome().err)
+	}
+	return cleanupErr
+}
+
+func cleanupStartedKeeperTree(pid int, runID string) error {
+	parentIdentity, alive, identityErr := ProcessIdentity(os.Getpid())
+	if identityErr != nil {
+		return fmt.Errorf("proc: inspect startup caller before tree cleanup: %w", identityErr)
+	}
+	if !alive {
+		return errors.New("proc: startup caller identity disappeared before tree cleanup")
+	}
+	cleanup := killTreeWithProtectedAncestors(pid, runID, nil, []ProcessIdentityEvidence{{PID: os.Getpid(), Identity: parentIdentity}})
+	return errors.Join(cleanup.err, child.KillTree(pid))
+}
+
 func (r *Run) Wait() error {
 	r.once.Do(func() {
-		r.err = r.cmd.Wait()
+		r.err = r.wait.outcome().err
 		if r.err != nil {
 			if lostErr := recordObservedKeeperLoss(r.stateDir, r.RunID); lostErr != nil {
 				r.err = errors.Join(r.err, fmt.Errorf("proc: record keeper loss for run %s: %w", r.RunID, lostErr))
 			}
 		}
+		r.err = errors.Join(r.err, closeFileLeases(r.leases))
 		close(r.done)
 	})
 	return r.err
@@ -636,29 +870,28 @@ func SignalRecordedKeeper(stateDir, runID string, signal syscall.Signal) error {
 	}); err != nil {
 		return fmt.Errorf("proc: resolve keeper for run %s: %w", runID, err)
 	}
-	return signalKeeper(rec.PID, rec.StartedAt, runID, signal, osProcessSource{})
+	return signalKeeper(RecordedKeeperPID(rec.PID), rec.StartedAt, runID, signal, osProcessSource{})
 }
 
-// KeeperMain is the helper entry point. Call it only for the private __keeper
-// command dispatched by the executable that Start re-executes.
-func KeeperMain() int {
+// keeperMain runs the process selected by Start's private environment marker.
+func keeperMain() diag.ExitStatus {
 	encoded := os.Getenv(stateEnv)
 	readyFD := os.Getenv(readyEnv)
 	if encoded == "" || readyFD != "3" {
 		fmt.Fprintln(os.Stderr, "proc: keeper must be started by proc.Start")
-		return 2
+		return diag.ProcessExitStatus(2)
 	}
 	data, err := base64.RawStdEncoding.DecodeString(encoded)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proc: invalid keeper configuration")
-		return 2
+		return diag.ProcessExitStatus(2)
 	}
 	var cfg keeperConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "proc: invalid keeper configuration")
-		return 2
+		return diag.ProcessExitStatus(2)
 	}
-	return runKeeper(cfg)
+	return diag.ProcessExitStatus(runKeeper(cfg))
 }
 
 // List reads run and queue records under their state lock, then verifies each PID identity.
@@ -1405,7 +1638,7 @@ func newID() (string, error) {
 func filteredEnv(env []string) []string {
 	out := make([]string, 0, len(env)+1)
 	for _, item := range env {
-		if strings.HasPrefix(item, stateEnv+"=") || strings.HasPrefix(item, readyEnv+"=") || strings.HasPrefix(item, runEnv+"=") || strings.HasPrefix(item, resourceStateEnv+"=") || strings.HasPrefix(item, "KB_RUNNER_CPUS=") || strings.HasPrefix(item, "KB_RUNNER_MEM_BYTES=") {
+		if strings.HasPrefix(item, stateEnv+"=") || strings.HasPrefix(item, readyEnv+"=") || strings.HasPrefix(item, keeperDispatchEnv+"=") || strings.HasPrefix(item, runEnv+"=") || strings.HasPrefix(item, resourceStateEnv+"=") || strings.HasPrefix(item, "KB_RUNNER_CPUS=") || strings.HasPrefix(item, "KB_RUNNER_MEM_BYTES=") {
 			continue
 		}
 		out = append(out, item)
@@ -1414,15 +1647,58 @@ func filteredEnv(env []string) []string {
 }
 
 func environmentFor(cfg Config, parent []string) []string {
+	var env []string
 	if cfg.CleanEnv {
-		return append([]string(nil), cfg.Env...)
+		env = make([]string, 0, len(cfg.Env))
+	} else {
+		env = filteredEnv(parent)
 	}
-	return append(filteredEnv(parent), cfg.Env...)
+	for _, item := range cfg.Env {
+		if strings.HasPrefix(item, keeperDispatchEnv+"=") {
+			continue
+		}
+		env = append(env, item)
+	}
+	return env
 }
 
 func decodeReady(r *os.File) (record, error) {
+	data := make([]byte, 0, 512)
+	chunk := make([]byte, 4096)
+	for {
+		n, readErr := r.Read(chunk)
+		if n > 0 {
+			data = append(data, chunk[:n]...)
+		}
+		if readErr != nil {
+			if errors.Is(readErr, os.ErrDeadlineExceeded) {
+				var drainErr error
+				data, drainErr = drainReadyPipe(r, data)
+				if drainErr != nil {
+					return record{}, errors.Join(fmt.Errorf("proc: drain expired readiness pipe: %w", drainErr), io.ErrUnexpectedEOF)
+				}
+			}
+			line := data
+			if newline := bytes.IndexByte(data, '\n'); newline >= 0 {
+				line = data[:newline]
+			}
+			if len(line) == 0 && errors.Is(readErr, io.EOF) {
+				return record{}, io.EOF
+			}
+			if bytes.IndexByte(data, '\n') < 0 {
+				return record{}, errors.Join(io.ErrUnexpectedEOF, readErr)
+			}
+			return decodeReadyLine(line)
+		}
+		if newline := bytes.IndexByte(data, '\n'); newline >= 0 {
+			return decodeReadyLine(data[:newline])
+		}
+	}
+}
+
+func decodeReadyLine(data []byte) (record, error) {
 	var ready readyMessage
-	if err := json.NewDecoder(r).Decode(&ready); err != nil {
+	if err := json.Unmarshal(data, &ready); err != nil {
 		return record{}, err
 	}
 	if ready.Error != "" {
@@ -1432,6 +1708,29 @@ func decodeReady(r *os.File) (record, error) {
 		return record{}, errors.New("keeper returned no process identity")
 	}
 	return ready.Record, nil
+}
+
+func drainReadyPipe(r *os.File, data []byte) ([]byte, error) {
+	fd := int(r.Fd())
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return data, err
+	}
+	chunk := make([]byte, 4096)
+	for {
+		n, err := syscall.Read(fd, chunk)
+		if n > 0 {
+			data = append(data, chunk[:n]...)
+		}
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) || (err == nil && n == 0) {
+			return data, nil
+		}
+		if err != nil {
+			return data, err
+		}
+	}
 }
 
 func writeRecord(rec record) error {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"io"
 	"os"
 	"os/exec"
@@ -52,7 +53,7 @@ func TestGovernorStopsAndContinuesOwnedChildTree(t *testing.T) {
 	t.Cleanup(func() { _ = child.Process.Signal(syscall.SIGCONT); _ = child.Process.Kill(); _ = child.Wait() })
 	waitForOutput := func(previous int64) int64 {
 		t.Helper()
-		deadline := time.Now().Add(2 * time.Second)
+		deadline := time.Now().Add(testdeadline.Budget(t))
 		for time.Now().Before(deadline) {
 			info, statErr := os.Stat(outputPath)
 			if statErr == nil && info.Size() > previous {
@@ -80,7 +81,7 @@ func TestGovernorStopsAndContinuesOwnedChildTree(t *testing.T) {
 	}
 	waitForStopped := func(want bool) {
 		t.Helper()
-		deadline := time.Now().Add(2 * time.Second)
+		deadline := time.Now().Add(testdeadline.Budget(t))
 		for time.Now().Before(deadline) {
 			stopped, present, inspectErr := testProcessStopped(child.Process.Pid)
 			if inspectErr == nil && present && stopped == want {
@@ -101,7 +102,7 @@ func TestGovernorStopsAndContinuesOwnedChildTree(t *testing.T) {
 		t.Fatalf("resume process tree: %v", err)
 	}
 	waitForStopped(false)
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for fileSize(t, outputPath) == pausedSize && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -129,6 +130,13 @@ type ownedProcessTreeSource struct{ processes []Process }
 
 func (source ownedProcessTreeSource) Snapshot(string) ([]Process, error) {
 	return source.processes, nil
+}
+func (source ownedProcessTreeSource) Metrics(tree []Process) ([]Process, error) {
+	out := append([]Process(nil), tree...)
+	for index := range out {
+		out[index].MetricsAvailable = true
+	}
+	return out, nil
 }
 func (ownedProcessTreeSource) Identity(pid int) (string, bool, error) { return ProcessIdentity(pid) }
 func (ownedProcessTreeSource) Signal(pid int, signal syscall.Signal) error {
@@ -429,7 +437,7 @@ func TestKeeperSignalOwnerRefusesCallerAncestor(t *testing.T) {
 		alive:      map[int]bool{ancestorPID: true},
 		parents:    map[int]int{callerPID: ancestorPID, ancestorPID: 1},
 	}
-	err := signalKeeper(ancestorPID, "ancestor-start", "ancestor-run", syscall.SIGKILL, source)
+	err := signalKeeper(RecordedKeeperPID(ancestorPID), "ancestor-start", "ancestor-run", syscall.SIGKILL, source)
 	var signalErr *KeeperSignalError
 	if !errors.As(err, &signalErr) || signalErr.Outcome != KeeperSignalRefusedCaller {
 		t.Fatalf("signal outcome = %v, want typed %q refusal", err, KeeperSignalRefusedCaller)
@@ -1517,7 +1525,7 @@ func TestWaitLatestTagSelectsNewestTerminalRun(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	info, err := WaitLatestTag(ctx, state, "stream")
 	if err != nil {
@@ -1557,7 +1565,9 @@ func TestWaitRunIDSelectsRequestedRunWhenTagIsReused(t *testing.T) {
 
 // case: S-237.11
 func TestStartRejectsRelativeStateDirBeforeStartingKeeper(t *testing.T) {
-	run, err := StartWithHostResourceSource(context.Background(), Config{StateDir: "relative-state"}, systemHostResourceSource())
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
+	defer cancel()
+	run, err := StartWithHostResourceSource(ctx, Config{StateDir: "relative-state"}, systemHostResourceSource())
 	if err == nil || !strings.Contains(err.Error(), "state directory must be absolute") {
 		t.Fatalf("start with relative state dir = run %v, err %v; want an absolute-path contract error", run, err)
 	}

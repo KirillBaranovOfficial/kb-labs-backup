@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"math"
 	"os"
 	"path/filepath"
@@ -19,14 +20,12 @@ import (
 // case: S-237.55
 func TestIdleQueueEventComesFromProductionAdmissionPath(t *testing.T) {
 	state := t.TempDir()
-	runner := buildRunner(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{
-			HelperPath: runner, StateDir: state, Tag: "agent:queued-idle", Stall: time.Hour,
+		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{StateDir: state, Tag: "agent:queued-idle", Stall: time.Hour,
 			StdoutPath: filepath.Join(state, "out"), StderrPath: filepath.Join(state, "err"),
 			MinFree: math.MaxUint64, Command: []string{"/bin/sleep", "30"},
 		}, stableHostResourceSource{})
@@ -36,13 +35,13 @@ func TestIdleQueueEventComesFromProductionAdmissionPath(t *testing.T) {
 		cancel()
 		select {
 		case <-finished:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testdeadline.Budget(t)):
 			t.Errorf("production admission did not return after cancellation")
 		}
 	})
 
 	var recordPath string
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		paths, err := filepath.Glob(filepath.Join(state, "runs", "*.json"))
 		if err != nil {
@@ -108,7 +107,7 @@ func TestIdleQueueEventComesFromProductionAdmissionPath(t *testing.T) {
 
 	events := readAdmissionEvents(t, state)
 	var idle *proc.Event
-	deadline = time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		for index := range events {
 			if events[index].Type == proc.EventIdle {
@@ -134,14 +133,12 @@ func TestIdleQueueEventComesFromProductionAdmissionPath(t *testing.T) {
 // case: S-237.56
 func TestCancellingProductionQueuedAdmissionWritesTerminalTeardown(t *testing.T) {
 	state := t.TempDir()
-	runner := buildRunner(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{
-			HelperPath: runner, StateDir: state, Tag: "agent:queued-cancel", Stall: time.Hour,
+		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{StateDir: state, Tag: "agent:queued-cancel", Stall: time.Hour,
 			StdoutPath: filepath.Join(state, "out"), StderrPath: filepath.Join(state, "err"),
 			MinFree: math.MaxUint64, Command: []string{"/bin/sleep", "30"},
 		}, stableHostResourceSource{})
@@ -151,13 +148,13 @@ func TestCancellingProductionQueuedAdmissionWritesTerminalTeardown(t *testing.T)
 		cancel()
 		select {
 		case <-finished:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testdeadline.Budget(t)):
 			t.Errorf("production admission did not return after cancellation")
 		}
 	})
 
 	var queued bool
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		for _, event := range readAdmissionEvents(t, state) {
 			if event.Type == proc.EventBlocked && event.Tag == "agent:queued-cancel" {

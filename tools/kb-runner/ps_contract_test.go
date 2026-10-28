@@ -4,9 +4,9 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,9 +79,7 @@ func TestPSJSONCarriesEveryRecordFieldRecordConsumersRead(t *testing.T) {
 		t.Skip("process supervision supports Linux and macOS")
 	}
 	state := t.TempDir()
-	runner := buildRunnerBinary(t)
-	run, err := proc.Start(context.Background(), proc.Config{
-		HelperPath: runner, StateDir: state, Tag: "contract-check", Stall: 30 * time.Minute,
+	run, err := proc.Start(cancellableProcTestContext(t), proc.Config{StateDir: state, Tag: "contract-check", Stall: 30 * time.Minute,
 		StdoutPath: filepath.Join(state, "out"), StderrPath: filepath.Join(state, "err"),
 		Command: []string{"/bin/sh", "-c", `exit "$1"`, "sh", "0"},
 	})
@@ -92,7 +90,7 @@ func TestPSJSONCarriesEveryRecordFieldRecordConsumersRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	var record map[string]any
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for {
 		records := psJSONRecords(t, state)
 		if len(records) == 1 {
@@ -162,7 +160,7 @@ func TestPSLeftoversJSONAttributesEveryLeftoverToItsRun(t *testing.T) {
 		_ = runCommand.Process.Kill()
 		_ = runCommand.Wait()
 	})
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		listing := proc.List(state)
 		if listing.Error != nil {
@@ -202,7 +200,7 @@ func TestPSLeftoversJSONAttributesEveryLeftoverToItsRun(t *testing.T) {
 	if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGKILL); err != nil {
 		t.Fatalf("signal recorded keeper: %v", err)
 	}
-	terminalDeadline := time.Now().Add(5 * time.Second)
+	terminalDeadline := time.Now().Add(testdeadline.Budget(t))
 	runID := ""
 	for time.Now().Before(terminalDeadline) {
 		listing := proc.List(state)

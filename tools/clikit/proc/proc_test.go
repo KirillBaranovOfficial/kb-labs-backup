@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"github.com/kb-labs/clikit/internal/testutil"
 	"github.com/kb-labs/clikit/proc"
 )
@@ -36,6 +37,13 @@ func (stableHostResourceSource) Snapshot() proc.HostResourceSnapshot {
 
 func startTest(ctx context.Context, cfg proc.Config) (*proc.Run, error) {
 	return proc.StartWithHostResourceSource(ctx, cfg, stableHostResourceSource{})
+}
+
+func cancellableTestContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
+	t.Cleanup(cancel)
+	return ctx
 }
 
 // case: S-237.56
@@ -305,7 +313,6 @@ func TestRunScratchRemovesReadOnlyGoModuleContent(t *testing.T) {
 // case: S-237.41
 func TestCanceledKeeperStartupRemovesRegisteredScratch(t *testing.T) {
 	state := t.TempDir()
-	runner := buildRunner(t)
 	stdoutFIFO := filepath.Join(state, "stdout.fifo")
 	if err := syscall.Mkfifo(stdoutFIFO, 0o600); err != nil {
 		t.Fatal(err)
@@ -314,7 +321,7 @@ func TestCanceledKeeperStartupRemovesRegisteredScratch(t *testing.T) {
 	started := make(chan error, 1)
 	go func() {
 		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{
-			HelperPath: runner, StateDir: state, Tag: "canceled-startup", Stall: time.Hour,
+			StateDir: state, Tag: "canceled-startup", Stall: time.Hour,
 			StdoutPath: stdoutFIFO, StderrPath: filepath.Join(state, "stderr.log"),
 			Command: []string{"/bin/sleep", "30"},
 		}, stableHostResourceSource{})
@@ -860,8 +867,8 @@ func TestSilentLeafEmitsOneStallEvent(t *testing.T) {
 	helper := buildHelper(t)
 	leafPIDFile := filepath.Join(state, "leaf.pid")
 	releaseFile := filepath.Join(state, "release-leaves")
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "stall", Stall: 250 * time.Millisecond,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "stall", Stall: 250 * time.Millisecond,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "hold", leafPIDFile, releaseFile},
 	})
@@ -914,8 +921,8 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 	helper := buildHelper(t)
 	pidFile := filepath.Join(state, "grandchild.pid")
 	releaseFile := filepath.Join(state, "release-command")
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "darwin-sampled-descendant", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "darwin-sampled-descendant", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "double-fork-system-held", "30", pidFile, releaseFile},
 	})
@@ -1002,8 +1009,8 @@ func TestUnrelatedSameUIDProcessIsNotOwnedByRun(t *testing.T) {
 		t.Fatal("test-owned unrelated process exited before the run started")
 	}
 
-	run, err := proc.Start(context.Background(), proc.Config{
-		HelperPath: buildHelper(t), StateDir: state, Tag: "unrelated-same-uid", Stall: time.Hour,
+	run, err := proc.Start(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "unrelated-same-uid", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{sleepPath, "3"},
 	})
@@ -1044,10 +1051,9 @@ func wasKilledByTest(err *exec.ExitError) bool {
 // case: S-237.3
 func TestListShowsLiveTreeAndDetectsDeadKeeper(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	runner := buildRunner(t)
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "list", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "list", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "30"},
 	})
@@ -1081,11 +1087,10 @@ func TestListShowsLiveTreeAndDetectsDeadKeeper(t *testing.T) {
 // case: S-237.4
 func TestEventsAreStructuredJSONL(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	runner := buildRunner(t)
 	runCtx, cancelRun := context.WithTimeout(context.Background(), 15*time.Second)
 	run, err := startTest(runCtx, proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "events", Stall: time.Hour,
+		StateDir: state, Tag: "events", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/usr/bin/true"},
 	})
@@ -1146,8 +1151,8 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	skipOnTeardownObservationFailure(t, state, run.RunID)
 
 	followState := t.TempDir()
-	followRun, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: followState, Tag: "follow", Stall: time.Hour,
+	followRun, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: followState, Tag: "follow", Stall: time.Hour,
 		StdoutPath: filepath.Join(followState, "stdout.log"), StderrPath: filepath.Join(followState, "stderr.log"),
 		Command: []string{"/usr/bin/true"},
 	})
@@ -1245,8 +1250,8 @@ func sameEventTypes(got, want []proc.EventType) bool {
 // case: S-237.4
 func TestEventsFollowLiveLifecycleFromRunStart(t *testing.T) {
 	state := t.TempDir()
-	runner := buildRunner(t)
 	helper := buildHelper(t)
+	runner := buildRunner(t)
 
 	follow := exec.Command(runner, "events", "--state", state, "--follow")
 	followStdout, err := follow.StdoutPipe()
@@ -1289,7 +1294,7 @@ func TestEventsFollowLiveLifecycleFromRunStart(t *testing.T) {
 	childPIDPath := filepath.Join(state, "child.pid")
 	releasePath := filepath.Join(state, "release-child")
 	run, err := startTest(runCtx, proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "live-follow", Stall: time.Hour,
+		StateDir: state, Tag: "live-follow", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "hold", childPIDPath, releasePath},
 	})
@@ -1639,8 +1644,8 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 	helper := buildHelper(t)
 	pidFile := filepath.Join(state, "grandchild.pid")
 	releaseFile := filepath.Join(state, "release-command")
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "double-fork", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "double-fork", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "double-fork-held", "30", pidFile, releaseFile},
 	})
@@ -1680,12 +1685,11 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 // case: S-237.4
 func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	const count = 8
 	runs := make([]*proc.Run, 0, count)
 	for i := 0; i < count; i++ {
-		run, err := startTest(context.Background(), proc.Config{
-			HelperPath: helper, StateDir: state, Tag: fmt.Sprintf("parallel-%d", i), Stall: time.Hour,
+		run, err := startTest(cancellableTestContext(t), proc.Config{
+			StateDir: state, Tag: fmt.Sprintf("parallel-%d", i), Stall: time.Hour,
 			StdoutPath: filepath.Join(state, fmt.Sprintf("out-%d", i)), StderrPath: filepath.Join(state, fmt.Sprintf("err-%d", i)),
 			Command: []string{"/bin/sleep", "0.3"},
 		})
@@ -1732,120 +1736,6 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 }
 
 // case: S-237.5
-func TestStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
-	testStartRejectsHelperWithoutKeeperDispatchPromptly(t)
-}
-
-// case: S-237.41
-func TestStartupErrorTeardownReportsScratchOutcome(t *testing.T) {
-	testStartRejectsHelperWithoutKeeperDispatchPromptly(t)
-}
-
-func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
-	state := t.TempDir()
-	badHelper := filepath.Join(state, "wrong-helper")
-	pidFile := filepath.Join(state, "bad-helper.pid")
-	if err := os.WriteFile(badHelper, []byte("#!/bin/sh\nprintf '%s\\n' \"$$\" > \""+pidFile+"\"\nexec /bin/sleep 30\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	killBadHelper := func() {
-		data, readErr := os.ReadFile(pidFile)
-		if readErr == nil {
-			if pid, ready, parseErr := parsePIDFile(data); parseErr == nil && ready {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			}
-		}
-	}
-	t.Cleanup(killBadHelper)
-	started := time.Now()
-	type startResult struct {
-		err error
-	}
-	startedResult := make(chan startResult, 1)
-	startCtx, cancelStart := context.WithCancel(context.Background())
-	t.Cleanup(cancelStart)
-	go func() {
-		_, err := startTest(startCtx, proc.Config{
-			HelperPath: badHelper, StateDir: state, Tag: "wrong-helper", Stall: time.Hour,
-			StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
-			Command: []string{"/usr/bin/true"},
-		})
-		startedResult <- startResult{err: err}
-	}()
-	var err error
-	select {
-	case result := <-startedResult:
-		err = result.err
-	case <-time.After(4 * time.Second):
-		cancelStart()
-		killBadHelper()
-		select {
-		case <-startedResult:
-			t.Fatal("Start did not reject an incorrect helper within four seconds")
-		case <-time.After(2 * time.Second):
-			t.Fatal("Start did not stop after its context was cancelled")
-		}
-	}
-	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
-		t.Fatalf("Start error = %v, want clear helper-dispatch error", err)
-	}
-	pid, readErr := waitPIDFile(pidFile, 5*time.Second)
-	if readErr != nil {
-		t.Fatalf("invalid helper did not record a complete process id: %v", readErr)
-	}
-	if identity, alive := identityForTest(t, pid); alive {
-		t.Fatalf("invalid helper process %d remains alive with identity %s", pid, identity)
-	}
-	if time.Since(started) > 4*time.Second {
-		t.Fatalf("invalid helper took too long to reject: %s", time.Since(started))
-	}
-	assertExactlyOneScratchOutcome(t, state, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceAlreadyGone))
-}
-
-// case: S-237.5
-func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
-	state := t.TempDir()
-	helper := buildHelper(t)
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "replace-helper", Stall: time.Hour,
-		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
-		Command: []string{"/bin/sleep", "1"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cleanupRun(t, run)
-	callerIdentity, callerAlive, callerIdentityErr := proc.ProcessIdentity(os.Getpid())
-	if callerIdentityErr != nil || !callerAlive {
-		t.Fatalf("inspect test caller for keeper attribution: identity=%q alive=%t err=%v", callerIdentity, callerAlive, callerIdentityErr)
-	}
-	t.Logf("keeper attribution fixture: caller=%d/%s keeper=%d/%s run=%s", os.Getpid(), callerIdentity, run.PID, run.StartedAt, run.RunID)
-	replacement := filepath.Join(state, "replacement")
-	if err := os.WriteFile(replacement, []byte("#!/bin/sh\nexit 99\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(replacement, helper); err != nil {
-		t.Fatal(err)
-	}
-	if identity, alive := identityForTest(t, int(run.PID)); !alive || identity != run.StartedAt {
-		t.Fatalf("running keeper changed identity after on-disk replacement: pid=%d identity=%q alive=%t", run.PID, identity, alive)
-	}
-	if err := run.Wait(); err != nil {
-		skipOnTeardownObservationFailure(t, state, run.RunID)
-		t.Fatalf("running keeper failed after on-disk helper replacement: %v", err)
-	}
-	_, err = startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "replacement-next-run", Stall: time.Hour,
-		StdoutPath: filepath.Join(state, "next-stdout.log"), StderrPath: filepath.Join(state, "next-stderr.log"),
-		Command: []string{"/usr/bin/true"},
-	})
-	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
-		t.Fatalf("future run with replacement helper error = %v", err)
-	}
-	skipOnTeardownObservationFailure(t, state, run.RunID)
-}
-
-// case: S-237.5
 func TestCallerSurvivesInProcessRunTeardown(t *testing.T) {
 	state := t.TempDir()
 	callerPID := os.Getpid()
@@ -1853,8 +1743,8 @@ func TestCallerSurvivesInProcessRunTeardown(t *testing.T) {
 	if err != nil || !alive {
 		t.Fatalf("inspect supervising test process: alive=%t err=%v", alive, err)
 	}
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: buildHelper(t), StateDir: state, Tag: "caller-survival", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "caller-survival", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "0.1"},
 	})
@@ -2178,10 +2068,9 @@ func eventForRunAndType(t *testing.T, state, runID string, eventType proc.EventT
 // case: S-237.17
 func TestRunWaitRecordsKeeperLossWithoutRegistryReader(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	childFile := filepath.Join(state, "daemon-child.pid")
-	run, err := proc.Start(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "daemon:wait-owner", Stall: time.Hour,
+	run, err := proc.Start(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "daemon:wait-owner", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", childFile},
 	})

@@ -46,6 +46,13 @@ func runKeeper(cfg keeperConfig) int {
 	if ready == nil {
 		return 2
 	}
+	return runKeeperWithReady(cfg, ready)
+}
+
+func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
+	// The readiness descriptor belongs only to the keeper. Prevent commands
+	// started below this boundary from inheriting it across exec.
+	syscall.CloseOnExec(int(ready.Fd()))
 	defer func() {
 		if ready != nil {
 			if err := ready.Close(); err != nil {
@@ -811,37 +818,37 @@ func applyCleanupToEvent(event *Event, cleanup treeCleanup) {
 	event.TeardownInventoryOmitted = cleanup.InventorySamplesOmitted
 }
 
-func signalKeeper(pid int, identity, runID string, signal syscall.Signal, source processSource) error {
+func signalKeeper(pid RecordedKeeperPID, identity, runID string, signal syscall.Signal, source processSource) error {
 	if pid <= 0 {
 		return errors.New("proc: invalid keeper pid")
 	}
-	current, alive, err := source.Identity(pid)
+	current, alive, err := source.Identity(int(pid))
 	if err != nil {
 		return err
 	}
 	if !alive || current != identity {
 		return nil
 	}
-	if pid == os.Getpid() {
+	if int(pid) == os.Getpid() {
 		fmt.Fprintf(os.Stderr, "proc: keeper signal refused pid=%d identity=%q signal=%s run=%q outcome=%q attribution=caller\n", pid, identity, signal, runID, KeeperSignalRefusedCaller)
-		return &KeeperSignalError{Outcome: KeeperSignalRefusedCaller, PID: pid}
+		return &KeeperSignalError{Outcome: KeeperSignalRefusedCaller, PID: int(pid)}
 	}
 	parentSource, ok := source.(processParentSource)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "proc: keeper signal refused pid=%d identity=%q signal=%s run=%q outcome=%q attribution=caller-ancestry-unverifiable\n", pid, identity, signal, runID, KeeperSignalRefusedUnverifiable)
-		return &KeeperSignalError{Outcome: KeeperSignalRefusedUnverifiable, PID: pid}
+		return &KeeperSignalError{Outcome: KeeperSignalRefusedUnverifiable, PID: int(pid)}
 	}
 	ancestors, err := callerAncestorPIDs(os.Getpid(), parentSource.ParentPID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "proc: keeper signal refused pid=%d identity=%q signal=%s run=%q outcome=%q attribution=caller-ancestry-unverifiable\n", pid, identity, signal, runID, KeeperSignalRefusedUnverifiable)
-		return &KeeperSignalError{Outcome: KeeperSignalRefusedUnverifiable, PID: pid}
+		return &KeeperSignalError{Outcome: KeeperSignalRefusedUnverifiable, PID: int(pid)}
 	}
-	if _, protected := ancestors[pid]; protected {
+	if _, protected := ancestors[int(pid)]; protected {
 		fmt.Fprintf(os.Stderr, "proc: keeper signal refused pid=%d identity=%q signal=%s run=%q outcome=%q attribution=caller-ancestor\n", pid, identity, signal, runID, KeeperSignalRefusedCaller)
-		return &KeeperSignalError{Outcome: KeeperSignalRefusedCaller, PID: pid}
+		return &KeeperSignalError{Outcome: KeeperSignalRefusedCaller, PID: int(pid)}
 	}
 	fmt.Fprintf(os.Stderr, "proc: keeper signal pid=%d identity=%q signal=%s run=%q attribution=run-record-keeper\n", pid, identity, signal, runID)
-	return source.Signal(pid, signal)
+	return source.Signal(int(pid), signal)
 }
 
 type processParentSource interface {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/kb-labs/devkit/internal/testdeadline"
 	"io"
 	"os"
 	"os/exec"
@@ -243,7 +244,7 @@ custom_checks:
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	transcript := filepath.Join(tempDir, "pty-transcript.txt")
 	command := exec.CommandContext(ctx, script, "-q", "-F", transcript, binary, "--config", configPath, "check", "--only", "slow-check", "--json")
@@ -267,7 +268,7 @@ custom_checks:
 			}
 		}
 	})
-	deadline := time.After(10 * time.Second)
+	deadline := time.After(testdeadline.Budget(t))
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {

@@ -33,7 +33,8 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
                                   run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
                                   _snapshot_installation_owned_tree, shim_owner_matches,
                                   assert_foreign_shim_diagnosis, assert_other_shim_diagnosis,
-                                  assert_gateway_index_diagnosis, verify_installation_spellings)
+                                  assert_gateway_index_diagnosis, verify_installation_spellings,
+                                  add_installed_host_stop_case_step)
 from installer_case_steps import verify_package_manager_failure_diagnostic
 from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
@@ -43,6 +44,49 @@ from installer_case_steps import (assert_immutable_publish_conflict,
                                   assert_provenance_mismatch_refusal)
 from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_create_cli_result
 from journey_resources import active_platform_root, case_catalog_root
+from service_steps import Journey
+from installed_fixture import layout_value
+
+
+class InstalledHostStopJourneyTests(unittest.TestCase):
+    def test_stop_case_runs_installed_stop_then_confirms_stopped_status(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installed-stop-") as directory:
+            root = Path(directory)
+            calls = []
+
+            def runner(command, **kwargs):
+                calls.append((command, kwargs))
+                if command[1] == "stop":
+                    data = {"operation": "stop"}
+                else:
+                    data = {"running": False, "host": {layout_value("sharedStateDirectory"): "stopped"}}
+                return subprocess.CompletedProcess(command, 0,
+                                                   json.dumps({"ok": True, "data": data}), "")
+
+            journey = Journey("local", "installed-stop")
+            add_installed_host_stop_case_step(journey, root, {"HOME": directory}, runner=runner)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], ["kb-create", "stop", "--platform-root", str(root), "--json"])
+        self.assertEqual(calls[1][0], ["kb-create", "status", "--platform-root", str(root), "--json"])
+        self.assertEqual(journey.steps[-1].cases, ["PC-002.4"])
+        self.assertEqual(journey.steps[-1].status, "PASS")
+
+    def test_stop_case_fails_when_status_still_reports_running(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installed-stop-running-") as directory:
+            root = Path(directory)
+
+            def runner(command, **kwargs):
+                data = {"operation": "stop"} if command[1] == "stop" else {
+                    "running": True, "host": {layout_value("sharedStateDirectory"): "running"}}
+                return subprocess.CompletedProcess(command, 0,
+                                                   json.dumps({"ok": True, "data": data}), "")
+
+            journey = Journey("local", "installed-stop-running")
+            add_installed_host_stop_case_step(journey, root, {"HOME": directory}, runner=runner)
+
+        self.assertEqual(journey.steps[-1].status, "FAIL")
+        self.assertIn("status", journey.steps[-1].message)
 from test_install_layout import create_test_install_container, move_test_platform_into_container
 from test_catalog_exit_status import catalogued_exit
 from service_steps import Journey, record_candidate_provenance

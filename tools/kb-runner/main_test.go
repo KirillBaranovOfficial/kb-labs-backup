@@ -22,6 +22,7 @@ import (
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
 )
 
 var testIsolatedHome string
@@ -100,6 +101,13 @@ func setTestEnv(key, value string) {
 	}
 }
 
+func cancellableProcTestContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
+}
+
 // case: S-237.54
 func TestRootHelpSpellingsReturnUsageSuccessfully(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}} {
@@ -120,9 +128,7 @@ func TestPSJSONIncludesHostDecisionAndRunMeasurements(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runner := buildRunnerBinary(t)
-	run, err := proc.Start(context.Background(), proc.Config{
-		HelperPath: runner, StateDir: state, Tag: "json-measurement", CostKey: "json-measurement", CostClass: proc.CostLight,
+	run, err := proc.Start(cancellableProcTestContext(t), proc.Config{StateDir: state, Tag: "json-measurement", CostKey: "json-measurement", CostClass: proc.CostLight,
 		Stall: time.Hour, StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "30"},
 	})
@@ -340,7 +346,6 @@ func TestEveryNextHintPathNamesRegisteredCommand(t *testing.T) {
 		invocation{name: "run invalid disk", args: []string{"run", "--disk", "not-size"}},
 		invocation{name: "run invalid CPU range", args: []string{"run", "--cpus", "not-a-range"}},
 		invocation{name: "run state cannot be created", args: []string{"run", "--tag", "hint-run", "--state", invalidState, "--stall", "1s", "--stdout", filepath.Join(outputDir, "stdout"), "--stderr", filepath.Join(outputDir, "stderr"), "--", "/bin/true"}},
-		invocation{name: "run supervised command exits unsuccessfully", args: []string{"run", "--tag", "hint-run-exit", "--state", t.TempDir(), "--stall", "1h", "--stdout", filepath.Join(outputDir, "exit-stdout"), "--stderr", filepath.Join(outputDir, "exit-stderr"), "--", "/bin/false"}},
 		invocation{name: "quota missing options", args: []string{"quota", "set", "--state", t.TempDir()}},
 		invocation{name: "quota unknown action", args: []string{"quota", "unknown", "--state", t.TempDir()}},
 		invocation{name: "quota set invalid resource", args: []string{"quota", "set", "--state", invalidState, "--memory", "not-size"}},
@@ -401,6 +406,72 @@ func TestEveryNextHintPathNamesRegisteredCommand(t *testing.T) {
 			assertNextHintCommand(t, invokedRunner, registered, output)
 		})
 	}
+}
+
+// case: S-237.138
+func TestKeeperDispatchRunsBeforeTestMain(t *testing.T) {
+	state := t.TempDir()
+	falseCommand, err := exec.LookPath("false")
+	if err != nil {
+		t.Fatalf("locate false command fixture: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Scale(t, 2*time.Second))
+	defer cancel()
+	run, err := proc.Start(ctx, proc.Config{StateDir: state, Tag: "testmain-keeper-dispatch", Stall: time.Hour,
+		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
+		Command: []string{falseCommand},
+	})
+	if err != nil {
+		t.Fatalf("Start from a test binary with an unaware TestMain: %v", err)
+	}
+	if err := run.Wait(); err == nil {
+		t.Fatal("supervised false command unexpectedly succeeded")
+	}
+}
+
+// case: S-237.138
+func TestKeeperDispatchDoesNotUseCommandLineArgument(t *testing.T) {
+	runner := buildRunnerBinary(t)
+	command := exec.Command(runner, "__keeper")
+	output, err := command.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() == 0 {
+		t.Fatalf("ordinary __keeper argument exit = %v, want command-resolution failure; output=%s", err, output)
+	}
+	if strings.Contains(string(output), "keeper must be started by proc.Start") {
+		t.Fatalf("ordinary __keeper argument entered keeper mode: %s", output)
+	}
+}
+
+// case: S-237.54
+func TestRunNonzeroCommandEmitsRegisteredHint(t *testing.T) {
+	runner := buildRunnerBinary(t)
+	state := t.TempDir()
+	failingCommand, err := exec.LookPath("false")
+	if err != nil {
+		t.Fatalf("locate false command fixture: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
+	defer cancel()
+	command := exec.CommandContext(ctx, runner, "run", "--tag", "hint-run-exit", "--state", state,
+		"--stall", "1h", "--stdout", filepath.Join(state, "exit-stdout"),
+		"--stderr", filepath.Join(state, "exit-stderr"), "--", failingCommand)
+	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("built runner did not finish the failed supervised command before the test budget: %v; output=%s", ctx.Err(), output)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("built runner exit = %v, want supervised command status 1; output=%s", err, output)
+	}
+	if !strings.Contains(string(output), "supervised command exited with status 1") {
+		t.Fatalf("built runner omitted the supervised-command failure: %s", output)
+	}
+	registered := make(map[string]bool, len(runnerCommands))
+	for _, entry := range runnerCommands {
+		registered[entry.name] = true
+	}
+	assertNextHintCommand(t, runner, registered, string(output))
 }
 
 // case: S-237.54
@@ -494,9 +565,11 @@ func assertSingleRunnableHintCommand(t *testing.T, commandName, command string) 
 		t.Fatal(err)
 	}
 	callsPath := filepath.Join(binDir, "calls")
-	cmd := exec.Command("/bin/sh", "-c", command)
-	cmd.Env = []string{"PATH=" + binDir, "NEXT_HINT_CALLS=" + callsPath}
-	if output, err := cmd.CombinedOutput(); err != nil {
+	budget := testdeadline.Budget(t)
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	output, err := runHintCommand(ctx, command, []string{"PATH=" + binDir, "NEXT_HINT_CALLS=" + callsPath}, budget)
+	if err != nil {
 		t.Fatalf("next hint is not a runnable command %q: %v (%s)", command, err, output)
 	}
 	calls, err := os.ReadFile(callsPath)
@@ -506,6 +579,121 @@ func assertSingleRunnableHintCommand(t *testing.T, commandName, command string) 
 	if string(calls) != "x" {
 		t.Fatalf("next hint must contain exactly one command, got %d command invocations for %q", len(calls), command)
 	}
+}
+
+func TestHintCommandCancellationKillsProcessGroup(t *testing.T) {
+	budget := testdeadline.Budget(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	state := t.TempDir()
+	pidPath := filepath.Join(state, "descendant.pid")
+	var childPID int
+	t.Cleanup(func() {
+		if childPID > 0 {
+			_ = syscall.Kill(childPID, syscall.SIGKILL)
+		}
+	})
+	command := shellQuote("/bin/sh") + " -c " + shellQuote(`(/bin/sleep 300) & echo $! > "$HINT_DESCENDANT_PID"; wait`)
+	result := make(chan error, 1)
+	go func() {
+		_, err := runHintCommand(ctx, command, []string{"PATH=" + os.Getenv("PATH"), "HINT_DESCENDANT_PID=" + pidPath}, budget)
+		result <- err
+	}()
+	pidDeadline := time.NewTimer(budget)
+	defer pidDeadline.Stop()
+	poll := time.NewTicker(5 * time.Millisecond)
+	defer poll.Stop()
+	for childPID == 0 {
+		data, err := os.ReadFile(pidPath)
+		if err == nil {
+			childPID, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("read hint descendant pid: %v", err)
+		}
+		if childPID != 0 {
+			break
+		}
+		select {
+		case <-poll.C:
+		case <-pidDeadline.C:
+			t.Fatalf("hint descendant did not start before %s", budget)
+		}
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "HINT_COMMAND_CANCELED") {
+			t.Fatalf("hint cancellation error = %v, want HINT_COMMAND_CANCELED", err)
+		}
+	case <-time.After(budget):
+		t.Fatalf("hint command did not stop its process group within %s", budget)
+	}
+	if err := syscall.Kill(childPID, 0); err == nil {
+		t.Fatalf("hint descendant %d survived process-group cancellation", childPID)
+	} else if !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("inspect hint descendant %d after cancellation: %v", childPID, err)
+	}
+}
+
+func TestHintCommandDeadlineReturnsNamedTimeout(t *testing.T) {
+	t.Setenv("KB_TEST_DEADLINE_SCALE", "0.05")
+	budget := testdeadline.Budget(t)
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	output, err := runHintCommand(ctx, "exec /bin/sleep 300", []string{"PATH=/bin"}, budget)
+	if err == nil || !strings.Contains(err.Error(), "HINT_COMMAND_TIMEOUT") {
+		t.Fatalf("hint deadline error = %v, want HINT_COMMAND_TIMEOUT (output %q)", err, output)
+	}
+	if !strings.Contains(err.Error(), "budget=") || !strings.Contains(err.Error(), "elapsed=") || !strings.Contains(err.Error(), "host_load=") {
+		t.Fatalf("hint timeout diagnostic lacks budget, elapsed time, or host load: %v", err)
+	}
+}
+
+func runHintCommand(ctx context.Context, command string, env []string, budget time.Duration) ([]byte, error) {
+	started := time.Now()
+	outputFile, err := os.CreateTemp("", "kb-runner-hint-output-")
+	if err != nil {
+		return nil, fmt.Errorf("create hint output capture: %w", err)
+	}
+	path := outputFile.Name()
+	defer os.Remove(path)
+	cmd := exec.Command("/bin/sh", "-c", command)
+	cmd.Env = env
+	cmd.Stdout = outputFile
+	cmd.Stderr = outputFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		_ = outputFile.Close()
+		return nil, fmt.Errorf("start hint shell: %w", err)
+	}
+	wait := make(chan error, 1)
+	go func() { wait <- cmd.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-wait:
+	case <-ctx.Done():
+		killErr := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		waitErr = <-wait
+		_ = outputFile.Close()
+		output, readErr := os.ReadFile(path)
+		kind := "HINT_COMMAND_CANCELED"
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			kind = "HINT_COMMAND_TIMEOUT"
+		}
+		return output, fmt.Errorf("%s command=%q %s: %w", kind, command, testdeadline.FailureDetails(budget, time.Since(started)), errors.Join(ctx.Err(), waitErr, nonProcessDone(killErr), readErr))
+	}
+	if err := outputFile.Close(); err != nil {
+		return nil, fmt.Errorf("close hint output capture: %w", err)
+	}
+	output, readErr := os.ReadFile(path)
+	return output, errors.Join(waitErr, readErr)
+}
+
+func nonProcessDone(err error) error {
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return err
 }
 
 // case: S-237.54
@@ -750,7 +938,7 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool,
 		_ = runCommand.Wait()
 	})
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		listing := proc.List(state)
 		if listing.Error != nil {
@@ -811,7 +999,7 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool,
 	if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGKILL); err != nil {
 		t.Fatalf("signal recorded keeper: %v", err)
 	}
-	terminalDeadline := time.Now().Add(5 * time.Second)
+	terminalDeadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(terminalDeadline) {
 		listing := proc.List(state)
 		for _, candidate := range listing.Runs {
@@ -828,13 +1016,13 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool,
 	if !run.Status.Terminal() {
 		t.Fatalf("keeper loss did not become terminal; status=%q", run.Status)
 	}
-	waitCtx, waitCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	procRun, procWaitErr := proc.WaitTag(waitCtx, state, tag)
 	waitCancel()
 	if procWaitErr != nil || procRun.Status != proc.StatusDirty || !strings.Contains(procRun.Error, failedCleanupPath(resource, path, scratch)) {
 		t.Fatalf("proc wait result = %+v, %v; want dirty cleanup outcome", procRun, procWaitErr)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	wait := exec.CommandContext(ctx, runner, "wait", "--tag", tag, "--state", state)
 	waitOutput, waitErr := wait.CombinedOutput()
@@ -976,8 +1164,7 @@ func TestPSIncludesEachRunTreeAndElapsed(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build kb-runner: %v\n%s", err, output)
 	}
-	run, err := proc.Start(context.Background(), proc.Config{
-		HelperPath: runner, StateDir: state, Tag: "ps-check", Stall: time.Hour,
+	run, err := proc.Start(cancellableProcTestContext(t), proc.Config{StateDir: state, Tag: "ps-check", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "out"), StderrPath: filepath.Join(state, "err"),
 		Command: []string{"/bin/sleep", "30"},
 	})
@@ -992,11 +1179,11 @@ func TestPSIncludesEachRunTreeAndElapsed(t *testing.T) {
 		if err := run.Wait(); err != nil {
 			t.Logf("wait for test-owned ps run %s: %v", run.RunID, err)
 		}
-		if !finished && !waitForTeardownEvent(state, 5*time.Second) {
+		if !finished && !waitForTeardownEvent(t, state) {
 			t.Log("runner teardown event was not recorded before temporary state cleanup")
 		}
 	})
-	deadline := time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	var listing []byte
 	for time.Now().Before(deadline) {
 		listing, _ = exec.Command(runner, "ps", "--state", state).CombinedOutput()
@@ -1189,7 +1376,7 @@ func TestWaitLatestTagUsesNewestRunRecord(t *testing.T) {
 	state := filepath.Join(dir, "state")
 	run := func(tag string, exitCode string) {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 		defer cancel()
 		cmd := exec.CommandContext(ctx, runner, "run", "--tag", tag, "--latest-tag", "stream", "--state", state,
 			"--stall", "1h", "--stdout", filepath.Join(dir, tag+".out"), "--stderr", filepath.Join(dir, tag+".err"),
@@ -1207,7 +1394,7 @@ func TestWaitLatestTagUsesNewestRunRecord(t *testing.T) {
 	}
 	run("stream-first", "0")
 	run("stream-second", "7")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	wait := exec.CommandContext(ctx, runner, "wait", "--latest-tag", "stream", "--state", state)
 	output, err := wait.CombinedOutput()
@@ -1388,7 +1575,7 @@ func persistedEventKinds(t *testing.T, path string) map[proc.EventType]struct{} 
 	return kinds
 }
 
-// case: S-237.138
+// case: S-237.140
 func TestWaitLatestTagMissingRecordIsBounded(t *testing.T) {
 	missingState := filepath.Join(t.TempDir(), "missing-state")
 	started := time.Now()
@@ -1403,8 +1590,9 @@ func TestWaitLatestTagMissingRecordIsBounded(t *testing.T) {
 	}
 }
 
-func waitForTeardownEvent(state string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
+func waitForTeardownEvent(t testing.TB, state string) bool {
+	t.Helper()
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		file, err := os.Open(filepath.Join(state, "events.jsonl"))
 		if err == nil {
