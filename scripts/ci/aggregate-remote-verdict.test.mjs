@@ -174,7 +174,10 @@ test('missing shard artifacts retain GitHub runner-loss conclusion, failed steps
     githubJobs: [{
       name: `Build-dependent test ${shard.stage}`, conclusion: 'failure',
       steps: [{ name: 'Run build-dependent test', conclusion: 'in_progress' }],
-      annotations: [{ message: 'The hosted runner lost communication with the server.' }],
+      annotations: [
+        { annotation_level: 'failure', message: 'The hosted runner lost communication with the server.' },
+        { annotation_level: 'notice', message: 'The ubuntu-latest label will migrate to Ubuntu 26.' },
+      ],
     }], verificationProfile: 'candidate',
   });
 
@@ -183,6 +186,7 @@ test('missing shard artifacts retain GitHub runner-loss conclusion, failed steps
   assert.equal(job.githubConclusion, 'failure');
   assert.deepEqual(job.steps, [{ name: 'Run build-dependent test', conclusion: 'in_progress' }]);
   assert.match(job.failures.join('\n'), /lost communication with the server/);
+  assert.ok(!job.failures.some((failure) => failure.includes('Ubuntu 26')));
   assert.match(job.logTail, /in_progress/);
 });
 
@@ -202,6 +206,91 @@ test('only a cancelled peer in the same fail-fast matrix is reported as skipped 
   assert.equal(verdict.jobs.at(-1).status, 'skipped');
   assert.deepEqual(verdict.jobs.at(-1).failures, ['cancelled by fail-fast after a peer in the same test matrix failed']);
   assert.equal(verdict.jobs.at(-1).logTail, 'cancelled by fail-fast after a peer in the same test matrix failed');
+});
+
+// case: S-262.7
+test('fail-fast cancellation overrides a pass artifact and ignores notice annotations as failures', () => {
+  const stage = profile.packageTestStage;
+  const verdict = aggregateVerdict({
+    sha: 'f'.repeat(40), prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 41, failures: [], logTail: '' },
+    matrix: { include: [
+      { stage, shard: 1, packages: ['@kb-labs/a'] },
+      { stage, shard: 6, packages: ['@kb-labs/b'] },
+      { stage, shard: 12, packages: ['@kb-labs/c'] },
+    ] },
+    results: [
+      { name: `${stage}:shard-1`, status: 'pass', selectedPackageCount: 1, failures: [], logTail: 'tests passed' },
+      { name: `${stage}:shard-6`, status: 'fail', selectedPackageCount: 1, failures: ['test failed'], logTail: 'test failed' },
+      { name: `${stage}:shard-12`, status: 'pass', selectedPackageCount: 1, failures: [], logTail: 'tests passed' },
+    ],
+    selectedPackageCount: 41, prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'stream',
+    githubJobs: [
+      { name: 'Build-dependent test 1', conclusion: 'cancelled', steps: [], annotations: [
+        { annotation_level: 'notice', message: 'The ubuntu-latest label will migrate to Ubuntu 26.' },
+      ] },
+      { name: 'Build-dependent test 6', conclusion: 'failure', steps: [], annotations: [] },
+      { name: 'Build-dependent test 12', conclusion: 'cancelled', steps: [], annotations: [] },
+    ],
+  });
+
+  const cancelledPass = verdict.jobs.find((job) => job.name === `${stage}:shard-1`);
+  const cancelledPassAfterFailure = verdict.jobs.find((job) => job.name === `${stage}:shard-12`);
+  for (const job of [cancelledPass, cancelledPassAfterFailure]) {
+    assert.equal(job.status, 'skipped');
+    assert.equal(job.testsBeforeCancel, 'pass');
+    assert.ok(job.failures.some((failure) => failure.includes('cancelled by fail-fast')));
+    assert.ok(!job.failures.some((failure) => failure.includes('Ubuntu 26')));
+  }
+});
+
+// case: S-262.7
+test('failed devkit tasks name structured test output and use an explicit tail fallback only without it', () => {
+  const stage = profile.packageTestStage;
+  const taskOutput = '\u001b[41m FAIL \u001b[49m src/__tests__/projects.integration.test.ts > kb-host project routing > answers KB_PROJECT_RUNTIME_START_FAILED when the runtime does not start\n';
+  const fallbackTail = '[WARN] Adapter "storage" using InMemory fallback';
+  const verdict = aggregateVerdict({
+    sha: '9'.repeat(40), prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 41, failures: [], logTail: '' },
+    matrix: { include: [{ stage, shard: 19, packages: ['@kb-labs/host-app'] }] },
+    results: [{
+      name: `${stage}:shard-19`, status: 'fail', selectedPackageCount: 1,
+      failures: [fallbackTail], logTail: fallbackTail,
+      taskFailures: [{
+        package: '@kb-labs/host-app', task: 'test', exitCode: 1, logTail: fallbackTail,
+        structuredResult: {
+          Package: '@kb-labs/host-app', Task: 'test', OK: false, ExitCode: 1,
+          Stdout: taskOutput,
+          Error: 'command exited with code 1',
+        },
+      }],
+    }],
+    selectedPackageCount: 41, prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'candidate',
+    githubJobs: [{ name: 'Build-dependent test 19', conclusion: 'failure', steps: [], annotations: [] }],
+  });
+
+  const job = verdict.jobs.at(-1);
+  assert.equal(job.taskFailures[0].package, '@kb-labs/host-app');
+  assert.equal(job.taskFailures[0].task, 'test');
+  assert.ok(job.failures.some((failure) => /FAIL\s+src\/__tests__\/projects\.integration\.test\.ts/.test(failure)));
+  assert.ok(!job.failures.some((failure) => failure.includes('Adapter "storage"')));
+  assert.ok(!job.failures.some((failure) => failure.includes('log-tail fallback')));
+});
+
+// case: S-262.7
+test('devkit task log tail is labeled as fallback only when structured task results are absent', () => {
+  const stage = profile.packageTestStage;
+  const tail = '[WARN] Adapter "storage" using InMemory fallback';
+  const verdict = aggregateVerdict({
+    sha: '8'.repeat(40), prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 41, failures: [], logTail: '' },
+    matrix: { include: [{ stage, shard: 4, packages: ['@kb-labs/other'] }] },
+    results: [{ name: `${stage}:shard-4`, status: 'fail', selectedPackageCount: 1, failures: [], logTail: tail, taskFailures: [] }],
+    selectedPackageCount: 41, prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'candidate',
+    githubJobs: [{ name: 'Build-dependent test 4', conclusion: 'failure', steps: [], annotations: [] }],
+  });
+
+  assert.deepEqual(verdict.jobs.at(-1).failures, [`log-tail fallback: ${tail}`, 'GitHub job Build-dependent test 4 concluded failure.']);
 });
 
 // case: S-262.7
@@ -267,7 +356,7 @@ test('a passing build stage artifact cannot override a failed enclosing build jo
     githubJobs: [{
       name: 'build', conclusion: 'failure',
       steps: [{ name: 'Upload workspace build artifact', conclusion: 'failure', status: 'completed' }],
-      annotations: [{ message: 'Artifact upload failed.' }],
+      annotations: [{ annotation_level: 'failure', message: 'Artifact upload failed.' }],
     }],
     matrix: { include: [] }, results: [], selectedPackageCount: 0,
   });
@@ -292,7 +381,7 @@ test('a passing matrix stage artifact cannot override a failed enclosing shard j
     githubJobs: [{
       name: `Build-dependent test ${stage}`, conclusion: 'failure',
       steps: [{ name: 'Upload build-dependent result', conclusion: 'failure', status: 'completed' }],
-      annotations: [{ message: 'Result artifact upload failed.' }],
+      annotations: [{ annotation_level: 'failure', message: 'Result artifact upload failed.' }],
     }], verificationProfile: 'candidate',
   });
 

@@ -154,6 +154,9 @@ test('workspace build failures come from structured task errors, not streamed bu
     assert.equal(result.taskFailures.length, packageNames.length);
     assert.deepEqual(result.taskFailures.map((failure) => failure.package).sort(), packageNames.slice().sort());
     assert.ok(result.taskFailures.every((failure) => failure.task === 'build' && failure.exitCode === 1));
+    assert.ok(result.taskFailures.every((failure) => failure.structuredResult.OK === false));
+    assert.ok(result.taskFailures.every((failure) => failure.structuredResult.Package === failure.package));
+    assert.ok(result.taskFailures.every((failure) => failure.structuredResult.Stderr.includes(diagnostic)));
     assert.deepEqual(result.failures.slice().sort(), packageNames.map((name) => `${name}:build — ${diagnostic}`).sort());
     assert.ok(result.taskFailures.every((failure) => failure.errorLine === diagnostic));
     assert.ok(!result.failures.some((failure) => failure.includes('ESM dist/core/services.js.map')));
