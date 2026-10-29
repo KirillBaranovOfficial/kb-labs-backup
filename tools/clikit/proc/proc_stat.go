@@ -22,6 +22,8 @@ type procStat struct {
 	Identity       string
 }
 
+func processStateIsLive(state byte) bool { return state != 'Z' && state != 'X' }
+
 // parseProcStat parses Linux /proc/<pid>/stat. Comm is parenthesized but may
 // itself contain parentheses, so fields begin after the final closing one.
 func parseProcStat(data string) (procStat, error) {

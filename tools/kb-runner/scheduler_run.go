@@ -652,17 +652,14 @@ func (options schedulerRunOptions) jobSupervisor() schedulerJobSupervisor {
 	if options.supervisor != nil {
 		return options.supervisor
 	}
-	if options.root.supervisor != nil {
-		return options.root.supervisor
-	}
-	return clikitSchedulerSupervisor{}
+	return options.root.jobSupervisor()
 }
 
 func (root runnerRoot) jobSupervisor() schedulerJobSupervisor {
 	if root.supervisor != nil {
 		return root.supervisor
 	}
-	return clikitSchedulerSupervisor{}
+	return clikitSchedulerSupervisor{hostResourceSource: root.hostResourceSource}
 }
 
 type hygieneSupervisor struct {

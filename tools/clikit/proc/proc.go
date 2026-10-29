@@ -1664,8 +1664,8 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 	}
 	// The deadline bounds discovery and polling. Give already-attributed targets
 	// one final identity check and escalation; never discover or signal new PIDs here.
-	for key, firstSignal := range termSent {
-		if killSent[key] || clock.Now().Sub(firstSignal) < termGrace {
+	for key := range termSent {
+		if killSent[key] {
 			continue
 		}
 		process, exists := targets[key]

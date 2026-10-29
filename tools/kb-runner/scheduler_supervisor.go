@@ -26,9 +26,12 @@ type schedulerJobRun interface {
 	Wait() error
 }
 
-type clikitSchedulerSupervisor struct{}
+type clikitSchedulerSupervisor struct{ hostResourceSource proc.HostResourceSource }
 
-func (clikitSchedulerSupervisor) Start(ctx context.Context, config proc.Config) (schedulerJobRun, error) {
+func (supervisor clikitSchedulerSupervisor) Start(ctx context.Context, config proc.Config) (schedulerJobRun, error) {
+	if supervisor.hostResourceSource != nil {
+		return proc.StartWithHostResourceSource(ctx, config, supervisor.hostResourceSource)
+	}
 	return proc.Start(ctx, config)
 }
 

@@ -35,7 +35,8 @@ func executeCommand(args []string, stdout, stderr io.Writer) diag.ExitStatus {
 }
 
 func executeInvocation(invocation string, args []string, stdout, stderr io.Writer) diag.ExitStatus {
-	root := runnerRoot{Root: command.InvocationRoot(invocation), invocation: invocation}
+	executable, _ := os.Executable()
+	root := runnerRoot{Root: command.InvocationRoot(invocation), invocation: invocation, executable: executable}
 	if len(args) == 1 && args[0] == "--version" {
 		if _, err := fmt.Fprintln(stdout, runnerVersion); err != nil {
 			fmt.Fprintf(stderr, "%s --version: write version output: %v\n", root.Name(), err)
@@ -75,13 +76,29 @@ func execute(args []string, stdout, stderr io.Writer) (int, error) {
 
 type runnerRoot struct {
 	command.Root
-	invocation string
-	supervisor schedulerJobSupervisor
+	invocation         string
+	executable         string
+	supervisor         schedulerJobSupervisor
+	hostResourceSource proc.HostResourceSource
 }
 
 func (root runnerRoot) Invocation() string { return root.invocation }
 
 func (root runnerRoot) InvocationCommand() string { return shellQuote(root.invocation) }
+
+func (root runnerRoot) startProcess(ctx context.Context, config proc.Config) (*proc.Run, error) {
+	if root.hostResourceSource != nil {
+		return proc.StartWithHostResourceSource(ctx, config, root.hostResourceSource)
+	}
+	return proc.Start(ctx, config)
+}
+
+func (root runnerRoot) executablePath() (string, error) {
+	if root.executable != "" {
+		return root.executable, nil
+	}
+	return os.Executable()
+}
 
 func executeRoot(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
@@ -191,6 +208,12 @@ func procIdentityFailure(rootName, invocation string, pid int, err error) error 
 }
 
 func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	return runCommandWithContext(ctx, root, args, stdout, stderr)
+}
+
+func runCommandWithContext(ctx context.Context, root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tag := fs.String("tag", "", "run label")
@@ -267,8 +290,6 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	if err != nil {
 		return 2, fmt.Errorf("%s run: invalid --cpus: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 	workdir, err := os.Getwd()
 	if err != nil {
 		return 1, fmt.Errorf("%s run: inspect current workdir for lease: %w", root.Name(), err)
@@ -278,7 +299,7 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 		return 1, fmt.Errorf("%s run: acquire owned-worktree lease: %w", root.Name(), err)
 	}
 	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
-	run, err := proc.Start(ctx, proc.Config{StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, SlotWeight: *slotWeight, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, SharedLeasePaths: leasePaths, Command: command})
+	run, err := root.startProcess(ctx, proc.Config{StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, SlotWeight: *slotWeight, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, SharedLeasePaths: leasePaths, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("%s run: %w\nInspect state directory access before retrying:\nnext: ls -ld %s\nnext: %s", root.Name(), err, shellQuote(*state), shellJoin(os.Args))
 	}

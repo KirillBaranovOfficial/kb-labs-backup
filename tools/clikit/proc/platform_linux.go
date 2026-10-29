@@ -120,7 +120,7 @@ func readProcessStat(pid int) (procStat, bool, error) {
 	if stat.PID != pid {
 		return procStat{}, false, nil
 	}
-	return stat, stat.State != 'Z', nil
+	return stat, processStateIsLive(stat.State), nil
 }
 
 func readProcessArguments(pid int) ([]string, error) {
@@ -212,7 +212,7 @@ func allProcesses(runID string) ([]Process, error) {
 		if parsed.PID != pid {
 			return out, fmt.Errorf("/proc/%d/stat described PID %d", pid, parsed.PID)
 		}
-		if parsed.State == 'Z' {
+		if !processStateIsLive(parsed.State) {
 			continue
 		}
 		entryInfo, err := os.Stat(filepath.Join("/proc", entry.Name()))
@@ -305,7 +305,7 @@ func (osProcessSource) Metrics(tree []Process) ([]Process, error) {
 		if err != nil {
 			return out, fmt.Errorf("parse metrics for process %d: %w", out[index].PID, err)
 		}
-		if parsed.PID != out[index].PID || parsed.Identity != out[index].Identity || parsed.State == 'Z' {
+		if parsed.PID != out[index].PID || parsed.Identity != out[index].Identity || !processStateIsLive(parsed.State) {
 			continue
 		}
 		out[index].RSSBytes = uint64(parsed.ResidentPages) * uint64(os.Getpagesize())
