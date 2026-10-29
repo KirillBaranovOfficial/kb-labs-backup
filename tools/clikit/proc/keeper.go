@@ -357,7 +357,9 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 				result := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
 				cleanup = mergeCleanup(cleanup, result)
 				cleanupError = errors.Join(cleanupError, result.err)
-				waitErr = <-waitDone
+				var stopErr error
+				waitErr, stopErr = waitForCommandAfterTreeCleanup(waitDone, cmd, result)
+				cleanupError = errors.Join(cleanupError, stopErr)
 				commandExitedAt = time.Now().UTC()
 				commandFinished = true
 			}
@@ -368,7 +370,9 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 			result := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
 			cleanup = mergeCleanup(cleanup, result)
 			cleanupError = errors.Join(cleanupError, result.err)
-			waitErr = <-waitDone
+			var stopErr error
+			waitErr, stopErr = waitForCommandAfterTreeCleanup(waitDone, cmd, result)
+			cleanupError = errors.Join(cleanupError, stopErr)
 			commandExitedAt = time.Now().UTC()
 			commandFinished = true
 		case <-treeSamples:
@@ -460,6 +464,15 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 	result := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
 	cleanup = mergeCleanup(cleanup, result)
 	cleanupError = errors.Join(cleanupError, result.err)
+	if result.err == nil && len(result.Remaining) == 0 {
+		if reapErr := reapAdopted(); reapErr != nil {
+			cleanupError = errors.Join(cleanupError, reapErr)
+		} else {
+			verified := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
+			cleanup = mergeCleanup(cleanup, verified)
+			cleanupError = errors.Join(cleanupError, verified.err)
+		}
+	}
 	if err := closeRunToken(); err != nil {
 		cleanupError = errors.Join(cleanupError, fmt.Errorf("close run ownership token: %w", err))
 	}
@@ -467,11 +480,26 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 		cleanupError = errors.Join(cleanupError, err)
 	}
 	runTokenReleased = true
-	for readersRemaining > 0 {
-		if copyErr := <-copyDone; copyErr != nil {
-			outputError = errors.Join(outputError, copyErr)
+	if cleanupError != nil || len(cleanup.Remaining) > 0 {
+		for readersRemaining > 0 {
+			select {
+			case copyErr := <-copyDone:
+				if copyErr != nil {
+					outputError = errors.Join(outputError, copyErr)
+				}
+				readersRemaining--
+			default:
+				outputError = errors.Join(outputError, errors.New("stop waiting for inherited command output because process-tree teardown was incomplete"))
+				readersRemaining = 0
+			}
 		}
-		readersRemaining--
+	} else {
+		for readersRemaining > 0 {
+			if copyErr := <-copyDone; copyErr != nil {
+				outputError = errors.Join(outputError, copyErr)
+			}
+			readersRemaining--
+		}
 	}
 	code, signal, exitError := platformExit(waitErr)
 	exitEvent := eventFor(rec, EventExit)
@@ -637,6 +665,28 @@ func copyOutput(src io.Reader, dst activityWriter) error {
 		return fmt.Errorf("copy command output: %w", err)
 	}
 	return nil
+}
+
+func waitForCommandAfterTreeCleanup(waitDone <-chan error, command *exec.Cmd, cleanup treeCleanup) (error, error) {
+	if cleanup.err == nil && len(cleanup.Remaining) == 0 {
+		return <-waitDone, nil
+	}
+	select {
+	case waitErr := <-waitDone:
+		return waitErr, nil
+	default:
+	}
+	if command == nil || command.Process == nil {
+		return <-waitDone, errors.New("process-tree cleanup failed before the command process handle was available")
+	}
+	stopErr := processsignal.SignalStartedChild(command.Process)
+	if errors.Is(stopErr, os.ErrProcessDone) {
+		stopErr = nil
+	}
+	if stopErr != nil {
+		stopErr = fmt.Errorf("force-stop command after incomplete process-tree cleanup: %w", stopErr)
+	}
+	return <-waitDone, stopErr
 }
 
 func writeReadyError(ready *os.File, cause error) {

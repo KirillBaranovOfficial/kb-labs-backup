@@ -33,6 +33,32 @@ func prepareKeeperPlatform() error {
 	return unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
 }
 
+func (osProcessSource) ContainedDescendants(root int, snapshot []Process) ([]Process, bool, error) {
+	if root != os.Getpid() {
+		return nil, false, nil
+	}
+	childSubreaper, err := unix.PrctlRetInt(unix.PR_GET_CHILD_SUBREAPER, 0, 0, 0, 0)
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect Linux child-subreaper state: %w", err)
+	}
+	if childSubreaper != 1 {
+		return nil, false, errors.New("Linux keeper is not a child subreaper")
+	}
+	identity, alive, err := readProcessIdentity(root)
+	if err != nil || !alive {
+		return nil, false, errors.Join(err, fmt.Errorf("Linux subreaper owner PID %d is not live", root))
+	}
+	for _, process := range snapshot {
+		if process.PID == root {
+			if process.Identity != identity {
+				return nil, false, fmt.Errorf("Linux subreaper owner identity changed: pid=%d expected=%q actual=%q", root, identity, process.Identity)
+			}
+			return processDescendantsFromSnapshot(snapshot, root), true, nil
+		}
+	}
+	return nil, false, fmt.Errorf("Linux subreaper owner PID %d is missing from its process snapshot", root)
+}
+
 func monitorParent(_ int, _ string) (<-chan error, error) {
 	dead := make(chan error, 1)
 	signals := make(chan os.Signal, 1)
@@ -239,7 +265,7 @@ func allProcesses(runID string) ([]Process, error) {
 		}
 		out = append(out, Process{
 			PID: pid, PPID: parsed.PPID, processGroupID: parsed.ProcessGroupID, sessionID: parsed.SessionID, Command: command, StartedAt: started,
-			ElapsedMS: elapsed, Identity: parsed.Identity, uid: statInfo.Uid,
+			ElapsedMS: elapsed, Identity: parsed.Identity, uid: statInfo.Uid, processState: string(parsed.State),
 		})
 	}
 	candidates := processInspectionCandidates(out, syscall.Getpid())
