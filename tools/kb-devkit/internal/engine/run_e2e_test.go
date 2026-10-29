@@ -145,6 +145,10 @@ func TestAffectedSelectionAndTaskKeysShareTrackedFileOwnership(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read tracked fixture %s: %v", file, err)
 		}
+		originalInfo, err := os.Stat(file)
+		if err != nil {
+			t.Fatalf("stat tracked fixture %s: %v", file, err)
+		}
 		if err := os.WriteFile(file, append(append([]byte(nil), original...), '\n'), 0o644); err != nil {
 			t.Fatalf("mutate tracked fixture %s: %v", file, err)
 		}
@@ -179,6 +183,18 @@ func TestAffectedSelectionAndTaskKeysShareTrackedFileOwnership(t *testing.T) {
 		}
 		if err := os.WriteFile(file, original, 0o644); err != nil {
 			t.Fatalf("restore tracked fixture %s: %v", file, err)
+		}
+		neutralTime := originalInfo.ModTime().Add(time.Second)
+		if err := os.Chtimes(file, neutralTime, neutralTime); err != nil {
+			t.Fatalf("change metadata on restored tracked fixture %s: %v", file, err)
+		}
+		restored := propertyTaskKeys(t, ws, tasks)
+		for name, taskKeys := range baseline {
+			for task, before := range taskKeys {
+				if restored[name][task] != before {
+					t.Errorf("tracked file %s has unchanged content but changed metadata; %s:%s key changed", file, name, task)
+				}
+			}
 		}
 	}
 }
@@ -508,6 +524,15 @@ func TestAffectedBuildSelectsChangedInputsAfterMerge(t *testing.T) {
 	if err != nil || !completed.OK {
 		t.Fatalf("build after merged change = %+v, error = %v", completed, err)
 	}
+	runGitCommand(t, root, "checkout", "feature")
+	runGitCommand(t, root, "checkout", "main")
+	unchangedAfterCheckout, err := AffectedRunPackages(ws, cfg, []string{"build"}, cacheRoot, false)
+	if err != nil {
+		t.Fatalf("AffectedRunPackages after content-neutral checkout = %v", err)
+	}
+	if len(unchangedAfterCheckout) != 0 {
+		t.Fatalf("content-neutral checkout selected %v by input hashes; want none", packageNames(unchangedAfterCheckout))
+	}
 	if err := os.WriteFile(filepath.Join(coreDir, "README.md"), []byte("notes outside declared build inputs\n"), 0o644); err != nil {
 		t.Fatalf("change file outside task inputs: %v", err)
 	}
@@ -523,8 +548,13 @@ func TestAffectedBuildSelectsChangedInputsAfterMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AffectedRunPackages after README change: %v", err)
 	}
-	if len(diffOnly.Packages) == 0 || len(diffOnlySelection) != len(diffOnly.Packages) || len(unchangedInputs) != 0 {
-		t.Fatalf("Git diff = %v, diff-only selection = %v, input-hash selection = %v; want a selected Git diff and empty input-hash selection", packageNames(diffOnly.Packages), packageNames(diffOnlySelection), packageNames(unchangedInputs))
+	wantChanged := []string{"@fixture/app", "@fixture/core", "@fixture/runtime"}
+	for _, selection := range [][]workspace.Package{diffOnly.Packages, diffOnlySelection, unchangedInputs} {
+		got := packageNames(selection)
+		sort.Strings(got)
+		if strings.Join(got, "\x00") != strings.Join(wantChanged, "\x00") {
+			t.Fatalf("Git diff = %v, diff-only selection = %v, input-hash selection = %v; each must select %v for a tracked package file change", packageNames(diffOnly.Packages), packageNames(diffOnlySelection), packageNames(unchangedInputs), wantChanged)
+		}
 	}
 }
 
