@@ -245,23 +245,23 @@ test('fail-fast cancellation overrides a pass artifact and ignores notice annota
 });
 
 // case: S-262.7
-test('failed devkit tasks name structured test output and use an explicit tail fallback only without it', () => {
+test('devkit task cause uses only that failed task structured output', () => {
   const stage = profile.packageTestStage;
-  const taskOutput = '\u001b[41m FAIL \u001b[49m src/__tests__/projects.integration.test.ts > kb-host project routing > answers KB_PROJECT_RUNTIME_START_FAILED when the runtime does not start\n';
-  const fallbackTail = '[WARN] Adapter "storage" using InMemory fallback';
+  const failedTaskOutput = 'FAIL src/__tests__/projects.integration.test.ts > kb-host project routing > answers KB_PROJECT_RUNTIME_START_FAILED\nError: listen EADDRINUSE: address already in use 127.0.0.1:44107';
+  const passingTaskNoise = '[WARN] Adapter "storage" using InMemory fallback';
+  const taskLogPath = '/home/runner/work/kb-labs-backup/kb-labs-backup/.kb/devkit/logs/62340c390a5aedf3af87c4f63748a52fdc1b207869387111783eb0295c71fafe.log';
   const verdict = aggregateVerdict({
     sha: '9'.repeat(40), prepare: passingPrepare(),
     build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 41, failures: [], logTail: '' },
     matrix: { include: [{ stage, shard: 19, packages: ['@kb-labs/host-app'] }] },
     results: [{
       name: `${stage}:shard-19`, status: 'fail', selectedPackageCount: 1,
-      failures: [fallbackTail], logTail: fallbackTail,
+      failures: [passingTaskNoise], logTail: passingTaskNoise,
       taskFailures: [{
-        package: '@kb-labs/host-app', task: 'test', exitCode: 1, logTail: fallbackTail,
+        package: '@kb-labs/host-app', task: 'test', exitCode: 1, logPath: taskLogPath,
         structuredResult: {
-          Package: '@kb-labs/host-app', Task: 'test', OK: false, ExitCode: 1,
-          Stdout: taskOutput,
-          Error: 'command exited with code 1',
+          Package: '@kb-labs/host-app', Task: 'test', OK: false, ExitCode: 1, logPath: taskLogPath,
+          Stdout: failedTaskOutput, Stderr: '',
         },
       }],
     }],
@@ -270,11 +270,13 @@ test('failed devkit tasks name structured test output and use an explicit tail f
   });
 
   const job = verdict.jobs.at(-1);
-  assert.equal(job.taskFailures[0].package, '@kb-labs/host-app');
-  assert.equal(job.taskFailures[0].task, 'test');
-  assert.ok(job.failures.some((failure) => /FAIL\s+src\/__tests__\/projects\.integration\.test\.ts/.test(failure)));
+  const [taskCause] = job.failures;
+  assert.ok(taskCause.includes('@kb-labs/host-app:test'));
+  assert.ok(taskCause.includes('exit code 1'));
+  assert.ok(taskCause.includes(taskLogPath));
+  assert.ok(taskCause.includes('FAIL src/__tests__/projects.integration.test.ts'));
+  assert.ok(taskCause.includes('EADDRINUSE'));
   assert.ok(!job.failures.some((failure) => failure.includes('Adapter "storage"')));
-  assert.ok(!job.failures.some((failure) => failure.includes('log-tail fallback')));
 });
 
 // case: S-262.7
