@@ -3,6 +3,7 @@ package workspace
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -138,4 +139,29 @@ func (ws *Workspace) PackageByPath(absPath string) (*Package, bool) {
 		cur = parent
 	}
 	return nil, false
+}
+
+// TrackedFiles returns Git-tracked paths and the subset that have no discovered
+// package owner. PackageByPath is the same ownership rule used by affected
+// selection; paths are returned even when deleted from the working tree.
+func (ws *Workspace) TrackedFiles() (all, unowned []string, err error) {
+	command := exec.Command("git", "-C", ws.Root, "ls-files", "--cached", "-z")
+	output, err := command.Output()
+	if err != nil {
+		return nil, nil, fmt.Errorf("list tracked workspace files: %w", err)
+	}
+
+	for _, rel := range strings.Split(string(output), "\x00") {
+		if rel == "" {
+			continue
+		}
+		absPath := filepath.Join(ws.Root, filepath.FromSlash(rel))
+		all = append(all, absPath)
+		if _, owned := ws.PackageByPath(absPath); !owned {
+			unowned = append(unowned, absPath)
+		}
+	}
+	sort.Strings(all)
+	sort.Strings(unowned)
+	return all, unowned, nil
 }

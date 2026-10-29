@@ -3,22 +3,14 @@ package cache
 
 import (
 	"crypto/sha256"
-	_ "embed"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 )
-
-//go:embed tool-inputs.mjs
-var toolInputReporter []byte
 
 // HashInputs computes a deterministic SHA256 hash over all files matching
 // the given glob patterns.
@@ -43,26 +35,55 @@ func HashInputs(pkgDir string, depDirs []string, patterns []string) (string, err
 // package (the command, cache format, and toolchain). Keeping it in the same
 // digest prevents a remote CAS entry from surviving a semantic task change.
 func HashInputsWithFingerprint(pkgDir string, depDirs []string, patterns []string, fingerprint string) (string, error) {
-	return hashInputs(pkgDir, depDirs, patterns, fingerprint, toolInputContext{})
+	return hashInputs(pkgDir, depDirs, patterns, fingerprint, "", nil, false)
 }
 
-type toolInputContext struct {
-	WorkspaceRoot string
-	Language      string
-	TaskName      string
+// HashInputsWithGlobalDigest includes the run-wide digest of tracked files with
+// no workspace package owner. Package-owned inputs remain scoped to this task.
+func HashInputsWithGlobalDigest(pkgDir string, depDirs []string, patterns []string, fingerprint, globalDigest string, trackedFiles map[string]struct{}) (string, error) {
+	return hashInputs(pkgDir, depDirs, patterns, fingerprint, globalDigest, trackedFiles, true)
 }
 
-// HashInputsWithToolInputs extends the task digest with files resolved by the
-// task's compiler or test runner, using the same content hash as declared files.
-func HashInputsWithToolInputs(pkgDir, workspaceRoot string, depDirs []string, patterns []string, fingerprint, language, taskName string) (string, error) {
-	return hashInputs(pkgDir, depDirs, patterns, fingerprint, toolInputContext{
-		WorkspaceRoot: workspaceRoot,
-		Language:      language,
-		TaskName:      taskName,
-	})
+// GlobalInputDigest hashes tracked unowned paths and their current working-tree
+// contents. A deleted tracked path contributes a deletion marker; untracked
+// files are excluded by the caller's git ls-files enumeration.
+func GlobalInputDigest(workspaceRoot string, files []string) (string, error) {
+	files = uniqueSorted(files)
+	h := sha256.New()
+	for _, file := range files {
+		rel, err := filepath.Rel(workspaceRoot, file)
+		if err != nil {
+			return "", err
+		}
+		_, _ = io.WriteString(h, filepath.ToSlash(rel)+"\x00")
+		info, err := os.Lstat(file)
+		if os.IsNotExist(err) {
+			_, _ = io.WriteString(h, "deleted\x00")
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		var content []byte
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(file)
+			if err != nil {
+				return "", err
+			}
+			content = []byte(link)
+		} else {
+			content, err = os.ReadFile(file)
+			if err != nil {
+				return "", err
+			}
+		}
+		_, _ = h.Write(content)
+		_, _ = io.WriteString(h, "\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint string, toolContext toolInputContext) (string, error) {
+func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint, globalDigest string, trackedFiles map[string]struct{}, trackedOnly bool) (string, error) {
 	type entry struct {
 		key  string // sort key written into hash (unique across local + dep files)
 		path string // absolute path for reading
@@ -86,6 +107,7 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint 
 		if err != nil {
 			return "", err
 		}
+		rels = filterTracked(pkgDir, rels, trackedFiles, trackedOnly)
 		for _, rel := range rels {
 			if _, dup := seen[rel]; !dup {
 				seen[rel] = entry{key: rel, path: filepath.Join(pkgDir, rel)}
@@ -101,6 +123,7 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint 
 		if err != nil {
 			return "", err
 		}
+		rels = filterTracked(depDir, rels, trackedFiles, trackedOnly)
 		for _, rel := range rels {
 			absPath := filepath.Join(depDir, rel)
 			relKey, err := filepath.Rel(pkgDir, absPath)
@@ -114,23 +137,6 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint 
 		}
 	}
 
-	// Tool reporters use the compiler and test runner's resolved input data.
-	// Their results enter the same digest as declared files and dependency surfaces.
-	toolInputs, err := reportToolInputs(pkgDir, patterns, toolContext)
-	if err != nil {
-		return "", err
-	}
-	for _, absPath := range toolInputs {
-		relKey, err := filepath.Rel(pkgDir, absPath)
-		if err != nil {
-			relKey = absPath
-		}
-		relKey = filepath.ToSlash(relKey)
-		if _, dup := seen[relKey]; !dup {
-			seen[relKey] = entry{key: relKey, path: absPath}
-		}
-	}
-
 	// One expandGlobs call per dep dir for declared dependency output patterns.
 	for _, depDir := range depDirs {
 		if len(depPatterns) == 0 {
@@ -140,6 +146,7 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint 
 		if err != nil {
 			return "", err
 		}
+		rels = filterTracked(depDir, rels, trackedFiles, trackedOnly)
 		for _, rel := range rels {
 			absPath := filepath.Join(depDir, rel)
 			// Key is relative to pkgDir — machine-independent across checkouts.
@@ -167,6 +174,11 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint 
 		_, _ = io.WriteString(h, fingerprint)
 		_, _ = io.WriteString(h, "\x00")
 	}
+	if globalDigest != "" {
+		_, _ = io.WriteString(h, "global-inputs\x00")
+		_, _ = io.WriteString(h, globalDigest)
+		_, _ = io.WriteString(h, "\x00")
+	}
 	for _, key := range keys {
 		e := seen[key]
 		_, _ = io.WriteString(h, e.key+"\x00")
@@ -186,144 +198,17 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint 
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-type toolInputReport struct {
-	Tool          string   `json:"tool"`
-	WorkspaceRoot string   `json:"workspaceRoot"`
-	PackageRoot   string   `json:"packageRoot"`
-	ConfigFiles   []string `json:"configFiles,omitempty"`
-}
-
-type cachedToolReportEntry struct {
-	files     []string
-	signature string
-}
-
-var toolReportCache = struct {
-	sync.Mutex
-	reports map[string]cachedToolReportEntry
-}{reports: make(map[string]cachedToolReportEntry)}
-
-func reportToolInputs(pkgDir string, patterns []string, context toolInputContext) ([]string, error) {
-	var inputs []string
-	goInputs, err := goBuildInputFiles(pkgDir)
-	if err != nil {
-		return nil, err
+func filterTracked(root string, rels []string, trackedFiles map[string]struct{}, trackedOnly bool) []string {
+	if !trackedOnly {
+		return rels
 	}
-	inputs = append(inputs, goInputs...)
-	if context.Language != "typescript" {
-		return inputs, nil
-	}
-
-	for _, pattern := range patterns {
-		if filepath.Ext(pattern) != ".json" || !strings.ContainsAny(pattern, "*?[") {
-			continue
-		}
-		roots, err := expandGlobs(pkgDir, []string{pattern}, true)
-		if err != nil {
-			return nil, err
-		}
-		for _, root := range roots {
-			root = filepath.Join(pkgDir, root)
-			files, err := cachedToolReport("typescript\x00"+root, func() ([]string, error) {
-				return runToolInputReporter(toolInputReport{
-					Tool:          "typescript",
-					WorkspaceRoot: context.WorkspaceRoot,
-					PackageRoot:   pkgDir,
-					ConfigFiles:   []string{root},
-				}, root)
-			})
-			if err != nil {
-				return nil, err
-			}
-			inputs = append(inputs, files...)
+	filtered := make([]string, 0, len(rels))
+	for _, rel := range rels {
+		if _, ok := trackedFiles[filepath.Clean(filepath.Join(root, rel))]; ok {
+			filtered = append(filtered, rel)
 		}
 	}
-
-	if context.TaskName == "test" || context.TaskName == "test:coverage" {
-		files, err := cachedToolReport("vitest\x00"+pkgDir, func() ([]string, error) {
-			return runToolInputReporter(toolInputReport{
-				Tool:          "vitest",
-				WorkspaceRoot: context.WorkspaceRoot,
-				PackageRoot:   pkgDir,
-			}, pkgDir)
-		})
-		if err != nil {
-			return nil, err
-		}
-		inputs = append(inputs, files...)
-	}
-	return inputs, nil
-}
-
-func cachedToolReport(key string, resolve func() ([]string, error)) ([]string, error) {
-	toolReportCache.Lock()
-	defer toolReportCache.Unlock()
-	if cached, ok := toolReportCache.reports[key]; ok {
-		signature, err := fileSetSignature(cached.files)
-		if err == nil && signature == cached.signature {
-			return append([]string(nil), cached.files...), nil
-		}
-	}
-	files, err := resolve()
-	if err != nil {
-		return nil, err
-	}
-	files = uniqueSorted(files)
-	signature, err := fileSetSignature(files)
-	if err != nil {
-		return nil, err
-	}
-	toolReportCache.reports[key] = cachedToolReportEntry{files: files, signature: signature}
-	return append([]string(nil), files...), nil
-}
-
-func fileSetSignature(files []string) (string, error) {
-	files = uniqueSorted(files)
-	h := sha256.New()
-	for _, file := range files {
-		content, err := os.ReadFile(file)
-		if err != nil {
-			return "", err
-		}
-		_, _ = io.WriteString(h, file+"\x00")
-		_, _ = h.Write(content)
-		_, _ = io.WriteString(h, "\x00")
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func runToolInputReporter(request toolInputReport, signatureRoot string) ([]string, error) {
-	requestBytes, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-	command := exec.Command("node", "--input-type=module", "-e", string(toolInputReporter))
-	command.Dir = request.WorkspaceRoot
-	command.Stdin = strings.NewReader(string(requestBytes))
-	output, err := command.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
-			return nil, fmt.Errorf("%s input report failed: %w: %s", request.Tool, err, strings.TrimSpace(string(exitErr.Stderr)))
-		}
-		return nil, fmt.Errorf("%s input report failed: %w", request.Tool, err)
-	}
-	if request.Tool == "vitest" {
-		var files []string
-		if err := json.Unmarshal(output, &files); err != nil {
-			return nil, err
-		}
-		return files, nil
-	}
-	var result map[string][]string
-	if err := json.Unmarshal(output, &result); err != nil {
-		return nil, err
-	}
-	files, ok := result[signatureRoot]
-	if !ok {
-		return nil, os.ErrNotExist
-	}
-	return files, nil
+	return filtered
 }
 
 func uniqueSorted(files []string) []string {
@@ -350,7 +235,7 @@ func packageSurfaceFiles(root string) ([]string, error) {
 	manifestPath := filepath.Join(root, "package.json")
 	content, err := os.ReadFile(manifestPath)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return expandSurfaceFiles(root, []string{"**"})
 	}
 	if err != nil {
 		return nil, err
@@ -449,81 +334,6 @@ func expandSurfaceFiles(root string, patterns []string) ([]string, error) {
 	return result, nil
 }
 
-func goBuildInputFiles(pkgDir string) ([]string, error) {
-	if _, err := os.Stat(filepath.Join(pkgDir, "go.mod")); os.IsNotExist(err) {
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	command := exec.Command("go", "list", "-deps", "-json", "./...")
-	command.Dir = pkgDir
-	output, err := command.Output()
-	if err != nil {
-		return nil, err
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(output)))
-	var inputs []string
-	for {
-		var pkg struct {
-			Dir    string `json:"Dir"`
-			Module *struct {
-				Main    bool   `json:"Main"`
-				Dir     string `json:"Dir"`
-				Replace *struct {
-					Dir string `json:"Dir"`
-				} `json:"Replace"`
-			} `json:"Module"`
-			GoFiles    []string `json:"GoFiles"`
-			CgoFiles   []string `json:"CgoFiles"`
-			CFiles     []string `json:"CFiles"`
-			CXXFiles   []string `json:"CXXFiles"`
-			MFiles     []string `json:"MFiles"`
-			HFiles     []string `json:"HFiles"`
-			FFiles     []string `json:"FFiles"`
-			SFiles     []string `json:"SFiles"`
-			SwigFiles  []string `json:"SwigFiles"`
-			SysoFiles  []string `json:"SysoFiles"`
-			EmbedFiles []string `json:"EmbedFiles"`
-		}
-		if err := decoder.Decode(&pkg); err == io.EOF {
-			break
-		} else if err != nil {
-			return nil, err
-		}
-		localModuleDir := ""
-		if pkg.Module != nil && pkg.Module.Main {
-			localModuleDir = pkg.Module.Dir
-		} else if pkg.Module != nil && pkg.Module.Replace != nil {
-			localModuleDir = pkg.Module.Replace.Dir
-		}
-		if localModuleDir == "" {
-			continue
-		}
-		if pkg.Module != nil && pkg.Module.Replace != nil && pkg.Module.Replace.Dir != "" {
-			for _, manifest := range []string{"go.mod", "go.sum"} {
-				path := filepath.Join(pkg.Module.Replace.Dir, manifest)
-				if _, err := os.Stat(path); err == nil {
-					inputs = append(inputs, path)
-				} else if !os.IsNotExist(err) {
-					return nil, err
-				}
-			}
-		}
-		for _, files := range [][]string{pkg.GoFiles, pkg.CgoFiles, pkg.CFiles, pkg.CXXFiles, pkg.MFiles, pkg.HFiles, pkg.FFiles, pkg.SFiles, pkg.SwigFiles, pkg.SysoFiles, pkg.EmbedFiles} {
-			for _, file := range files {
-				inputs = append(inputs, filepath.Join(pkg.Dir, file))
-			}
-		}
-	}
-	return inputs, nil
-}
-
-// expandGlobs returns sorted relative paths of all files matching any pattern.
-// Patterns use simple glob syntax: ** matches any number of path segments,
-// * matches within one segment.
-// skipDist controls whether the "dist" directory is pruned during traversal.
-// Use true for local package dirs (dist is a generated output, not an input),
-// false for dep dirs (dist is exactly what we want to hash via "^dist/**").
 func expandGlobs(root string, patterns []string, skipDist bool) ([]string, error) {
 	seen := make(map[string]bool)
 

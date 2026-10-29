@@ -609,6 +609,8 @@ tasks:
         - "kb-deploy"
         - "kb-monitor"
         - "kb-runner"
+      deps:
+        - "^build"
 
     - categories: [site-pkg]
       command: pnpm run build
