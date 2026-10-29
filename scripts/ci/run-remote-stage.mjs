@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import os from 'node:os';
 import { runStage } from './remote-verify-stage.mjs';
-import { deriveBuildLimits, readRunnerMemory } from './remote-build-resources.mjs';
+import { measureBuildLimits } from './remote-build-resources.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const stage = process.env.REMOTE_STAGE;
@@ -30,7 +29,7 @@ const result = await runStage({
   resourceSamplePath,
   partialResultPath: stage === profile.buildStage ? out : undefined,
   measureBuildLimits: stage === profile.buildStage ? () => {
-    const limits = deriveBuildLimits({ cpuCount: os.availableParallelism(), ...readRunnerMemory() });
+    const limits = measureBuildLimits();
     process.stdout.write(`${profile.buildStage} resource limits: ${JSON.stringify(limits)}\n`);
     return limits;
   } : undefined,

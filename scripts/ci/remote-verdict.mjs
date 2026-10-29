@@ -24,6 +24,7 @@ export function repositoryFromRemote(url) {
   return match[1];
 }
 
-export function selectVerificationRun(runs, { branch, sha, workflowPath }) {
-  return runs.find((item) => item.event === 'push' && item.head_branch === branch && item.head_sha === sha && item.path === workflowPath);
+export function selectVerificationRun(runs, { branch, sha, workflowPath, event = 'push', profile = 'stream' }) {
+  const title = `Remote agent verification (${profile}) for ${branch}`;
+  return runs.find((item) => item.event === event && item.head_branch === branch && item.head_sha === sha && item.path === workflowPath && item.display_title === title);
 }

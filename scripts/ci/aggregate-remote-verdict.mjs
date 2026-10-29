@@ -17,7 +17,7 @@ function skippedShard(name, selectedPackageCount) {
 
 export function aggregateVerdict({
   sha, prepare, prepareJobResult = 'unknown', build, buildJobResult = 'unknown', buildResourceSamples = [],
-  matrix, results, selectedPackageCount,
+  matrix, results, selectedPackageCount, verificationProfile = 'stream',
 }) {
   if (!Number.isSafeInteger(selectedPackageCount) || selectedPackageCount < 0) throw new Error('Remote verdict requires the selected package count from the prepare job.');
   const prepareStage = prepare ?? {
@@ -68,6 +68,7 @@ export function aggregateVerdict({
   const verdict = {
     schemaVersion: 1,
     sha,
+    profile: verificationProfile,
     status: jobs.every((job) => job.status === 'pass') ? 'pass' : 'fail',
     jobs,
     diagnostics: [],
@@ -94,6 +95,7 @@ function main() {
     sha, prepare, prepareJobResult: process.env.PREPARE_JOB_RESULT, build,
     buildJobResult: process.env.BUILD_JOB_RESULT, buildResourceSamples, matrix,
     results: results.filter((result) => result !== prepare && result !== build), selectedPackageCount,
+    verificationProfile: process.env.VERIFICATION_PROFILE ?? 'stream',
   });
   writeFileSync(out, `${JSON.stringify(verdict, null, 2)}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) {

@@ -1,4 +1,5 @@
 name: Remote agent verification
+run-name: Remote agent verification (${{ inputs.profile || 'stream' }}) for ${{ github.ref_name }}
 
 on:
   push:
@@ -305,6 +306,7 @@ jobs:
           PREPARE_JOB_RESULT: ${{ needs.prepare.result }}
           BUILD_JOB_RESULT: ${{ needs.build.result }}
           BUILD_RESOURCE_SAMPLES: remote-results/stage-resource-samples.jsonl
+          VERIFICATION_PROFILE: ${{ github.event.inputs.profile || 'stream' }}
         run: node scripts/ci/aggregate-remote-verdict.mjs remote-results verdict.json
       - name: Upload commit-bound verdict
         if: always()

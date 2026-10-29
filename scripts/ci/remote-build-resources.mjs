@@ -6,15 +6,22 @@ export const BUILD_MEMORY_BUDGET_FRACTION = 0.7;
 // Largest observed task-process RSS in run 40424362740, read from the 30-second resource samples.
 export const CALIBRATED_TASK_FOOTPRINT_BYTES = 2_536_468_480;
 
-export function deriveBuildLimits({ cpuCount, memTotalBytes, memAvailableBytes, expectedTaskFootprintBytes = CALIBRATED_TASK_FOOTPRINT_BYTES }) {
+export function deriveBuildLimits({ cpuCount, totalBytes, availableBytes, expectedTaskFootprintBytes = CALIBRATED_TASK_FOOTPRINT_BYTES }) {
   if (!Number.isSafeInteger(cpuCount) || cpuCount < 1) throw new Error('Runner CPU count must be a positive integer.');
-  if (!Number.isSafeInteger(memTotalBytes) || memTotalBytes < 1) throw new Error('Runner MemTotal must be a positive integer.');
-  if (!Number.isSafeInteger(memAvailableBytes) || memAvailableBytes < 1) throw new Error('Runner MemAvailable must be a positive integer.');
+  if (!Number.isSafeInteger(totalBytes) || totalBytes < 1) throw new Error('Runner MemTotal must be a positive integer.');
+  if (!Number.isSafeInteger(availableBytes) || availableBytes < 1) throw new Error('Runner MemAvailable must be a positive integer.');
   if (!Number.isSafeInteger(expectedTaskFootprintBytes) || expectedTaskFootprintBytes < 1) throw new Error('Expected task footprint must be a positive integer measured in bytes.');
-  const memoryBudgetBytes = Math.floor(memTotalBytes * BUILD_MEMORY_BUDGET_FRACTION);
+  const memoryBudgetBytes = Math.floor(totalBytes * BUILD_MEMORY_BUDGET_FRACTION);
   const memoryBoundConcurrency = Math.max(1, Math.floor(memoryBudgetBytes / expectedTaskFootprintBytes));
   const concurrency = Math.min(cpuCount, memoryBoundConcurrency);
   return { cpuCount, memoryBudgetBytes, concurrency, expectedTaskFootprintBytes };
+}
+
+export function measureBuildLimits({
+  readCpuCount = () => os.availableParallelism(),
+  readMeminfo = () => readFileSync('/proc/meminfo', 'utf8'),
+} = {}) {
+  return deriveBuildLimits({ cpuCount: readCpuCount(), ...readRunnerMemory(readMeminfo) });
 }
 
 export function readRunnerMemory(readMeminfo = () => readFileSync('/proc/meminfo', 'utf8')) {
