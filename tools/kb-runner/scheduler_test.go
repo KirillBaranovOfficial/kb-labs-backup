@@ -248,6 +248,7 @@ printf '%s\n' "${FAKE_ZCODE_VERDICT:-ACCEPT}" > "$FAKE_ZCODE_REPORT"
 		t.Fatal(err)
 	}
 	setSchedulerFixtureEnv(t, &fixture, isolated, "PATH", fixture.bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	setSchedulerFixtureEnv(t, &fixture, isolated, "KB_RUNNER_FIXTURE_BINARY", filepath.Join(fixture.bin, "kb-runner"))
 	setSchedulerFixtureEnv(t, &fixture, isolated, "HOME", fixture.home)
 	setSchedulerFixtureEnv(t, &fixture, isolated, "KBLABS_WORKTREES_ROOT", fixture.worktrees)
 	setSchedulerFixtureEnv(t, &fixture, isolated, "GOCACHE", filepath.Join(fixture.worktrees, "go-build-cache"))
@@ -290,7 +291,8 @@ func fixtureEnvironment(fixture schedulerFixture, key string) string {
 }
 
 func executeInvocationWithSupervisor(f schedulerFixture, args []string, stdout, stderr io.Writer) (int, error) {
-	root := runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner", supervisor: f.supervisor}
+	root := f.invocationRoot()
+	root.supervisor = f.supervisor
 	return executeRoot(root, args, stdout, stderr)
 }
 
@@ -522,6 +524,23 @@ func (f schedulerFixture) writeCommand(t *testing.T, name, body string) {
 	}
 }
 
+func (f schedulerFixture) invocationRoot() runnerRoot {
+	return runnerRootFromFixturePath(filepath.Join(f.bin, "kb-runner"))
+}
+
+func runnerRootFromFixtureEnv(t *testing.T) runnerRoot {
+	t.Helper()
+	path := os.Getenv("KB_RUNNER_FIXTURE_BINARY")
+	if !filepath.IsAbs(path) {
+		t.Fatalf("scheduler fixture binary path %q is not absolute", path)
+	}
+	return runnerRootFromFixturePath(path)
+}
+
+func runnerRootFromFixturePath(path string) runnerRoot {
+	return runnerRoot{Root: command.InvocationRoot(path), invocation: path}
+}
+
 func (f schedulerFixture) addTask(t *testing.T, stream, role string, deps ...string) SchedulerTask {
 	t.Helper()
 	prompt := filepath.Join(f.repo, stream+".md")
@@ -552,7 +571,7 @@ func (f schedulerFixture) runOnce(t *testing.T, extra ...string) (int, string) {
 	if len(extra) != 0 {
 		t.Fatalf("scheduler fixture direct run does not accept CLI arguments: %v", extra)
 	}
-	root := runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}
+	root := f.invocationRoot()
 	code, err := runSchedulerUsingDependencies(context.Background(), root, f.state, 1, true, filesystemRunnerStateStore{}, f.supervisor)
 	if err != nil {
 		return code, err.Error()
@@ -962,7 +981,7 @@ func TestAutoAdvanceQueuesReviewAfterVerificationTransition(t *testing.T) {
 	if err := store.advance(task.Stream, AdvanceReviewing, "", "", schedulerTestSHA); err != nil {
 		t.Fatal(err)
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := options.queueAutoReview(task, ReviewStandard); err != nil {
 		t.Fatal(err)
 	}
@@ -1037,7 +1056,7 @@ func TestExistingReviewTaskRepairsReviewingAndRunIdentityInOneTransition(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := options.queueAutoReview(worker, ReviewStandard); err != nil {
 		t.Fatal(err)
 	}
@@ -1099,7 +1118,7 @@ func TestAutoAdvanceFakeSchedulerReviewAcceptsAndLandsOnce(t *testing.T) {
 	}
 	lifecycle, cancelLifecycle := schedulerLifecycleContext(context.Background())
 	defer cancelLifecycle()
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, lifecycle: lifecycle})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor, lifecycle: lifecycle})
 	if err := store.advance(task.Stream, AdvanceVerifying, "", "", schedulerTestSHA); err != nil {
 		t.Fatal(err)
 	}
@@ -1187,7 +1206,7 @@ func TestAutoReviewMissingVerdictEscalatesParentAndChildInOneTransition(t *testi
 			t.Fatal(err)
 		}
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := options.queueAutoReview(worker, ReviewStandard); err != nil {
 		t.Fatal(err)
 	}
@@ -1263,7 +1282,7 @@ func TestAutoReviewRecoveryEscalatesParentForAlreadyEscalatedChild(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := options.queueAutoReview(worker, ReviewStandard); err != nil {
 		t.Fatal(err)
 	}
@@ -1327,7 +1346,7 @@ func TestAutoLandingRefusalCannotPublishAccepted(t *testing.T) {
 	if err := store.commitAutoTransition([]SchedulerStream{stream}); err != nil {
 		t.Fatal(err)
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := options.acceptAutoStream(task, stream); err != nil {
 		t.Fatal(err)
 	}
@@ -1423,7 +1442,7 @@ func TestAutoAdvanceFakeSchedulerReworkRecordsBothReviewCallsAndRecoversOnce(t *
 	}
 	lifecycle, cancelLifecycle := schedulerLifecycleContext(context.Background())
 	defer cancelLifecycle()
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, lifecycle: lifecycle})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor, lifecycle: lifecycle})
 	if err := options.finishAutoWorker(task, stream, "Status: DONE", []byte(report)); err != nil {
 		t.Fatal(err)
 	}
@@ -1450,7 +1469,7 @@ func TestAutoAdvanceFakeSchedulerReworkRecordsBothReviewCallsAndRecoversOnce(t *
 	if err != nil || strings.Count(string(gitCalls), "commit-tree") != 3 {
 		t.Fatalf("landed commit set count=%d git calls=%q err=%v", strings.Count(string(gitCalls), "commit-tree"), gitCalls, err)
 	}
-	restarted := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	restarted := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	for range 2 {
 		if err := restarted.recoverAutoStreams(); err != nil {
 			t.Fatalf("fresh scheduler recovery: %v", err)
@@ -1828,7 +1847,7 @@ func TestSchedulerLifecycleCrashChild(t *testing.T) {
 	}
 	if mode == "recover" {
 		supervisor = lifecycleCrashSupervisor{schedulerJobSupervisor: supervisor, store: storeIO}
-		if err := runLifecycleUntilTerminal(t, runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state, stream, filesystemRunnerStateStore{}, supervisor); err != nil {
+		if err := runLifecycleUntilTerminal(t, runnerRootFromFixtureEnv(t), state, stream, filesystemRunnerStateStore{}, supervisor); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -1837,7 +1856,7 @@ func TestSchedulerLifecycleCrashChild(t *testing.T) {
 	watchResult := make(chan error, 1)
 	supervisor = lifecycleCrashSupervisor{schedulerJobSupervisor: supervisor, store: storeIO}
 	go func() { watchResult <- observeLifecycleRunCompletions(watchContext, state, storeIO, supervisor) }()
-	runErr := runLifecycleUntilTerminal(t, runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state, stream, storeIO, supervisor)
+	runErr := runLifecycleUntilTerminal(t, runnerRootFromFixtureEnv(t), state, stream, storeIO, supervisor)
 	stopWatching()
 	watchErr := <-watchResult
 	if runErr != nil {
@@ -2155,7 +2174,7 @@ func TestAutoAdvanceRecoveryRequeuesLostExternalRunsWithFreshIDs(t *testing.T) {
 	}
 	lifecycle, cancelLifecycle := schedulerLifecycleContext(context.Background())
 	defer cancelLifecycle()
-	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, lifecycle: lifecycle})
+	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor, lifecycle: lifecycle})
 	if err := options.recoverAutoStreams(); err != nil {
 		t.Fatalf("recover lost external run identities: %v", err)
 	}
@@ -3095,7 +3114,7 @@ func TestAutoAdvanceStandardAcceptRearmsPersistedHighRiskReviewOnce(t *testing.T
 	if err := store.commitAutoTransition([]SchedulerStream{workerState}); err != nil {
 		t.Fatal(err)
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := options.queueAutoReview(worker, ReviewStandard); err != nil {
 		t.Fatal(err)
 	}
@@ -3129,7 +3148,7 @@ func TestAutoAdvanceStandardAcceptRearmsPersistedHighRiskReviewOnce(t *testing.T
 	if err := store.transition(adversarialState, SchedulerRunning, "review", "simulate crash"); err != nil {
 		t.Fatal(err)
 	}
-	restarted := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	restarted := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := restarted.recoverAutoStreams(); err != nil {
 		t.Fatal(err)
 	}
@@ -3166,7 +3185,7 @@ func TestAutoReviewRejectAndReworkShareOneJournalTransaction(t *testing.T) {
 	if err := store.advance(worker.Stream, AdvanceVerifying, "", "", schedulerTestSHA); err != nil {
 		t.Fatal(err)
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := options.queueAutoReview(worker, ReviewStandard); err != nil {
 		t.Fatal(err)
 	}
@@ -3341,7 +3360,7 @@ func TestGemReviewUsesGoAssembledInputAndPersistsFirstPartyReport(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, slots: 1})
+	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor, slots: 1})
 	lifecycle, cancelLifecycle := schedulerLifecycleContext(context.Background())
 	defer cancelLifecycle()
 	if _, err := options.runGemReview(lifecycle, review, runID); err != nil {
@@ -3421,7 +3440,7 @@ func TestSchedulerFinalAdversarialRunsOnceOnlyAfterStandardAccept(t *testing.T) 
 	if err := store.advance(worker.Stream, AdvanceReviewing, "", "", schedulerTestSHA); err != nil {
 		t.Fatal(err)
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := options.queueAutoReview(worker, ReviewStandard); err != nil {
 		t.Fatal(err)
 	}
@@ -3660,7 +3679,7 @@ func TestAutoAdvanceRestartResumesPersistedWorkingVerifyingReworkAndEscalatedSta
 	lifecycle, cancelLifecycle := schedulerLifecycleContext(context.Background())
 	defer cancelLifecycle()
 	options := func() schedulerRunOptions {
-		return newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, lifecycle: lifecycle})
+		return newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor, lifecycle: lifecycle})
 	}
 	working, _, _ := makeTask("restart-working")
 	for range 2 {
@@ -3781,7 +3800,7 @@ func TestAutoAdvanceFreshSchedulerRestartsEachReviewingRoleOnce(t *testing.T) {
 			if err := store.commitAutoTransition([]SchedulerStream{parent}); err != nil {
 				t.Fatal(err)
 			}
-			options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+			options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 			if err := options.queueAutoReview(worker, role); err != nil {
 				t.Fatal(err)
 			}
@@ -3794,7 +3813,7 @@ func TestAutoAdvanceFreshSchedulerRestartsEachReviewingRoleOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				restarted := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+				restarted := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 				if err := restarted.recoverAutoStreams(); err != nil {
 					t.Fatalf("fresh %s recovery: %v", role, err)
 				}
@@ -4007,7 +4026,7 @@ func TestAutoAdvanceRecoveryEscalatesCorruptRunRecordAndContinues(t *testing.T) 
 	// treated as absent or allowed to abort recovery of the other stream.
 	restartedStore := newSchedulerStore(fixture.state)
 	options := newSchedulerRunOptions(restartedStore, schedulerRunOptionsConfig{
-		root: runnerRoot{invocation: "kb-runner"}, state: fixture.state, supervisor: newFakeSchedulerSupervisor(),
+		root: fixture.invocationRoot(), state: fixture.state, supervisor: newFakeSchedulerSupervisor(),
 	})
 	if err := options.recoverAutoStreams(); err != nil {
 		t.Fatalf("recover streams after corrupt run record: %v", err)
@@ -4020,7 +4039,7 @@ func TestAutoAdvanceRecoveryEscalatesCorruptRunRecordAndContinues(t *testing.T) 
 	assertUnknownRunEventCount(t, restartedStore, unknownTask.Stream, 1)
 
 	secondRestart := newSchedulerRunOptions(newSchedulerStore(fixture.state), schedulerRunOptionsConfig{
-		root: runnerRoot{invocation: "kb-runner"}, state: fixture.state, supervisor: newFakeSchedulerSupervisor(),
+		root: fixture.invocationRoot(), state: fixture.state, supervisor: newFakeSchedulerSupervisor(),
 	})
 	if err := secondRestart.recoverAutoStreams(); err != nil {
 		t.Fatalf("repeat recovery of durable unknown escalation: %v", err)
@@ -4200,7 +4219,7 @@ func TestAutoAdvanceRecoveryNoOpsTerminalDoneStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: f.invocationRoot(), state: f.state, supervisor: f.supervisor})
 	if err := options.recoverAutoStreams(); err != nil {
 		t.Fatalf("recovery of an already-done stream: %v", err)
 	}
@@ -4366,6 +4385,11 @@ func TestSchedulerCrossReviewDisagreementNamesBothReports(t *testing.T) {
 	code, output := f.runOnce(t)
 	if code != 0 {
 		t.Fatalf("cross review cycle exit=%d output=%s", code, output)
+	}
+	for _, run := range f.supervisor.List(f.state).Runs {
+		if len(run.Command) == 0 || run.Command[0] != filepath.Join(f.bin, "kb-runner") {
+			t.Fatalf("scheduler child command = %q, want fixture executable %q", run.Command, filepath.Join(f.bin, "kb-runner"))
+		}
 	}
 	stream, err := newSchedulerStore(f.state).stream(task.Stream)
 	if err != nil || stream.State != SchedulerAwaitingOrchestrator || stream.Cause != "review-disagreement" || len(stream.ReviewRunIDs) != 2 {
@@ -5062,7 +5086,8 @@ func TestAgentReviewDispatchesPersistedReviewTask(t *testing.T) {
 	}
 	t.Setenv("FAKE_REVIEW_VERDICT", "REJECT")
 	var out, errOut bytes.Buffer
-	root := runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner", supervisor: f.supervisor}
+	root := f.invocationRoot()
+	root.supervisor = f.supervisor
 	code, err := executeRoot(root, []string{"agent", "review", worker.Stream, "--state", f.state}, &out, &errOut)
 	if code != 0 || err != nil {
 		diagnostics := agentDispatchDiagnostics(t, f, errOut.String(), worker.Stream, review.Stream)

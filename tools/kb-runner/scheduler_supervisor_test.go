@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/proc"
 )
 
@@ -369,7 +368,7 @@ func TestSchedulerAdmissionWaitIsProjectedAndCleared(t *testing.T) {
 		t.Fatalf("claim scheduler worker: claimed=%t err=%v", ok, err)
 	}
 	supervisor := &queuedAdmissionSupervisor{fakeSchedulerSupervisor: newFakeSchedulerSupervisor(), entered: make(chan struct{}), release: make(chan struct{})}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: fixture.state, root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, lifecycle: context.Background(), supervisor: supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: fixture.state, root: fixture.invocationRoot(), lifecycle: context.Background(), supervisor: supervisor})
 	result := make(chan error, 1)
 	go func() {
 		run, startErr := options.startSupervisedJob(context.Background(), task.Stream, proc.Config{StateDir: fixture.state, Tag: claimed.RunID, RunID: claimed.RunID, Command: []string{"unused"}}, time.Second)
@@ -414,7 +413,7 @@ func TestSchedulerAdmissionWaitReturnsTypedBoundedOutcome(t *testing.T) {
 		t.Fatalf("claim scheduler worker: claimed=%t err=%v", ok, err)
 	}
 	supervisor := &queuedAdmissionSupervisor{fakeSchedulerSupervisor: newFakeSchedulerSupervisor(), entered: make(chan struct{}), release: make(chan struct{})}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: fixture.state, root: runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}, lifecycle: context.Background(), supervisor: supervisor})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: fixture.state, root: fixture.invocationRoot(), lifecycle: context.Background(), supervisor: supervisor})
 	_, err = options.startSupervisedJob(context.Background(), task.Stream, proc.Config{StateDir: fixture.state, Tag: claimed.RunID, RunID: claimed.RunID, Command: []string{"unused"}}, 300*time.Millisecond)
 	var timeout schedulerAdmissionTimeoutError
 	if !errors.As(err, &timeout) || timeout.RunID != claimed.RunID || !strings.Contains(timeout.Next, "sched ps --state") {
@@ -446,7 +445,7 @@ func TestSchedulerAdmissionTimeoutEscalatesWithDiagnostic(t *testing.T) {
 	if err := store.transition(stream, SchedulerRunning, "agent round", "wait for agent report"); err != nil {
 		t.Fatal(err)
 	}
-	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: fixture.state, root: runnerRoot{invocation: "kb-runner"}})
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: fixture.state, root: fixture.invocationRoot()})
 	cause := schedulerAdmissionTimeoutError{RunID: "run-admission-timeout", WaitReason: "host pressure: memory warn", Bound: time.Second, Next: "kb-runner sched ps --json"}
 	if err := options.finishWorker(schedulerWorkerResult{task: task, jobID: "preallocated-job", err: cause}); err != nil {
 		t.Fatal(err)

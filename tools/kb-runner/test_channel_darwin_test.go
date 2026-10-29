@@ -68,8 +68,12 @@ func TestResolveTestChannelToolchainUsesRunnerGoPathDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if toolchain.GOMODCACHE != moduleCache {
-		t.Fatalf("resolved module cache = %q, want GOPATH default %q", toolchain.GOMODCACHE, moduleCache)
+	canonicalModuleCache, err := canonicalSandboxPath(moduleCache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toolchain.GOMODCACHE != canonicalModuleCache {
+		t.Fatalf("resolved module cache = %q, want canonical GOPATH default %q", toolchain.GOMODCACHE, canonicalModuleCache)
 	}
 }
 
@@ -193,7 +197,10 @@ func TestTestChannelSandboxProfileProbeOptionsChangeGeneratedRules(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secretRoot := filepath.Join(tempHome, ".codex")
+	secretRoot, err := canonicalSandboxPath(filepath.Join(tempHome, ".codex"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	canonicalTarget, err := canonicalSandboxPath(writeTarget)
 	if err != nil {
 		t.Fatal(err)
@@ -714,13 +721,17 @@ func TestTestChannelSandboxProfileUsesCanonicalNarrowReadRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	canonicalWorktree, err := canonicalSandboxPath(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{
 		`(literal "/")`,
 		`(literal "/dev/null")`,
 		`(allow file-read-metadata)`,
 		`(allow file-read* (subpath "/usr/lib"))`,
 		`(allow file-read* (subpath "/System"))`,
-		`(allow file-read* (subpath ` + strconv.Quote(worktree) + `))`,
+		`(allow file-read* (subpath ` + strconv.Quote(canonicalWorktree) + `))`,
 	} {
 		if !strings.Contains(profile, want) {
 			t.Fatalf("sandbox profile lacks %s: %s", want, profile)
