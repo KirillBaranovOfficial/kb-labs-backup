@@ -34,6 +34,54 @@ func HashInputs(pkgDir string, depDirs []string, patterns []string) (string, err
 // package (the command, cache format, and toolchain). Keeping it in the same
 // digest prevents a remote CAS entry from surviving a semantic task change.
 func HashInputsWithFingerprint(pkgDir string, depDirs []string, patterns []string, fingerprint string) (string, error) {
+	return hashInputs(pkgDir, depDirs, patterns, fingerprint, "", "", "")
+}
+
+// HashInputsWithOwnership includes global and package-owned tracked-file
+// digests in addition to generated dependency outputs and task semantics.
+func HashInputsWithOwnership(pkgDir string, depDirs []string, patterns []string, fingerprint, globalDigest, ownedDigest, dependencyDigest string) (string, error) {
+	return hashInputs(pkgDir, depDirs, patterns, fingerprint, globalDigest, ownedDigest, dependencyDigest)
+}
+
+// ContentDigest hashes supplied tracked paths and their current working-tree
+// contents. A deleted tracked path contributes a deletion marker.
+func ContentDigest(workspaceRoot string, files []string) (string, error) {
+	files = uniqueSorted(files)
+	h := sha256.New()
+	for _, file := range files {
+		rel, err := filepath.Rel(workspaceRoot, file)
+		if err != nil {
+			return "", err
+		}
+		_, _ = io.WriteString(h, filepath.ToSlash(rel)+"\x00")
+		info, err := os.Lstat(file)
+		if os.IsNotExist(err) {
+			_, _ = io.WriteString(h, "deleted\x00")
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		var content []byte
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(file)
+			if err != nil {
+				return "", err
+			}
+			content = []byte(link)
+		} else {
+			content, err = os.ReadFile(file)
+			if err != nil {
+				return "", err
+			}
+		}
+		_, _ = h.Write(content)
+		_, _ = io.WriteString(h, "\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint, globalDigest, ownedDigest, dependencyDigest string) (string, error) {
 	type entry struct {
 		key  string // sort key written into hash (unique across local + dep files)
 		path string // absolute path for reading
@@ -64,7 +112,7 @@ func HashInputsWithFingerprint(pkgDir string, depDirs []string, patterns []strin
 		}
 	}
 
-	// One expandGlobs call per dep dir for all dep patterns (single WalkDir per dep).
+	// One expandGlobs call per dep dir for declared dependency output patterns.
 	for _, depDir := range depDirs {
 		if len(depPatterns) == 0 {
 			break
@@ -100,6 +148,17 @@ func HashInputsWithFingerprint(pkgDir string, depDirs []string, patterns []strin
 		_, _ = io.WriteString(h, fingerprint)
 		_, _ = io.WriteString(h, "\x00")
 	}
+	if globalDigest != "" {
+		_, _ = io.WriteString(h, "global-inputs\x00")
+		_, _ = io.WriteString(h, globalDigest)
+		_, _ = io.WriteString(h, "\x00")
+	}
+	if ownedDigest != "" {
+		_, _ = io.WriteString(h, "owned-inputs\x00"+ownedDigest+"\x00")
+	}
+	if dependencyDigest != "" {
+		_, _ = io.WriteString(h, "dependency-inputs\x00"+dependencyDigest+"\x00")
+	}
 	for _, key := range keys {
 		e := seen[key]
 		_, _ = io.WriteString(h, e.key+"\x00")
@@ -119,19 +178,42 @@ func HashInputsWithFingerprint(pkgDir string, depDirs []string, patterns []strin
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// expandGlobs returns sorted relative paths of all files matching any pattern.
-// Patterns use simple glob syntax: ** matches any number of path segments,
-// * matches within one segment.
-// skipDist controls whether the "dist" directory is pruned during traversal.
-// Use true for local package dirs (dist is a generated output, not an input),
-// false for dep dirs (dist is exactly what we want to hash via "^dist/**").
+func uniqueSorted(files []string) []string {
+	seen := make(map[string]struct{}, len(files))
+	result := make([]string, 0, len(files))
+	for _, file := range files {
+		file = filepath.Clean(file)
+		if _, ok := seen[file]; ok {
+			continue
+		}
+		seen[file] = struct{}{}
+		result = append(result, file)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// CombineContentDigests hashes named package digests in a stable order.
+func CombineContentDigests(digests map[string]string) string {
+	names := make([]string, 0, len(digests))
+	for name := range digests {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		_, _ = io.WriteString(h, name+"\x00"+digests[name]+"\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func expandGlobs(root string, patterns []string, skipDist bool) ([]string, error) {
 	seen := make(map[string]bool)
 
 	for _, pattern := range patterns {
 		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
-				return nil // skip unreadable
+				return err
 			}
 
 			rel, _ := filepath.Rel(root, path)

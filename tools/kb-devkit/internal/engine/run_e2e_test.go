@@ -21,6 +21,216 @@ import (
 	"github.com/kb-labs/devkit/internal/workspace"
 )
 
+func TestRunCacheValidityFollowsWorkspaceOwnership(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	aDir := filepath.Join(root, "packages", "a")
+	bDir := filepath.Join(root, "packages", "b")
+	appDir := filepath.Join(root, "packages", "app")
+	writePkg(t, aDir, `{"name":"@fixture/a","files":["src"]}`)
+	writePkg(t, bDir, `{"name":"@fixture/b"}`)
+	writePkg(t, appDir, `{"name":"@fixture/app","dependencies":{"@fixture/a":"workspace:*"}}`)
+	writeEngineFile(t, filepath.Join(aDir, "src", "index.ts"), "export const value = 1\n")
+	writeEngineFile(t, filepath.Join(bDir, "src", "index.ts"), "export const value = 1\n")
+	writeEngineFile(t, filepath.Join(appDir, "src", "index.ts"), "export const app = true\n")
+	writeEngineFile(t, filepath.Join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n")
+	writeEngineFile(t, filepath.Join(root, "services", "tsconfig.base.json"), `{"compilerOptions":{"strict":true}}`)
+	writeEngineFile(t, filepath.Join(root, "services", "vitest.config.ts"), "export default { test: { timeout: 1000 } }\n")
+	if output, err := exec.Command("git", "-C", root, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", root, "add", "--all").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "a", Category: config.CategoryConfig{Match: []string{"packages/a"}, Preset: "node-lib"}},
+		{Name: "b", Category: config.CategoryConfig{Match: []string{"packages/b"}, Preset: "node-lib"}},
+		{Name: "app", Category: config.CategoryConfig{Match: []string{"packages/app"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {{Command: "true", Inputs: []string{"src/**", "package.json", "^dist/**"}, Deps: []string{"^build"}}},
+		"test":  {{Command: "true", Inputs: []string{"src/**", "package.json", "^dist/**"}}},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	run := func() RunResult {
+		t.Helper()
+		result, err := Run(ws, cfg, RunOptions{Tasks: []string{"build", "test"}, WSRoot: root, CacheRoot: cacheRoot, Concurrency: 1})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return result
+	}
+	assertCacheState := func(result RunResult, expected map[string]bool) {
+		t.Helper()
+		for _, task := range result.Results {
+			if task.Cached != expected[task.Package] {
+				t.Errorf("%s cached=%t; want %t", task.Package, task.Cached, expected[task.Package])
+			}
+		}
+	}
+
+	first := run()
+	assertCacheState(first, map[string]bool{"@fixture/a": false, "@fixture/b": false, "@fixture/app": false})
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+	writeEngineFile(t, filepath.Join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n# tracked lock change\n")
+	assertCacheState(run(), map[string]bool{"@fixture/a": false, "@fixture/b": false, "@fixture/app": false})
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+	writeEngineFile(t, filepath.Join(root, "services", "tsconfig.base.json"), `{"compilerOptions":{"strict":false}}`)
+	assertCacheState(run(), map[string]bool{"@fixture/a": false, "@fixture/b": false, "@fixture/app": false})
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+	writeEngineFile(t, filepath.Join(root, "services", "vitest.config.ts"), "export default { test: { timeout: 2000 } }\n")
+	assertCacheState(run(), map[string]bool{"@fixture/a": false, "@fixture/b": false, "@fixture/app": false})
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+	writeEngineFile(t, filepath.Join(aDir, "src", "index.ts"), "export const value = 2\n")
+	assertCacheState(run(), map[string]bool{"@fixture/a": false, "@fixture/b": true, "@fixture/app": false})
+	writeEngineFile(t, filepath.Join(aDir, "src", "untracked-junk.ts"), "ignored by tracked input manifest\n")
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+}
+
+func TestAffectedSelectionAndTaskKeysShareTrackedFileOwnership(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	packages := []struct {
+		name string
+		json string
+	}{
+		{"base", `{"name":"@fixture/base"}`},
+		{"middle", `{"name":"@fixture/middle","dependencies":{"@fixture/base":"workspace:*"}}`},
+		{"app", `{"name":"@fixture/app","dependencies":{"@fixture/middle":"workspace:*"}}`},
+		{"island", `{"name":"@fixture/island"}`},
+		{"clikit", `{"name":"@fixture/clikit"}`},
+		{"runner", `{"name":"@fixture/runner"}`},
+	}
+	for _, pkg := range packages {
+		dir := filepath.Join(root, "packages", pkg.name)
+		writePkg(t, dir, pkg.json)
+		writeEngineFile(t, filepath.Join(dir, "src", "entry.go"), "package main\n")
+	}
+	writeEngineFile(t, filepath.Join(root, "packages", "app", "tests", "outside-glob.test.ts"), "expect(true).toBe(true)\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "runner", "go.mod"), "module fixture/runner\n\ngo 1.22\n\nrequire fixture/clikit v0.0.0\nreplace fixture/clikit => ../clikit\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "runner", "main.go"), "package main\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "clikit", "go.mod"), "module fixture/clikit\n\ngo 1.22\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "clikit", "kit.go"), "package clikit\n")
+	writeEngineFile(t, filepath.Join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n")
+	writeEngineFile(t, filepath.Join(root, "tsconfig.base.json"), `{"compilerOptions":{"strict":true}}`)
+	writeEngineFile(t, filepath.Join(root, "vitest.config.ts"), "export default { test: {} }\n")
+	if output, err := exec.Command("git", "-C", root, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", root, "add", "--all").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+
+	config := testConfig([]config.NamedCategory{{Name: "all", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}}})
+	ws := mustWorkspace(t, root, config)
+	tasks := []TaskDef{
+		{Name: "build", Command: "build", Inputs: []string{"src/**", "package.json", "^dist/**"}, Cache: true},
+		{Name: "test", Command: "test", Inputs: []string{"src/**", "test/**", "__tests__/**", "package.json", "^dist/**"}, Cache: true},
+	}
+	baseline := propertyTaskKeys(t, ws, tasks)
+	unownedFiles, ownedFiles, err := ws.TrackedFileOwnership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked := make([]string, 0)
+	for _, files := range ownedFiles {
+		tracked = append(tracked, files...)
+	}
+	tracked = append(tracked, unownedFiles...)
+	sort.Strings(tracked)
+	for _, file := range tracked {
+		original, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read tracked fixture %s: %v", file, err)
+		}
+		originalInfo, err := os.Stat(file)
+		if err != nil {
+			t.Fatalf("stat tracked fixture %s: %v", file, err)
+		}
+		if err := os.WriteFile(file, append(append([]byte(nil), original...), '\n'), 0o644); err != nil {
+			t.Fatalf("mutate tracked fixture %s: %v", file, err)
+		}
+		selection, err := selectAffectedPackages(ws, []string{file})
+		if err != nil {
+			t.Fatalf("select for %s: %v", file, err)
+		}
+		changed := propertyTaskKeys(t, ws, tasks)
+		changedPackages := make(map[string]bool)
+		for name, taskKeys := range baseline {
+			for task, before := range taskKeys {
+				if before != changed[name][task] {
+					changedPackages[name] = true
+				}
+			}
+		}
+		for _, selected := range selection.Packages {
+			for _, task := range tasks {
+				if baseline[selected.Name][task.Name] == changed[selected.Name][task.Name] {
+					t.Errorf("tracked file %s selected %s but left its %s task key unchanged", file, selected.Name, task.Name)
+				}
+			}
+		}
+		selectedNames := make(map[string]bool)
+		for _, selected := range selection.Packages {
+			selectedNames[selected.Name] = true
+		}
+		for name := range baseline {
+			if !selectedNames[name] && changedPackages[name] {
+				t.Errorf("tracked file %s changed unrelated package %s task keys", file, name)
+			}
+		}
+		if err := os.WriteFile(file, original, 0o644); err != nil {
+			t.Fatalf("restore tracked fixture %s: %v", file, err)
+		}
+		neutralTime := originalInfo.ModTime().Add(time.Second)
+		if err := os.Chtimes(file, neutralTime, neutralTime); err != nil {
+			t.Fatalf("change metadata on restored tracked fixture %s: %v", file, err)
+		}
+		restored := propertyTaskKeys(t, ws, tasks)
+		for name, taskKeys := range baseline {
+			for task, before := range taskKeys {
+				if restored[name][task] != before {
+					t.Errorf("tracked file %s has unchanged content but changed metadata; %s:%s key changed", file, name, task)
+				}
+			}
+		}
+	}
+}
+
+func propertyTaskKeys(t *testing.T, ws *workspace.Workspace, tasks []TaskDef) map[string]map[string]string {
+	t.Helper()
+	global, owned, dependencies, err := workspaceInputDigests(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		pkgByName[pkg.Name] = pkg
+	}
+	keys := make(map[string]map[string]string, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		depNames, err := WorkspaceDeps(pkg.Dir, pkgByName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		depDirs := make([]string, 0, len(depNames))
+		for _, name := range depNames {
+			depDirs = append(depDirs, pkgByName[name].Dir)
+		}
+		keys[pkg.Name] = make(map[string]string, len(tasks))
+		for _, task := range tasks {
+			key, err := hashTaskInputs(pkg, task, depDirs, "fixture-toolchain", global, owned[pkg.Name], dependencies[pkg.Name])
+			if err != nil {
+				t.Fatalf("hash %s:%s: %v", pkg.Name, task.Name, err)
+			}
+			keys[pkg.Name][task.Name] = key
+		}
+	}
+	return keys
+}
+
 func TestRunE2ECachesAndRestoresOutputs(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceRoot(t, root, []string{"packages/*"})
@@ -296,8 +506,8 @@ func TestAffectedBuildSelectsChangedInputsAfterMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AffectedPackages: %v", err)
 	}
-	if len(changed) != 0 {
-		t.Fatalf("committed merge has Git-diff packages %v, want none", packageNames(changed))
+	if len(changed.Packages) != 0 {
+		t.Fatalf("committed merge has Git-diff packages %v, want none", packageNames(changed.Packages))
 	}
 	selected, err := AffectedRunPackages(ws, cfg, []string{"build"}, cacheRoot, false)
 	if err != nil {
@@ -308,11 +518,20 @@ func TestAffectedBuildSelectsChangedInputsAfterMerge(t *testing.T) {
 	sort.Strings(got)
 	sort.Strings(want)
 	if len(got) != len(want) || strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("--affected selected %v (git changes %v), want %v", got, packageNames(changed), want)
+		t.Fatalf("--affected selected %v (git changes %v), want %v", got, packageNames(changed.Packages), want)
 	}
 	completed, err := Run(ws, cfg, RunOptions{Tasks: []string{"build"}, WSRoot: root, CacheRoot: cacheRoot, Concurrency: 1})
 	if err != nil || !completed.OK {
 		t.Fatalf("build after merged change = %+v, error = %v", completed, err)
+	}
+	runGitCommand(t, root, "checkout", "feature")
+	runGitCommand(t, root, "checkout", "main")
+	unchangedAfterCheckout, err := AffectedRunPackages(ws, cfg, []string{"build"}, cacheRoot, false)
+	if err != nil {
+		t.Fatalf("AffectedRunPackages after content-neutral checkout = %v", err)
+	}
+	if len(unchangedAfterCheckout) != 0 {
+		t.Fatalf("content-neutral checkout selected %v by input hashes; want none", packageNames(unchangedAfterCheckout))
 	}
 	if err := os.WriteFile(filepath.Join(coreDir, "README.md"), []byte("notes outside declared build inputs\n"), 0o644); err != nil {
 		t.Fatalf("change file outside task inputs: %v", err)
@@ -329,8 +548,13 @@ func TestAffectedBuildSelectsChangedInputsAfterMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AffectedRunPackages after README change: %v", err)
 	}
-	if len(diffOnly) == 0 || len(diffOnlySelection) != len(diffOnly) || len(unchangedInputs) != 0 {
-		t.Fatalf("Git diff = %v, diff-only selection = %v, input-hash selection = %v; want a selected Git diff and empty input-hash selection", packageNames(diffOnly), packageNames(diffOnlySelection), packageNames(unchangedInputs))
+	wantChanged := []string{"@fixture/app", "@fixture/core", "@fixture/runtime"}
+	for _, selection := range [][]workspace.Package{diffOnly.Packages, diffOnlySelection, unchangedInputs} {
+		got := packageNames(selection)
+		sort.Strings(got)
+		if strings.Join(got, "\x00") != strings.Join(wantChanged, "\x00") {
+			t.Fatalf("Git diff = %v, diff-only selection = %v, input-hash selection = %v; each must select %v for a tracked package file change", packageNames(diffOnly.Packages), packageNames(diffOnlySelection), packageNames(unchangedInputs), wantChanged)
+		}
 	}
 }
 
@@ -793,7 +1017,10 @@ func TestDirtyPackagesCoversRetryAfterFailure(t *testing.T) {
 	})
 
 	// DirtyPackages must return @kb/app even though no files changed
-	dirty := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+	dirty, err := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(dirty) != 1 || dirty[0].Name != "@kb/app" {
 		t.Fatalf("DirtyPackages after failure = %v, want [@kb/app]", dirty)
 	}
@@ -807,7 +1034,10 @@ func TestDirtyPackagesCoversRetryAfterFailure(t *testing.T) {
 	})
 
 	// Now DirtyPackages must be empty
-	dirty2 := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+	dirty2, err := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(dirty2) != 0 {
 		t.Fatalf("DirtyPackages after fix = %v, want []", dirty2)
 	}
@@ -815,6 +1045,14 @@ func TestDirtyPackagesCoversRetryAfterFailure(t *testing.T) {
 
 func mustWorkspace(t *testing.T, root string, cfg *config.DevkitConfig) *workspace.Workspace {
 	t.Helper()
+	if output, err := exec.Command("git", "-C", root, "rev-parse", "--show-toplevel").CombinedOutput(); err != nil {
+		initTrackedFixture(t, root)
+	} else if len(output) == 0 {
+		t.Fatal("git rev-parse returned an empty workspace root")
+	}
+	if output, err := exec.Command("git", "-C", root, "add", "--all").CombinedOutput(); err != nil {
+		t.Fatalf("git add workspace fixture: %v: %s", err, output)
+	}
 	ws, err := workspace.New(root, cfg)
 	if err != nil {
 		t.Fatalf("workspace.New error: %v", err)

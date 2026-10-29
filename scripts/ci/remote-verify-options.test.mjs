@@ -7,8 +7,10 @@ test('requires an explicit verdict path and resolves it from the invoking direct
   assert.deepEqual(parseArgs(['stream-name', '--out', '../reports/result.json'], '/work/tree'), {
     stream: 'stream-name',
     attach: undefined,
+    profile: 'stream',
     out: '/work/reports/result.json',
   });
+  assert.equal(parseArgs(['stream-name', '--profile', 'candidate', '--out', '/tmp/candidate.json']).profile, 'candidate');
   assert.throws(() => parseArgs(['stream-name'], '/work/tree'), /--out path is required/);
 });
 

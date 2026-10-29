@@ -33,7 +33,8 @@ function createExecutors(scratch) {
   };
 
   const gh = {
-    listRuns: async (repo, branch) => JSON.parse(execute('gh', ['api', `repos/${repo}/actions/runs?branch=${encodeURIComponent(branch)}&event=push&per_page=100`], { retryable: true } )).workflow_runs ?? [],
+    listRuns: async (repo, branch, event) => JSON.parse(execute('gh', ['api', `repos/${repo}/actions/runs?branch=${encodeURIComponent(branch)}&event=${event}&per_page=100`], { retryable: true } )).workflow_runs ?? [],
+    dispatchRun: async (repo, ref, profile) => execute('gh', ['workflow', 'run', 'remote-verify.yml', '--repo', repo, '--ref', ref, '-f', `profile=${profile}`], { retryable: true }),
     getRun: async (repo, runId) => JSON.parse(execute('gh', ['api', `repos/${repo}/actions/runs/${runId}`], { retryable: true })),
     downloadVerdict: async (repo, runId) => {
       const dir = path.join(scratch, String(runId));

@@ -185,6 +185,79 @@ func TestHashInputsDepPatternWithNilDepDirsIsNoop(t *testing.T) {
 	}
 }
 
+func TestHashInputsWithOwnershipTracksPackageAndDependencyDigests(t *testing.T) {
+	root := t.TempDir()
+	packageInput := filepath.Join(root, "packages", "lib", "tests", "input.test.ts")
+	dependencyInput := filepath.Join(root, "packages", "base", "tsconfig.base.json")
+	mustWriteFile(t, packageInput, "expect(true).toBe(true)\n")
+	mustWriteFile(t, dependencyInput, `{"compilerOptions":{"strict":true}}`)
+	own, err := ContentDigest(root, []string{packageInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := ContentDigest(root, []string{dependencyInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := HashInputsWithOwnership(root, nil, nil, "test-task", "global", own, CombineContentDigests(map[string]string{"@fixture/base": dep}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, packageInput, "expect(false).toBe(true)\n")
+	own, err = ContentDigest(root, []string{packageInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := HashInputsWithOwnership(root, nil, nil, "test-task", "global", own, CombineContentDigests(map[string]string{"@fixture/base": dep}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("task hash unchanged after package-owned test file changed")
+	}
+	mustWriteFile(t, dependencyInput, `{"compilerOptions":{"strict":false}}`)
+	dep, err = ContentDigest(root, []string{dependencyInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := HashInputsWithOwnership(root, nil, nil, "test-task", "global", own, CombineContentDigests(map[string]string{"@fixture/base": dep}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == third {
+		t.Fatal("task hash unchanged after workspace dependency digest changed")
+	}
+}
+
+func TestContentDigestTracksProvidedContentOnly(t *testing.T) {
+	root := t.TempDir()
+	lockfile := filepath.Join(root, "pnpm-lock.yaml")
+	untracked := filepath.Join(root, "untracked.txt")
+	mustWriteFile(t, lockfile, "lockfileVersion: 9\n")
+	mustWriteFile(t, untracked, "first\n")
+
+	first, err := ContentDigest(root, []string{lockfile})
+	if err != nil {
+		t.Fatalf("global input digest: %v", err)
+	}
+	mustWriteFile(t, untracked, "second\n")
+	second, err := ContentDigest(root, []string{lockfile})
+	if err != nil {
+		t.Fatalf("global input digest after untracked change: %v", err)
+	}
+	if first != second {
+		t.Fatal("global digest changed when only an untracked path changed")
+	}
+	mustWriteFile(t, lockfile, "lockfileVersion: 9\n# tracked edit\n")
+	third, err := ContentDigest(root, []string{lockfile})
+	if err != nil {
+		t.Fatalf("global input digest after tracked content change: %v", err)
+	}
+	if second == third {
+		t.Fatal("global digest unchanged after tracked lockfile content changed")
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -71,6 +71,124 @@ func TestExecutorStoresAndRestoresOutputsThroughCache(t *testing.T) {
 	}
 }
 
+func TestConsumerBuildIsNotCachedAfterInheritedTsConfigChanges(t *testing.T) {
+	root := t.TempDir()
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(root, "services", "gateway", "app")
+	gatewayDir := filepath.Join(root, "services", "gateway")
+	writeFile(t, filepath.Join(appDir, "package.json"), `{"name":"@fixture/gateway-app"}`)
+	writeFile(t, filepath.Join(appDir, "src", "index.ts"), "export const value = true\n")
+	writeFile(t, filepath.Join(appDir, "tsconfig.build.json"), `{"extends":"../tsconfig.base.json","include":["src"]}`)
+	writeFile(t, filepath.Join(gatewayDir, "tsconfig.base.json"), `{"compilerOptions":{"strict":true}}`)
+	initTrackedFixture(t, root)
+	globalDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(&workspace.Workspace{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceRoot := findWorkspaceRoot(t)
+	exec := &Executor{
+		objects: store, manifests: cache.NewManifestStore(cacheRoot), states: cache.NewStateStore(cacheRoot),
+		wsRoot: workspaceRoot, logRoot: filepath.Join(cacheRoot, "logs"), runtimeFingerprint: "fixture-toolchain",
+		ownedInputDigests: ownedInputDigests, dependencyDigests: dependencyDigests, globalInputDigest: globalDigest,
+	}
+	pkg := workspace.Package{Name: "@fixture/gateway-app", Dir: appDir, Language: "typescript"}
+	def := TaskDef{Name: "build", Command: "true", Inputs: []string{"src/**", "tsconfig*.json"}, Cache: true}
+
+	first := exec.Run(pkg, def, false, nil)
+	if !first.OK || first.Cached {
+		t.Fatalf("first gateway app build = %+v, want successful execution", first)
+	}
+	second := exec.Run(pkg, def, false, nil)
+	if !second.OK || !second.Cached {
+		t.Fatalf("second gateway app build = %+v, want cache hit", second)
+	}
+	writeFile(t, filepath.Join(gatewayDir, "tsconfig.base.json"), `{"compilerOptions":{"strict":false}}`)
+	exec.globalInputDigest, err = cache.ContentDigest(root, []string{filepath.Join(gatewayDir, "tsconfig.base.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third := exec.Run(pkg, def, false, nil)
+	if !third.OK || third.Cached {
+		t.Fatalf("gateway app build after only its inherited tsconfig changed = %+v, want a fresh execution", third)
+	}
+}
+
+func TestConsumerTestIsNotCachedAfterImportedVitestConfigChanges(t *testing.T) {
+	root := t.TempDir()
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(root, "services", "gateway", "app")
+	servicesDir := filepath.Join(root, "services")
+	writeFile(t, filepath.Join(appDir, "package.json"), `{"name":"@fixture/gateway-app","type":"module"}`)
+	writeFile(t, filepath.Join(appDir, "src", "test.ts"), "export const value = true\n")
+	writeFile(t, filepath.Join(appDir, "vitest.config.ts"), "import base from '../../vitest.config.mjs'; export default base\n")
+	writeFile(t, filepath.Join(servicesDir, "vitest.config.mjs"), "export default { test: { testTimeout: 1000 } }\n")
+	initTrackedFixture(t, root)
+	globalDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(&workspace.Workspace{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceRoot := findWorkspaceRoot(t)
+	vitestLink := filepath.Join(appDir, "node_modules", "vitest")
+	if err := os.MkdirAll(filepath.Dir(vitestLink), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(workspaceRoot, "node_modules", "vitest"), vitestLink); err != nil {
+		t.Fatal(err)
+	}
+
+	exec := &Executor{
+		objects: store, manifests: cache.NewManifestStore(cacheRoot), states: cache.NewStateStore(cacheRoot),
+		wsRoot: workspaceRoot, logRoot: filepath.Join(cacheRoot, "logs"), runtimeFingerprint: "fixture-toolchain",
+		ownedInputDigests: ownedInputDigests, dependencyDigests: dependencyDigests, globalInputDigest: globalDigest,
+	}
+	pkg := workspace.Package{Name: "@fixture/gateway-app", Dir: appDir, Language: "typescript"}
+	def := TaskDef{Name: "test", Command: "true", Inputs: []string{"src/**", "vitest.config.*"}, Cache: true}
+
+	first := exec.Run(pkg, def, false, nil)
+	if !first.OK || first.Cached {
+		t.Fatalf("first gateway app test = %+v, want successful execution", first)
+	}
+	second := exec.Run(pkg, def, false, nil)
+	if !second.OK || !second.Cached {
+		t.Fatalf("second gateway app test = %+v, want cache hit", second)
+	}
+	writeFile(t, filepath.Join(servicesDir, "vitest.config.mjs"), "export default { test: { testTimeout: 2000 } }\n")
+	exec.globalInputDigest, err = cache.ContentDigest(root, []string{filepath.Join(servicesDir, "vitest.config.mjs")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third := exec.Run(pkg, def, false, nil)
+	if !third.OK || third.Cached {
+		t.Fatalf("gateway app test after only its imported Vitest config changed = %+v, want fresh execution", third)
+	}
+}
+
+func findWorkspaceRoot(t *testing.T) string {
+	t.Helper()
+	current, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(current, "pnpm-workspace.yaml")); err == nil {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			t.Fatal("workspace root not found from test process directory")
+		}
+		current = parent
+	}
+}
+
 func TestTaskFingerprintChangesWhenTaskDefinitionChanges(t *testing.T) {
 	exec := &Executor{runtimeFingerprint: "toolchain"}
 	base := TaskDef{Name: "build", Command: "tsup", Inputs: []string{"src/**"}, Outputs: []string{"dist/**"}, Deps: []string{"^build"}, Cache: true}
