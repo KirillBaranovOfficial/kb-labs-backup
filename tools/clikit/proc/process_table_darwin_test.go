@@ -372,6 +372,111 @@ func TestIdleKeeperCPUStaysBelowOnePercent(t *testing.T) {
 	}
 }
 
+// case: S-237.147
+func TestDarwinMetricsTreatsReapedProcessAsUnavailable(t *testing.T) {
+	child := exec.Command("/bin/sleep", "30")
+	child.Stdout, child.Stderr = io.Discard, io.Discard
+	if err := child.Start(); err != nil {
+		t.Fatalf("start short-lived metrics child: %v", err)
+	}
+	reaped := false
+	t.Cleanup(func() {
+		if reaped {
+			return
+		}
+		if err := child.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("terminate metrics child during cleanup: %v", err)
+		}
+		if err := child.Wait(); err != nil {
+			var exitErr *exec.ExitError
+			status, ok := syscall.WaitStatus(0), false
+			if errors.As(err, &exitErr) {
+				status, ok = exitErr.Sys().(syscall.WaitStatus)
+			}
+			if !ok || status.Signal() != syscall.SIGKILL {
+				t.Errorf("reap metrics child during cleanup: %v", err)
+			}
+		}
+		reaped = true
+	})
+
+	snapshot, err := darwinProcessSnapshot("")
+	if err != nil {
+		t.Fatalf("capture process tree before child exit: %v", err)
+	}
+	var stale Process
+	found := false
+	for _, process := range snapshot {
+		if process.PID == child.Process.Pid {
+			stale, found = process, true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("child PID %d was absent from captured process tree", child.Process.Pid)
+	}
+	if err := child.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("terminate metrics child: %v", err)
+	}
+	waitErr := child.Wait()
+	reaped = true
+	if waitErr != nil {
+		var exitErr *exec.ExitError
+		status, ok := syscall.WaitStatus(0), false
+		if errors.As(waitErr, &exitErr) {
+			status, ok = exitErr.Sys().(syscall.WaitStatus)
+		}
+		if !ok || status.Signal() != syscall.SIGKILL {
+			t.Fatalf("reap metrics child after SIGKILL: %v", waitErr)
+		}
+	}
+
+	measured, err := (osProcessSource{}).Metrics([]Process{stale})
+	if err != nil {
+		t.Fatalf("measure reaped process: %v", err)
+	}
+	if len(measured) != 1 || measured[0].MetricsAvailable {
+		t.Fatalf("reaped process metrics = %+v, want one unavailable entry", measured)
+	}
+}
+
+// case: S-237.147
+func TestDarwinKinfoProcDecodeTreatsEmptyRecordAsGone(t *testing.T) {
+	info, gone, err := decodeDarwinKinfoProc(nil)
+	if err != nil {
+		t.Fatalf("decode empty process record: %v", err)
+	}
+	if !gone || info != nil {
+		t.Fatalf("empty process record = (%v, gone=%t), want nil and gone", info, gone)
+	}
+}
+
+// case: S-237.147
+func TestDarwinKinfoProcDecodeRejectsUnexpectedNonemptySize(t *testing.T) {
+	info, gone, err := decodeDarwinKinfoProc(make([]byte, unix.SizeofKinfoProc-1))
+	if err == nil || gone || info != nil {
+		t.Fatalf("partial process record = (%v, gone=%t, err=%v), want typed size error", info, gone, err)
+	}
+	if !errors.Is(err, syscall.EIO) {
+		t.Fatalf("partial process record error = %v, want EIO cause", err)
+	}
+}
+
+// case: S-237.147
+func TestDarwinLibprocMetricsErrorTreatsESRCHAsGone(t *testing.T) {
+	if err := darwinProcessMetricsError(43210, int(syscall.ESRCH)); err != nil {
+		t.Fatalf("disappeared libproc target error = %v, want no error", err)
+	}
+}
+
+// case: S-237.147
+func TestDarwinLibprocMetricsErrorPreservesInspectionErrno(t *testing.T) {
+	err := darwinProcessMetricsError(43210, int(syscall.EACCES))
+	if !errors.Is(err, syscall.EACCES) {
+		t.Fatalf("libproc inspection error = %v, want EACCES cause", err)
+	}
+}
+
 // case: S-237.13
 func TestSupervisedRunObservesWholeDarwinTableWithForeignUIDs(t *testing.T) {
 	truePath, err := exec.LookPath("true")

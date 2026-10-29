@@ -11,9 +11,14 @@ package proc
 #include <stdint.h>
 #include <stdlib.h>
 
-static int kb_proc_metrics(pid_t pid, uint64_t *rss, uint64_t *cpu_ns) {
+static int kb_proc_metrics(pid_t pid, uint64_t *rss, uint64_t *cpu_ns, int *error_code) {
 	struct rusage_info_v2 usage;
-	if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)&usage) != 0) return 0;
+	errno = 0;
+	if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)&usage) != 0) {
+		*error_code = errno == 0 ? EIO : errno;
+		return 0;
+	}
+	*error_code = 0;
 	*rss = usage.ri_resident_size;
 	*cpu_ns = usage.ri_user_time + usage.ri_system_time;
 	return 1;
@@ -72,6 +77,7 @@ import (
 	"fmt"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -125,20 +131,34 @@ func darwinProcessMetrics(tree []Process) ([]Process, error) {
 	out := append([]Process(nil), tree...)
 	var failures []error
 	for index := range out {
+		out[index].RSSBytes = 0
+		out[index].CPUSeconds = 0
+		out[index].MetricsAvailable = false
 		if out[index].Unverified {
 			continue
 		}
-		info, err := unix.SysctlKinfoProc("kern.proc.pid", out[index].PID)
+		record, err := unix.SysctlRaw("kern.proc.pid", out[index].PID)
+		if err != nil {
+			if processGone(err) {
+				continue
+			}
+			failures = append(failures, fmt.Errorf("inspect process %d for metrics: %w", out[index].PID, err))
+			continue
+		}
+		info, gone, err := decodeDarwinKinfoProc(record)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("inspect process %d for metrics: %w", out[index].PID, err))
 			continue
 		}
-		if formatStart(info) != out[index].Identity {
+		if gone || formatStart(info) != out[index].Identity {
 			continue
 		}
 		var rss, cpuNS C.uint64_t
-		if C.kb_proc_metrics(C.pid_t(out[index].PID), &rss, &cpuNS) == 0 {
-			failures = append(failures, fmt.Errorf("read resource metrics for process %d", out[index].PID))
+		var errorCode C.int
+		if C.kb_proc_metrics(C.pid_t(out[index].PID), &rss, &cpuNS, &errorCode) == 0 {
+			if err := darwinProcessMetricsError(out[index].PID, int(errorCode)); err != nil {
+				failures = append(failures, err)
+			}
 			continue
 		}
 		out[index].RSSBytes = uint64(rss)
@@ -146,6 +166,30 @@ func darwinProcessMetrics(tree []Process) ([]Process, error) {
 		out[index].MetricsAvailable = true
 	}
 	return out, errors.Join(failures...)
+}
+
+func darwinProcessMetricsError(pid, errorCode int) error {
+	cause := syscall.Errno(errorCode)
+	if processGone(cause) {
+		return nil
+	}
+	if cause == 0 {
+		cause = syscall.EIO
+	}
+	return fmt.Errorf("read resource metrics for process %d: %w", pid, cause)
+}
+
+func decodeDarwinKinfoProc(data []byte) (*unix.KinfoProc, bool, error) {
+	if len(data) == 0 {
+		return nil, true, nil
+	}
+	info := new(unix.KinfoProc)
+	size := int(unsafe.Sizeof(*info))
+	if len(data) != size {
+		return nil, false, fmt.Errorf("kern.proc.pid returned %d bytes, want %d: %w", len(data), size, syscall.EIO)
+	}
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(info)), size), data)
+	return info, false, nil
 }
 
 func darwinCommandName(comm []byte) string {

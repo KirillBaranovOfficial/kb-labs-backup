@@ -123,6 +123,7 @@ var runnerCommands = []runnerCommand{
 	{name: "status", execute: statusCommand},
 	{name: "limits", execute: limitsCommand},
 	{name: "agent", execute: agentCommand},
+	{name: "test-channel", execute: testChannelRequestCommand},
 	{name: "verify", execute: verifyCommand},
 	{name: "worktree", execute: worktreeCommand},
 	{name: "hygiene", execute: hygieneCommand},

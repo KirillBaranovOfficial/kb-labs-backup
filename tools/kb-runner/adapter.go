@@ -151,15 +151,16 @@ func quotaBlocked(limits []VendorLimit, fiveHour, week float64) bool {
 }
 
 type AgentRequest struct {
-	Prompt       string
-	Workdir      string
-	Effort       string
-	WritableDirs []string
-	Model        string
-	SessionID    string
-	FinalPath    string
-	StateDir     string
-	JobID        string
+	Prompt           string
+	Workdir          string
+	Effort           string
+	WritableDirs     []string
+	Model            string
+	SessionID        string
+	FinalPath        string
+	StateDir         string
+	JobID            string
+	TestChannelSpool string
 }
 type AgentAdapter interface {
 	Start(context.Context, AgentRequest) (*exec.Cmd, error)
@@ -408,7 +409,11 @@ func (a commandAdapter) Start(ctx context.Context, r AgentRequest) (*exec.Cmd, e
 	var args []string
 	if a.vendor == "codex" {
 		args = []string{"exec", "--json", "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=true", "-c", fmt.Sprintf("model_reasoning_effort=%q", r.Effort), "-C", r.Workdir}
-		for _, d := range r.WritableDirs {
+		writableDirs := append(append([]string(nil), r.WritableDirs...), r.TestChannelSpool)
+		for _, d := range writableDirs {
+			if d == "" {
+				continue
+			}
 			args = append(args, "--add-dir", d)
 		}
 		if r.Model != "" {
@@ -479,6 +484,9 @@ func (a commandAdapter) Resume(ctx context.Context, r AgentRequest) (*exec.Cmd, 
 
 func codexResumeArgs(r AgentRequest) []string {
 	roots := append([]string{r.Workdir}, r.WritableDirs...)
+	if r.TestChannelSpool != "" {
+		roots = append(roots, r.TestChannelSpool)
+	}
 	encodedRoots := make([]string, 0, len(roots))
 	for _, root := range roots {
 		encodedRoots = append(encodedRoots, strconv.Quote(root))

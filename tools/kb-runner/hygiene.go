@@ -217,6 +217,9 @@ func runHygieneSweep(options hygieneOptions) (hygieneReport, error) {
 			if err := sweepJobTemp(state, options.Context, options.DryRun, &report); err != nil {
 				reportHygieneAlert(&report, "job-temp", state, err)
 			}
+			if err := sweepTestChannelCaches(state, options.Context, options.DryRun, &report); err != nil {
+				reportHygieneAlert(&report, "test-channel-cache", filepath.Join(state, "test-channel", "streams"), err)
+			}
 		}
 		if cacheBudgetErr != nil {
 			reportHygieneAlert(&report, "go-cache", options.Cache, cacheBudgetErr)
@@ -418,6 +421,60 @@ func sweepJobTemp(state string, ctx context.Context, dryRun bool, report *hygien
 			}
 			recordHygieneReclaimResult(report, intent)
 		}
+	}
+	return nil
+}
+
+func sweepTestChannelCaches(state string, ctx context.Context, dryRun bool, report *hygieneReport) error {
+	jobs, err := newJobStore(state).ListRecords()
+	if err != nil {
+		return fmt.Errorf("list runner jobs for outside-test caches in %s: %w", state, err)
+	}
+	active := make(map[string]struct{})
+	for _, job := range jobs {
+		if !job.State.Terminal() {
+			active[filepath.Base(filepath.Dir(testChannelCachePath(state, job.Stream)))] = struct{}{}
+		}
+	}
+	root := filepath.Join(state, "test-channel", "streams")
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read outside-test stream caches: %w", err)
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			return fmt.Errorf("outside-test cache entry %q is not a directory", entry.Name())
+		}
+		if _, keep := active[entry.Name()]; keep {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		bytes, err := treeBytes(path)
+		if err != nil {
+			return fmt.Errorf("measure abandoned outside-test cache %s: %w", path, err)
+		}
+		if dryRun {
+			report.Actions = append(report.Actions, hygieneAction{Rule: "test-channel-cache", Path: path, Action: "would-reap", Bytes: bytes, Cause: "stream has no active runner job"})
+			continue
+		}
+		action := hygieneAction{Rule: "test-channel-cache", Path: path, Action: "reaped", Bytes: bytes, Cause: "stream has no active runner job"}
+		intent, err := beginHygieneReclaim(report, action, "", "")
+		if err != nil {
+			return fmt.Errorf("journal abandoned outside-test cache %s: %w", path, err)
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("reap abandoned outside-test cache %s: %w", path, err)
+		}
+		if err := completeHygieneReclaim(report.eventRoot, intent); err != nil {
+			return fmt.Errorf("complete abandoned outside-test cache journal %s: %w", path, err)
+		}
+		recordHygieneReclaimResult(report, intent)
 	}
 	return nil
 }
