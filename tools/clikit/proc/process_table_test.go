@@ -139,7 +139,7 @@ func (source ownedProcessTreeSource) Metrics(tree []Process) ([]Process, error) 
 	return out, nil
 }
 func (ownedProcessTreeSource) Identity(pid int) (string, bool, error) { return ProcessIdentity(pid) }
-func (ownedProcessTreeSource) Signal(pid int, signal syscall.Signal) error {
+func (ownedProcessTreeSource) Signal(pid int, _ string, signal syscall.Signal) error {
 	return syscall.Kill(pid, signal)
 }
 
@@ -471,7 +471,7 @@ func (source *keeperSignalProcessSource) ParentPID(pid int) (int, error) {
 	return parent, nil
 }
 
-func (source *keeperSignalProcessSource) Signal(pid int, _ syscall.Signal) error {
+func (source *keeperSignalProcessSource) Signal(pid int, _ string, _ syscall.Signal) error {
 	source.signals = append(source.signals, pid)
 	return nil
 }
@@ -490,7 +490,7 @@ func (source *unavailableSnapshotWithLiveIdentity) Identity(pid int) (string, bo
 	return identities[pid], source.alive[pid], nil
 }
 
-func (source *unavailableSnapshotWithLiveIdentity) Signal(pid int, _ syscall.Signal) error {
+func (source *unavailableSnapshotWithLiveIdentity) Signal(pid int, _ string, _ syscall.Signal) error {
 	source.signals = append(source.signals, pid)
 	source.alive[pid] = false
 	return nil
@@ -541,7 +541,7 @@ func (source *supervisorAncestorProcessSource) Identity(pid int) (string, bool, 
 	return identities[pid], source.alive[pid], nil
 }
 
-func (source *supervisorAncestorProcessSource) Signal(pid int, _ syscall.Signal) error {
+func (source *supervisorAncestorProcessSource) Signal(pid int, _ string, _ syscall.Signal) error {
 	source.signals = append(source.signals, pid)
 	source.alive[pid] = false
 	return nil
@@ -953,7 +953,7 @@ func (source staticIdentityProcessSource) Identity(pid int) (string, bool, error
 	}
 	return "", false, nil
 }
-func (staticIdentityProcessSource) Signal(int, syscall.Signal) error { return nil }
+func (staticIdentityProcessSource) Signal(int, string, syscall.Signal) error { return nil }
 
 // case: S-237.4
 func TestEventWriterBoundsTeardownTextAndRejectsOtherOversizedRecords(t *testing.T) {
@@ -1148,7 +1148,7 @@ func (source *deadlineAfterTermSource) Snapshot(string) ([]Process, error) {
 func (*deadlineAfterTermSource) Identity(pid int) (string, bool, error) {
 	return "marker-start", pid == 102, nil
 }
-func (source *deadlineAfterTermSource) Signal(_ int, signal syscall.Signal) error {
+func (source *deadlineAfterTermSource) Signal(_ int, _ string, signal syscall.Signal) error {
 	source.signals = append(source.signals, signal)
 	return nil
 }
@@ -1158,7 +1158,7 @@ func (*persistentMarkerProcessSource) Identity(pid int) (string, bool, error) {
 	}
 	return "", false, nil
 }
-func (source *persistentMarkerProcessSource) Signal(_ int, signal syscall.Signal) error {
+func (source *persistentMarkerProcessSource) Signal(_ int, _ string, signal syscall.Signal) error {
 	source.signals = append(source.signals, signal)
 	return nil
 }
@@ -1191,7 +1191,7 @@ func (*deadlineAdvancingMarkerSource) Identity(pid int) (string, bool, error) {
 	}
 	return "", false, nil
 }
-func (source *deadlineAdvancingMarkerSource) Signal(_ int, signal syscall.Signal) error {
+func (source *deadlineAdvancingMarkerSource) Signal(_ int, _ string, signal syscall.Signal) error {
 	source.signals = append(source.signals, signal)
 	return nil
 }
@@ -1224,7 +1224,7 @@ func (source *identityAdvancingMarkerSource) Identity(pid int) (string, bool, er
 	}
 	return "", false, nil
 }
-func (source *identityAdvancingMarkerSource) Signal(_ int, signal syscall.Signal) error {
+func (source *identityAdvancingMarkerSource) Signal(_ int, _ string, signal syscall.Signal) error {
 	source.signals = append(source.signals, signal)
 	return nil
 }
@@ -1235,8 +1235,8 @@ func (source *rootMarkerProcessSource) Snapshot(string) ([]Process, error) {
 	source.snapshots++
 	return []Process{{PID: 100, Identity: "root-marker-start", runMarker: true, markerResult: "match"}}, nil
 }
-func (*rootMarkerProcessSource) Identity(int) (string, bool, error) { return "", false, nil }
-func (*rootMarkerProcessSource) Signal(int, syscall.Signal) error   { return nil }
+func (*rootMarkerProcessSource) Identity(int) (string, bool, error)       { return "", false, nil }
+func (*rootMarkerProcessSource) Signal(int, string, syscall.Signal) error { return nil }
 
 func TestRunIdentityHistoryRetainsDetachedDescendantOwnership(t *testing.T) {
 	source := &detachedHistorySource{alive: true}
@@ -1361,7 +1361,7 @@ func (source *markerInventoryProcessSource) Identity(pid int) (string, bool, err
 	return "", false, nil
 }
 
-func (source *markerInventoryProcessSource) Signal(pid int, signal syscall.Signal) error {
+func (source *markerInventoryProcessSource) Signal(pid int, _ string, signal syscall.Signal) error {
 	if pid != 102 {
 		return fmt.Errorf("unexpected signal target %d", pid)
 	}
@@ -1397,7 +1397,7 @@ func (source *detachedHistorySource) Identity(pid int) (string, bool, error) {
 	return "", false, nil
 }
 
-func (source *detachedHistorySource) Signal(pid int, signal syscall.Signal) error {
+func (source *detachedHistorySource) Signal(pid int, _ string, signal syscall.Signal) error {
 	if pid != 102 {
 		return fmt.Errorf("unexpected signal target %d", pid)
 	}
@@ -1408,15 +1408,15 @@ func (source *detachedHistorySource) Signal(pid int, signal syscall.Signal) erro
 
 type failingProcessSource struct{ err error }
 
-func (s failingProcessSource) Snapshot(string) ([]Process, error) { return nil, s.err }
-func (failingProcessSource) Identity(int) (string, bool, error)   { return "", false, nil }
-func (failingProcessSource) Signal(int, syscall.Signal) error     { return nil }
+func (s failingProcessSource) Snapshot(string) ([]Process, error)     { return nil, s.err }
+func (failingProcessSource) Identity(int) (string, bool, error)       { return "", false, nil }
+func (failingProcessSource) Signal(int, string, syscall.Signal) error { return nil }
 
 type emptyProcessSource struct{}
 
-func (emptyProcessSource) Snapshot(string) ([]Process, error) { return nil, nil }
-func (emptyProcessSource) Identity(int) (string, bool, error) { return "", false, nil }
-func (emptyProcessSource) Signal(int, syscall.Signal) error   { return nil }
+func (emptyProcessSource) Snapshot(string) ([]Process, error)       { return nil, nil }
+func (emptyProcessSource) Identity(int) (string, bool, error)       { return "", false, nil }
+func (emptyProcessSource) Signal(int, string, syscall.Signal) error { return nil }
 
 func TestLostRunWithoutRecordedTreeIsNotClean(t *testing.T) {
 	cleanup := cleanupLostRun(record{PID: 777, RunID: "lost-run"}, emptyProcessSource{})
@@ -1456,7 +1456,7 @@ func (s failedHistoryIdentitySource) Snapshot(string) ([]Process, error) { retur
 func (s failedHistoryIdentitySource) Identity(int) (string, bool, error) {
 	return "", false, s.err
 }
-func (failedHistoryIdentitySource) Signal(int, syscall.Signal) error { return nil }
+func (failedHistoryIdentitySource) Signal(int, string, syscall.Signal) error { return nil }
 
 func TestProcessTreeRetainsHistoryAsUnverifiedWhenIdentityReadFails(t *testing.T) {
 	identityErr := errors.New("identity denied")
@@ -1498,7 +1498,7 @@ func (s *deniedCandidateSource) Identity(pid int) (string, bool, error) {
 	return "", false, nil
 }
 
-func (*deniedCandidateSource) Signal(int, syscall.Signal) error { return nil }
+func (*deniedCandidateSource) Signal(int, string, syscall.Signal) error { return nil }
 
 func newDeniedCandidateSource(deniedPID int) *deniedCandidateSource {
 	started := time.Now().Add(-time.Second)
@@ -1642,7 +1642,7 @@ func (*deniedEnvironmentSource) Identity(int) (string, bool, error) {
 	return "child-start", true, nil
 }
 
-func (s *deniedEnvironmentSource) Signal(pid int, _ syscall.Signal) error {
+func (s *deniedEnvironmentSource) Signal(pid int, _ string, _ syscall.Signal) error {
 	s.signaled = append(s.signaled, pid)
 	return nil
 }
@@ -1683,7 +1683,7 @@ func (s *lateDescendantSource) Identity(pid int) (string, bool, error) {
 	return "", false, nil
 }
 
-func (s *lateDescendantSource) Signal(pid int, signal syscall.Signal) error {
+func (s *lateDescendantSource) Signal(pid int, _ string, signal syscall.Signal) error {
 	if pid != 779 {
 		return errors.New("cleanup signaled an unexpected process")
 	}

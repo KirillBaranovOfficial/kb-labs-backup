@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/kb-labs/clikit/proc/internal/processsignal"
 )
 
 func startManaged(command *exec.Cmd, mode Mode, observer ProcessObserver) (*Started, error) {
@@ -259,22 +261,14 @@ func terminateTree(pid int) error {
 	if pid <= 0 {
 		return fmt.Errorf("terminate child tree: invalid pid %d", pid)
 	}
-	err := syscall.Kill(-pid, syscall.SIGTERM)
-	if errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	return err
+	return processsignal.SignalProcessGroup(pid, syscall.SIGTERM)
 }
 
 func killTree(pid int) error {
 	if pid <= 0 {
 		return fmt.Errorf("kill child tree: invalid pid %d", pid)
 	}
-	err := syscall.Kill(-pid, syscall.SIGKILL)
-	if errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	return err
+	return processsignal.SignalProcessGroup(pid, syscall.SIGKILL)
 }
 
 func terminateGroup(command *exec.Cmd) error {

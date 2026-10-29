@@ -440,7 +440,7 @@ func signalRunTreeWithSource(rec record, signal syscall.Signal, source processSo
 		}
 		return tree[i].PID < tree[j].PID
 	})
-	var signaled []int
+	var signaled []Process
 	for _, process := range tree {
 		if process.Unverified {
 			continue
@@ -452,10 +452,10 @@ func signalRunTreeWithSource(rec record, signal syscall.Signal, source processSo
 		if !live || identity != process.Identity {
 			continue
 		}
-		if err := source.Signal(process.PID, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
+		if err := source.Signal(process.PID, process.Identity, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
 			return errors.Join(fmt.Errorf("signal process %d with %s: %w", process.PID, signal, err), resumeSignaled(source, signaled))
 		}
-		signaled = append(signaled, process.PID)
+		signaled = append(signaled, process)
 	}
 	if len(signaled) == 0 {
 		return fmt.Errorf("run %s has no verified process identities to signal with %s", rec.Tag, signal)
@@ -463,10 +463,10 @@ func signalRunTreeWithSource(rec record, signal syscall.Signal, source processSo
 	return nil
 }
 
-func resumeSignaled(source processSource, pids []int) error {
+func resumeSignaled(source processSource, processes []Process) error {
 	var failures []error
-	for _, pid := range pids {
-		if err := source.Signal(pid, syscall.SIGCONT); err != nil && !errors.Is(err, syscall.ESRCH) {
+	for _, process := range processes {
+		if err := source.Signal(process.PID, process.Identity, syscall.SIGCONT); err != nil && !errors.Is(err, syscall.ESRCH) {
 			failures = append(failures, err)
 		}
 	}

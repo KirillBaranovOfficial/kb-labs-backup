@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kb-labs/clikit/proc/internal/processsignal"
 	"golang.org/x/sys/unix"
 )
 
@@ -109,8 +110,8 @@ func (osProcessSource) ParentPID(pid int) (int, error) {
 	}
 	return int(info.Eproc.Ppid), nil
 }
-func (osProcessSource) Signal(pid int, signal syscall.Signal) error {
-	return syscall.Kill(pid, signal)
+func (osProcessSource) Signal(pid int, identity string, signal syscall.Signal) error {
+	return processsignal.SignalPID(pid, identity, signal, readProcessIdentity)
 }
 
 func readProcessIdentity(pid int) (string, bool, error) {

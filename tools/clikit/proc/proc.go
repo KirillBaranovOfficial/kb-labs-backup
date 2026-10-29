@@ -391,7 +391,7 @@ type ProcessTreeInventoryEvidence struct {
 type processSource interface {
 	Snapshot(runID string) ([]Process, error)
 	Identity(pid int) (string, bool, error)
-	Signal(pid int, signal syscall.Signal) error
+	Signal(pid int, identity string, signal syscall.Signal) error
 }
 
 type processMetricsSource interface {
@@ -1635,7 +1635,7 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 					reason = "accepted:recorded-pid-start-identity"
 				}
 				fmt.Fprintf(os.Stderr, "proc: teardown signal pid=%d identity=%q signal=SIGTERM attribution=%s\n", process.PID, process.Identity, reason)
-				if signalErr := source.Signal(process.PID, syscall.SIGTERM); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+				if signalErr := source.Signal(process.PID, process.Identity, syscall.SIGTERM); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
 					recordFailure(fmt.Errorf("send SIGTERM to process %d: %w", process.PID, signalErr))
 				}
 				termSent[key] = clock.Now()
@@ -1645,7 +1645,7 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 					reason = "accepted:recorded-pid-start-identity"
 				}
 				fmt.Fprintf(os.Stderr, "proc: teardown signal pid=%d identity=%q signal=SIGKILL attribution=%s\n", process.PID, process.Identity, reason)
-				if signalErr := source.Signal(process.PID, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+				if signalErr := source.Signal(process.PID, process.Identity, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
 					recordFailure(fmt.Errorf("send SIGKILL to process %d: %w", process.PID, signalErr))
 				}
 				killSent[key] = true
@@ -1681,7 +1681,7 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "proc: teardown signal pid=%d identity=%q signal=SIGKILL attribution=accepted:recorded-pid-start-identity\n", process.PID, process.Identity)
-		if signalErr := source.Signal(process.PID, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+		if signalErr := source.Signal(process.PID, process.Identity, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
 			recordFailure(fmt.Errorf("send final SIGKILL to process %d: %w", process.PID, signalErr))
 		}
 		killSent[key] = true

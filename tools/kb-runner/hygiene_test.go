@@ -143,7 +143,7 @@ func TestWorktreeSweepSkipsSharedLeaseHolder(t *testing.T) {
 	}()
 	report := hygieneReport{Actions: []hygieneAction{}, eventRoot: root}
 	candidate := ownedWorktree{gitWorktree: gitWorktree{Path: worktree, Branch: "agent/worker"}, ResolvedPath: worktree}
-	if err := sweepWorktreeCandidate(hygieneOptions{Root: root, Integration: integration}, root, integration, candidate, nil, nil, &report); err != nil {
+	if err := sweepWorktreeCandidate(hygieneOptions{Root: root, Integration: integration}, root, integration, candidate, nil, nil, livenessSnapshot{}, &report); err != nil {
 		t.Fatal(err)
 	}
 	if !hasHygieneActionWithCause(report, "worktree", "skipped", "owned worktree has an active runner lease") {
@@ -413,6 +413,44 @@ func TestHygieneDirtyRetiredWorktreeArchivesBeforeRemoval(t *testing.T) {
 	for _, name := range []string{"tracked.diff", "untracked.list", "untracked.tgz", "head"} {
 		if _, err := os.Stat(filepath.Join(archive, name)); err != nil {
 			t.Fatalf("archive missing %s: %v", name, err)
+		}
+	}
+	assertTarReadable(t, filepath.Join(archive, "untracked.tgz"))
+}
+
+// case: S-276.6
+func TestUnreadableRelativeArgvStillArchivesDirtyRetiredWorktree(t *testing.T) {
+	root, integration := hygieneGitFixture(t)
+	worktree := filepath.Join(root, "x-unreadable-cwd")
+	gitTest(t, integration, "worktree", "add", "-b", "agent/x-unreadable-cwd", worktree, "HEAD")
+	if err := os.WriteFile(filepath.Join(worktree, "tracked.txt"), []byte("modified\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "loose.txt"), []byte("untracked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(root, "logs", "runner")
+	store := newSchedulerStore(state)
+	stream := SchedulerStream{Stream: "x-unreadable-cwd", State: SchedulerDone, ChangedAt: time.Now().Add(-72 * time.Hour)}
+	if err := store.writeJSON(store.streamPath(stream.Stream), stream); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := processSnapshotFromEntries([]proc.ProcessInventoryEntry{{
+		PID: 45, UID: uint32(os.Getuid()), Identity: "process-start", Command: "go test",
+		Argv: []string{"go", "test", "./..."}, CwdError: "permission denied",
+	}}, uint32(os.Getuid()))
+	report := hygieneReport{Actions: []hygieneAction{}, eventRoot: root}
+	candidate := ownedWorktree{gitWorktree: gitWorktree{Path: worktree, Branch: "agent/x-unreadable-cwd"}, ResolvedPath: worktree}
+	if err := sweepWorktreeCandidate(hygieneOptions{Root: root, State: state, Integration: integration, Now: time.Now()}, root, integration, candidate, map[string]SchedulerStream{stream.Stream: stream}, nil, snapshot, &report); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(worktree); !os.IsNotExist(err) {
+		t.Fatalf("dirty retired worktree with unreadable relative-argv process still exists: %v; actions=%+v", err, report.Actions)
+	}
+	archive := filepath.Join(root, "reports", "abandoned", stream.Stream)
+	for _, name := range []string{"tracked.diff", "untracked.list", "untracked.tgz", "head"} {
+		if _, err := os.Stat(filepath.Join(archive, name)); err != nil {
+			t.Fatalf("unreadable-process path archive missing %s: %v", name, err)
 		}
 	}
 	assertTarReadable(t, filepath.Join(archive, "untracked.tgz"))
