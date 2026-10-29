@@ -18,6 +18,67 @@ function githubJobName(job) {
   return `${independent ? 'Independent' : 'Build-dependent'} test ${job.shard ?? job.stage}`;
 }
 
+function failureAnnotations(evidence) {
+  return (evidence?.annotations ?? [])
+    .filter((annotation) => annotation.annotation_level === 'failure')
+    .map((annotation) => annotation.message ?? JSON.stringify(annotation));
+}
+
+function failFastMatrix(shard) {
+  if (shard.packages) return `package:${shard.stage}`;
+  if (profile.independentTestStages.stream.includes(shard.stage)) return 'independent';
+  if (profile.buildDependentTestStages.stream.includes(shard.stage)) return 'build-dependent';
+  return undefined;
+}
+
+function failFastReason(shard, matrix, resultsByName, evidenceByName, verificationProfile) {
+  if (verificationProfile !== 'stream' || !shard.packages || evidenceByName.get(githubJobName(shard))?.conclusion !== 'cancelled') return undefined;
+  const group = failFastMatrix(shard);
+  if (!group) return undefined;
+  const failedPeer = matrix.include.some((peer) => {
+    if (peer === shard || failFastMatrix(peer) !== group) return false;
+    const peerName = peer.packages ? `${peer.stage}:shard-${peer.shard}` : peer.stage;
+    const peerArtifact = resultsByName.get(peerName);
+    const peerConclusion = evidenceByName.get(githubJobName(peer))?.conclusion;
+    return peerArtifact?.status === 'fail' || peerConclusion === 'failure';
+  });
+  return failedPeer ? 'cancelled by fail-fast after a peer in the same test matrix failed' : undefined;
+}
+
+function plainTestOutput(value) {
+  return typeof value === 'string' ? value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '') : '';
+}
+
+function taskTestFailureLines(task) {
+  const output = plainTestOutput(task.structuredResult?.Stdout ?? task.stdout ?? task.Stdout);
+  return output.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(?:FAIL\s|×\s|--- FAIL:|✖\s)/.test(line));
+}
+
+function isDevkitStage(result) {
+  return result.name === profile.buildStage || result.name.startsWith(`${profile.packageTestStage}:shard-`);
+}
+
+function devkitFailureEvidence(result) {
+  if (!isDevkitStage(result) || result.status === 'pass') return result;
+  const taskFailures = Array.isArray(result.taskFailures) ? result.taskFailures : [];
+  let failures;
+  if (taskFailures.length) {
+    failures = taskFailures.flatMap((task) => {
+      const structured = task.structuredResult ?? task;
+      const identity = [task.package ?? structured.Package ?? task.Package, task.task ?? structured.Task ?? task.Task].filter(Boolean).join(':') || 'kb-devkit task';
+      const testLines = taskTestFailureLines(task);
+      if (testLines.length) return testLines.map((line) => `${identity} — ${line}`);
+      const detail = task.errorLine ?? task.error ?? structured.Error ?? structured.Stderr ?? `task exited with code ${String(task.exitCode ?? structured.ExitCode ?? task.ExitCode)}`;
+      return [`${identity} — ${detail}`];
+    });
+    failures = [...new Set([...(result.failures ?? []).filter((line) => /^(?:FAIL\s|×\s|--- FAIL:|✖\s)/.test(plainTestOutput(line).trim())), ...failures])];
+  } else {
+    const tail = plainTestOutput(result.logTail ?? '').trim().split(/\r?\n/).filter(Boolean).at(-1);
+    failures = [tail ? `log-tail fallback: ${tail}` : 'log-tail fallback: no task output was recorded'];
+  }
+  return { ...result, failures };
+}
+
 function reconcileJobResult(result, jobName, declaredConclusion, evidence, githubJobsError) {
   const githubConclusion = declaredConclusion && declaredConclusion !== 'unknown'
     ? declaredConclusion
@@ -42,7 +103,7 @@ function reconcileJobResult(result, jobName, declaredConclusion, evidence, githu
 
   const steps = (evidence?.steps ?? []).map(({ name, conclusion, status }) => ({ name, ...(conclusion === undefined ? {} : { conclusion }), ...(status === undefined ? {} : { status }) }));
   const failedSteps = steps.filter((step) => step.conclusion === 'failure').map((step) => `GitHub step ${step.name} concluded failure.`);
-  const annotations = (evidence?.annotations ?? []).map((annotation) => annotation.message ?? JSON.stringify(annotation));
+  const annotations = failureAnnotations(evidence);
   const causes = [
     `GitHub job ${jobName} concluded ${actualConclusion}.`,
     ...failedSteps,
@@ -74,7 +135,7 @@ function missingShard(shard, selectedPackageCount, githubJobs, githubJobsError, 
     return { name, status: 'fail', selectedPackageCount: count, failures: [`GitHub job evidence is missing for planned job ${githubJobName(shard)}.`], logTail: '' };
   }
   const steps = (evidence.steps ?? []).map(({ name: stepName, conclusion, status }) => ({ name: stepName, ...(conclusion === undefined ? {} : { conclusion }), ...(status === undefined ? {} : { status }) }));
-  const annotations = (evidence.annotations ?? []).map((annotation) => annotation.message ?? JSON.stringify(annotation));
+  const annotations = failureAnnotations(evidence);
   const conclusion = evidence.conclusion ?? 'unknown';
   if (conclusion === 'skipped') {
     return { name, status: 'skipped', selectedPackageCount: count, failures: ['GitHub skipped this planned job.'], logTail: 'GitHub skipped this planned job.', githubConclusion: conclusion, steps };
@@ -156,8 +217,29 @@ export function aggregateVerdict({
     const name = shard.packages ? `${shard.stage}:shard-${shard.shard}` : shard.stage;
     const jobName = githubJobName(shard);
     const result = byName.get(name);
+    const cancellationReason = failFastReason(shard, matrix, byName, evidenceByName, verificationProfile);
+    if (cancellationReason) {
+      const evidence = evidenceByName.get(jobName);
+      const count = shard.packages ? shard.packages.length : selectedPackageCount;
+      jobs.push(result
+        ? {
+          ...devkitFailureEvidence(result),
+          status: 'skipped',
+          failures: [cancellationReason],
+          logTail: [result.logTail, cancellationReason].filter(Boolean).join('\n'),
+          githubConclusion: 'cancelled',
+          testsBeforeCancel: result.status,
+          ...(result.failures?.length ? { artifactFailures: result.failures } : {}),
+        }
+        : {
+          name, status: 'skipped', selectedPackageCount: count, failures: [cancellationReason],
+          logTail: cancellationReason, githubConclusion: 'cancelled',
+          steps: (evidence?.steps ?? []).map(({ name: stepName, conclusion, status }) => ({ name: stepName, ...(conclusion === undefined ? {} : { conclusion }), ...(status === undefined ? {} : { status }) })),
+        });
+      continue;
+    }
     jobs.push(result
-      ? reconcileJobResult(result, jobName, undefined, evidenceByName.get(jobName), githubJobsError)
+      ? reconcileJobResult(devkitFailureEvidence(result), jobName, undefined, evidenceByName.get(jobName), githubJobsError)
       : missingShard(shard, selectedPackageCount, githubJobs, githubJobsError, jobs.slice(2), verificationProfile));
   }
   for (const job of jobs) {
