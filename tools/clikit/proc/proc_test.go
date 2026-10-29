@@ -625,17 +625,22 @@ func assertExactlyOneScratchOutcome(t *testing.T, state string, event proc.Event
 // case: S-237.1
 func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	runner := buildRunner(t)
 	descendantPIDFile := filepath.Join(state, "descendant.pid")
 	sleepPIDFile := filepath.Join(state, "sleep.pid")
 	releaseIntermediate := filepath.Join(state, "release-intermediate")
-	cmd := exec.Command(runner, "run", "--state", state, "--tag", "sigkill", "--stall", "1h", "--stdout", filepath.Join(state, "out"), "--stderr", filepath.Join(state, "err"), "--", "/bin/sh", "-c", `"$1" double-fork-held 4 "$2" "$4" & printf 'descendant-ready %s\n' "$!"; /bin/sleep 30 & echo $! > "$3"; wait`, "sh", helper, descendantPIDFile, sleepPIDFile, releaseIntermediate)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "linux" {
+		helper := buildHelper(t)
+		cmd = exec.Command(runner, "run", "--state", state, "--tag", "sigkill", "--stall", "1h", "--stdout", filepath.Join(state, "out"), "--stderr", filepath.Join(state, "err"), "--", "/bin/sh", "-c", `"$1" double-fork-held 4 "$2" "$4" & printf 'descendant-ready %s\n' "$!"; /bin/sleep 30 & echo $! > "$3"; wait`, "sh", helper, descendantPIDFile, sleepPIDFile, releaseIntermediate)
+	} else {
+		cmd = exec.Command(runner, "run", "--state", state, "--tag", "sigkill", "--stall", "1h", "--stdout", filepath.Join(state, "out"), "--stderr", filepath.Join(state, "err"), "--", "/bin/sh", "-c", `echo "descendant-ready $$"; echo $$ > "$1"; echo $$ > "$2"; exec /bin/sleep 30`, "sh", descendantPIDFile, sleepPIDFile)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var stderr bytes.Buffer
+	var stderr lockedTestBuffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -692,6 +697,16 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 		t.Logf("test-owned process identities remain after bounded cleanup: %v", started)
+		// Keep this integration fixture from leaving test processes behind when
+		// the local sandbox denies the product's complete process snapshot.
+		for pid, identity := range started {
+			current, alive := identityForTest(t, pid)
+			if alive && current == identity {
+				if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+					t.Logf("force-stop test-owned process %d after failed cleanup: %v", pid, err)
+				}
+			}
+		}
 	})
 	scanner := bufio.NewScanner(stdout)
 	line := make(chan string, 1)
@@ -719,24 +734,11 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !waitUntil(2*time.Second, func() bool {
-		current := proc.List(state)
-		if current.Error != nil || len(current.Runs) != 1 {
-			return false
-		}
-		for _, process := range current.Runs[0].Tree {
-			if process.PID == descendant {
-				started[process.PID] = process.Identity
-				return true
-			}
-		}
-		return false
-	}) {
-		t.Fatalf("setsid descendant absent from live tree: %+v", listing.Runs[0].Tree)
+	descendantIdentity, descendantAlive, descendantIdentityErr := proc.ProcessIdentity(descendant)
+	if descendantIdentityErr != nil || !descendantAlive || descendantIdentity == "" {
+		t.Fatalf("setsid descendant is not identifiable before supervisor kill: pid=%d identity=%q alive=%t err=%v; %s", descendant, descendantIdentity, descendantAlive, descendantIdentityErr, processTestDiagnostic(t, descendant, state, stderr.String()))
 	}
-	if descendant == 0 {
-		t.Fatalf("setsid descendant absent from live tree: %+v", listing.Runs[0].Tree)
-	}
+	started[descendant] = descendantIdentity
 	sleepPID, err := waitPIDFile(sleepPIDFile, 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -1716,7 +1718,7 @@ func identityForTest(t testing.TB, pid int) (string, bool) {
 }
 
 type lockedTestBuffer struct {
-	mu sync.Mutex
+	mu     sync.Mutex
 	buffer bytes.Buffer
 }
 
