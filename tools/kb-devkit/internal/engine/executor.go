@@ -61,7 +61,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	start := time.Now()
 
 	// 1. Compute input hash.
-	inputHash, err := hashTaskInputs(pkg, def, depDirs, e.runtimeFingerprint)
+	inputHash, err := hashTaskInputs(pkg, e.wsRoot, def, depDirs, e.runtimeFingerprint)
 	if err != nil {
 		failure := fmt.Sprintf("hash inputs: %v", err)
 		logPath, logErr := e.writeTaskLog(pkg.Name, def.Name, "", "", failure)
@@ -222,14 +222,14 @@ func taskFingerprint(def TaskDef, runtimeFingerprint string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func hashTaskInputs(pkg workspace.Package, def TaskDef, depDirs []string, runtimeFingerprint string) (string, error) {
+func hashTaskInputs(pkg workspace.Package, workspaceRoot string, def TaskDef, depDirs []string, runtimeFingerprint string) (string, error) {
 	inputs := append([]string(nil), def.Inputs...)
 	if !containsInput(inputs, "package.json") {
 		// Package metadata controls exports, scripts and dependency resolution,
 		// all of which can change dist without touching src/.
 		inputs = append(inputs, "package.json")
 	}
-	return cache.HashInputsWithFingerprint(pkg.Dir, depDirs, inputs, taskFingerprint(def, runtimeFingerprint))
+	return cache.HashInputsWithToolInputs(pkg.Dir, workspaceRoot, depDirs, inputs, taskFingerprint(def, runtimeFingerprint), pkg.Language, def.Name)
 }
 
 func containsInput(inputs []string, wanted string) bool {

@@ -837,7 +837,7 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 					depDirs = append(depDirs, dep.Dir)
 				}
 			}
-			inputHash, err := hashTaskInputs(p, *def, depDirs, runtimeFingerprint)
+			inputHash, err := hashTaskInputs(p, ws.Root, *def, depDirs, runtimeFingerprint)
 			if err != nil {
 				// Schedule the package so Executor reports the input read failure
 				// through the task's catalogued error and recovery hint.

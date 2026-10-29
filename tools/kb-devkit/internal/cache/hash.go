@@ -3,15 +3,22 @@ package cache
 
 import (
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
+
+//go:embed tool-inputs.mjs
+var toolInputReporter []byte
 
 // HashInputs computes a deterministic SHA256 hash over all files matching
 // the given glob patterns.
@@ -36,6 +43,26 @@ func HashInputs(pkgDir string, depDirs []string, patterns []string) (string, err
 // package (the command, cache format, and toolchain). Keeping it in the same
 // digest prevents a remote CAS entry from surviving a semantic task change.
 func HashInputsWithFingerprint(pkgDir string, depDirs []string, patterns []string, fingerprint string) (string, error) {
+	return hashInputs(pkgDir, depDirs, patterns, fingerprint, toolInputContext{})
+}
+
+type toolInputContext struct {
+	WorkspaceRoot string
+	Language      string
+	TaskName      string
+}
+
+// HashInputsWithToolInputs extends the task digest with files resolved by the
+// task's compiler or test runner, using the same content hash as declared files.
+func HashInputsWithToolInputs(pkgDir, workspaceRoot string, depDirs []string, patterns []string, fingerprint, language, taskName string) (string, error) {
+	return hashInputs(pkgDir, depDirs, patterns, fingerprint, toolInputContext{
+		WorkspaceRoot: workspaceRoot,
+		Language:      language,
+		TaskName:      taskName,
+	})
+}
+
+func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint string, toolContext toolInputContext) (string, error) {
 	type entry struct {
 		key  string // sort key written into hash (unique across local + dep files)
 		path string // absolute path for reading
@@ -87,14 +114,13 @@ func HashInputsWithFingerprint(pkgDir string, depDirs []string, patterns []strin
 		}
 	}
 
-	// Go builds consume the selected source and embed files of every imported
-	// package, including modules replaced with local workspace paths. Ask the Go
-	// tool for that exact input set instead of maintaining another module list.
-	goInputs, err := goBuildInputFiles(pkgDir)
+	// Tool reporters use the compiler and test runner's resolved input data.
+	// Their results enter the same digest as declared files and dependency surfaces.
+	toolInputs, err := reportToolInputs(pkgDir, patterns, toolContext)
 	if err != nil {
 		return "", err
 	}
-	for _, absPath := range goInputs {
+	for _, absPath := range toolInputs {
 		relKey, err := filepath.Rel(pkgDir, absPath)
 		if err != nil {
 			relKey = absPath
@@ -158,6 +184,161 @@ func HashInputsWithFingerprint(pkgDir string, depDirs []string, patterns []strin
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+type toolInputReport struct {
+	Tool          string   `json:"tool"`
+	WorkspaceRoot string   `json:"workspaceRoot"`
+	PackageRoot   string   `json:"packageRoot"`
+	ConfigFiles   []string `json:"configFiles,omitempty"`
+}
+
+type cachedToolReportEntry struct {
+	files     []string
+	signature string
+}
+
+var toolReportCache = struct {
+	sync.Mutex
+	reports map[string]cachedToolReportEntry
+}{reports: make(map[string]cachedToolReportEntry)}
+
+func reportToolInputs(pkgDir string, patterns []string, context toolInputContext) ([]string, error) {
+	var inputs []string
+	goInputs, err := goBuildInputFiles(pkgDir)
+	if err != nil {
+		return nil, err
+	}
+	inputs = append(inputs, goInputs...)
+	if context.Language != "typescript" {
+		return inputs, nil
+	}
+
+	for _, pattern := range patterns {
+		if filepath.Ext(pattern) != ".json" || !strings.ContainsAny(pattern, "*?[") {
+			continue
+		}
+		roots, err := expandGlobs(pkgDir, []string{pattern}, true)
+		if err != nil {
+			return nil, err
+		}
+		for _, root := range roots {
+			root = filepath.Join(pkgDir, root)
+			files, err := cachedToolReport("typescript\x00"+root, func() ([]string, error) {
+				return runToolInputReporter(toolInputReport{
+					Tool:          "typescript",
+					WorkspaceRoot: context.WorkspaceRoot,
+					PackageRoot:   pkgDir,
+					ConfigFiles:   []string{root},
+				}, root)
+			})
+			if err != nil {
+				return nil, err
+			}
+			inputs = append(inputs, files...)
+		}
+	}
+
+	if context.TaskName == "test" || context.TaskName == "test:coverage" {
+		files, err := cachedToolReport("vitest\x00"+pkgDir, func() ([]string, error) {
+			return runToolInputReporter(toolInputReport{
+				Tool:          "vitest",
+				WorkspaceRoot: context.WorkspaceRoot,
+				PackageRoot:   pkgDir,
+			}, pkgDir)
+		})
+		if err != nil {
+			return nil, err
+		}
+		inputs = append(inputs, files...)
+	}
+	return inputs, nil
+}
+
+func cachedToolReport(key string, resolve func() ([]string, error)) ([]string, error) {
+	toolReportCache.Lock()
+	defer toolReportCache.Unlock()
+	if cached, ok := toolReportCache.reports[key]; ok {
+		signature, err := fileSetSignature(cached.files)
+		if err == nil && signature == cached.signature {
+			return append([]string(nil), cached.files...), nil
+		}
+	}
+	files, err := resolve()
+	if err != nil {
+		return nil, err
+	}
+	files = uniqueSorted(files)
+	signature, err := fileSetSignature(files)
+	if err != nil {
+		return nil, err
+	}
+	toolReportCache.reports[key] = cachedToolReportEntry{files: files, signature: signature}
+	return append([]string(nil), files...), nil
+}
+
+func fileSetSignature(files []string) (string, error) {
+	files = uniqueSorted(files)
+	h := sha256.New()
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			return "", err
+		}
+		_, _ = io.WriteString(h, file+"\x00")
+		_, _ = h.Write(content)
+		_, _ = io.WriteString(h, "\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func runToolInputReporter(request toolInputReport, signatureRoot string) ([]string, error) {
+	requestBytes, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	command := exec.Command("node", "--input-type=module", "-e", string(toolInputReporter))
+	command.Dir = request.WorkspaceRoot
+	command.Stdin = strings.NewReader(string(requestBytes))
+	output, err := command.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("%s input report failed: %w: %s", request.Tool, err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, fmt.Errorf("%s input report failed: %w", request.Tool, err)
+	}
+	if request.Tool == "vitest" {
+		var files []string
+		if err := json.Unmarshal(output, &files); err != nil {
+			return nil, err
+		}
+		return files, nil
+	}
+	var result map[string][]string
+	if err := json.Unmarshal(output, &result); err != nil {
+		return nil, err
+	}
+	files, ok := result[signatureRoot]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return files, nil
+}
+
+func uniqueSorted(files []string) []string {
+	seen := make(map[string]struct{}, len(files))
+	result := make([]string, 0, len(files))
+	for _, file := range files {
+		file = filepath.Clean(file)
+		if _, ok := seen[file]; ok {
+			continue
+		}
+		seen[file] = struct{}{}
+		result = append(result, file)
+	}
+	sort.Strings(result)
+	return result
 }
 
 type packageManifest struct {
