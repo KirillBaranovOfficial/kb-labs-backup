@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kb-labs/clikit/proc"
 )
 
 type claudeResetMode uint8
@@ -137,6 +139,128 @@ func validPercent(value float64) bool {
 }
 
 func timePointer(value time.Time) *time.Time { return &value }
+
+type vendorLimitEvent struct {
+	Kind       string    `json:"kind"`
+	Vendor     string    `json:"vendor"`
+	ResetAt    time.Time `json:"resetAt"`
+	RecordedAt time.Time `json:"recordedAt"`
+	Message    string    `json:"message"`
+}
+
+type vendorLimitStateStore struct {
+	state string
+	now   func() time.Time
+}
+
+func newVendorLimitStateStore(state string, now func() time.Time) vendorLimitStateStore {
+	return vendorLimitStateStore{state: state, now: now}
+}
+
+func (s vendorLimitStateStore) scheduler() *schedulerStore { return newSchedulerStore(s.state) }
+
+func (s vendorLimitStateStore) eventsPath() string {
+	return filepath.Join(s.scheduler().dir, "events.jsonl")
+}
+
+func (s vendorLimitStateStore) withLock(action func() error) error {
+	return s.scheduler().withLock(action)
+}
+
+func (s vendorLimitStateStore) readLatestLocked(vendor string) (vendorLimitEvent, bool, error) {
+	file, err := os.Open(s.eventsPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return vendorLimitEvent{}, false, nil
+	}
+	if err != nil {
+		return vendorLimitEvent{}, false, fmt.Errorf("open vendor limit events: %w", err)
+	}
+	defer file.Close()
+	var latest vendorLimitEvent
+	found := false
+	readErr := proc.ReadJSONL(file, func(line []byte) error {
+		var event vendorLimitEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return fmt.Errorf("decode vendor limit event: %w", err)
+		}
+		if event.Kind != "vendor_limit.recorded" || event.Vendor != vendor {
+			return nil
+		}
+		if event.ResetAt.IsZero() || event.RecordedAt.IsZero() {
+			return errors.New("vendor limit event has no reset or recorded time")
+		}
+		if !found || event.ResetAt.After(latest.ResetAt) {
+			latest, found = event, true
+		}
+		return nil
+	})
+	if readErr != nil {
+		return vendorLimitEvent{}, false, fmt.Errorf("read vendor limit events: %w", readErr)
+	}
+	return latest, found, nil
+}
+
+func (s vendorLimitStateStore) Record(vendor string, resetAt time.Time, message string) (bool, error) {
+	if vendor == "" || resetAt.IsZero() || s.now == nil {
+		return false, errors.New("vendor limit record requires a vendor, reset time, and clock")
+	}
+	changed := false
+	err := s.withLock(func() error {
+		previous, found, err := s.readLatestLocked(vendor)
+		if err != nil {
+			return err
+		}
+		if found && !resetAt.After(previous.ResetAt) {
+			return nil
+		}
+		event := vendorLimitEvent{Kind: "vendor_limit.recorded", Vendor: vendor, ResetAt: resetAt.UTC(), RecordedAt: s.now().UTC(), Message: message}
+		if err := s.scheduler().appendEvent(event); err != nil {
+			return fmt.Errorf("persist vendor limit event: %w", err)
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
+func (s vendorLimitStateStore) Active(vendor string) (VendorLimit, bool, error) {
+	if vendor == "" || s.now == nil {
+		return VendorLimit{}, false, errors.New("active vendor limit lookup requires a vendor and clock")
+	}
+	var latest vendorLimitEvent
+	var found bool
+	err := s.withLock(func() error {
+		var err error
+		latest, found, err = s.readLatestLocked(vendor)
+		return err
+	})
+	if err != nil || !found || !s.now().Before(latest.ResetAt) {
+		return VendorLimit{}, false, err
+	}
+	reset := latest.ResetAt
+	return VendorLimit{
+		Vendor: vendor, Window: "usage", UsedPercent: 100, Blocked: true, ResetsAt: &reset,
+		Confidence: "vendor", Source: "failure-message", FetchedAt: latest.RecordedAt,
+	}, true, nil
+}
+
+func limitsWithRecordedVendorState(limits []VendorLimit, store vendorLimitStateStore, vendor string) ([]VendorLimit, error) {
+	merged := make([]VendorLimit, 0, len(limits)+1)
+	for _, limit := range limits {
+		if limit.Vendor == vendor && limit.Source == "failure-message" {
+			continue
+		}
+		merged = append(merged, limit)
+	}
+	recorded, active, err := store.Active(vendor)
+	if err != nil {
+		return nil, err
+	}
+	if active {
+		merged = append(merged, recorded)
+	}
+	return merged, nil
+}
 
 func parseClaudeReset(value string, mode claudeResetMode, now time.Time, location *time.Location) (time.Time, error) {
 	value = strings.TrimSpace(value)

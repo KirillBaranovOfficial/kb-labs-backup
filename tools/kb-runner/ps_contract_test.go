@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -151,11 +152,11 @@ func TestPSLeftoversJSONAttributesEveryLeftoverToItsRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		killOwnedProcess(childPID, childIdentity)
-		for _, child := range run.Tree {
-			killOwnedProcess(child.PID, child.Identity)
+		if run.RunID != "" {
+			if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGTERM); err != nil {
+				t.Logf("stop recorded run %s during cleanup: %v", run.RunID, err)
+			}
 		}
-		killOwnedProcess(run.PID, run.Identity)
 		_ = runCommand.Process.Kill()
 		_ = runCommand.Wait()
 	})
@@ -196,7 +197,9 @@ func TestPSLeftoversJSONAttributesEveryLeftoverToItsRun(t *testing.T) {
 	if err := os.WriteFile(ownedPath, []byte("replacement"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	killOwnedProcess(run.PID, run.Identity)
+	if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGKILL); err != nil {
+		t.Fatalf("signal recorded keeper: %v", err)
+	}
 	terminalDeadline := time.Now().Add(testdeadline.Budget(t))
 	runID := ""
 	for time.Now().Before(terminalDeadline) {

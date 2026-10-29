@@ -23,7 +23,7 @@ func WriteRunRecord(stateDir string, info RunInfo) error {
 		startedAt = *info.StartedAt
 	}
 	rec := record{
-		RunID: info.RunID, Tag: info.Tag, PID: info.PID,
+		RunID: info.RunID, Tag: info.Tag, PID: int(info.PID),
 		StartedAt: info.Identity, StartedAtTime: startedAt,
 		Command: append([]string(nil), info.Command...), StateDir: stateDir,
 		Status: info.Status, Error: info.Error, SlotGroup: info.SlotGroup,

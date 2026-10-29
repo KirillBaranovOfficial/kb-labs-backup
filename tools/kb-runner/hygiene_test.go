@@ -25,6 +25,45 @@ import (
 	"github.com/kb-labs/clikit/proc"
 )
 
+func TestHygieneKeepsActiveStreamTestCacheAndReapsTerminalStreamCache(t *testing.T) {
+	state := t.TempDir()
+	store := newJobStore(state)
+	job, err := store.Create(Job{ID: "test-cache-active", Stream: "stream-one", Vendor: "codex", State: JobRunning, Phase: PhaseRun})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := testChannelCachePath(state, job.Stream)
+	if cache == testChannelCachePath(state, "stream-two") {
+		t.Fatal("different streams share an outside-test Go build cache")
+	}
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "entry"), []byte("stream cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := hygieneReport{Actions: []hygieneAction{}, eventRoot: state}
+	if err := sweepTestChannelCaches(state, context.Background(), false, &report); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cache, "entry")); err != nil {
+		t.Fatalf("active stream cache was reaped: %v", err)
+	}
+	if err := store.Update(job.ID, func(job *Job) error { job.State = JobOK; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	report = hygieneReport{Actions: []hygieneAction{}, eventRoot: state}
+	if err := sweepTestChannelCaches(state, context.Background(), false, &report); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cache); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("terminal stream cache remains: %v", err)
+	}
+	if !hasHygieneAction(report, "test-channel-cache", "reaped") {
+		t.Fatalf("stream cache reap was not journaled in hygiene report: %+v", report.Actions)
+	}
+}
+
 // case: S-276.1
 func TestHygieneLivenessUsesSchedulerStateAndObservedWorktreePath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "worker")

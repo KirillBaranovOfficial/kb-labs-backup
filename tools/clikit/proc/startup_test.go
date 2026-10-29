@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,7 +38,7 @@ func TestStartWaitsForKeeperReadyHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start before ready handshake: %v", err)
 	}
-	cleanupRun(t, state, run)
+	cleanupRun(t, run)
 	if run.PID <= 0 || run.StartedAt == "" {
 		t.Fatalf("ready run identity = pid %d, started_at %q", run.PID, run.StartedAt)
 	}
@@ -169,7 +170,7 @@ func TestStartCancellationAtReadyPublicationReapsRunTree(t *testing.T) {
 		t.Fatalf("list state after ready-boundary cancellation: %s", listing.Error)
 	}
 	for _, run := range listing.Runs {
-		if run.PID == keeperPID && run.Status == proc.StatusRunning {
+		if int(run.PID) == keeperPID && run.Status == proc.StatusRunning {
 			t.Fatalf("cancelled keeper %d remains recorded as running", keeperPID)
 		}
 		for _, child := range run.Tree {
@@ -224,10 +225,19 @@ func (ctx *cancelAtReadyPublicationContext) cancelAndRelease() {
 }
 
 // case: S-237.138
-func TestKeeperCommandDescendantDoesNotInheritReadinessFD(t *testing.T) {
+func TestCommandFD3IsRunTokenNotReadinessFD(t *testing.T) {
 	state := t.TempDir()
 	marker := filepath.Join(state, "fd-result")
-	command := []string{"/bin/sh", "-c", "exec /bin/sh -c 'if [ -e /dev/fd/3 ]; then printf inherited > \"$1\"; else printf closed > \"$1\"; fi' sh \"$1\"", "sh", marker}
+	statArguments := "-f %i"
+	descriptor := "/dev/fd/3"
+	if runtime.GOOS == "linux" {
+		statArguments = "-L -c %i"
+		descriptor = "/proc/self/fd/3"
+	}
+	statCommand := "expected=$(stat " + statArguments + " \"$KB_RUNNER_SCRATCH/.run-token\") || exit 2\n" +
+		"actual=$(stat " + statArguments + " " + descriptor + ") || exit 3\n" +
+		"if [ \"$actual\" = \"$expected\" ]; then printf run-token > \"$1\"; else printf wrong-descriptor > \"$1\"; fi"
+	command := []string{"/bin/sh", "-c", statCommand, "sh", marker}
 	run, err := startTest(cancellableTestContext(t), proc.Config{
 		StateDir: state, Tag: "ready-fd-cloexec", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
@@ -249,8 +259,8 @@ func TestKeeperCommandDescendantDoesNotInheritReadinessFD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read descendant fd inspection result: %v", err)
 	}
-	if string(result) != "closed" {
-		t.Fatalf("command descendant readiness fd result = %q, want closed", result)
+	if string(result) != "run-token" {
+		t.Fatalf("command fd 3 identity = %q, want run-token and not readiness pipe", result)
 	}
 }
 
@@ -318,7 +328,7 @@ func TestStartReturnsKeeperExitWhileOutputOpenIsGated(t *testing.T) {
 		t.Fatalf("list state after early keeper exit: %s", listing.Error)
 	} else {
 		for _, run := range listing.Runs {
-			if run.PID == keeperPID && run.Status == proc.StatusRunning {
+			if int(run.PID) == keeperPID && run.Status == proc.StatusRunning {
 				t.Fatalf("early-exit keeper %d remains recorded as running", keeperPID)
 			}
 		}

@@ -63,6 +63,16 @@ type osProcessSource struct{}
 
 func (osProcessSource) Snapshot(runID string) ([]Process, error) { return allProcesses(runID) }
 func (osProcessSource) Identity(pid int) (string, bool, error)   { return readProcessIdentity(pid) }
+func (osProcessSource) ParentPID(pid int) (int, error) {
+	stat, alive, err := readProcessStat(pid)
+	if err != nil {
+		return 0, err
+	}
+	if !alive || stat.PID == 0 {
+		return 0, fmt.Errorf("process %d exited while reading its parent", pid)
+	}
+	return stat.PPID, nil
+}
 func (osProcessSource) Signal(pid int, signal syscall.Signal) error {
 	return syscall.Kill(pid, signal)
 }
@@ -183,7 +193,6 @@ func allProcesses(runID string) ([]Process, error) {
 		return nil, fmt.Errorf("enumerate /proc: %w", err)
 	}
 	var out []Process
-	uid := uint32(os.Getuid())
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil {
@@ -228,12 +237,12 @@ func allProcesses(runID string) ([]Process, error) {
 			}
 		}
 		out = append(out, Process{
-			PID: pid, PPID: parsed.PPID, processGroupID: parsed.ProcessGroupID, Command: command, StartedAt: started,
+			PID: pid, PPID: parsed.PPID, processGroupID: parsed.ProcessGroupID, sessionID: parsed.SessionID, Command: command, StartedAt: started,
 			ElapsedMS: elapsed, Identity: parsed.Identity, uid: statInfo.Uid,
 		})
 	}
-	candidates := processInspectionCandidates(out, syscall.Getpid(), uid)
-	return applyCachedProcessMarkers(out, candidates, runID, hostProcessMarkerCache, func(pid int) (string, bool, error) {
+	candidates := processInspectionCandidates(out, syscall.Getpid())
+	marked := applyCachedProcessMarkers(out, candidates, runID, hostProcessMarkerCache, func(pid int) (string, bool, error) {
 		env, envErr := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "environ"))
 		if processGone(envErr) {
 			return "", false, envErr
@@ -242,7 +251,37 @@ func allProcesses(runID string) ([]Process, error) {
 			return "", true, envErr
 		}
 		return processMarkerValue(env), false, nil
-	}), nil
+	})
+	return applyRunTokenDescriptors(marked, runID, processHasRunTokenDescriptor)
+}
+
+func processHasRunTokenDescriptor(pid int, token fileIdentity) (bool, error) {
+	fdDirectory := filepath.Join("/proc", strconv.Itoa(pid), "fd")
+	entries, err := os.ReadDir(fdDirectory)
+	if err != nil {
+		if processGone(err) {
+			return false, err
+		}
+		return false, fmt.Errorf("read %s: %w", fdDirectory, err)
+	}
+	for _, entry := range entries {
+		path := filepath.Join(fdDirectory, entry.Name())
+		info, err := os.Stat(path)
+		if err != nil {
+			if processGone(err) || errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return false, fmt.Errorf("stat %s: %w", path, err)
+		}
+		identity, err := resourceIdentity(path, info)
+		if err != nil {
+			return false, fmt.Errorf("identify %s: %w", path, err)
+		}
+		if identity == token {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (osProcessSource) Metrics(tree []Process) ([]Process, error) {

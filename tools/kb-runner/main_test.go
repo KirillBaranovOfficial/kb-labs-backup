@@ -3,12 +3,12 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,11 +26,17 @@ import (
 )
 
 var testIsolatedHome string
+var testRunnerHome string
 
 func TestMain(m *testing.M) {
 	// Every package test and every runner subprocess inherits an isolated home
 	// and explicit fake vendor executables. Provider discovery can never fall
 	// through to the lead's installed binaries or credentials.
+	testRunnerHome = os.Getenv("HOME")
+	if testRunnerHome == "" {
+		fmt.Fprintln(os.Stderr, "HOME is required to resolve the runner Go module cache")
+		os.Exit(2)
+	}
 	home, err := os.MkdirTemp("", "kb-runner-tests-home-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -92,6 +98,14 @@ func TestMain(m *testing.M) {
 		}
 	}
 	os.Exit(code)
+}
+
+func setTestRunnerHome(t *testing.T) {
+	t.Helper()
+	if testRunnerHome == "" {
+		t.Fatal("real runner HOME was not captured by TestMain")
+	}
+	t.Setenv("HOME", testRunnerHome)
 }
 
 func setTestEnv(key, value string) {
@@ -234,23 +248,19 @@ func TestPSJSONReportsCompletedRunContract(t *testing.T) {
 		t.Fatalf("open event stream: %v", err)
 	}
 	defer events.Close()
-	scanner := bufio.NewScanner(events)
 	exitEvents := 0
-	for scanner.Scan() {
-		var event proc.Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatalf("decode lifecycle event: %v: %s", err, scanner.Text())
-		}
+	readErr := proc.ReadEvents(events, func(event proc.Event) error {
 		if event.Type != proc.EventExit {
-			continue
+			return nil
 		}
 		exitEvents++
 		if event.Status != run.Status || event.ExitCode == nil || *event.ExitCode != *run.ExitCode {
-			t.Fatalf("exit event outcome = status %q, exit code %v; ps outcome = status %q, exit code %v", event.Status, event.ExitCode, run.Status, run.ExitCode)
+			return fmt.Errorf("exit event outcome = status %q, exit code %v; ps outcome = status %q, exit code %v", event.Status, event.ExitCode, run.Status, run.ExitCode)
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("read lifecycle events: %v", err)
+		return nil
+	})
+	if readErr != nil {
+		t.Fatalf("read lifecycle events: %v", readErr)
 	}
 	if exitEvents != 1 {
 		t.Fatalf("exit event count = %d, want 1", exitEvents)
@@ -933,11 +943,11 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		killOwnedProcess(childPID, childIdentity)
-		for _, child := range run.Tree {
-			killOwnedProcess(child.PID, child.Identity)
+		if run.RunID != "" {
+			if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGTERM); err != nil {
+				t.Logf("stop recorded run %s during cleanup: %v", run.RunID, err)
+			}
 		}
-		killOwnedProcess(run.PID, run.Identity)
 		_ = runCommand.Process.Kill()
 		_ = runCommand.Wait()
 	})
@@ -1000,7 +1010,9 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool,
 			t.Fatal(err)
 		}
 	}
-	killOwnedProcess(run.PID, run.Identity)
+	if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGKILL); err != nil {
+		t.Fatalf("signal recorded keeper: %v", err)
+	}
 	terminalDeadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(terminalDeadline) {
 		listing := proc.List(state)
@@ -1090,16 +1102,6 @@ func pidFromRecord(path string) int {
 		return 0
 	}
 	return pid
-}
-
-func killOwnedProcess(pid int, expectedIdentity string) {
-	if pid <= 0 || expectedIdentity == "" {
-		return
-	}
-	identity, alive, err := proc.ProcessIdentity(pid)
-	if err == nil && alive && identity == expectedIdentity {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
-	}
 }
 
 func buildRunnerBinary(t *testing.T) string {
@@ -1422,21 +1424,201 @@ func TestWaitLatestTagUsesNewestRunRecord(t *testing.T) {
 	}
 }
 
+// case: S-237.11
+func TestRunWaitsForItsRunIDWhenTagIsReused(t *testing.T) {
+	runner := buildRunnerBinary(t)
+	state := t.TempDir()
+	run := func(exitCode string) (int, string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, runner, "run", "--tag", "reused", "--state", state,
+			"--stall", "1h", "--stdout", filepath.Join(state, "child.out"), "--stderr", filepath.Join(state, "child.err"),
+			"--", "/bin/sh", "-c", "exit \"$1\"", "sh", exitCode)
+		output, err := command.CombinedOutput()
+		if err == nil {
+			return 0, string(output)
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode(), string(output)
+		}
+		t.Fatalf("run with child status %s failed unexpectedly: %v\n%s", exitCode, err, output)
+		return 0, ""
+	}
+	if code, output := run("0"); code != 0 {
+		t.Fatalf("first run returned %d, want 0\n%s", code, output)
+	}
+	if code, output := run("7"); code != 7 {
+		t.Fatalf("second run returned %d, want its child's status 7\n%s", code, output)
+	}
+}
+
+// case: S-237.11
+func TestRunCanonicalizesRelativeStateBeforeKeeperAndChildStart(t *testing.T) {
+	runner := buildRunnerBinary(t)
+	callerDir := t.TempDir()
+	childDir := t.TempDir()
+	stateArgument := filepath.Join("logs", "runner")
+	canonicalState, err := filepath.Abs(filepath.Join(callerDir, stateArgument))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(runner, "run", "--tag", "relative-state", "--state", stateArgument,
+		"--stall", "1h", "--stdout", filepath.Join(callerDir, "child.out"), "--stderr", filepath.Join(callerDir, "child.err"),
+		"--", "/bin/sh", "-c", "cd \"$1\"; exit 0", "sh", childDir)
+	command.Dir = callerDir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run with relative state and changed child cwd: %v\n%s", err, output)
+	}
+	records, err := filepath.Glob(filepath.Join(canonicalState, "runs", "finished", "*.json"))
+	if err != nil || len(records) != 1 {
+		t.Fatalf("finished records at canonical state path = %v, err=%v; want one", records, err)
+	}
+	data, err := os.ReadFile(records[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		StateDir string `json:"state_dir"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.StateDir != canonicalState {
+		t.Fatalf("persisted state_dir = %q, want canonical absolute path %q", record.StateDir, canonicalState)
+	}
+	if _, err := os.Stat(filepath.Join(childDir, stateArgument, "runs")); !os.IsNotExist(err) {
+		t.Fatalf("child cwd contains a re-resolved state directory: stat err=%v", err)
+	}
+}
+
+// case: S-237.137
+func TestMixedVersionRunStateExchange(t *testing.T) {
+	fixture := filepath.Join("testdata", "mixed-version", "base-era")
+	copyFixture := func(source, destination string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := t.TempDir()
+	copyFixture(filepath.Join(fixture, "state.lock"), filepath.Join(state, "state.lock"))
+	copyFixture(filepath.Join(fixture, "events.jsonl"), filepath.Join(state, "events.jsonl"))
+	kinds := persistedEventKinds(t, filepath.Join(state, "events.jsonl"))
+	if len(kinds) == 0 {
+		t.Fatal("base-era writer fixture contains no event kinds")
+	}
+	gateState := t.TempDir()
+	copyFixture(filepath.Join(fixture, "state.lock"), filepath.Join(gateState, "state.lock"))
+	gatePath := filepath.Join(gateState, "gates", "bWFpbnRlbmFuY2U.json")
+	copyFixture(filepath.Join(fixture, "maintenance-gate.json"), gatePath)
+	if _, err := os.Stat(gatePath); err != nil {
+		t.Fatalf("base-era gate fixture was not copied: %v", err)
+	}
+	gate, held, err := proc.GateStatus(gateState, "maintenance")
+	if err != nil || held || gate.Name != "" {
+		t.Fatalf("read stale base-era gate fixture = %+v, held=%t err=%v", gate, held, err)
+	}
+	if _, err := os.Stat(gatePath); !os.IsNotExist(err) {
+		t.Fatalf("current reader did not prune stale base-era gate fixture: stat err=%v", err)
+	}
+
+	recordState := t.TempDir()
+	copyFixture(filepath.Join(fixture, "state.lock"), filepath.Join(recordState, "state.lock"))
+	copyFixture(filepath.Join(fixture, "run-record.json"), filepath.Join(recordState, "runs", "finished", "base-era.json"))
+	listing := proc.List(recordState)
+	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Tag != "base-era" {
+		t.Fatalf("current reader did not read base-era run fixture: %+v", listing)
+	}
+
+	listing = proc.List(state)
+	var olderFormat *proc.OlderEventFormatError
+	if listing.Error == nil || !errors.As(listing.Error, &olderFormat) {
+		t.Fatalf("current proc reader did not classify the base-era event fixture: %v", listing.Error)
+	}
+	status, err := psCommand(runnerRoot{invocation: "kb-runner"}, []string{"--state", state}, io.Discard)
+	if err == nil || status == 0 {
+		t.Fatalf("current reader accepted base-era event fixture: status=%d err=%v", status, err)
+	}
+	diagnostic := err.Error()
+	for _, want := range []string{"KB_RUNTIME_INPUT_INVALID", "events.jsonl", "line", "record kind", "older kb-runner format", "next:"} {
+		if !strings.Contains(diagnostic, want) {
+			t.Fatalf("current reader diagnostic %q omitted %q", diagnostic, want)
+		}
+	}
+	var namedKind bool
+	for kind := range kinds {
+		if strings.Contains(diagnostic, fmt.Sprintf("record kind %q", kind)) {
+			namedKind = true
+			break
+		}
+	}
+	if !namedKind {
+		t.Fatalf("diagnostic did not name a kind written by the base-era event producers %v: %s", kinds, diagnostic)
+	}
+}
+
+func persistedEventKinds(t *testing.T, path string) map[proc.EventType]struct{} {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read persisted event fixture %q: %v", path, err)
+	}
+	kinds := make(map[proc.EventType]struct{})
+	for lineNumber, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+		var record struct {
+			Type proc.EventType `json:"type"`
+		}
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatalf("decode writer output event line %d: %v", lineNumber+1, err)
+		}
+		if record.Type == "" {
+			t.Fatalf("writer output event line %d has no kind", lineNumber+1)
+		}
+		kinds[record.Type] = struct{}{}
+	}
+	return kinds
+}
+
+// case: S-237.149
+func TestWaitLatestTagMissingRecordIsBounded(t *testing.T) {
+	missingState := filepath.Join(t.TempDir(), "missing-state")
+	started := time.Now()
+	var output, stderr bytes.Buffer
+	status := executeInvocation("kb-runner", []string{"wait", "--latest-tag", "typo", "--appear-within", "60ms", "--state", missingState}, &output, &stderr)
+	if status.Code() == 0 || time.Since(started) > time.Second {
+		t.Fatalf("wait for missing record = code %d after %s", status.Code(), time.Since(started))
+	}
+	entry, ok := diag.LookupCatalog("KB_RUNTIME_JOB_NOT_FOUND")
+	if !ok || !strings.Contains(stderr.String(), entry.Code) || !strings.Contains(stderr.String(), "not-found") || !strings.Contains(stderr.String(), "next:") {
+		t.Fatalf("missing latest-tag result is not a catalogued bounded not-found diagnostic: %s", stderr.String())
+	}
+}
+
 func waitForTeardownEvent(t testing.TB, state string) bool {
 	t.Helper()
 	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		file, err := os.Open(filepath.Join(state, "events.jsonl"))
 		if err == nil {
-			var event proc.Event
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				if json.Unmarshal(scanner.Bytes(), &event) == nil && event.Type == proc.EventTeardown {
-					_ = file.Close()
-					return true
-				}
-			}
+			found := false
+			_ = proc.ReadEvents(file, func(event proc.Event) error {
+				found = found || event.Type == proc.EventTeardown
+				return nil
+			})
 			_ = file.Close()
+			if found {
+				return true
+			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

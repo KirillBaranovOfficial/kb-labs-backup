@@ -8,8 +8,25 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ### Auto-advance review and landing outcomes follow durable side effects
 
-A review child with no valid verdict is a decision-needed outcome for both the child and its parent, committed through one transition and one orchestrator event; recovery does not recreate an already escalated review. For auto-advance acceptance, commit-only landing must succeed before the accepted advancement and event become durable. A landing refusal is escalated without accepted status. Scheduler recovery re-derives the worker run after the atomic rework handoff from its persisted run identity, so a restarted scheduler consumes the resumed worker result. The crash matrix observes all kb-runner durable state writes through `runnerStateStore`; clikit run-record internals remain covered at the Start API boundaries because their write is owned by clikit. Case: S-237.140.
+A review child with no valid verdict is a decision-needed outcome for both the child and its parent, committed through one transition and one orchestrator event; recovery does not recreate an already escalated review. For auto-advance acceptance, commit-only landing must succeed before the accepted advancement and event become durable. A landing refusal is escalated without accepted status. Scheduler recovery re-derives the worker run after the atomic rework handoff from its persisted run identity, so a restarted scheduler consumes the resumed worker result. The crash matrix observes all kb-runner durable state writes through `runnerStateStore`; clikit run-record internals remain covered at the Start API boundaries because their write is owned by clikit. Case: S-237.149.
 
+## 2026-10-27
+
+### macOS process ownership uses an inherited run-token descriptor
+
+macOS does not expose environment strings for Apple platform binaries through
+`kern.procargs2`, so the run environment marker cannot prove ownership of
+commands such as `/bin/sh` and `/bin/sleep` after exec and detachment. Each
+supervised command therefore inherits a run-unique file descriptor; the process
+owner matches the descriptor's vnode device and inode for same-UID processes
+across process inventory snapshots. This survives exec of platform binaries,
+setsid, and reparenting. A readable environment marker and recorded PID/start
+identity remain additional evidence. Foreign-UID unreadable candidates remain
+visible as potential setuid owners but are not accepted without other ownership
+proof. A recorded process that closes the token and loses its marker remains
+visible as unverified. A process that closes every inherited descriptor before
+it is observed and then detaches cannot be attributed after that point. Cases:
+S-237.1, S-237.7.
 ## 2026-10-23
 
 ### Built-in scenario plugins are Marketplace install specs

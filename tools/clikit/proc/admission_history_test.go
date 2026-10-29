@@ -269,7 +269,7 @@ func TestWaitRunCostIsIndependentOfFinishedHistory(t *testing.T) {
 	}
 	result := make(chan waitResult, 1)
 	go func() {
-		info, err := waitRun(ctx, state, "waited", false)
+		info, err := waitRun(ctx, state, "waited", waitByTag, 0)
 		result <- waitResult{info: info, err: err}
 	}()
 	window := 3 * time.Second
@@ -321,7 +321,7 @@ func TestWaitRunReturnsRunThatFinishesBetweenPolls(t *testing.T) {
 	done := make(chan RunInfo, 1)
 	errs := make(chan error, 1)
 	go func() {
-		info, err := waitRun(ctx, state, "late", false)
+		info, err := waitRun(ctx, state, "late", waitByTag, 0)
 		errs <- err
 		done <- info
 	}()
@@ -354,6 +354,49 @@ func TestWaitRunReturnsRunThatFinishesBetweenPolls(t *testing.T) {
 	case <-time.After(testdeadline.Budget(t)):
 		cancel()
 		t.Fatal("wait never observed the run that finished between two polls")
+	}
+}
+
+// case: S-237.138
+func TestWaitLatestTagAppearanceWindowAcceptsAppearingRecord(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result := make(chan struct {
+		info RunInfo
+		err  error
+	}, 1)
+	go func() {
+		info, err := WaitLatestTagWithin(ctx, state, "appearing", time.Second)
+		result <- struct {
+			info RunInfo
+			err  error
+		}{info: info, err: err}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	code := 0
+	if err := withStateLock(state, func() error {
+		order, err := nextQueueOrderLocked(state)
+		if err != nil {
+			return err
+		}
+		return writeRecordAtomic(record{
+			RunID: "appeared", Tag: "agent:stream:appeared", LatestTag: "appearing", Status: StatusCompleted,
+			QueueOrder: order, StateDir: state, ExitCode: &code, Command: []string{"/bin/true"},
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case outcome := <-result:
+		if outcome.err != nil || outcome.info.RunID != "appeared" || outcome.info.ExitCode == nil || *outcome.info.ExitCode != 0 {
+			t.Fatalf("wait result = %+v err=%v", outcome.info, outcome.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("wait did not accept a latest-tag record that appeared within its window")
 	}
 }
 

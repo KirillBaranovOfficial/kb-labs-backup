@@ -24,10 +24,11 @@ type zcodeSandboxError struct{ reason string }
 func (e zcodeSandboxError) Error() string { return e.reason }
 
 type zcodeSandboxInputs struct {
-	Worktree   string
-	JobTemp    string
-	ZcodeState []string
-	NodeCaches []string
+	Worktree         string
+	JobTemp          string
+	TestChannelSpool string
+	ZcodeState       []string
+	NodeCaches       []string
 }
 
 // zcodeJobTemp is the per-job temp directory: the only temp root the sandbox
@@ -47,13 +48,13 @@ func zcodeStateRoots(home string) []string {
 	return []string{zcodeDataBaseDir(home), filepath.Join(home, ".zcode", "cli")}
 }
 
-// canonicalSandboxWriteRoot resolves every existing path component through
-// EvalSymlinks. If the requested root does not exist yet, resolve the nearest
-// existing ancestor and append the missing suffix; callers do not create roots.
-func canonicalSandboxWriteRoot(path string) (string, error) {
+// canonicalSandboxPath resolves every existing path component through
+// EvalSymlinks. If the requested path does not exist yet, resolve the nearest
+// existing ancestor and append the missing suffix; callers do not create paths.
+func canonicalSandboxPath(path string) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("resolve ZCode sandbox directory %q: %w", path, err)
+		return "", fmt.Errorf("resolve sandbox path %q: %w", path, err)
 	}
 	candidate := filepath.Clean(absolute)
 	missing := make([]string, 0)
@@ -66,16 +67,16 @@ func canonicalSandboxWriteRoot(path string) (string, error) {
 			return filepath.Clean(resolved), nil
 		}
 		if !os.IsNotExist(err) {
-			return "", fmt.Errorf("canonicalize ZCode sandbox directory %q: %w", path, err)
+			return "", fmt.Errorf("canonicalize sandbox path %q: %w", path, err)
 		}
 		if _, statErr := os.Lstat(candidate); statErr == nil {
-			return "", fmt.Errorf("canonicalize existing ZCode sandbox path %q: %w", candidate, err)
+			return "", fmt.Errorf("canonicalize existing sandbox path %q: %w", candidate, err)
 		} else if !os.IsNotExist(statErr) {
-			return "", fmt.Errorf("inspect ZCode sandbox directory %q: %w", candidate, statErr)
+			return "", fmt.Errorf("inspect sandbox path %q: %w", candidate, statErr)
 		}
 		parent := filepath.Dir(candidate)
 		if parent == candidate {
-			return "", fmt.Errorf("canonicalize ZCode sandbox directory %q: no existing ancestor", path)
+			return "", fmt.Errorf("canonicalize sandbox path %q: no existing ancestor", path)
 		}
 		missing = append(missing, filepath.Base(candidate))
 		candidate = parent
@@ -87,6 +88,9 @@ func zcodeSandboxProfile(input zcodeSandboxInputs) (string, error) {
 		return "", zcodeSandboxError{reason: "ZCode requires the macOS sandbox-exec boundary"}
 	}
 	paths := append([]string{input.Worktree, input.JobTemp}, input.ZcodeState...)
+	if input.TestChannelSpool != "" {
+		paths = append(paths, input.TestChannelSpool)
+	}
 	paths = append(paths, input.NodeCaches...)
 	allowed := make([]string, 0, len(paths))
 	seen := make(map[string]struct{}, len(paths))
@@ -94,7 +98,7 @@ func zcodeSandboxProfile(input zcodeSandboxInputs) (string, error) {
 		if path == "" {
 			return "", errors.New("ZCode sandbox directory is empty")
 		}
-		canonical, err := canonicalSandboxWriteRoot(path)
+		canonical, err := canonicalSandboxPath(path)
 		if err != nil {
 			return "", err
 		}
@@ -164,9 +168,10 @@ func (a commandAdapter) zcodeCommand(ctx context.Context, request AgentRequest, 
 		return nil, fmt.Errorf("create ZCode per-job temp directory: %w", err)
 	}
 	input := zcodeSandboxInputs{
-		Worktree:   request.Workdir,
-		JobTemp:    jobTemp,
-		ZcodeState: zcodeStateRoots(home),
+		Worktree:         request.Workdir,
+		JobTemp:          jobTemp,
+		TestChannelSpool: request.TestChannelSpool,
+		ZcodeState:       zcodeStateRoots(home),
 		NodeCaches: []string{
 			filepath.Join(home, ".npm"),
 			filepath.Join(home, ".cache", "node"),

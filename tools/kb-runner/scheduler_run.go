@@ -159,12 +159,17 @@ func (options schedulerRunOptions) landAccepted(task SchedulerTask, stream Sched
 		stream.Cause = "no-proposed-commits"
 		return false, "", options.store.transition(stream, SchedulerAwaitingOrchestrator, "land proposals", "add a parseable Proposed commits section, then resume")
 	}
-	object, err := buildLandingObjects(options.store.stateIO, task.RepoRoot, task.Stream, verifiedTree.String(), stream.Submission.ExpectedRefSHA, commits, filepath.Join(options.state, "jobs", task.ID, "tmp"))
+	nextCommand := fmt.Sprintf("%s land %s --state %q", options.root.InvocationCommand(), task.Stream, options.state)
+	object, err := buildLandingObjects(options.store.stateIO, task.RepoRoot, task.Stream, verifiedTree.String(), stream.Submission.ExpectedRefSHA, commits, filepath.Join(options.state, "jobs", task.ID, "tmp"), nextCommand)
 	if err != nil {
 		return false, "", fmt.Errorf("build verified landing objects for %s: %w; next: %s land %s --state %q", task.Stream, err, options.root.InvocationCommand(), task.Stream, options.state)
 	}
-	if object.TreeSHA != verifiedTree {
-		return false, "", fmt.Errorf("landing objects have tree %s, expected verified tree %s", object.TreeSHA, verifiedTree)
+	matchesVerifiedContent, err := landingTreesEqualWithoutStreamReports(task.RepoRoot, object.TreeSHA.String(), verifiedTree.String())
+	if err != nil {
+		return false, "", err
+	}
+	if !matchesVerifiedContent {
+		return false, "", fmt.Errorf("landing tree %s differs from verified tree %s after excluding report artifacts", object.TreeSHA, verifiedTree)
 	}
 	if err := moveLandingRef(options.store.stateIO, task.RepoRoot, task.Stream, object, stream.Submission.ExpectedRefSHA); err != nil {
 		var conflict *landingRefConflict
@@ -236,8 +241,8 @@ func (options schedulerRunOptions) landAccepted(task SchedulerTask, stream Sched
 	if err != nil {
 		return false, "", fmt.Errorf("verify immutable integration merge input: %w", err)
 	}
-	if mergeInputTree != verifiedTree {
-		return false, "", fmt.Errorf("integration merge input tree %s differs from verified tree %s", mergeInputTree, verifiedTree)
+	if mergeInputTree != object.TreeSHA {
+		return false, "", fmt.Errorf("integration merge input tree %s differs from sanitized landing tree %s", mergeInputTree, object.TreeSHA)
 	}
 	mergeCommitTree, err := treeSHAForCommit(task.RepoRoot, mergeSHA.String())
 	if err != nil {
@@ -290,7 +295,11 @@ func (options schedulerRunOptions) landAutoAccepted(task SchedulerTask, stream S
 	if err != nil {
 		return false, "", err
 	}
-	if actualTree.String() != stream.Advance.TreeHash {
+	actualMatchesAcceptedContent, err := landingTreesEqualWithoutStreamReports(task.RepoRoot, actualTree.String(), stream.Advance.TreeHash)
+	if err != nil {
+		return false, "", err
+	}
+	if !actualMatchesAcceptedContent {
 		return false, "", fmt.Errorf("accepted tree %s differs from current stream tree %s", stream.Advance.TreeHash, actualTree)
 	}
 	if stream.Advance.LandingCommit != "" {
@@ -303,7 +312,11 @@ func (options schedulerRunOptions) landAutoAccepted(task SchedulerTask, stream S
 			if treeErr != nil {
 				return false, "", treeErr
 			}
-			if landedTree.String() != stream.Advance.TreeHash {
+			landedMatchesAcceptedContent, compareErr := landingTreesEqualWithoutStreamReports(task.RepoRoot, landedTree.String(), stream.Advance.TreeHash)
+			if compareErr != nil {
+				return false, "", compareErr
+			}
+			if !landedMatchesAcceptedContent {
 				return false, "", fmt.Errorf("persisted landing commit tree %s differs from accepted tree %s", landedTree, stream.Advance.TreeHash)
 			}
 			if err := moveLandingRef(options.store.stateIO, task.RepoRoot, task.Stream, landingObject{CommitSHA: landingCommit, TreeSHA: landedTree}, oldSHA.String()); err != nil {
@@ -323,6 +336,10 @@ func (options schedulerRunOptions) landAutoAccepted(task SchedulerTask, stream S
 	if err != nil {
 		return false, "", err
 	}
+	// Only an identical accepted tree means landing is already complete here.
+	// A report-only difference is still a pending commit-only landing: its report
+	// supplies the case/tests/code proposals even though report artifacts are
+	// excluded from the three landing commits.
 	if baseTree.String() == stream.Advance.TreeHash {
 		if err := refreshLandingWorktree(options.store.stateIO, task.RepoRoot, task.Workdir, oldSHA.String()); err != nil {
 			return false, "", err
@@ -340,12 +357,17 @@ func (options schedulerRunOptions) landAutoAccepted(task SchedulerTask, stream S
 	if err != nil {
 		return false, "", fmt.Errorf("accepted worker report has no case, tests, code commit proposals: %w", err)
 	}
-	object, err := buildLandingObjects(options.store.stateIO, task.RepoRoot, task.Stream, stream.Advance.TreeHash, baseSHA.String(), commits, filepath.Join(options.state, "jobs", task.ID, "tmp"))
+	nextCommand := fmt.Sprintf("%s land %s --state %q", options.root.InvocationCommand(), task.Stream, options.state)
+	object, err := buildLandingObjects(options.store.stateIO, task.RepoRoot, task.Stream, stream.Advance.TreeHash, baseSHA.String(), commits, filepath.Join(options.state, "jobs", task.ID, "tmp"), nextCommand)
 	if err != nil {
 		return false, "", fmt.Errorf("build accepted commit-only landing objects for %s: %w", task.Stream, err)
 	}
-	if object.TreeSHA.String() != stream.Advance.TreeHash {
-		return false, "", fmt.Errorf("commit-only landing tree %s differs from accepted tree %s", object.TreeSHA, stream.Advance.TreeHash)
+	matchesAcceptedContent, err := landingTreesEqualWithoutStreamReports(task.RepoRoot, object.TreeSHA.String(), stream.Advance.TreeHash)
+	if err != nil {
+		return false, "", err
+	}
+	if !matchesAcceptedContent {
+		return false, "", fmt.Errorf("commit-only landing tree %s differs from accepted tree %s after excluding report artifacts", object.TreeSHA, stream.Advance.TreeHash)
 	}
 	current, err := options.store.stream(task.Stream)
 	if err != nil {
@@ -1709,6 +1731,27 @@ func (options schedulerRunOptions) resolveReviewOutcome(workerTask SchedulerTask
 	return options.store.commitAutoTransitionWithTasks([]SchedulerStream{workerStream}, []SchedulerTask{workerTask}, transitionEvent)
 }
 
+type reviewReportArtifact struct {
+	Path     string
+	Contents []byte
+}
+
+func archiveReviewReports(stateIO runnerStateStore, workdir, stream string, reports []reviewReportArtifact) ([]string, error) {
+	if len(reports) == 0 {
+		return nil, nil
+	}
+	archive := filepath.Join(workdir, "reviews", "archive", stream+"-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".md")
+	var paths []string
+	for _, report := range reports {
+		archived := strings.TrimSuffix(archive, ".md") + "-" + filepath.Base(report.Path)
+		if err := stateIO.AtomicWrite(archived, report.Contents); err != nil {
+			return nil, fmt.Errorf("archive report %s: %w", report.Path, err)
+		}
+		paths = append(paths, archived)
+	}
+	return paths, nil
+}
+
 func (options schedulerRunOptions) finishMerge(task SchedulerTask, mergeStream SchedulerStream) error {
 	status, _, err := readReport(filepath.Join(task.Workdir, ".agent-report.md"))
 	if err != nil || status != "Status: DONE" {
@@ -1737,6 +1780,10 @@ func (options schedulerRunOptions) finishMerge(task SchedulerTask, mergeStream S
 	if err != nil {
 		return fmt.Errorf("capture integration commit before merge resolution: %w", err)
 	}
+	nextCommand := fmt.Sprintf("%s sched run --state %q", options.root.InvocationCommand(), options.state)
+	if err := excludeLandingReportsFromIndex(options.store.stateIO, task.Workdir, workerHead.String(), nextCommand); err != nil {
+		return fmt.Errorf("exclude merge-resolution report files: %w", err)
+	}
 	resolvedTree, err := readGitObjectIDCommand(task.Workdir, "-C", task.Workdir, "write-tree")
 	if err != nil {
 		return fmt.Errorf("write merge-resolution tree: %w", err)
@@ -1752,7 +1799,14 @@ func (options schedulerRunOptions) finishMerge(task SchedulerTask, mergeStream S
 		}
 		return fmt.Errorf("publish merge-resolution commit with worker-ref compare-and-swap: %w", err)
 	}
-	submission, err := options.submitWorkerCommit(worker, resolvedSHA, resolvedSHA)
+	if _, err := schedulerCommandOutput(task.Workdir, "git", "-C", task.Workdir, "reset", "--mixed", resolvedSHA.String()); err != nil {
+		return fmt.Errorf("refresh merge-resolution worktree before report snapshot: %w", err)
+	}
+	verifiedSHA, _, err := snapshotWorktree(options.store.stateIO, task.Workdir, worker.Stream)
+	if err != nil {
+		return fmt.Errorf("snapshot merge-resolution worktree: %w", err)
+	}
+	submission, err := options.submitWorkerCommit(worker, verifiedSHA, resolvedSHA)
 	if err != nil {
 		return fmt.Errorf("submit immutable merge-resolution commit for remote verification: %w", err)
 	}

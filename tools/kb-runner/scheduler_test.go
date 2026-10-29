@@ -639,7 +639,7 @@ func TestSchedulerTaskPersistsExplicitReviewPolicy(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestSchedulerAutoAdvanceTaskHasNoManualReviewerPolicy(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	base := f.addTask(t, "policy-auto-base", "worker")
@@ -924,7 +924,7 @@ func TestSchedulerMissingCommitProposalsStopsWithNamedCause(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestAutoAdvanceQueuesReviewAfterVerificationTransition(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	f.state = filepath.Join(f.home, "runner-state")
@@ -1369,7 +1369,7 @@ func TestJobStorePersistsThroughRunnerStateStore(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestAutoAdvanceFakeSchedulerReworkRecordsBothReviewCallsAndRecoversOnce(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{}`)
 	f.state = filepath.Join(f.home, "runner-state")
@@ -2329,7 +2329,7 @@ func TestSchedulerTransitionCrashMatrix(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestSchedulerUnknownRunRecordCrashRecoveryContinuesOtherStreams(t *testing.T) {
 	scenario := lifecycleCrashScenario{name: "unknown-run-crash", workerStatuses: []string{"Status: DONE"}, terminalState: SchedulerAwaitingOrchestrator, advanceState: AdvanceEscalated}
 	fixture := prepareLifecycleCrashFixture(t, scenario)
@@ -3731,7 +3731,7 @@ func TestAutoAdvanceRestartResumesPersistedWorkingVerifyingReworkAndEscalatedSta
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestAutoAdvanceFreshSchedulerRestartsEachReviewingRoleOnce(t *testing.T) {
 	for _, role := range []ReviewRole{ReviewStandard, ReviewDelta, ReviewFinal} {
 		t.Run(string(role), func(t *testing.T) {
@@ -3966,7 +3966,7 @@ func TestSchedulerRunLookupPreservesUnknownRegistryState(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestAutoAdvanceRecoveryEscalatesCorruptRunRecordAndContinues(t *testing.T) {
 	fixture := newSchedulerFixture(t, `[]`, `{}`)
 	store := newSchedulerStore(fixture.state)
@@ -4028,7 +4028,7 @@ func TestAutoAdvanceRecoveryEscalatesCorruptRunRecordAndContinues(t *testing.T) 
 	assertUnknownRunEventCount(t, secondRestart.store, unknownTask.Stream, 1)
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestAutoAdvanceRecoveryEscalatesCorruptVerificationRun(t *testing.T) {
 	fixture := newSchedulerFixture(t, `[]`, `{}`)
 	store := newSchedulerStore(fixture.state)
@@ -4057,7 +4057,7 @@ func TestAutoAdvanceRecoveryEscalatesCorruptVerificationRun(t *testing.T) {
 	assertUnknownRunEventCount(t, options.store, task.Stream, 1)
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestAutoAdvanceRecoveryEscalatesCorruptReviewRun(t *testing.T) {
 	fixture := newSchedulerFixture(t, `[]`, `{}`)
 	store := newSchedulerStore(fixture.state)
@@ -4175,7 +4175,7 @@ func TestCarryWorkerSessionClassifiesMissingJobRecordAsAbsent(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestAutoAdvanceRecoveryNoOpsTerminalDoneStream(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{}`)
 	task := f.addTask(t, "terminal-recovery", "worker")
@@ -4213,7 +4213,7 @@ func TestAutoAdvanceRecoveryNoOpsTerminalDoneStream(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestAutoAdvanceResumesOnePartialAndEscalatesTheSecond(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	f.state = filepath.Join(f.home, "runner-state")
@@ -4267,7 +4267,7 @@ func TestAutoAdvanceResumesOnePartialAndEscalatesTheSecond(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestAutoAdvanceProjectsOnlyOrchestratorEventStatusesToHandoff(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{}`)
 	f.state = filepath.Join(f.home, "runner-state")
@@ -5157,7 +5157,7 @@ func TestLandCreatesOrderedCommitGroupsInNativeGit(t *testing.T) {
 	task := SchedulerTask{Stream: "land-a", Workdir: repo}
 	expectedOld := run("rev-parse", "HEAD")
 	commits := []proposedCommit{{Kind: "case", Subject: "docs(qa): add case"}, {Kind: "tests", Subject: "test(runner): cover case"}, {Kind: "code", Subject: "fix(runner): implement behavior", Body: "details"}}
-	object, err := buildLandingObjects(filesystemRunnerStateStore{}, repo, task.Stream, verifiedTree.String(), expectedOld, commits, t.TempDir())
+	object, err := buildLandingObjects(filesystemRunnerStateStore{}, repo, task.Stream, verifiedTree.String(), expectedOld, commits, t.TempDir(), "kb-runner land land-a --state /tmp/state")
 	if err != nil {
 		t.Fatal(err)
 	}

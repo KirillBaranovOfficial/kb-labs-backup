@@ -209,8 +209,14 @@ func TestSchedulerSubmissionPersistsTreeAndLandIgnoresLaterWorktreeChanges(t *te
 	if gotSHA := git("rev-parse", "HEAD"); gotSHA == submission.ExpectedRefSHA {
 		t.Fatalf("landing did not move the worker branch to its immutable grouped commit: %s", gotSHA)
 	}
-	if committedTree, err := treeSHAForCommit(repo, git("rev-parse", "HEAD")); err != nil || committedTree.String() != verifiedTree {
-		t.Fatalf("worker branch commit differs from verified tree: tree=%s verified=%s err=%v", committedTree, verifiedTree, err)
+	if committedTree, err := treeSHAForCommit(repo, git("rev-parse", "HEAD")); err != nil {
+		t.Fatalf("read landed worker branch tree: %v", err)
+	} else if equal, err := landingTreesEqualWithoutStreamReports(repo, committedTree.String(), verifiedTree); err != nil || !equal {
+		t.Fatalf("worker branch differs from verified tree outside report artifacts: tree=%s verified=%s equal=%t err=%v", committedTree, verifiedTree, equal, err)
+	} else if entries, err := landingTreeEntries(repo, committedTree.String()); err != nil {
+		t.Fatalf("read landed worker branch entries: %v", err)
+	} else if _, exists := entries[".agent-report.md"]; exists {
+		t.Fatal("landed worker branch contains the stream report artifact")
 	}
 	worktreeBytes, err := os.ReadFile(filepath.Join(repo, "tracked.txt"))
 	if err != nil {

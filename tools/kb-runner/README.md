@@ -68,6 +68,18 @@ kb-runner limits --state "$RUNNER_STATE"
 
 The grant is accounting only and does not select or fall back to ZCode.
 
+## Request a bounded Go test from an agent
+
+`agent start` enables a per-job `kb-test` shim by default. From a Go module in the job worktree, request only a Go test run:
+
+```sh
+kb-test go -run '^TestX$' ./proc
+```
+
+The shim returns a JSON result with the exit code, pass/fail/skip counts, failing test names, a log tail capped at 64 KiB, and sandbox-denial lines. Each accepted request is admitted as a heavy runner process and appears in `kb-runner ps` and events with an `outside-test:<job-id>:<request-id>` tag. A job round accepts at most 20 requests, one at a time. The default timeout is 10 minutes; requests can set `-timeout` up to 20 minutes. Other tools and unsupported Go flags are refused with a typed runtime diagnostic.
+
+The macOS execution profile allows process inspection, reads from the worktree, Go toolchain and runner-resolved shared module cache, writes in the worktree, fresh temporary HOME, and a state-owned Go build cache isolated by stream. The resolver honors runner-owned `HOME`, `GOPATH`, and `GOMODCACHE`, while disabling `GOENV`; it canonicalizes the result and requires an existing Go module cache containing `cache/download`. A cache that overlaps a denied secret root is refused. `GOMODCACHE` is read-only, `GOPROXY=off`, and `GOFLAGS=-mod=readonly`. Network access and runner credential paths are denied. Hygiene retains caches while a stream has an active runner job and journals their removal once the stream is inactive. Linux requests fail closed until its sandbox policy is implemented. Cancellation and timeout tear down every process proc can attribute and report unresolved identities; a same-UID macOS descendant that closes inherited fd 3, clears `KBLABS_CLIPROC_RUN`, and detaches before proc's first snapshot is outside this guarantee ([proc ownership guarantee and platform limits](../clikit/proc/doc.go), also described in S-237.7). Disable the channel for a job with `--test-channel=off`; the orchestrator can also create `<state>/test-channel-off` to disable it for all jobs using that state directory, then remove the file to re-enable it.
+
 ## Transient provider failures resume the same session
 
 Agent jobs survive provider hiccups. Each vendor adapter owns a failure table that classifies every provider failure from the structured fields the vendor emits — ZCode's `turn.failed` attribution (provider codes such as 3009, HTTP statuses, network transport markers) or the vendor's failure kinds — into transient (network loss, concurrency and rate limits, 5xx) and permanent (authentication, quota exhaustion, invalid request) classes.

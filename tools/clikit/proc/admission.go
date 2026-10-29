@@ -19,6 +19,8 @@ import (
 
 const admissionPollInterval = 250 * time.Millisecond
 const idleQueueThreshold = 10 * time.Minute
+const slotAgingThreshold = 30 * time.Second
+const CPUCommandTokenGroup = "heavy-command"
 
 type gateRecord struct {
 	Name     string `json:"name"`
@@ -42,6 +44,12 @@ type admissionDecision struct {
 	DiskFreeBytes uint64
 	Pressure      HostResourceSnapshot
 }
+
+type admissionClock interface{ Now() time.Time }
+
+type realAdmissionClock struct{}
+
+func (realAdmissionClock) Now() time.Time { return time.Now().UTC() }
 
 func GateStatus(stateDir, name string) (GateInfo, bool, error) {
 	var info GateInfo
@@ -67,8 +75,14 @@ func GateStatus(stateDir, name string) (GateInfo, bool, error) {
 }
 
 func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID int, parentIdentity string, source HostResourceSource) error {
-	if cfg.Slots < 0 || (cfg.SlotGroup == "") != (cfg.Slots == 0) {
+	if cfg.Slots < 0 || (cfg.SlotGroup == "") != (cfg.Slots == 0) || cfg.SlotWeight < 0 || (cfg.SlotGroup == "" && cfg.SlotWeight != 0) {
 		return errors.New("proc: --slot-group and positive --slots must be supplied together")
+	}
+	if cfg.SlotGroup != "" && cfg.SlotWeight == 0 {
+		cfg.SlotWeight = 1
+	}
+	if cfg.SlotGroup != "" && cfg.SlotWeight > cfg.Slots {
+		return errors.New("proc: --slot-weight cannot exceed --slots")
 	}
 	if cfg.HoldGate != "" && cfg.WaitGate == cfg.HoldGate {
 		return errors.New("proc: a run cannot wait on the gate it holds")
@@ -102,7 +116,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 		rec := record{
 			RunID: runID, Tag: cfg.Tag, LatestTag: cfg.LatestTag, PID: parentPID, StartedAt: parentIdentity,
 			Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusQueued,
-			SlotGroup: cfg.SlotGroup, Slots: cfg.Slots, QueueOrder: order,
+			SlotGroup: cfg.SlotGroup, Slots: cfg.Slots, SlotWeight: cfg.SlotWeight, QueueOrder: order,
 			EnqueuedAt: time.Now().UTC(), WaitGate: cfg.WaitGate, HoldGate: cfg.HoldGate, MinFree: cfg.MinFree,
 			CostKey: cfg.CostKey, CostClass: cfg.CostClass, Priority: cfg.Priority, MemoryBytes: cost.MemoryBytes, CPUsMin: cost.MinCPUs, CPUsMax: cfg.CPUsMax, DiskBytes: cost.DiskBytes,
 		}
@@ -120,10 +134,11 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 	ticker := time.NewTicker(admissionPollInterval)
 	defer ticker.Stop()
 	useFirstDecisionSample := true
+	var waitReason string
 	for {
 		if err := ctx.Err(); err != nil {
 			cleanupAdmission(cfg.StateDir, runID, "cancelled before start")
-			return fmt.Errorf("proc: admission cancelled: %w", err)
+			return &AdmissionCanceledError{WaitReason: waitReason, Cause: err}
 		}
 		admitted := false
 		err := withStateLock(cfg.StateDir, func() error {
@@ -144,6 +159,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 				return err
 			}
 			useFirstDecisionSample = false
+			waitReason = decision.Reason
 			notice := hostResourceNotice(decision.Pressure)
 			if decision.Reason == "" {
 				quota, err := effectiveQuota(cfg.StateDir, source)
@@ -188,17 +204,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 				if !statusChanged && decision.Status == StatusBlocked {
 					return reportIdleQueueLocked(cfg.StateDir, time.Now().UTC())
 				}
-				eventType := EventQueued
-				if decision.Status == StatusBlocked {
-					eventType = EventBlocked
-				}
-				event := eventFor(rec, eventType)
-				event.Reason = decision.Reason
-				event.Position = decision.Position
-				event.DiskNeedBytes = decision.DiskNeedBytes
-				event.DiskFreeBytes = decision.DiskFreeBytes
-				event.Pressure = decision.Pressure
-				if err := appendEvent(cfg.StateDir, event); err != nil {
+				if err := appendAdmissionWaitEvents(cfg.StateDir, rec, decision); err != nil {
 					return err
 				}
 				return reportIdleQueueLocked(cfg.StateDir, time.Now().UTC())
@@ -273,34 +279,16 @@ func admissionStateLocked(stateDir string, candidate record, source HostResource
 }
 
 func admissionStateLockedWithSample(stateDir string, candidate record, source HostResourceSource, sample HostResourceSnapshot) (decision admissionDecision, resultErr error) {
+	return admissionStateLockedWithSampleAndClock(stateDir, candidate, source, sample, realAdmissionClock{})
+}
+
+func admissionStateLockedWithSampleAndClock(stateDir string, candidate record, source HostResourceSource, sample HostResourceSnapshot, clock admissionClock) (decision admissionDecision, resultErr error) {
 	defer func() { decision.Pressure = sample }()
 	records, err := readLiveRecordsLocked(stateDir)
 	if err != nil {
 		return admissionDecision{}, err
 	}
 	position := 1
-	if candidate.SlotGroup != "" {
-		active := 0
-		queuedBefore := 0
-		for _, rec := range records {
-			if rec.RunID == candidate.RunID || rec.SlotGroup != candidate.SlotGroup {
-				continue
-			}
-			if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled || rec.Status == StatusPaused {
-				active++
-			}
-			if (rec.Status == StatusQueued || rec.Status == StatusBlocked) && rec.QueueOrder < candidate.QueueOrder {
-				queuedBefore++
-			}
-		}
-		position += queuedBefore
-		if active >= candidate.Slots {
-			return admissionDecision{Reason: fmt.Sprintf("slot group %s is full", candidate.SlotGroup), Status: StatusQueued, Position: position}, nil
-		}
-		if queuedBefore > 0 {
-			return admissionDecision{Reason: fmt.Sprintf("waiting behind %d earlier run(s) in slot group %s", queuedBefore, candidate.SlotGroup), Status: StatusQueued, Position: position}, nil
-		}
-	}
 	if candidate.WaitGate != "" {
 		if _, exists, err := readGateLocked(stateDir, candidate.WaitGate); err != nil {
 			return admissionDecision{}, err
@@ -319,6 +307,64 @@ func admissionStateLockedWithSample(stateDir string, candidate record, source Ho
 				(rec.Status == StatusQueued || rec.Status == StatusBlocked) && rec.QueueOrder < candidate.QueueOrder {
 				return admissionDecision{Reason: "waiting for gate holder " + candidate.HoldGate, Status: StatusBlocked, Position: position}, nil
 			}
+		}
+	}
+	if candidate.SlotGroup != "" {
+		activeWeight := 0
+		queuedBefore := 0
+		var agedWaiter *record
+		for index := range records {
+			rec := &records[index]
+			if rec.RunID == candidate.RunID || rec.SlotGroup != candidate.SlotGroup {
+				continue
+			}
+			if cpuTokenStatusActive(rec.Status) {
+				activeWeight += slotWeight(*rec)
+			}
+			if (rec.Status == StatusQueued || rec.Status == StatusBlocked || rec.Status == StatusPaused) && rec.QueueOrder < candidate.QueueOrder {
+				if rec.Status != StatusPaused {
+					queuedBefore++
+				}
+				blocked, err := slotWaiterBlockedByGate(stateDir, records, *rec)
+				if err != nil {
+					return admissionDecision{}, err
+				}
+				if !blocked && !rec.EnqueuedAt.Add(slotAgingThreshold).After(clock.Now()) && slotWeight(*rec) <= rec.Slots &&
+					(agedWaiter == nil || rec.EnqueuedAt.Before(agedWaiter.EnqueuedAt)) {
+					agedWaiter = rec
+				}
+			}
+		}
+		position += queuedBefore
+		weight := slotWeight(candidate)
+		if agedWaiter != nil {
+			return admissionDecision{Reason: fmt.Sprintf("waiting for aged slot request %s in group %s", agedWaiter.Tag, candidate.SlotGroup), Status: StatusQueued, Position: position}, nil
+		}
+		quota, err := effectiveQuota(stateDir, source)
+		if err != nil {
+			return admissionDecision{}, err
+		}
+		capacity := min(candidate.Slots, quota.CPUs)
+		governor, err := readGovernorState(stateDir)
+		if err != nil {
+			return admissionDecision{}, err
+		}
+		for _, rec := range records {
+			if rec.RunID == candidate.RunID || rec.SlotGroup != candidate.SlotGroup || rec.QueueOrder >= candidate.QueueOrder ||
+				!(rec.Status == StatusQueued || rec.Status == StatusBlocked) {
+				continue
+			}
+			blocked, err := slotWaiterBlockedByGate(stateDir, records, rec)
+			if err != nil {
+				return admissionDecision{}, err
+			}
+			if blocked || slotWeight(rec) > rec.Slots || activeWeight+governor.UngatedCPUTokens+slotWeight(rec) > capacity {
+				continue
+			}
+			return admissionDecision{Reason: fmt.Sprintf("waiting behind earlier fitting slot request %s in group %s", rec.Tag, candidate.SlotGroup), Status: StatusQueued, Position: position}, nil
+		}
+		if activeWeight+governor.UngatedCPUTokens+weight > capacity {
+			return admissionDecision{Reason: fmt.Sprintf("slot group %s has %d granted and %d measured ungated CPU tokens of %d in use; request needs %d", candidate.SlotGroup, activeWeight, governor.UngatedCPUTokens, capacity, weight), Status: StatusQueued, Position: position}, nil
 		}
 	}
 	quota, err := effectiveQuota(stateDir, source)
@@ -343,7 +389,7 @@ func admissionStateLockedWithSample(stateDir string, candidate record, source Ho
 	if queuedBefore > 0 {
 		return admissionDecision{Reason: fmt.Sprintf("waiting behind %d earlier run(s)", queuedBefore), Status: StatusQueued, Position: position + queuedBefore}, nil
 	}
-	if reason, err := admissionPressureLocked(stateDir, candidate, sample); err != nil {
+	if reason, err := admissionPressureLockedAt(stateDir, candidate, sample, clock.Now()); err != nil {
 		return admissionDecision{}, err
 	} else if reason != "" {
 		return admissionDecision{Reason: reason, Status: StatusBlocked, Position: position}, nil
@@ -388,9 +434,6 @@ func admissionStateLockedWithSample(stateDir string, candidate record, source Ho
 }
 
 func admissionResourcesOverlap(candidate, earlier record, globalMinFree uint64) bool {
-	if candidate.SlotGroup != "" && candidate.SlotGroup == earlier.SlotGroup {
-		return true
-	}
 	for _, gate := range []string{candidate.WaitGate, candidate.HoldGate} {
 		if gate != "" && (gate == earlier.WaitGate || gate == earlier.HoldGate) {
 			return true
@@ -404,7 +447,59 @@ func admissionResourcesOverlap(candidate, earlier record, globalMinFree uint64) 
 	return candidate.MemoryBytes > 0 && earlier.MemoryBytes > 0 || candidate.CPUsMin > 0 && earlier.CPUsMin > 0
 }
 
-func admissionPressureLocked(stateDir string, candidate record, sample HostResourceSnapshot) (string, error) {
+func slotWeight(rec record) int {
+	if rec.SlotWeight <= 0 {
+		return 1
+	}
+	return rec.SlotWeight
+}
+
+func runStatusActive(status RunStatus) bool {
+	return status == StatusStarting || status == StatusRunning || status == StatusStalled || status == StatusPaused
+}
+
+func cpuTokenStatusActive(status RunStatus) bool {
+	return status == StatusStarting || status == StatusRunning || status == StatusStalled
+}
+
+func slotWaiterBlockedByGate(stateDir string, records []record, waiter record) (bool, error) {
+	for _, name := range []string{waiter.WaitGate, waiter.HoldGate} {
+		if name == "" {
+			continue
+		}
+		if _, exists, err := readGateLocked(stateDir, name); err != nil || exists {
+			return exists, err
+		}
+		if waiter.WaitGate == name {
+			for _, holder := range records {
+				if holder.RunID != waiter.RunID && holder.HoldGate == name &&
+					(holder.Status == StatusQueued || holder.Status == StatusBlocked || runStatusActive(holder.Status)) {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+func appendAdmissionWaitEvents(stateDir string, rec record, decision admissionDecision) error {
+	eventType := EventQueued
+	if decision.Status == StatusBlocked {
+		eventType = EventBlocked
+	}
+	event := eventFor(rec, eventType)
+	event.Reason = decision.Reason
+	event.Position = decision.Position
+	event.DiskNeedBytes = decision.DiskNeedBytes
+	event.DiskFreeBytes = decision.DiskFreeBytes
+	event.Pressure = decision.Pressure
+	if err := appendEvent(stateDir, event); err != nil {
+		return err
+	}
+	return nil
+}
+
+func admissionPressureLockedAt(stateDir string, candidate record, sample HostResourceSnapshot, now time.Time) (string, error) {
 	var hold pressureState
 	pressurePath := filepath.Join(stateDir, "pressure-state.json")
 	if data, readErr := os.ReadFile(pressurePath); readErr == nil {
@@ -417,7 +512,6 @@ func admissionPressureLocked(stateDir string, candidate record, sample HostResou
 	hadPressureState := !hold.LastKnownAt.IsZero() || !hold.UnknownSince.IsZero() || hold.Level != "" || hold.LevelClass != ""
 	pressureKnown := pressureSignalsAvailable(sample)
 	previousLevel := hold.Level
-	now := time.Now().UTC()
 	if !pressureKnown {
 		if !hold.LastKnownAt.IsZero() && now.Sub(hold.LastKnownAt) < pressureStateStalenessBound {
 			if pressureLevelBlocks(hold.LevelClass, candidate.CostClass) {
@@ -425,7 +519,7 @@ func admissionPressureLocked(stateDir string, candidate record, sample HostResou
 				if age < 0 {
 					age = 0
 				}
-				reason := pressureAdmissionWait(hold.LevelClass, hold.LevelSince, false)
+				reason := pressureAdmissionWait(hold.LevelClass, hold.LevelSince, false, hold.Level)
 				return fmt.Sprintf("%s; last known %s sample %s ago", reason, hold.LevelClass, age), nil
 			}
 			return "", nil
@@ -453,7 +547,7 @@ func admissionPressureLocked(stateDir string, candidate record, sample HostResou
 			}
 		}
 		if pressureLevelBlocks(pressureUnknown, candidate.CostClass) {
-			return pressureAdmissionWait(pressureUnknown, hold.UnknownSince, false), nil
+			return pressureAdmissionWait(pressureUnknown, hold.UnknownSince, false, ""), nil
 		}
 		return "", nil
 	}
@@ -510,7 +604,7 @@ func admissionPressureLocked(stateDir string, candidate record, sample HostResou
 		if swapUsedGrowing && !elevated {
 			return fmt.Sprintf("waiting for host pressure to return to normal; current: critical since %s (swap used increased to %s)", hold.LevelSince.UTC().Format(time.RFC3339), FormatResourceBytes(sample.SwapUsedBytes)), nil
 		}
-		return pressureAdmissionWait(hold.LevelClass, hold.LevelSince, !elevated), nil
+		return pressureAdmissionWait(hold.LevelClass, hold.LevelSince, !elevated, hold.Level), nil
 	}
 	return "", nil
 }
@@ -884,11 +978,18 @@ func markLostLocked(stateDir string, rec record) error {
 	if scratch != "" {
 		scratchOutcome, err := cleanupScratchOutcome(stateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
 		scratchErr = err
-		resources = append(resources, scratchOutcome)
+		if persistErr := appendResourceOutcomeLocked(stateDir, rec.RunID, scratchOutcome); persistErr != nil {
+			scratchErr = errors.Join(scratchErr, fmt.Errorf("persist scratch cleanup outcome: %w", persistErr))
+		}
 		if scratchErr != nil {
 			resourceErr = errors.Join(resourceErr, fmt.Errorf("remove run scratch: %w", scratchErr))
 		}
 	}
+	storedResources, err := readRunResources(stateDir, rec.RunID)
+	if err != nil {
+		return fmt.Errorf("read persisted cleanup outcomes for lost run %s: %w", rec.RunID, err)
+	}
+	rec.Resources = storedResources
 	rec.Status = StatusLost
 	rec.Error = fmt.Sprintf("keeper PID %d identity %s is no longer live", rec.PID, rec.StartedAt)
 	if cleanup.err != nil {
@@ -913,7 +1014,6 @@ func markLostLocked(stateDir string, rec record) error {
 	teardown.Reaped = cleanup.Reaped
 	teardown.Unverified = cleanup.Unverified
 	teardown.Remaining = cleanup.Remaining
-	teardown.Resources = resources
 	if cleanup.err != nil {
 		teardown.Error = cleanup.err.Error()
 	}
@@ -965,8 +1065,10 @@ func cleanupAdmission(stateDir, runID, reason string) {
 				event := eventFor(rec, EventTeardown)
 				event.Reason = reason
 				event.Error = pathErr.Error()
-				if removeErr := os.Remove(recordPath(stateDir, runID, false)); removeErr != nil && !os.IsNotExist(removeErr) {
-					return errors.Join(pathErr, removeErr)
+				rec.Status, rec.Error = StatusFailed, pathErr.Error()
+				event.Status = rec.Status
+				if err := writeRecordAtomic(rec); err != nil {
+					return errors.Join(pathErr, err)
 				}
 				return appendEvent(stateDir, event)
 			}
@@ -977,21 +1079,30 @@ func cleanupAdmission(stateDir, runID, reason string) {
 		if scratch != "" {
 			scratchOutcome, err := cleanupScratchOutcome(stateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
 			scratchErr = err
-			event.Resources = append(event.Resources, scratchOutcome)
+			if persistErr := appendResourceOutcomeLocked(stateDir, runID, scratchOutcome); persistErr != nil {
+				scratchErr = errors.Join(scratchErr, fmt.Errorf("persist scratch cleanup outcome: %w", persistErr))
+			}
+			rec.Resources, err = readRunResources(stateDir, runID)
+			if err != nil {
+				return err
+			}
 			if scratchErr != nil {
 				event.Error = scratchErr.Error()
 				rec.Status, rec.Error = StatusDirty, scratchErr.Error()
-				if err := writeRecordAtomic(rec); err != nil {
-					return errors.Join(scratchErr, err)
-				}
+			} else {
+				rec.Status, rec.Error = StatusFailed, reason
 			}
+		} else {
+			rec.Status, rec.Error = StatusFailed, reason
 		}
-		if scratchErr == nil {
-			if err := os.Remove(recordPath(stateDir, runID, false)); err != nil && !os.IsNotExist(err) {
-				return err
-			}
+		event.Status = rec.Status
+		if err := writeRecordAtomic(rec); err != nil {
+			return errors.Join(scratchErr, err)
 		}
-		return appendEvent(stateDir, event)
+		if err := appendEvent(stateDir, event); err != nil {
+			return err
+		}
+		return nil
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "proc: remove incomplete admission %s: %v\n", runID, err)
 	}
@@ -1042,30 +1153,56 @@ func completeRecord(stateDir, runID string, code *int, signal string, duration t
 }
 
 func WaitTag(ctx context.Context, stateDir, tag string) (RunInfo, error) {
-	return waitRun(ctx, stateDir, tag, false)
+	return waitRun(ctx, stateDir, tag, waitByTag, 0)
 }
 
 func WaitLatestTag(ctx context.Context, stateDir, tag string) (RunInfo, error) {
-	return waitRun(ctx, stateDir, tag, true)
+	return WaitLatestTagWithin(ctx, stateDir, tag, 2*time.Minute)
 }
 
-// selectWaitMatch applies the tag-matching rules to one record set: exact tag
-// matches must stay unique, latest-tag matches resolve to the newest record.
-func selectWaitMatch(records []record, tag string, latest bool) (*record, error) {
+// WaitLatestTagWithin limits only the time allowed for a matching record to appear.
+func WaitLatestTagWithin(ctx context.Context, stateDir, tag string, appearWithin time.Duration) (RunInfo, error) {
+	if appearWithin < 0 {
+		return RunInfo{}, errors.New("proc: appearance window must not be negative")
+	}
+	return waitRun(ctx, stateDir, tag, waitByLatestTag, appearWithin)
+}
+
+// WaitRunID waits for one known run identity, independently of tag reuse.
+func WaitRunID(ctx context.Context, stateDir, runID string) (RunInfo, error) {
+	if runID == "" {
+		return RunInfo{}, errors.New("proc: run ID is required")
+	}
+	return waitRun(ctx, stateDir, runID, waitByRunID, 0)
+}
+
+type waitMode uint8
+
+const (
+	waitByTag waitMode = iota
+	waitByLatestTag
+	waitByRunID
+)
+
+// selectWaitMatch applies the selected tag or run identity to one record set.
+func selectWaitMatch(records []record, key string, mode waitMode) (*record, error) {
 	var match *record
 	for i := range records {
-		matches := records[i].Tag == tag
-		if latest {
-			matches = records[i].LatestTag == tag
+		matches := records[i].Tag == key
+		switch mode {
+		case waitByLatestTag:
+			matches = records[i].LatestTag == key
+		case waitByRunID:
+			matches = records[i].RunID == key
 		}
 		if !matches {
 			continue
 		}
-		if !latest && match != nil {
-			return nil, fmt.Errorf("tag %q identifies more than one run", tag)
+		if mode == waitByTag && match != nil {
+			return nil, fmt.Errorf("tag %q identifies more than one run", key)
 		}
 		if match == nil || records[i].EnqueuedAt.After(match.EnqueuedAt) ||
-			(records[i].EnqueuedAt.Equal(match.EnqueuedAt) && records[i].RunID > match.RunID) {
+			(mode == waitByLatestTag && records[i].EnqueuedAt.Equal(match.EnqueuedAt) && records[i].RunID > match.RunID) {
 			copy := records[i]
 			match = &copy
 		}
@@ -1091,17 +1228,25 @@ func terminalWaitInfo(match *record) (RunInfo, bool) {
 }
 
 func runInfoFromRecord(rec *record) RunInfo {
-	return RunInfo{RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: runStartedAt(*rec), Identity: rec.StartedAt, Status: rec.Status, Command: rec.Command, SlotGroup: rec.SlotGroup, ExitCode: rec.ExitCode, Signal: rec.Signal, DurationMS: rec.DurationMS, Error: rec.Error}
+	return RunInfo{RunID: rec.RunID, Tag: rec.Tag, PID: RecordedKeeperPID(rec.PID), StartedAt: runStartedAt(*rec), Identity: rec.StartedAt, Status: rec.Status, Command: rec.Command, SlotGroup: rec.SlotGroup, ExitCode: rec.ExitCode, Signal: rec.Signal, DurationMS: rec.DurationMS, Error: rec.Error, ResourceOutcomes: rec.Resources}
 }
 
-// waitRun polls a tag until its run reaches a terminal state. The full
+// waitRun polls the selected tag or run identity until it reaches a terminal state. The full
 // registry is consulted once at the start; every tick afterwards reads only
 // the live set, the matched run's record by ID, and the O(1) enqueue
 // watermark, so the wait never rescans finished history per tick. A watermark
 // change means a run was enqueued after the last consult — it may already
 // have finished and retired between two polls, so that tick resolves the full
 // registry once.
-func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, error) {
+type WaitNotFoundError struct {
+	LatestTag string
+}
+
+func (err *WaitNotFoundError) Error() string {
+	return fmt.Sprintf("not-found: no run record appeared for latest tag %q", err.LatestTag)
+}
+
+func waitRun(ctx context.Context, stateDir, key string, mode waitMode, appearWithin time.Duration) (RunInfo, error) {
 	if ctx == nil {
 		return RunInfo{}, errors.New("proc: wait context is required")
 	}
@@ -1115,7 +1260,7 @@ func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, e
 		if err != nil {
 			return err
 		}
-		match, err = selectWaitMatch(records, tag, latest)
+		match, err = selectWaitMatch(records, key, mode)
 		if err != nil {
 			return err
 		}
@@ -1132,9 +1277,16 @@ func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, e
 	if match != nil {
 		lastMatchedRunID = match.RunID
 	}
+	appearanceDeadline := time.Time{}
+	if mode == waitByLatestTag && lastMatchedRunID == "" {
+		appearanceDeadline = time.Now().Add(appearWithin)
+	}
 	ticker := time.NewTicker(admissionPollInterval)
 	defer ticker.Stop()
 	for {
+		if !appearanceDeadline.IsZero() && !time.Now().Before(appearanceDeadline) && lastMatchedRunID == "" && match == nil {
+			return RunInfo{}, &WaitNotFoundError{LatestTag: key}
+		}
 		err := withStateLock(stateDir, func() error {
 			if err := pruneStateLocked(stateDir); err != nil {
 				return err
@@ -1149,14 +1301,14 @@ func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, e
 				if err != nil {
 					return err
 				}
-				match, err = selectWaitMatch(records, tag, latest)
+				match, err = selectWaitMatch(records, key, mode)
 				return err
 			}
 			live, err := readLiveRecordsLocked(stateDir)
 			if err != nil {
 				return err
 			}
-			match, err = selectWaitMatch(live, tag, latest)
+			match, err = selectWaitMatch(live, key, mode)
 			if err != nil {
 				return err
 			}
@@ -1174,6 +1326,9 @@ func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, e
 		if err != nil {
 			return RunInfo{}, err
 		}
+		if match != nil && lastMatchedRunID == "" {
+			lastMatchedRunID = match.RunID
+		}
 		if match != nil {
 			lastMatchedRunID = match.RunID
 		}
@@ -1182,7 +1337,7 @@ func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, e
 		}
 		select {
 		case <-ctx.Done():
-			return RunInfo{}, fmt.Errorf("wait for run %q: %w", tag, ctx.Err())
+			return RunInfo{}, fmt.Errorf("wait for run %q: %w", key, ctx.Err())
 		case <-ticker.C:
 		}
 	}

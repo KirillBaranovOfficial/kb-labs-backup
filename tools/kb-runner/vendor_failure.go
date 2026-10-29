@@ -5,6 +5,7 @@ package main
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
 // failureClass is the resume decision for one provider failure: transient
@@ -21,8 +22,10 @@ const (
 
 // vendorFailure is the classified outcome of one provider failure.
 type vendorFailure struct {
-	class  failureClass
-	reason JobReason
+	class   failureClass
+	reason  JobReason
+	resetAt *time.Time
+	message string
 }
 
 var (
@@ -60,6 +63,19 @@ type vendorFailureTable struct {
 
 // classify maps one vendor stream event to its failure class.
 func (t vendorFailureTable) classify(event VendorEvent) vendorFailure {
+	return t.classifyAt(event, time.Now(), time.Local)
+}
+
+func (t vendorFailureTable) classifyAt(event VendorEvent, now time.Time, location *time.Location) vendorFailure {
+	failure := t.classifyWithoutReset(event)
+	if failure.reason == ReasonRateLimited {
+		failure.message = event.Message
+		failure.resetAt, _ = parseCodexResetAt(event.Message, now, location)
+	}
+	return failure
+}
+
+func (t vendorFailureTable) classifyWithoutReset(event VendorEvent) vendorFailure {
 	if event.ProviderCode != "" {
 		if failure, ok := t.transientCodes[event.ProviderCode]; ok {
 			return failure
@@ -90,6 +106,10 @@ func (t vendorFailureTable) classify(event VendorEvent) vendorFailure {
 // exit when its event stream carried no failure event. Label-anchored
 // structured tokens (provider code, HTTP status) are matched before phrases.
 func (t vendorFailureTable) classifyStderr(stderr string) (vendorFailure, bool) {
+	return t.classifyStderrAt(stderr, time.Now(), time.Local)
+}
+
+func (t vendorFailureTable) classifyStderrAt(stderr string, now time.Time, location *time.Location) (vendorFailure, bool) {
 	for code, failure := range t.transientCodes {
 		if matchLabeledCode(stderr, code) {
 			return failure, true
@@ -106,7 +126,10 @@ func (t vendorFailureTable) classifyStderr(stderr string) (vendorFailure, bool) 
 		}
 	}
 	if matchAnyPhrase(stderr, failureRateLimitPhrases) {
-		return transientRateLimitFailure, true
+		failure := transientRateLimitFailure
+		failure.message = stderr
+		failure.resetAt, _ = parseCodexResetAt(stderr, now, location)
+		return failure, true
 	}
 	if matchAnyPhrase(stderr, failureAuthPhrases) {
 		return permanentAuthFailure, true
@@ -115,6 +138,33 @@ func (t vendorFailureTable) classifyStderr(stderr string) (vendorFailure, bool) 
 		return transientUnreachableFailure, true
 	}
 	return vendorFailure{}, false
+}
+
+func parseCodexResetAt(message string, now time.Time, location *time.Location) (*time.Time, bool) {
+	if location == nil || now.IsZero() {
+		return nil, false
+	}
+	const marker = "try again at "
+	lower := strings.ToLower(message)
+	index := strings.LastIndex(lower, marker)
+	if index < 0 {
+		return nil, false
+	}
+	fields := strings.Fields(strings.TrimSpace(message[index+len(marker):]))
+	if len(fields) < 2 {
+		return nil, false
+	}
+	parsed, err := time.ParseInLocation("3:04 PM", strings.Join(fields[:2], " "), location)
+	if err != nil {
+		return nil, false
+	}
+	localNow := now.In(location)
+	year, month, day := localNow.Date()
+	reset := time.Date(year, month, day, parsed.Hour(), parsed.Minute(), 0, 0, location)
+	if !reset.After(localNow) {
+		reset = reset.AddDate(0, 0, 1)
+	}
+	return &reset, true
 }
 
 // classifyProviderStatus maps an HTTP status a vendor reports for a failed

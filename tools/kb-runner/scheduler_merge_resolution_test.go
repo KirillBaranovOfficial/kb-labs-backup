@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// case: S-237.86
+// case: S-237.86, S-237.123
 func TestMergeResolutionIsReverifiedAndPublishedThroughSharedLanding(t *testing.T) {
 	for _, race := range []string{"publish-resolved-merge", "integration-cas-refusal", "worker-cas-refusal"} {
 		t.Run(race, func(t *testing.T) {
@@ -50,10 +50,14 @@ func TestMergeResolutionIsReverifiedAndPublishedThroughSharedLanding(t *testing.
 			if err := os.WriteFile(filepath.Join(repo, ".agent-report.md"), []byte(report), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			git("add", "conflict.txt", ".agent-report.md")
+			git("add", "conflict.txt")
 			git("commit", "-m", "feat: worker conflict side")
 			workerSHA := git("rev-parse", "HEAD")
-			workerTree, err := treeSHAForCommit(repo, workerSHA)
+			verifiedSHA, _, err := snapshotWorktree(filesystemRunnerStateStore{}, repo, "resolution-worker")
+			if err != nil {
+				t.Fatal(err)
+			}
+			workerTree, err := treeSHAForCommit(repo, verifiedSHA.String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,12 +174,20 @@ exec "$REAL_GIT" "$@"
 			if err != nil {
 				t.Fatal(err)
 			}
-			workerState, err = store.stream(worker.Stream)
-			if err != nil || workerState.State != SchedulerAwaitingRemote || workerState.Submission == nil || workerState.Submission.SHA != resolvedSHA || workerState.Submission.SHA == integrationSHA || workerState.Submission.TreeSHA != resolvedTree.String() || workerState.Submission.ExpectedRefSHA != resolvedSHA {
-				t.Fatalf("resolver commit was not resubmitted as the immutable worker identity: stream=%+v wantSHA=%s tree=%s err=%v", workerState, resolvedSHA, resolvedTree, err)
+			resolvedEntries, err := landingTreeEntries(repo, resolvedTree.String())
+			if err != nil {
+				t.Fatal(err)
 			}
-			if resolverPushes, readErr := os.ReadFile(pushLog); readErr != nil || !strings.Contains(string(resolverPushes), "push backup "+resolvedSHA+":refs/heads/verify/resolution-worker-") {
-				t.Fatalf("resolved worker SHA was not remotely verified: pushes=%q err=%v", resolverPushes, readErr)
+			if _, exists := resolvedEntries[".agent-report.md"]; exists {
+				t.Fatal("merge-resolution commit contains the stream report artifact")
+			}
+			workerState, err = store.stream(worker.Stream)
+			workerState, err = store.stream(worker.Stream)
+			if err != nil || workerState.State != SchedulerAwaitingRemote || workerState.Submission == nil || workerState.Submission.SHA == resolvedSHA || workerState.Submission.SHA == integrationSHA || workerState.Submission.TreeSHA == resolvedTree.String() || workerState.Submission.ExpectedRefSHA != resolvedSHA {
+				t.Fatalf("resolver snapshot did not preserve the worker report against the resolved branch: stream=%+v wantRefSHA=%s tree=%s err=%v", workerState, resolvedSHA, resolvedTree, err)
+			}
+			if resolverPushes, readErr := os.ReadFile(pushLog); readErr != nil || !strings.Contains(string(resolverPushes), "push backup "+workerState.Submission.SHA+":refs/heads/verify/resolution-worker-") {
+				t.Fatalf("resolved worker snapshot SHA was not remotely verified: pushes=%q err=%v", resolverPushes, readErr)
 			}
 			mergeState, err = store.stream(mergeTask.Stream)
 			if err != nil || mergeState.State != SchedulerDone {
@@ -213,13 +225,17 @@ exec "$REAL_GIT" "$@"
 			if err != nil || !landed || candidateSHA == "" {
 				t.Fatalf("shared landing did not publish the resolved tree: landed=%t candidate=%s err=%v", landed, candidateSHA, err)
 			}
+			archives, err := filepath.Glob(filepath.Join(repo, "reviews", "archive", "resolution-worker-*.md"))
+			if err != nil || len(archives) == 0 {
+				t.Fatalf("merge-resolution report archives = %v, err=%v", archives, err)
+			}
 			published := gitFrom(t, gitPath, integrationWorktree, "show", candidateSHA+":conflict.txt")
 			if published != "resolver version" {
 				t.Fatalf("candidate merge omitted the resolver's conflict result: content=%q candidate=%s err=%v", published, candidateSHA, err)
 			}
 			pushes, err := os.ReadFile(pushLog)
-			if err != nil || !strings.Contains(string(pushes), "push backup "+resolvedSHA+":refs/heads/verify/resolution-worker-") || !strings.Contains(string(pushes), "push backup "+candidateSHA+":refs/heads/verify/candidate-resolution-worker-") {
-				t.Fatalf("resolved worker and resulting candidate SHA were not the verified/published identities: pushes=%q resolved=%s candidate=%s err=%v", pushes, resolvedSHA, candidateSHA, err)
+			if err != nil || !strings.Contains(string(pushes), "push backup "+workerState.Submission.SHA+":refs/heads/verify/resolution-worker-") || !strings.Contains(string(pushes), "push backup "+candidateSHA+":refs/heads/verify/candidate-resolution-worker-") {
+				t.Fatalf("resolved worker snapshot and resulting candidate SHA were not the verified/published identities: pushes=%q resolved=%s candidate=%s err=%v", pushes, workerState.Submission.SHA, candidateSHA, err)
 			}
 		})
 	}

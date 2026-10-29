@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1146,18 +1145,16 @@ func (s *schedulerStore) replayHandoff() error {
 		}
 		return fmt.Errorf("open scheduler event log for HANDOFF recovery: %w", err)
 	}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	lineNumber := 0
-	for scanner.Scan() {
+	readErr := proc.ReadJSONL(file, func(line []byte) error {
 		lineNumber++
-		if err := s.projectHandoff(scanner.Bytes()); err != nil {
-			return errors.Join(fmt.Errorf("replay scheduler event %d to HANDOFF: %w", lineNumber, err), file.Close())
+		if err := s.projectHandoff(line); err != nil {
+			return fmt.Errorf("replay scheduler event %d to HANDOFF: %w", lineNumber, err)
 		}
-	}
-	scanErr := scanner.Err()
+		return nil
+	})
 	closeErr := file.Close()
-	return errors.Join(scanErr, closeErr)
+	return errors.Join(readErr, closeErr)
 }
 
 func (s *schedulerStore) streams() ([]SchedulerStream, error) {
@@ -1237,6 +1234,11 @@ func schedulerAddCommand(root runnerRoot, args []string, out io.Writer) (int, er
 	if len(fs.Args()) != 0 {
 		return 2, fmt.Errorf("%s sched add: unexpected arguments; next: %s sched add --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "sched add", *state)
+	if err != nil {
+		return 2, fmt.Errorf("%s sched add: invalid runner state path: %w; next: %s sched add --help", root.Name(), err, root.InvocationCommand())
+	}
+	*state = resolvedState
 	for _, suite := range outsideSuites {
 		if _, _, err := parseOutsideSuiteSpec(suite); err != nil {
 			return 2, fmt.Errorf("%s sched add: %w; next: %s sched add --help", root.Name(), err, root.InvocationCommand())
@@ -1288,10 +1290,6 @@ func schedulerAddCommand(root runnerRoot, args []string, out io.Writer) (int, er
 	template := *promptTemplate
 	if *role == schedulerReviewRole && template == "" {
 		template = runnerReviewTemplate
-	}
-	resolvedState, err := resolveRunnerState(root, "sched add", *state)
-	if err != nil {
-		return 2, fmt.Errorf("%s sched add: %w; next: %s sched add --help", root.Name(), err, root.InvocationCommand())
 	}
 	task, err := newSchedulerStore(resolvedState).add(SchedulerTask{Stream: *stream, Prompt: *prompt, PromptTemplate: template, Workdir: resolvedWorkdir, WorktreeRoot: worktreeRootPath, RepoRoot: repoRoot, Base: *base, Priority: *priority, DependsOn: dependencies, Vendor: *vendor, Effort: *effort, Role: *role, Review: *review, Reviewers: reviewers, OutsideSuites: outsideSuites})
 	if err != nil {
@@ -1416,5 +1414,10 @@ func schedulerRunCommand(root runnerRoot, args []string) (int, error) {
 	if len(fs.Args()) != 0 || *slots < 1 {
 		return 2, fmt.Errorf("%s sched run: provide no positional arguments and a positive --slots value; next: %s sched run --help", root.Name(), root.InvocationCommand())
 	}
+	canonicalState, err := proc.CanonicalStateDir(*state)
+	if err != nil {
+		return 1, fmt.Errorf("%s sched run: resolve --state: %w; next: %s sched run --help", root.Name(), err, root.InvocationCommand())
+	}
+	*state = canonicalState
 	return runScheduler(context.Background(), root, *state, *slots, *once)
 }

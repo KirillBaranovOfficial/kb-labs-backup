@@ -102,7 +102,7 @@ func (supervisor *fakeSchedulerSupervisor) Start(ctx context.Context, config pro
 		return nil, err
 	}
 	started := time.Now()
-	record := proc.RunInfo{RunID: config.RunID, Tag: config.Tag, PID: command.Process.Pid, Identity: fmt.Sprintf("fake-run:%s:%d", config.RunID, command.Process.Pid), Status: proc.StatusRunning, Command: append([]string(nil), config.Command...), CostKey: config.CostKey, CostClass: config.CostClass}
+	record := proc.RunInfo{RunID: config.RunID, Tag: config.Tag, PID: proc.RecordedKeeperPID(command.Process.Pid), Identity: fmt.Sprintf("fake-run:%s:%d", config.RunID, command.Process.Pid), Status: proc.StatusRunning, Command: append([]string(nil), config.Command...), CostKey: config.CostKey, CostClass: config.CostClass}
 	record.StartedAt = &started
 	run := &fakeSchedulerRun{supervisor: supervisor, key: key, state: config.StateDir, runID: config.RunID, command: command, stdout: stdout, stderr: stderr, stdin: stdin, record: record}
 	supervisor.mu.Lock()
@@ -291,7 +291,7 @@ func (supervisor *fakeSchedulerSupervisor) RunOwnsProcess(state, runID string, p
 	if err != nil || !exists {
 		return false, err
 	}
-	return !record.Status.Terminal() && record.PID == pid && record.Identity == identity, nil
+	return !record.Status.Terminal() && record.PID == proc.RecordedKeeperPID(pid) && record.Identity == identity, nil
 }
 
 func (supervisor *fakeSchedulerSupervisor) RunTagActive(state, tag string) (bool, error) {
@@ -359,7 +359,7 @@ type completedAdmissionTestRun struct{}
 
 func (completedAdmissionTestRun) Wait() error { return nil }
 
-// case: S-237.140
+// case: S-237.149
 func TestSchedulerAdmissionWaitIsProjectedAndCleared(t *testing.T) {
 	fixture := newSchedulerFixture(t, `[]`, `{}`)
 	task := fixture.addTask(t, "admission-projection", "worker")
@@ -404,7 +404,7 @@ func TestSchedulerAdmissionWaitIsProjectedAndCleared(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestSchedulerAdmissionWaitReturnsTypedBoundedOutcome(t *testing.T) {
 	fixture := newSchedulerFixture(t, `[]`, `{}`)
 	task := fixture.addTask(t, "admission-timeout", "worker")
@@ -426,7 +426,7 @@ func TestSchedulerAdmissionWaitReturnsTypedBoundedOutcome(t *testing.T) {
 	}
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestSchedulerAdmissionTimeoutEscalatesWithDiagnostic(t *testing.T) {
 	fixture := newSchedulerFixture(t, `[]`, `{}`)
 	task := fixture.addTask(t, "admission-timeout-outcome", "worker")

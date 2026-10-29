@@ -836,6 +836,20 @@
       "httpStatus": 400
     },
     {
+      "code": "KB_RUNNER_LAND_BASE_REPORT_TRACKED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 409,
+      "message": "The base branch tracks stream report files: {paths}.",
+      "hint": "Remove these files from the base branch and commit that change, then run {nextCommand}.",
+      "templateParameters": ["nextCommand", "paths"],
+      "requiredTemplateParameters": ["nextCommand", "paths"],
+      "structuredDetailFields": ["paths"]
+    },
+    {
       "code": "KB_HOST_CONTROL_UNAUTHORIZED",
       "area": "host",
       "stage": "run",

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/kb-labs/clikit/diag"
 )
 
 type landingObject struct {
@@ -39,7 +41,7 @@ func (conflict *landingRefConflict) Error() string {
 	return fmt.Sprintf("landing ref %s changed before compare-and-swap: expected %s, found %s", conflict.Ref, conflict.Expected, conflict.Current)
 }
 
-func buildLandingObjects(stateIO runnerStateStore, repoRoot, stream, verifiedTree, expectedOld string, commits []proposedCommit, jobTemp string) (result landingObject, resultErr error) {
+func buildLandingObjects(stateIO runnerStateStore, repoRoot, stream, verifiedTree, expectedOld string, commits []proposedCommit, jobTemp, nextCommand string) (result landingObject, resultErr error) {
 	verifiedTreeID, err := storedGitObjectID(verifiedTree)
 	if err != nil {
 		return landingObject{}, errors.New("landing requires full verified tree and expected ref commit IDs")
@@ -55,12 +57,50 @@ func buildLandingObjects(stateIO runnerStateStore, repoRoot, stream, verifiedTre
 	if err != nil {
 		return landingObject{}, err
 	}
+	parentEntries, err := landingTreeEntries(repoRoot, parentTree.String())
+	if err != nil {
+		return landingObject{}, err
+	}
+	entries, err := landingTreeEntries(repoRoot, verifiedTreeID.String())
+	if err != nil {
+		return landingObject{}, err
+	}
+	var baseReports []string
+	for path := range parentEntries {
+		if isStreamReportPath(path) {
+			baseReports = append(baseReports, path)
+		}
+	}
+	if len(baseReports) > 0 {
+		return landingObject{}, baseTrackedReportDiagnostic(baseReports, nextCommand)
+	}
 	groups, err := landingPathGroups(repoRoot, parentTree.String(), verifiedTreeID.String())
 	if err != nil {
 		return landingObject{}, err
 	}
 	if err := validateCommitGroups(commits, groups[:]); err != nil {
 		return landingObject{}, err
+	}
+	var reportPaths []string
+	for path := range entries {
+		if isStreamReportPath(path) {
+			reportPaths = append(reportPaths, path)
+		}
+	}
+	sort.Strings(reportPaths)
+	var reports []reviewReportArtifact
+	for _, path := range reportPaths {
+		command := exec.Command("git", "-C", repoRoot, "show", verifiedTreeID.String()+":"+path)
+		data, err := command.Output()
+		if err != nil {
+			return landingObject{}, fmt.Errorf("read verified stream report %s for archive: %w", path, err)
+		}
+		reports = append(reports, reviewReportArtifact{Path: path, Contents: data})
+	}
+	if len(reports) > 0 {
+		if _, err := archiveReviewReports(stateIO, repoRoot, stream, reports); err != nil {
+			return landingObject{}, err
+		}
 	}
 	if err := os.MkdirAll(jobTemp, 0o700); err != nil {
 		return landingObject{}, fmt.Errorf("create landing job temp: %w", err)
@@ -77,10 +117,6 @@ func buildLandingObjects(stateIO runnerStateStore, repoRoot, stream, verifiedTre
 	indexPath := filepath.Join(indexDir, "index")
 	if _, err := gitWithIndex(stateIO, repoRoot, indexPath, "read-tree", parentTree.String()); err != nil {
 		return landingObject{}, fmt.Errorf("initialize private landing index: %w", err)
-	}
-	entries, err := landingTreeEntries(repoRoot, verifiedTreeID.String())
-	if err != nil {
-		return landingObject{}, err
 	}
 	parentCommit := expectedOldID
 	result = landingObject{CommitSHA: expectedOldID, TreeSHA: parentTree}
@@ -116,8 +152,12 @@ func buildLandingObjects(stateIO runnerStateStore, repoRoot, stream, verifiedTre
 		parentCommit = commitSHA
 		result = landingObject{CommitSHA: commitSHA, TreeSHA: tree}
 	}
-	if result.TreeSHA != verifiedTreeID {
-		return landingObject{}, fmt.Errorf("landing object tree %s does not reproduce verified tree %s", result.TreeSHA, verifiedTree)
+	matchesVerifiedContent, err := landingTreesEqualWithoutStreamReports(repoRoot, result.TreeSHA.String(), verifiedTreeID.String())
+	if err != nil {
+		return landingObject{}, err
+	}
+	if !matchesVerifiedContent {
+		return landingObject{}, fmt.Errorf("landing object tree %s differs from verified tree %s outside report artifacts", result.TreeSHA, verifiedTree)
 	}
 	return result, nil
 }
@@ -144,6 +184,65 @@ func createCommitObject(stateIO runnerStateStore, repoRoot string, tree gitObjec
 		return "", fmt.Errorf("create commit object: %w", err)
 	}
 	return sha, nil
+}
+
+func baseTrackedReportDiagnostic(paths []string, nextCommand string) error {
+	sort.Strings(paths)
+	diagnostic, err := diag.FromCatalog("KB_RUNNER_LAND_BASE_REPORT_TRACKED", map[string]string{
+		"paths": strings.Join(paths, ", "), "nextCommand": nextCommand,
+	}, diag.WithMeta(map[string]any{"paths": paths}))
+	if err != nil {
+		return fmt.Errorf("land base-report diagnostic is missing from the platform catalog: %w", err)
+	}
+	return diagnostic
+}
+
+func excludeLandingReportsFromIndex(stateIO runnerStateStore, repoRoot, parentCommit, nextCommand string) error {
+	parentTree, err := treeSHAForCommit(repoRoot, parentCommit)
+	if err != nil {
+		return err
+	}
+	parentEntries, err := landingTreeEntries(repoRoot, parentTree.String())
+	if err != nil {
+		return err
+	}
+	var baseReports []string
+	for path := range parentEntries {
+		if isStreamReportPath(path) {
+			baseReports = append(baseReports, path)
+		}
+	}
+	if len(baseReports) > 0 {
+		return baseTrackedReportDiagnostic(baseReports, nextCommand)
+	}
+	stagedTree, err := schedulerCommandOutput(repoRoot, "git", "-C", repoRoot, "write-tree")
+	if err != nil {
+		return fmt.Errorf("write staged merge-resolution tree for report inspection: %w", err)
+	}
+	entries, err := landingTreeEntries(repoRoot, strings.TrimSpace(stagedTree))
+	if err != nil {
+		return err
+	}
+	var paths []string
+	for path := range entries {
+		if isStreamReportPath(path) {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"reset", "HEAD", "--"}, paths...)
+	if _, err := stateIO.GitMutation(repoRoot, nil, args...); err != nil {
+		return fmt.Errorf("remove stream reports from merge-resolution index: %w", err)
+	}
+	return nil
+}
+
+func isStreamReportPath(path string) bool {
+	name := filepath.Base(path)
+	return strings.HasPrefix(name, ".agent-report") || strings.HasPrefix(name, ".review-report")
 }
 
 func readVerifiedWorkerReport(task SchedulerTask, tree string) ([]byte, error) {
@@ -191,6 +290,36 @@ func landingTreeEntries(repoRoot, tree string) (map[string]landingTreeEntry, err
 	return entries, nil
 }
 
+func landingTreesEqualWithoutStreamReports(repoRoot, leftTree, rightTree string) (bool, error) {
+	left, err := landingTreeEntries(repoRoot, leftTree)
+	if err != nil {
+		return false, err
+	}
+	right, err := landingTreeEntries(repoRoot, rightTree)
+	if err != nil {
+		return false, err
+	}
+	for path := range left {
+		if isStreamReportPath(path) {
+			delete(left, path)
+		}
+	}
+	for path := range right {
+		if isStreamReportPath(path) {
+			delete(right, path)
+		}
+	}
+	if len(left) != len(right) {
+		return false, nil
+	}
+	for path, entry := range left {
+		if right[path] != entry {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func landingPathGroups(repoRoot, parentTree, verifiedTree string) ([3][]string, error) {
 	all, err := landingDiffPaths(repoRoot, parentTree, verifiedTree, nil)
 	if err != nil {
@@ -213,6 +342,9 @@ func landingPathGroups(repoRoot, parentTree, verifiedTree string) ([3][]string, 
 	}
 	groups := [3][]string{}
 	for _, path := range all {
+		if isStreamReportPath(path) {
+			continue
+		}
 		switch {
 		case caseSet[path]:
 			groups[0] = append(groups[0], path)

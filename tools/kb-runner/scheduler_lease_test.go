@@ -69,9 +69,20 @@ func TestSchedulerReadyClaimIsAtomicAcrossStoreInstances(t *testing.T) {
 
 func TestSchedulerLeaseSubprocess(t *testing.T) {
 	if os.Getenv("KB_RUNNER_SCHEDULER_LEASE_HELPER") != "1" {
+		lease, err := newSchedulerStore(t.TempDir()).acquireRunLease()
+		if err != nil {
+			t.Fatalf("acquire fixture scheduler lease: %v", err)
+		}
+		if err := releaseRunLease(lease); err != nil {
+			t.Fatalf("release fixture scheduler lease: %v", err)
+		}
 		return
 	}
-	status := executeInvocation("kb-runner", []string{"sched", "run", "--state", os.Getenv("KB_RUNNER_SCHEDULER_LEASE_STATE")}, os.Stdout, os.Stderr)
+	state := os.Getenv("KB_RUNNER_SCHEDULER_LEASE_STATE")
+	if state == "" {
+		t.Fatal("subprocess lease helper requires KB_RUNNER_SCHEDULER_LEASE_STATE")
+	}
+	status := executeInvocation("kb-runner", []string{"sched", "run", "--state", state}, os.Stdout, os.Stderr)
 	os.Exit(status.Code())
 }
 
