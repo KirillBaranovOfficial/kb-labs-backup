@@ -37,6 +37,24 @@ test('production capacity composition measures real-format meminfo and returns p
 });
 
 // case: S-262.7
+test('available memory caps concurrency and rejects capacity below one task', () => {
+  const limits = deriveBuildLimits({
+    cpuCount: 4,
+    totalBytes: 16 * 1024 ** 3,
+    availableBytes: 5 * 1024 ** 3,
+    expectedTaskFootprintBytes: CALIBRATED_TASK_FOOTPRINT_BYTES,
+  });
+  assert.equal(limits.memoryBudgetBytes, 5 * 1024 ** 3);
+  assert.equal(limits.concurrency, 2);
+  assert.throws(() => deriveBuildLimits({
+    cpuCount: 4,
+    totalBytes: 16 * 1024 ** 3,
+    availableBytes: 1024 ** 3,
+    expectedTaskFootprintBytes: CALIBRATED_TASK_FOOTPRINT_BYTES,
+  }), (error) => error.code === 'RUNNER_MEMORY_CAPACITY_INSUFFICIENT');
+});
+
+// case: S-262.7
 test('resource sampler captures available memory, workspace disk, and top RSS processes', () => {
   const commands = [];
   const sample = sampleRunnerResources({
@@ -139,13 +157,14 @@ test('capacity measurement failure is written as a failed partial build with its
       measureBuildLimits: () => {
         const partial = JSON.parse(readFileSync(resultPath, 'utf8'));
         assert.equal(partial.status, 'running');
-        throw new Error('Runner MemAvailable must be a positive integer.');
+        throw Object.assign(new Error('Runner available memory cannot fit one build task.'), { code: 'RUNNER_MEMORY_CAPACITY_INSUFFICIENT' });
       },
       runCommand: async () => { commandRan = true; return { status: 0, stdout: 'built', stderr: '' }; },
     });
     assert.equal(commandRan, false);
     assert.equal(result.status, 'fail');
-    assert.deepEqual(result.failures, ['build capacity measurement failed: Runner MemAvailable must be a positive integer.']);
+    assert.deepEqual(result.failures, ['build capacity measurement failed: Runner available memory cannot fit one build task.']);
+    assert.equal(result.measurementErrorCode, 'RUNNER_MEMORY_CAPACITY_INSUFFICIENT');
     assert.deepEqual(JSON.parse(readFileSync(resultPath, 'utf8')), result);
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
