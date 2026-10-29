@@ -203,13 +203,14 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	}
 	manifests := cache.NewManifestStore(cacheRoot)
 	states := cache.NewStateStore(cacheRoot)
-	trackedFiles, globalInputDigest, err := workspaceInputDigest(ws)
+	globalInputDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(ws)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("cache inputs: %w", err)
 	}
 	executor := NewExecutor(objects, manifests, states, opts.WSRoot, cacheRoot, opts.LiveOutput)
 	executor.globalInputDigest = globalInputDigest
-	executor.trackedFiles = trackedFiles
+	executor.ownedInputDigests = ownedInputDigests
+	executor.dependencyDigests = dependencyDigests
 	executor.onHeartbeat = opts.OnHeartbeat
 
 	// Precompute direct workspace dep directories for each package in the run.
@@ -729,9 +730,9 @@ func readGoWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.P
 	}
 	command := exec.Command("go", "mod", "edit", "-json")
 	command.Dir = dir
-	output, err := command.Output()
+	output, err := command.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("read Go workspace dependencies in %s: %w", dir, err)
+		return nil, fmt.Errorf("read Go workspace dependencies in %s: %w: %s", dir, err, strings.TrimSpace(string(output)))
 	}
 	var module goModuleEdit
 	if err := json.Unmarshal(output, &module); err != nil {
@@ -910,8 +911,8 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 	}
 
 	var changed []workspace.Package
-	var trackedFiles map[string]struct{}
 	var globalInputDigest string
+	var ownedInputDigests, dependencyDigests map[string]string
 	var err error
 	inputDigestReady := false
 	for _, p := range ws.Packages {
@@ -926,7 +927,7 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 				break
 			}
 			if !inputDigestReady {
-				trackedFiles, globalInputDigest, err = workspaceInputDigest(ws)
+				globalInputDigest, ownedInputDigests, dependencyDigests, err = workspaceInputDigests(ws)
 				if err != nil {
 					return nil, fmt.Errorf("cache inputs: %w", err)
 				}
@@ -942,7 +943,7 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 					depDirs = append(depDirs, dep.Dir)
 				}
 			}
-			inputHash, err := hashTaskInputs(p, ws.Root, *def, depDirs, runtimeFingerprint, globalInputDigest, trackedFiles)
+			inputHash, err := hashTaskInputs(p, *def, depDirs, runtimeFingerprint, globalInputDigest, ownedInputDigests[p.Name], dependencyDigests[p.Name])
 			if err != nil {
 				// Schedule the package so Executor reports the input read failure
 				// through the task's catalogued error and recovery hint.
@@ -958,20 +959,55 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 	return packagesAndDependents(ws, changed)
 }
 
-func workspaceInputDigest(ws *workspace.Workspace) (map[string]struct{}, string, error) {
-	paths, unownedFiles, err := ws.TrackedFiles()
+func workspaceInputDigests(ws *workspace.Workspace) (string, map[string]string, map[string]string, error) {
+	unownedFiles, ownedFiles, err := ws.TrackedFileOwnership()
 	if err != nil {
-		return nil, "", err
+		return "", nil, nil, err
 	}
-	trackedFiles := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
-		trackedFiles[filepath.Clean(path)] = struct{}{}
-	}
-	globalDigest, err := cache.GlobalInputDigest(ws.Root, unownedFiles)
+	globalDigest, err := cache.ContentDigest(ws.Root, unownedFiles)
 	if err != nil {
-		return nil, "", err
+		return "", nil, nil, err
 	}
-	return trackedFiles, globalDigest, nil
+	ownedDigests := make(map[string]string, len(ownedFiles))
+	for name, files := range ownedFiles {
+		digest, err := cache.ContentDigest(ws.Root, files)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		ownedDigests[name] = digest
+	}
+	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		pkgByName[pkg.Name] = pkg
+	}
+	dependencies := make(map[string][]string, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		deps, err := WorkspaceDeps(pkg.Dir, pkgByName)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		dependencies[pkg.Name] = deps
+	}
+	dependencyDigests := make(map[string]string, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		visited := make(map[string]bool)
+		queue := append([]string(nil), dependencies[pkg.Name]...)
+		closure := make(map[string]string)
+		for len(queue) > 0 {
+			name := queue[0]
+			queue = queue[1:]
+			if visited[name] {
+				continue
+			}
+			visited[name] = true
+			if digest, ok := ownedDigests[name]; ok {
+				closure[name] = digest
+			}
+			queue = append(queue, dependencies[name]...)
+		}
+		dependencyDigests[pkg.Name] = cache.CombineContentDigests(closure)
+	}
+	return globalDigest, ownedDigests, dependencyDigests, nil
 }
 
 // AffectedRunPackages selects by configured Git diff only when diffOnly is

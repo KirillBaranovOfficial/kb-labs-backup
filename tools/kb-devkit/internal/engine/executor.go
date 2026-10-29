@@ -32,7 +32,8 @@ type Executor struct {
 	onHeartbeat        func(packageName, taskName string, elapsed time.Duration)
 	runtimeFingerprint string
 	globalInputDigest  string
-	trackedFiles       map[string]struct{}
+	ownedInputDigests  map[string]string
+	dependencyDigests  map[string]string
 }
 
 const taskHeartbeatInterval = 30 * time.Second
@@ -51,7 +52,7 @@ func NewExecutor(objects cache.ObjectStore, manifests *cache.ManifestStore, stat
 }
 
 // Run executes (pkg, task) with full cache semantics:
-//  1. Compute input hash (local inputs + dep outputs via "^" patterns)
+//  1. Compute input hash (owned tracked files, global inputs, dependencies and "^" outputs)
 //  2. Cache hit? → restore outputs + return cached result
 //  3. Run command
 //  4. Store outputs + write manifest
@@ -63,7 +64,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	start := time.Now()
 
 	// 1. Compute input hash.
-	inputHash, err := hashTaskInputs(pkg, e.wsRoot, def, depDirs, e.runtimeFingerprint, e.globalInputDigest, e.trackedFiles)
+	inputHash, err := hashTaskInputs(pkg, def, depDirs, e.runtimeFingerprint, e.globalInputDigest, e.ownedInputDigests[pkg.Name], e.dependencyDigests[pkg.Name])
 	if err != nil {
 		failure := fmt.Sprintf("hash inputs: %v", err)
 		logPath, logErr := e.writeTaskLog(pkg.Name, def.Name, "", "", failure)
@@ -224,23 +225,14 @@ func taskFingerprint(def TaskDef, runtimeFingerprint string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func hashTaskInputs(pkg workspace.Package, workspaceRoot string, def TaskDef, depDirs []string, runtimeFingerprint, globalInputDigest string, trackedFiles map[string]struct{}) (string, error) {
-	inputs := append([]string(nil), def.Inputs...)
-	if !containsInput(inputs, "package.json") {
-		// Package metadata controls exports, scripts and dependency resolution,
-		// all of which can change dist without touching src/.
-		inputs = append(inputs, "package.json")
-	}
-	return cache.HashInputsWithGlobalDigest(pkg.Dir, depDirs, inputs, taskFingerprint(def, runtimeFingerprint), globalInputDigest, trackedFiles)
-}
-
-func containsInput(inputs []string, wanted string) bool {
-	for _, input := range inputs {
-		if input == wanted {
-			return true
+func hashTaskInputs(pkg workspace.Package, def TaskDef, depDirs []string, runtimeFingerprint, globalInputDigest, ownedInputDigest, dependencyDigest string) (string, error) {
+	dependencyOutputs := make([]string, 0, len(def.Inputs))
+	for _, input := range def.Inputs {
+		if strings.HasPrefix(input, "^") {
+			dependencyOutputs = append(dependencyOutputs, input)
 		}
 	}
-	return false
+	return cache.HashInputsWithOwnership(pkg.Dir, depDirs, dependencyOutputs, taskFingerprint(def, runtimeFingerprint), globalInputDigest, ownedInputDigest, dependencyDigest)
 }
 
 // runCommand executes a shell command in dir, returning stdout, stderr, exit code.

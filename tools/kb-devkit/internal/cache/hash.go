@@ -4,7 +4,6 @@ package cache
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -35,19 +34,18 @@ func HashInputs(pkgDir string, depDirs []string, patterns []string) (string, err
 // package (the command, cache format, and toolchain). Keeping it in the same
 // digest prevents a remote CAS entry from surviving a semantic task change.
 func HashInputsWithFingerprint(pkgDir string, depDirs []string, patterns []string, fingerprint string) (string, error) {
-	return hashInputs(pkgDir, depDirs, patterns, fingerprint, "", nil, false)
+	return hashInputs(pkgDir, depDirs, patterns, fingerprint, "", "", "")
 }
 
-// HashInputsWithGlobalDigest includes the run-wide digest of tracked files with
-// no workspace package owner. Package-owned inputs remain scoped to this task.
-func HashInputsWithGlobalDigest(pkgDir string, depDirs []string, patterns []string, fingerprint, globalDigest string, trackedFiles map[string]struct{}) (string, error) {
-	return hashInputs(pkgDir, depDirs, patterns, fingerprint, globalDigest, trackedFiles, true)
+// HashInputsWithOwnership includes global and package-owned tracked-file
+// digests in addition to generated dependency outputs and task semantics.
+func HashInputsWithOwnership(pkgDir string, depDirs []string, patterns []string, fingerprint, globalDigest, ownedDigest, dependencyDigest string) (string, error) {
+	return hashInputs(pkgDir, depDirs, patterns, fingerprint, globalDigest, ownedDigest, dependencyDigest)
 }
 
-// GlobalInputDigest hashes tracked unowned paths and their current working-tree
-// contents. A deleted tracked path contributes a deletion marker; untracked
-// files are excluded by the caller's git ls-files enumeration.
-func GlobalInputDigest(workspaceRoot string, files []string) (string, error) {
+// ContentDigest hashes supplied tracked paths and their current working-tree
+// contents. A deleted tracked path contributes a deletion marker.
+func ContentDigest(workspaceRoot string, files []string) (string, error) {
 	files = uniqueSorted(files)
 	h := sha256.New()
 	for _, file := range files {
@@ -83,7 +81,7 @@ func GlobalInputDigest(workspaceRoot string, files []string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint, globalDigest string, trackedFiles map[string]struct{}, trackedOnly bool) (string, error) {
+func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint, globalDigest, ownedDigest, dependencyDigest string) (string, error) {
 	type entry struct {
 		key  string // sort key written into hash (unique across local + dep files)
 		path string // absolute path for reading
@@ -107,32 +105,9 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint,
 		if err != nil {
 			return "", err
 		}
-		rels = filterTracked(pkgDir, rels, trackedFiles, trackedOnly)
 		for _, rel := range rels {
 			if _, dup := seen[rel]; !dup {
 				seen[rel] = entry{key: rel, path: filepath.Join(pkgDir, rel)}
-			}
-		}
-	}
-
-	// Hash each direct workspace dependency's published/importable surface in
-	// addition to declared generated outputs. package.json is the producer's
-	// contract for which files consumers can read.
-	for _, depDir := range depDirs {
-		rels, err := packageSurfaceFiles(depDir)
-		if err != nil {
-			return "", err
-		}
-		rels = filterTracked(depDir, rels, trackedFiles, trackedOnly)
-		for _, rel := range rels {
-			absPath := filepath.Join(depDir, rel)
-			relKey, err := filepath.Rel(pkgDir, absPath)
-			if err != nil {
-				relKey = absPath
-			}
-			relKey = filepath.ToSlash(relKey)
-			if _, dup := seen[relKey]; !dup {
-				seen[relKey] = entry{key: relKey, path: absPath}
 			}
 		}
 	}
@@ -146,7 +121,6 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint,
 		if err != nil {
 			return "", err
 		}
-		rels = filterTracked(depDir, rels, trackedFiles, trackedOnly)
 		for _, rel := range rels {
 			absPath := filepath.Join(depDir, rel)
 			// Key is relative to pkgDir — machine-independent across checkouts.
@@ -179,6 +153,12 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint,
 		_, _ = io.WriteString(h, globalDigest)
 		_, _ = io.WriteString(h, "\x00")
 	}
+	if ownedDigest != "" {
+		_, _ = io.WriteString(h, "owned-inputs\x00"+ownedDigest+"\x00")
+	}
+	if dependencyDigest != "" {
+		_, _ = io.WriteString(h, "dependency-inputs\x00"+dependencyDigest+"\x00")
+	}
 	for _, key := range keys {
 		e := seen[key]
 		_, _ = io.WriteString(h, e.key+"\x00")
@@ -198,19 +178,6 @@ func hashInputs(pkgDir string, depDirs []string, patterns []string, fingerprint,
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func filterTracked(root string, rels []string, trackedFiles map[string]struct{}, trackedOnly bool) []string {
-	if !trackedOnly {
-		return rels
-	}
-	filtered := make([]string, 0, len(rels))
-	for _, rel := range rels {
-		if _, ok := trackedFiles[filepath.Clean(filepath.Join(root, rel))]; ok {
-			filtered = append(filtered, rel)
-		}
-	}
-	return filtered
-}
-
 func uniqueSorted(files []string) []string {
 	seen := make(map[string]struct{}, len(files))
 	result := make([]string, 0, len(files))
@@ -226,112 +193,18 @@ func uniqueSorted(files []string) []string {
 	return result
 }
 
-type packageManifest struct {
-	Exports json.RawMessage `json:"exports"`
-	Files   []string        `json:"files"`
-}
-
-func packageSurfaceFiles(root string) ([]string, error) {
-	manifestPath := filepath.Join(root, "package.json")
-	content, err := os.ReadFile(manifestPath)
-	if os.IsNotExist(err) {
-		return expandSurfaceFiles(root, []string{"**"})
+// CombineContentDigests hashes named package digests in a stable order.
+func CombineContentDigests(digests map[string]string) string {
+	names := make([]string, 0, len(digests))
+	for name := range digests {
+		names = append(names, name)
 	}
-	if err != nil {
-		return nil, err
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		_, _ = io.WriteString(h, name+"\x00"+digests[name]+"\x00")
 	}
-	var manifest packageManifest
-	if err := json.Unmarshal(content, &manifest); err != nil {
-		return nil, err
-	}
-	patterns := append([]string(nil), manifest.Files...)
-	if len(manifest.Exports) > 0 {
-		if err := collectExportTargets(manifest.Exports, &patterns); err != nil {
-			return nil, err
-		}
-	}
-	if len(patterns) == 0 {
-		return []string{"package.json"}, nil
-	}
-	patterns = append(patterns, "package.json")
-	for index, pattern := range patterns {
-		pattern = filepath.ToSlash(strings.TrimPrefix(pattern, "./"))
-		if filepath.IsAbs(pattern) || pattern == ".." || strings.HasPrefix(pattern, "../") {
-			return nil, os.ErrInvalid
-		}
-		if info, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(pattern))); statErr == nil && info.IsDir() {
-			pattern = strings.TrimSuffix(pattern, "/") + "/**"
-		}
-		patterns[index] = pattern
-	}
-	return expandSurfaceFiles(root, patterns)
-}
-
-func collectExportTargets(raw json.RawMessage, targets *[]string) error {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	var target string
-	if err := json.Unmarshal(raw, &target); err == nil {
-		if strings.HasPrefix(target, "./") {
-			*targets = append(*targets, target)
-		}
-		return nil
-	}
-	var values []json.RawMessage
-	if err := json.Unmarshal(raw, &values); err == nil {
-		for _, value := range values {
-			if err := collectExportTargets(value, targets); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	var conditions map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &conditions); err != nil {
-		return err
-	}
-	for _, value := range conditions {
-		if err := collectExportTargets(value, targets); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func expandSurfaceFiles(root string, patterns []string) ([]string, error) {
-	matched := make(map[string]struct{})
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() && path != root && (entry.Name() == ".git" || entry.Name() == "node_modules") {
-			return filepath.SkipDir
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		for _, pattern := range patterns {
-			if matchGlob(pattern, filepath.ToSlash(rel)) {
-				matched[rel] = struct{}{}
-				break
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]string, 0, len(matched))
-	for rel := range matched {
-		result = append(result, rel)
-	}
-	sort.Strings(result)
-	return result, nil
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func expandGlobs(root string, patterns []string, skipDist bool) ([]string, error) {
