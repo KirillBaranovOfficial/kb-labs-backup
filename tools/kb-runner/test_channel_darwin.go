@@ -115,11 +115,7 @@ func resolveTestChannelToolchain() (testChannelToolchain, error) {
 	if err != nil {
 		return testChannelToolchain{}, fmt.Errorf("Go toolchain is unavailable: %w", err)
 	}
-	goPath, err = filepath.Abs(goPath)
-	if err != nil {
-		return testChannelToolchain{}, fmt.Errorf("resolve Go toolchain path: %w", err)
-	}
-	goPath, err = filepath.EvalSymlinks(goPath)
+	goPath, err = canonicalSandboxPath(goPath)
 	if err != nil {
 		return testChannelToolchain{}, fmt.Errorf("cannot canonicalize Go toolchain path: %w", err)
 	}
