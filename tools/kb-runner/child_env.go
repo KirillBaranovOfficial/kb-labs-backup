@@ -86,10 +86,10 @@ func vendorAgentEnvironment(vendor string, declared []string, r AgentRequest, se
 			// fails the run when no configured provider serves it.
 			values = append(values, "ZCODE_MODEL="+r.Model)
 		}
-		return childEnvironment(values)
+		return childEnvironmentWithCommandShims(values, r)
 	}
 	if vendor != "zai" {
-		return childEnvironment(declared)
+		return childEnvironmentWithCommandShims(declared, r)
 	}
 	if state == "" || jobID == "" || secret == "" {
 		return nil, errors.New("z.ai agent environment requires state, job identity, and a validated key")
@@ -126,5 +126,30 @@ func vendorAgentEnvironment(vendor string, declared []string, r AgentRequest, se
 		}
 		values = append(values, model.name+"="+value)
 	}
-	return childEnvironment(values)
+	return childEnvironmentWithCommandShims(values, r)
+}
+
+func childEnvironmentWithCommandShims(declared []string, request AgentRequest) ([]string, error) {
+	if request.StateDir == "" || request.JobID == "" {
+		return nil, errors.New("agent command admission requires state and job identity")
+	}
+	runner, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("locate kb-runner for command shims: %w", err)
+	}
+	runner, err = filepath.Abs(runner)
+	if err != nil {
+		return nil, fmt.Errorf("resolve kb-runner command shim target: %w", err)
+	}
+	shimDir, err := installCommandShims(request.StateDir, request.JobID, runner)
+	if err != nil {
+		return nil, fmt.Errorf("install agent command admission shims: %w", err)
+	}
+	path := os.Getenv("PATH")
+	for _, entry := range declared {
+		if name, value, ok := strings.Cut(entry, "="); ok && name == "PATH" {
+			path = value
+		}
+	}
+	return childEnvironment(append(append([]string(nil), declared...), "PATH="+shimDir+string(os.PathListSeparator)+path))
 }

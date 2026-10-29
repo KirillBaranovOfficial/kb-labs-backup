@@ -35,7 +35,7 @@ const providerContinuationPrompt = "The provider connection dropped mid-task (tr
 
 func agentCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprintf(out, "Usage: %s agent <launch|resume|review|rework> <stream> [--state <dir>] | %s agent start --stream <name> --vendor <%s> --workdir <path> --prompt-file <path> [phase commands]\n", root.Name(), root.Name(), strings.Join(vendorNamesFor(nil), "|"))
+		_, err := fmt.Fprintf(out, "Usage: %s agent <launch|resume|review|rework> <stream> [--state <dir>] | %s agent start --stream <name> --vendor <%s> --workdir <path> --prompt-file <path> [--test-channel on|off] [phase commands]\n", root.Name(), root.Name(), strings.Join(vendorNamesFor(nil), "|"))
 		return 0, err
 	}
 	if len(args) == 0 {
@@ -76,6 +76,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	fiveHour := fs.Float64("five-hour-threshold", 95, "quota admission threshold")
 	week := fs.Float64("week-threshold", 98, "weekly quota admission threshold")
 	providerFailureThreshold := fs.Int("provider-failure-threshold", 3, "consecutive transient provider errors before recording a sustained outage")
+	testChannel := fs.String("test-channel", "on", "outside Go test channel: on or off")
 	var writable pathListFlag
 	fs.Var(&writable, "add-dir", "additional writable directory (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -84,6 +85,14 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	if *stream == "" || *workdir == "" || *promptFile == "" {
 		return 2, fmt.Errorf("%s agent start: --stream, --workdir, and --prompt-file are required; next: %s agent --help", root.Name(), root.InvocationCommand())
 	}
+	if *testChannel != "on" && *testChannel != "off" {
+		return 2, fmt.Errorf("%s agent start: --test-channel must be on or off; next: %s agent start --help", root.Name(), root.InvocationCommand())
+	}
+	canonicalState, err := proc.CanonicalStateDir(*state)
+	if err != nil {
+		return 1, fmt.Errorf("%s agent start: resolve --state: %w; next: %s agent start --help", root.Name(), err, root.InvocationCommand())
+	}
+	*state = canonicalState
 	costClass, err := proc.ParseCostClass(*cost)
 	if err != nil {
 		return 2, fmt.Errorf("%s agent start: %w; next: %s agent start --help", root.Name(), err, root.InvocationCommand())
@@ -107,6 +116,12 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		if _, err := store.Create(Job{ID: id, Stream: *stream, Vendor: *vendor, Model: *model, State: JobQueued, Phase: PhaseWorktree, SlotGroup: *slotGroup, SlotCeiling: *slots, MessagePath: finalPath}); err != nil {
 			return 1, err
 		}
+		if *testChannel == "on" {
+			spool := testChannelSpool(*state, id)
+			if err := os.MkdirAll(spool, 0o700); err != nil {
+				return failAgentJob(store, id, PhaseWorktree, ReasonSetup, root, finalPath, fmt.Errorf("create outside test request spool: %w", err))
+			}
+		}
 		minFreeBytes := uint64(0)
 		if *minFree != "" {
 			minFreeBytes, err = strconv.ParseUint(*minFree, 10, 64)
@@ -129,9 +144,13 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}
 		stdoutPath := filepath.Join(*state, "jobs", id+".stdout.log")
 		stderrPath := filepath.Join(*state, "jobs", id+".stderr.log")
+		leasePaths, err := runnerWorktreeLeasePaths(*workdir)
+		if err != nil {
+			return failAgentJob(store, id, PhaseAdmission, ReasonSetup, root, finalPath, fmt.Errorf("resolve agent worktree lease: %w", err))
+		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, Command: append([]string{helper}, argsForWorker...)})
+		run, err := proc.Start(ctx, proc.Config{StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, SharedLeasePaths: leasePaths, Command: append([]string{helper}, argsForWorker...)})
 		if err != nil {
 			return failAgentJob(store, id, PhaseAdmission, ReasonSetup, root, finalPath, fmt.Errorf("agent process admission failed: %w", err))
 		}
@@ -172,6 +191,13 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	finalPath := *message
 	if finalPath == "" {
 		finalPath = filepath.Join(*state, "jobs", id+".last.md")
+	}
+	spool := ""
+	if *testChannel == "on" {
+		spool = testChannelSpool(*state, id)
+		if err := os.MkdirAll(spool, 0o700); err != nil {
+			return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("create outside test request spool: %w", err))
+		}
 	}
 	workerIdentity, workerAlive, identityErr := proc.ProcessIdentity(os.Getpid())
 	if identityErr != nil {
@@ -223,10 +249,11 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		limitCtx, limitCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		limits, limitErr := adapter.Limits(limitCtx)
 		limitCancel()
-		if limitErr == nil {
-			if err := waitForQuotaAdmission(context.Background(), limits, adapter, store, id, *fiveHour, *week); err != nil {
-				return failAgentJob(store, id, PhaseAdmission, ReasonQuota, root, finalPath, err)
-			}
+		if limitErr != nil {
+			limits = nil
+		}
+		if err := waitForQuotaAdmission(context.Background(), limits, adapter, store, id, *fiveHour, *week, realQuotaAdmissionClock{}); err != nil {
+			return failAgentJob(store, id, PhaseAdmission, ReasonQuota, root, finalPath, err)
 		}
 	}
 	if err = store.Update(id, func(j *Job) error { j.State = JobRunning; j.Phase = PhaseRun; return nil }); err != nil {
@@ -238,7 +265,14 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	}); err != nil {
 		return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record provider attempt: %w", err))
 	}
-	req := AgentRequest{Prompt: string(prompt), Workdir: *workdir, Effort: *effort, Model: *model, SessionID: *session, WritableDirs: writable, FinalPath: finalPath, StateDir: *state, JobID: id}
+	req := AgentRequest{Prompt: string(prompt), Workdir: *workdir, Effort: *effort, Model: *model, SessionID: *session, WritableDirs: writable, TestChannelSpool: spool, FinalPath: finalPath, StateDir: *state, JobID: id}
+	channelContext, stopTestChannel := context.WithCancel(context.Background())
+	channelErrors := make(chan error, 1)
+	if spool != "" {
+		broker := &testChannelBroker{state: *state, jobID: id, stream: *stream, worktree: *workdir, spool: spool, executor: newTestChannelExecutor(nil)}
+		go func() { channelErrors <- broker.serve(channelContext) }()
+	}
+	defer stopTestChannel()
 	var cmd *exec.Cmd
 	if *session != "" {
 		cmd, err = adapter.Resume(context.Background(), req)
@@ -357,8 +391,14 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}
 	}
 	waitErr := cmd.Wait()
+	stopTestChannel()
+	if spool != "" {
+		if channelErr := <-channelErrors; channelErr != nil {
+			waitErr = errors.Join(waitErr, fmt.Errorf("outside test channel broker failed: %w", channelErr))
+		}
+	}
 	if scanErr != nil {
-		waitErr = scanErr
+		waitErr = errors.Join(waitErr, scanErr)
 	}
 	completedJob, getErr := store.Get(id)
 	if getErr != nil {
@@ -368,6 +408,11 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	if failure.class == failureUnrelated {
 		if classified, ok := failures.classifyStderr(adapter.Redact(stderr.String())); ok {
 			failure = classified
+		}
+	}
+	if failure.resetAt != nil {
+		if _, err := newVendorLimitStateStore(*state, time.Now).Record(*vendor, *failure.resetAt, adapter.Redact(failure.message)); err != nil {
+			return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record vendor limit reset: %w", err))
 		}
 	}
 	if waitErr != nil && failure.class == failureTransient && completedJob.SessionID != "" && *recoveryAttempt < maxProviderRecoveryAttempts {
@@ -382,7 +427,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}); err != nil {
 			return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record paused provider state: %w", err))
 		}
-		if err := waitForProviderRecovery(context.Background(), adapter, *vendor, failure.reason, nextAttempt, *fiveHour, *week); err != nil {
+		if err := waitForProviderRecovery(context.Background(), adapter, *vendor, failure.reason, nextAttempt, *fiveHour, *week, failure.resetAt); err != nil {
 			return failAgentJob(store, id, PhaseRun, failure.reason, root, finalPath, err)
 		}
 		retryArgs, err := continuationRetryArgs(root, args, *state, id, completedJob.SessionID, nextAttempt)
@@ -560,7 +605,40 @@ func failAgentJob(store *jobStore, id string, phase JobPhase, reason JobReason, 
 	return 1, fmt.Errorf("%v; next: %s", cause, next)
 }
 
-func waitForQuotaAdmission(ctx context.Context, limits []VendorLimit, provider limitsProvider, store *jobStore, id string, fiveHour, week float64) error {
+type quotaAdmissionClock interface {
+	Now() time.Time
+	WaitUntil(context.Context, time.Time) error
+}
+
+type realQuotaAdmissionClock struct{}
+
+func (realQuotaAdmissionClock) Now() time.Time { return time.Now() }
+
+func (realQuotaAdmissionClock) WaitUntil(ctx context.Context, deadline time.Time) error {
+	delay := time.Until(deadline)
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func waitForQuotaAdmission(ctx context.Context, limits []VendorLimit, provider limitsProvider, store *jobStore, id string, fiveHour, week float64, clock quotaAdmissionClock) error {
+	job, err := store.Get(id)
+	if err != nil {
+		return fmt.Errorf("read job before quota admission: %w", err)
+	}
+	limitStore := newVendorLimitStateStore(filepath.Dir(store.dir), clock.Now)
+	limits, err = limitsWithRecordedVendorState(limits, limitStore, job.Vendor)
+	if err != nil {
+		return fmt.Errorf("read recorded vendor limit: %w", err)
+	}
 	for quotaBlocked(limits, fiveHour, week) {
 		if err := store.Update(id, func(job *Job) error {
 			job.State = JobQuotaWait
@@ -574,14 +652,9 @@ func waitForQuotaAdmission(ctx context.Context, limits []VendorLimit, provider l
 		if reset == nil {
 			return nil
 		}
-		delay := time.Until(*reset)
-		if delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
+		for clock.Now().Before(*reset) {
+			if err := clock.WaitUntil(ctx, *reset); err != nil {
+				return err
 			}
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -590,7 +663,10 @@ func waitForQuotaAdmission(ctx context.Context, limits []VendorLimit, provider l
 		if err != nil {
 			return nil
 		}
-		limits = refreshed
+		limits, err = limitsWithRecordedVendorState(refreshed, limitStore, job.Vendor)
+		if err != nil {
+			return fmt.Errorf("refresh recorded vendor limit: %w", err)
+		}
 	}
 	return store.Update(id, func(job *Job) error {
 		job.State = JobRunning
@@ -615,14 +691,22 @@ func nextBlockedReset(limits []VendorLimit, fiveHour, week float64) *time.Time {
 	return next
 }
 
-func waitForProviderRecovery(ctx context.Context, adapter AgentAdapter, vendor string, reason JobReason, attempt int, fiveHour, week float64) error {
+func waitForProviderRecovery(ctx context.Context, adapter AgentAdapter, vendor string, reason JobReason, attempt int, fiveHour, week float64, recordedReset *time.Time) error {
 	delay := time.Duration(1<<min(attempt-1, 5)) * time.Second
 	if reason == ReasonRateLimited {
+		var reset *time.Time
+		if recordedReset != nil {
+			value := *recordedReset
+			reset = &value
+		}
 		limits, err := adapter.Limits(ctx)
 		if err == nil {
-			if reset := nextBlockedReset(limits, fiveHour, week); reset != nil && time.Until(*reset) > delay {
-				delay = time.Until(*reset)
+			if providerReset := nextBlockedReset(limits, fiveHour, week); providerReset != nil && (reset == nil || providerReset.After(*reset)) {
+				reset = providerReset
 			}
+		}
+		if reset != nil && time.Until(*reset) > delay {
+			delay = time.Until(*reset)
 		}
 		timer := time.NewTimer(delay)
 		defer timer.Stop()

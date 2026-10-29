@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"io"
 	"os"
 	"os/exec"
@@ -22,6 +23,13 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func contextForTestLifetime(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
+}
 
 // case: S-237.21
 func TestProcargs2ArgumentsPreserveOSArgumentBoundaries(t *testing.T) {
@@ -67,6 +75,61 @@ func procargs2Fixture(argv []string, padding int, includeEnvironment bool) ([]by
 		data = append(data, environment...)
 	}
 	return data, environment
+}
+
+// case: S-237.7
+func TestDarwinRunTokenFDInspectionFindsApplePlatformBinary(t *testing.T) {
+	token, err := os.CreateTemp(t.TempDir(), "run-token-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer token.Close()
+	stat, err := token.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	statInfo, ok := stat.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("run token stat type = %T", stat.Sys())
+	}
+	identity := fileIdentity{Device: uint64(statInfo.Dev), Inode: uint64(statInfo.Ino)}
+
+	child := exec.Command("/bin/sleep", "30")
+	child.Env = append(os.Environ(), runEnv+"=darwin-token-probe")
+	child.ExtraFiles = []*os.File{token}
+	child.Stdout, child.Stderr = io.Discard, io.Discard
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	})
+	processInfo, err := unix.SysctlKinfoProc("kern.proc.pid", child.Process.Pid)
+	if err != nil {
+		t.Fatalf("inspect same-UID /bin/sleep identity: %v", err)
+	}
+	if uint32(processInfo.Eproc.Ucred.Uid) != uint32(os.Getuid()) {
+		t.Fatalf("/bin/sleep UID = %d, want test UID %d", processInfo.Eproc.Ucred.Uid, os.Getuid())
+	}
+	arguments, err := unix.SysctlRaw("kern.procargs2", child.Process.Pid)
+	if err != nil {
+		t.Fatalf("inspect same-UID /bin/sleep procargs2: %v", err)
+	}
+	_, envOffset, err := parseProcargs2(arguments)
+	if err != nil {
+		t.Fatalf("parse same-UID /bin/sleep procargs2: %v", err)
+	}
+	if marker := processMarkerValue(arguments[envOffset:]); marker != "" {
+		t.Fatalf("platform binary exposed run marker %q; the test requires the hidden-environment case", marker)
+	}
+	matched, err := processHasRunTokenDescriptor(child.Process.Pid, identity)
+	if err != nil {
+		t.Fatalf("inspect inherited run-token descriptor for same-UID /bin/sleep: %v", err)
+	}
+	if !matched {
+		t.Fatal("libproc did not find the inherited run-token vnode on /bin/sleep")
+	}
 }
 
 // Requires real kern.procargs2 process-table access; run outside the restricted sandbox.
@@ -182,7 +245,7 @@ func TestDarwinExecCanReplaceMarkerWithinOneProcessIdentity(t *testing.T) {
 	if want := fmt.Sprintf("exec-ready %d exec-marker\n", pid); execLine != want {
 		t.Fatalf("post-exec child acknowledgment = %q, want %q", execLine, want)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	var lastMarker string
 	var lastUnverified bool
 	var lastMarkerErr error
@@ -249,8 +312,7 @@ func TestIdleKeeperCPUStaysBelowOnePercent(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build proc helper: %v\n%s", err, output)
 	}
-	run, err := StartWithHostResourceSource(context.Background(), Config{
-		HelperPath: helper, StateDir: state, Tag: "idle-keeper-cpu", Stall: time.Hour,
+	run, err := StartWithHostResourceSource(contextForTestLifetime(t), Config{StateDir: state, Tag: "idle-keeper-cpu", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "30"},
 	}, fakeHostResourceSource{sample: HostResourceSnapshot{
@@ -264,7 +326,7 @@ func TestIdleKeeperCPUStaysBelowOnePercent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read keeper record: %v", err)
 	}
-	if rec.PID != run.PID || rec.StartedAt != run.StartedAt {
+	if RecordedKeeperPID(rec.PID) != run.PID || rec.StartedAt != run.StartedAt {
 		t.Fatalf("run handle does not identify keeper: run=(pid %d identity %q) record=(pid %d identity %q)", run.PID, run.StartedAt, rec.PID, rec.StartedAt)
 	}
 	t.Cleanup(func() {
@@ -310,6 +372,111 @@ func TestIdleKeeperCPUStaysBelowOnePercent(t *testing.T) {
 	}
 }
 
+// case: S-237.147
+func TestDarwinMetricsTreatsReapedProcessAsUnavailable(t *testing.T) {
+	child := exec.Command("/bin/sleep", "30")
+	child.Stdout, child.Stderr = io.Discard, io.Discard
+	if err := child.Start(); err != nil {
+		t.Fatalf("start short-lived metrics child: %v", err)
+	}
+	reaped := false
+	t.Cleanup(func() {
+		if reaped {
+			return
+		}
+		if err := child.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("terminate metrics child during cleanup: %v", err)
+		}
+		if err := child.Wait(); err != nil {
+			var exitErr *exec.ExitError
+			status, ok := syscall.WaitStatus(0), false
+			if errors.As(err, &exitErr) {
+				status, ok = exitErr.Sys().(syscall.WaitStatus)
+			}
+			if !ok || status.Signal() != syscall.SIGKILL {
+				t.Errorf("reap metrics child during cleanup: %v", err)
+			}
+		}
+		reaped = true
+	})
+
+	snapshot, err := darwinProcessSnapshot("")
+	if err != nil {
+		t.Fatalf("capture process tree before child exit: %v", err)
+	}
+	var stale Process
+	found := false
+	for _, process := range snapshot {
+		if process.PID == child.Process.Pid {
+			stale, found = process, true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("child PID %d was absent from captured process tree", child.Process.Pid)
+	}
+	if err := child.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("terminate metrics child: %v", err)
+	}
+	waitErr := child.Wait()
+	reaped = true
+	if waitErr != nil {
+		var exitErr *exec.ExitError
+		status, ok := syscall.WaitStatus(0), false
+		if errors.As(waitErr, &exitErr) {
+			status, ok = exitErr.Sys().(syscall.WaitStatus)
+		}
+		if !ok || status.Signal() != syscall.SIGKILL {
+			t.Fatalf("reap metrics child after SIGKILL: %v", waitErr)
+		}
+	}
+
+	measured, err := (osProcessSource{}).Metrics([]Process{stale})
+	if err != nil {
+		t.Fatalf("measure reaped process: %v", err)
+	}
+	if len(measured) != 1 || measured[0].MetricsAvailable {
+		t.Fatalf("reaped process metrics = %+v, want one unavailable entry", measured)
+	}
+}
+
+// case: S-237.147
+func TestDarwinKinfoProcDecodeTreatsEmptyRecordAsGone(t *testing.T) {
+	info, gone, err := decodeDarwinKinfoProc(nil)
+	if err != nil {
+		t.Fatalf("decode empty process record: %v", err)
+	}
+	if !gone || info != nil {
+		t.Fatalf("empty process record = (%v, gone=%t), want nil and gone", info, gone)
+	}
+}
+
+// case: S-237.147
+func TestDarwinKinfoProcDecodeRejectsUnexpectedNonemptySize(t *testing.T) {
+	info, gone, err := decodeDarwinKinfoProc(make([]byte, unix.SizeofKinfoProc-1))
+	if err == nil || gone || info != nil {
+		t.Fatalf("partial process record = (%v, gone=%t, err=%v), want typed size error", info, gone, err)
+	}
+	if !errors.Is(err, syscall.EIO) {
+		t.Fatalf("partial process record error = %v, want EIO cause", err)
+	}
+}
+
+// case: S-237.147
+func TestDarwinLibprocMetricsErrorTreatsESRCHAsGone(t *testing.T) {
+	if err := darwinProcessMetricsError(43210, int(syscall.ESRCH)); err != nil {
+		t.Fatalf("disappeared libproc target error = %v, want no error", err)
+	}
+}
+
+// case: S-237.147
+func TestDarwinLibprocMetricsErrorPreservesInspectionErrno(t *testing.T) {
+	err := darwinProcessMetricsError(43210, int(syscall.EACCES))
+	if !errors.Is(err, syscall.EACCES) {
+		t.Fatalf("libproc inspection error = %v, want EACCES cause", err)
+	}
+}
+
 // case: S-237.13
 func TestSupervisedRunObservesWholeDarwinTableWithForeignUIDs(t *testing.T) {
 	truePath, err := exec.LookPath("true")
@@ -346,8 +513,7 @@ func TestSupervisedRunObservesWholeDarwinTableWithForeignUIDs(t *testing.T) {
 		t.Fatalf("build kb-runner: %v\n%s", err, output)
 	}
 	state := filepath.Join(dir, "state")
-	run, err := Start(context.Background(), Config{
-		HelperPath: runner, StateDir: state, Tag: "foreign-process-table", Stall: time.Hour,
+	run, err := Start(contextForTestLifetime(t), Config{StateDir: state, Tag: "foreign-process-table", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout"), StderrPath: filepath.Join(state, "stderr"),
 		Command: []string{truePath},
 	})
@@ -377,8 +543,7 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 	releaseFile := filepath.Join(dir, "release")
 	var pids []int
 	identities := make(map[int]string)
-	run, err := Start(context.Background(), Config{
-		HelperPath: helper, StateDir: state, Tag: "darwin-procargs", Stall: 250 * time.Millisecond,
+	run, err := Start(contextForTestLifetime(t), Config{StateDir: state, Tag: "darwin-procargs", Stall: 250 * time.Millisecond,
 		StdoutPath: filepath.Join(dir, "stdout"), StderrPath: filepath.Join(dir, "stderr"),
 		Command: []string{helper, "probe-detached", pidFile, releaseFile},
 	})
@@ -399,7 +564,7 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 				}
 			}
 		}
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(testdeadline.Budget(t))
 		for time.Now().Before(deadline) {
 			alive := false
 			for _, pid := range pids {
@@ -414,7 +579,7 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 		}
 		t.Logf("test-owned detached process identities still exist after bounded cleanup: %v", pids)
 	})
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testdeadline.Budget(t))
 	for time.Now().Before(deadline) {
 		data, readErr := os.ReadFile(pidFile)
 		if readErr == nil {

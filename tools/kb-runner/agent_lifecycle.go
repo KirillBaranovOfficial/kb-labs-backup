@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kb-labs/clikit/proc"
 )
 
 func agentLifecycleCommand(root runnerRoot, args []string, out io.Writer) (int, error) {
@@ -50,6 +52,11 @@ func agentLifecycleCommand(root runnerRoot, args []string, out io.Writer) (int, 
 	if streamArg == "" || len(fs.Args()) > 0 {
 		return 2, fmt.Errorf("%s agent %s: one stream is required; next: %s agent --help", root.Name(), operation, root.InvocationCommand())
 	}
+	canonicalState, err := proc.CanonicalStateDir(*statePath)
+	if err != nil {
+		return 1, fmt.Errorf("%s agent %s: resolve --state: %w; next: %s agent --help", root.Name(), operation, err, root.InvocationCommand())
+	}
+	*statePath = canonicalState
 	streamName := streamArg
 	store := newSchedulerStore(*statePath)
 	stream, err := store.stream(streamName)

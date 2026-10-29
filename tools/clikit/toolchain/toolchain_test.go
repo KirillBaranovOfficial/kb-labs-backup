@@ -9,10 +9,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"github.com/kb-labs/clikit/proc/child"
 )
 
@@ -78,19 +78,23 @@ func TestExternalToolStallReturnsCataloguedDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanupRunningInvocation(t, running)
-	if err := waitForReadiness(running, ready, 30*time.Second); err != nil {
+	if err := waitForReadiness(running, ready, testdeadline.Budget(t)); err != nil {
 		t.Fatal(err)
 	}
 	// The stall budget is injected here, anchored after readiness instead of
 	// racing process start.
+	stallTimeout := testdeadline.Scale(t, 5*time.Second)
 	started := time.Now()
-	_, err = running.finish(started, time.Second)
+	_, err = running.finish(started, stallTimeout)
 	if err == nil {
 		t.Fatal("stalled process returned success")
 	}
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" {
 		t.Fatalf("stall failure = %#v", err)
+	}
+	if elapsed := time.Since(started); elapsed > stallTimeout+testdeadline.ExternalToolTimeoutSlack(t) {
+		t.Fatalf("stall bound took %s", elapsed)
 	}
 	for key, want := range map[string]string{"tool": "fixture", "argsSummary": "--wait", "stderrTail": "stalled-tool-output", "nextCommand": "'" + tool + "' '--wait'"} {
 		if got := fmt.Sprint(failure.Meta[key]); !strings.Contains(got, want) {
@@ -113,7 +117,7 @@ func TestExternalToolExitBeforeReadinessEndsWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanupRunningInvocation(t, running)
-	if err := waitForReadiness(running, filepath.Join(t.TempDir(), "never-ready"), 30*time.Second); !errors.Is(err, errFixtureExitedBeforeReadiness) {
+	if err := waitForReadiness(running, filepath.Join(t.TempDir(), "never-ready"), testdeadline.Budget(t)); !errors.Is(err, errFixtureExitedBeforeReadiness) {
 		t.Fatalf("readiness result = %v, want child-exited signal", err)
 	}
 	if running.command.ProcessState == nil || running.command.ProcessState.ExitCode() != 23 {
@@ -125,16 +129,17 @@ func cleanupRunningInvocation(t *testing.T, running *runningInvocation) {
 	t.Helper()
 	t.Cleanup(func() {
 		running.cancel(context.Canceled)
+		grace := testdeadline.Budget(t)
 		select {
 		case <-running.waitDone:
-		case <-time.After(time.Second):
+		case <-time.After(grace):
 			killErr := child.KillTree(running.command.Process.Pid)
 			select {
 			case <-running.waitDone:
 				if killErr != nil {
 					t.Errorf("kill fixture process tree during cleanup: %v", killErr)
 				}
-			case <-time.After(time.Second):
+			case <-time.After(grace):
 				t.Errorf("fixture process tree was not reaped during cleanup (kill error: %v)", killErr)
 			}
 		}
@@ -168,15 +173,17 @@ func TestCallerDeadlineWinsOverOperationBound(t *testing.T) {
 	if err := os.WriteFile(tool, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	operationBound := 2 * time.Second
+	callerBudget := testdeadline.Scale(t, operationBound/20)
+	ctx, cancel := context.WithTimeout(context.Background(), callerBudget)
 	defer cancel()
 	started := time.Now()
-	_, err := run(ctx, Invocation{Tool: "fixture", Executable: tool, Operation: OperationWorkspaceTask}, 2*time.Second)
+	_, err := run(ctx, Invocation{Tool: "fixture", Executable: tool, Operation: OperationWorkspaceTask}, operationBound)
 	var timedOut *TimeoutError
-	if !errors.As(err, &timedOut) || timedOut.Bound != BoundCaller || timedOut.Budget.Round(time.Millisecond) != 100*time.Millisecond {
+	if !errors.As(err, &timedOut) || timedOut.Bound != BoundCaller || timedOut.Budget.Round(time.Millisecond) != callerBudget.Round(time.Millisecond) {
 		t.Fatalf("caller deadline error = %#v", err)
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
+	if elapsed := time.Since(started); elapsed > testdeadline.Scale(t, operationBound/2) {
 		t.Fatalf("caller deadline took %s", elapsed)
 	}
 }

@@ -20,7 +20,8 @@
     "KB_PLATFORM_ROOT",
     "KB_PROJECT_ROOT",
     "KB_SOCKET_HASH",
-    "KB_SOCKET_PATH"
+    "KB_SOCKET_PATH",
+    "KB_TEST_DEADLINE_SCALE"
   ],
   "codes": [
     {
@@ -144,6 +145,28 @@
       "httpStatus": 404,
       "message": "Agent ID {agentId} is not registered in the Agents plugin.",
       "hint": "Use an agent ID registered by the Agents plugin, then retry this request."
+    },
+    {
+      "code": "KB_ANALYTICS_STATS_UNSUPPORTED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "httpStatus": 501,
+      "message": "The analytics adapter cannot read aggregate statistics.",
+      "hint": "Configure `platform.adapters.analytics` in `kb.config.json` with an adapter that implements `getStats()`."
+    },
+    {
+      "code": "KB_ANALYTICS_PERSISTENCE_VOLATILE",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "warning",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "httpStatus": 200,
+      "message": "Analytics history is kept in memory and resets when the host restarts.",
+      "hint": "Run `kb marketplace install @kb-labs/adapters-analytics-sqlite --scope platform`, then `kb adapter bind analytics @kb-labs/adapters-analytics-sqlite` to retain analytics history across host restarts."
     },
     {
       "code": "KB_AUTH_CLOCK_SKEW",
@@ -346,6 +369,31 @@
       "structuredDetailFields": [
         "reason"
       ]
+    },
+    {
+      "code": "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE",
+      "area": "runtime",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The current executable path could not be determined.",
+      "hint": "Check that the current executable is available on disk, then retry the command.",
+      "structuredDetailFields": [
+        "reason"
+      ],
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_START_CONTEXT_NOT_CANCELLABLE",
+      "httpStatus": 400,
+      "area": "runtime",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "Process supervision requires a cancellable context.",
+      "hint": "Pass a context with a non-nil Done channel, such as one returned by context.WithCancel or signal.NotifyContext."
     },
     {
       "code": "KB_RUNTIME_RUN_DIRTY",
@@ -773,6 +821,20 @@
       "templateParameters": ["nextCommand"],
       "requiredTemplateParameters": ["nextCommand"],
       "httpStatus": 409
+    },
+    {
+      "code": "KB_RUNNER_LAND_BASE_REPORT_TRACKED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 409,
+      "message": "The base branch tracks stream report files: {paths}.",
+      "hint": "Remove these files from the base branch and commit that change, then run {nextCommand}.",
+      "templateParameters": ["nextCommand", "paths"],
+      "requiredTemplateParameters": ["nextCommand", "paths"],
+      "structuredDetailFields": ["paths"]
     },
     {
       "code": "KB_HOST_CONTROL_UNAUTHORIZED",

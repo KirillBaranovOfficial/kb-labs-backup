@@ -9,16 +9,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"github.com/kb-labs/clikit/internal/testutil"
 	"github.com/kb-labs/clikit/proc"
 )
@@ -34,6 +37,13 @@ func (stableHostResourceSource) Snapshot() proc.HostResourceSnapshot {
 
 func startTest(ctx context.Context, cfg proc.Config) (*proc.Run, error) {
 	return proc.StartWithHostResourceSource(ctx, cfg, stableHostResourceSource{})
+}
+
+func cancellableTestContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
+	t.Cleanup(cancel)
+	return ctx
 }
 
 // case: S-237.56
@@ -69,6 +79,7 @@ func TestLauncherExitTerminatesItsSpawnedRun(t *testing.T) {
 					continue
 				}
 				var owner struct {
+					RunID     string `json:"run_id"`
 					PID       int    `json:"pid"`
 					StartedAt string `json:"started_at"`
 				}
@@ -76,25 +87,8 @@ func TestLauncherExitTerminatesItsSpawnedRun(t *testing.T) {
 					t.Errorf("decode test-owned run record %s during cleanup: %v", path, err)
 					continue
 				}
-				identity, alive, identityErr := proc.ProcessIdentity(owner.PID)
-				if identityErr != nil {
-					t.Errorf("inspect test-owned process %d during cleanup: %v", owner.PID, identityErr)
-					continue
-				}
-				if alive && identity == owner.StartedAt {
-					if err := syscall.Kill(owner.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-						t.Errorf("kill test-owned process %d during cleanup: %v", owner.PID, err)
-					}
-				}
-			}
-		}
-		if childPID > 0 && childIdentity != "" {
-			identity, alive, err := proc.ProcessIdentity(childPID)
-			if err != nil {
-				t.Errorf("inspect spawned child %d during cleanup: %v", childPID, err)
-			} else if alive && identity == childIdentity {
-				if err := syscall.Kill(childPID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-					t.Errorf("kill spawned child %d during cleanup: %v", childPID, err)
+				if err := proc.SignalRecordedKeeper(state, owner.RunID, syscall.SIGTERM); err != nil {
+					t.Errorf("stop test-owned run %s during cleanup: %v", owner.RunID, err)
 				}
 			}
 		}
@@ -144,7 +138,7 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 	cmd := exec.CommandContext(ctx, runner, "run", "--tag", "normal", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--", helper, "detached", "3", readyFile)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		forceKillRecordedTree(t, state)
+		signalRecordedKeepers(t, state)
 		skipOnTeardownObservationFailure(t, state, outputRunID(t, state, "normal"))
 		stderr, _ := os.ReadFile(filepath.Join(state, "stderr.log"))
 		events, _ := os.ReadFile(filepath.Join(state, "events.jsonl"))
@@ -276,7 +270,7 @@ func TestRunScratchEnvironmentIsRemovedAndKeptOutputSurvives(t *testing.T) {
 	if err != nil || len(leftovers) != 0 {
 		t.Fatalf("kept scratch output appeared as a leftover: %+v, %v", leftovers, err)
 	}
-	assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
+	assertExactlyOneScratchOutcome(t, state, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
 	skipOnTeardownObservationFailure(t, state, runID)
 }
 
@@ -305,7 +299,7 @@ func TestRunScratchRemovesReadOnlyGoModuleContent(t *testing.T) {
 	if _, err := os.Lstat(scratch); !os.IsNotExist(err) {
 		t.Fatalf("read-only scratch remains at %s: %v", scratch, err)
 	}
-	assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
+	assertExactlyOneScratchOutcome(t, state, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
 	if err != nil {
 		skipOnTeardownObservationFailure(t, state, runID)
 		t.Fatalf("read-only scratch run failed: %v\n%s", err, output)
@@ -319,7 +313,6 @@ func TestRunScratchRemovesReadOnlyGoModuleContent(t *testing.T) {
 // case: S-237.41
 func TestCanceledKeeperStartupRemovesRegisteredScratch(t *testing.T) {
 	state := t.TempDir()
-	runner := buildRunner(t)
 	stdoutFIFO := filepath.Join(state, "stdout.fifo")
 	if err := syscall.Mkfifo(stdoutFIFO, 0o600); err != nil {
 		t.Fatal(err)
@@ -328,7 +321,7 @@ func TestCanceledKeeperStartupRemovesRegisteredScratch(t *testing.T) {
 	started := make(chan error, 1)
 	go func() {
 		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{
-			HelperPath: runner, StateDir: state, Tag: "canceled-startup", Stall: time.Hour,
+			StateDir: state, Tag: "canceled-startup", Stall: time.Hour,
 			StdoutPath: stdoutFIFO, StderrPath: filepath.Join(state, "stderr.log"),
 			Command: []string{"/bin/sleep", "30"},
 		}, stableHostResourceSource{})
@@ -494,11 +487,15 @@ func TestRunScratchReplacementWithDifferentInodeIsRefused(t *testing.T) {
 		t.Fatalf("replacement scratch was removed or changed: data=%q err=%v", marker, err)
 	}
 	teardown := eventOfType(t, state, proc.EventTeardown)
-	assertExactlyOneScratchOutcome(t, teardown, string(proc.ResourceRefused))
+	assertExactlyOneScratchOutcome(t, state, teardown, string(proc.ResourceRefused))
 	var refusal string
-	for _, outcome := range teardown.Resources {
-		if outcome.Resource.Kind == "scratch" {
-			refusal = outcome.Error
+	resources, err := proc.ResourceOutcomes(state, teardown.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range resources {
+		if resource.Kind == "scratch" {
+			refusal = resource.Error
 		}
 	}
 	if refusal == "" || !strings.Contains(teardown.Error, refusal) {
@@ -533,7 +530,7 @@ func TestRunScratchSymlinkReplacementRefusesWithoutTouchingTarget(t *testing.T) 
 		t.Fatalf("scratch symlink replacement changed: target=%q err=%v", target, err)
 	}
 	teardown := eventOfType(t, state, proc.EventTeardown)
-	assertExactlyOneScratchOutcome(t, teardown, string(proc.ResourceRefused))
+	assertExactlyOneScratchOutcome(t, state, teardown, string(proc.ResourceRefused))
 }
 
 // case: S-237.41
@@ -558,23 +555,28 @@ func TestRunScratchIsRemovedAfterNonzeroExitAndSignal(t *testing.T) {
 		if outcome.tag == "stall" {
 			assertEvent(t, state, "stall")
 		}
-		assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
+		assertExactlyOneScratchOutcome(t, state, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
 	}
 }
 
-func assertExactlyOneScratchOutcome(t *testing.T, event proc.Event, expected string) {
+func assertExactlyOneScratchOutcome(t *testing.T, state string, event proc.Event, expected string) {
 	t.Helper()
+	resources, err := proc.ResourceOutcomes(state, event.RunID)
+	if err != nil {
+		t.Errorf("read run resource outcomes: %v", err)
+		return
+	}
 	count := 0
-	for _, outcome := range event.Resources {
-		if outcome.Resource.Kind == "scratch" {
+	for _, resource := range resources {
+		if resource.Kind == "scratch" {
 			count++
-			if outcome.Outcome != expected {
-				t.Errorf("scratch outcome = %q, want %q", outcome.Outcome, expected)
+			if resource.Outcome != expected {
+				t.Errorf("scratch outcome = %q, want %q", resource.Outcome, expected)
 			}
 		}
 	}
 	if count != 1 {
-		t.Errorf("scratch outcomes = %d, want exactly one: %+v", count, event.Resources)
+		t.Errorf("scratch outcomes = %d, want exactly one: %+v", count, resources)
 	}
 }
 
@@ -598,11 +600,26 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	}
 	waited := false
 	var descendant int
-	var descendantUnverified bool
 	var owned []proc.Process
 	started := make(map[int]string)
+	var stopTeardownFollower context.CancelFunc
+	var teardownFollowerDone <-chan error
+	followerWaited := false
 	stdoutReadDone := make(chan struct{})
 	t.Cleanup(func() {
+		if stopTeardownFollower != nil {
+			stopTeardownFollower()
+			if teardownFollowerDone != nil && !followerWaited {
+				select {
+				case followErr := <-teardownFollowerDone:
+					if followErr != nil && !errors.Is(followErr, context.Canceled) && !errors.Is(followErr, context.DeadlineExceeded) {
+						t.Logf("stop teardown event follower: %v", followErr)
+					}
+				case <-time.After(time.Second):
+					t.Log("teardown event follower did not stop after cancellation")
+				}
+			}
+		}
 		if listing := proc.List(state); listing.Error == nil {
 			for _, run := range listing.Runs {
 				owned = append(owned, run.Tree...)
@@ -613,14 +630,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 				t.Logf("cleanup test supervisor: %v", err)
 			}
 		}
-		for pid, identity := range started {
-			if current, ok := identityForTest(t, pid); ok && current == identity {
-				if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-					t.Logf("cleanup test process %d: %v", pid, err)
-				}
-			}
-		}
-		forceKillRecordedTree(t, state)
+		signalRecordedKeepers(t, state)
 		if !waited {
 			if err := testutil.WaitAfterPipeRead(cmd, stdoutReadDone); err != nil {
 				t.Logf("wait for killed test supervisor: %v", err)
@@ -674,7 +684,6 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 		}
 		for _, process := range current.Runs[0].Tree {
 			if process.PID == descendant {
-				descendantUnverified = process.Unverified
 				started[process.PID] = process.Identity
 				return true
 			}
@@ -699,40 +708,157 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 		t.Fatalf("setsid descendant %d disappeared before supervisor kill", descendant)
 	}
 	owned = append(owned, listing.Runs[0].Tree...)
+	for _, process := range listing.Runs[0].Tree {
+		started[process.PID] = process.Identity
+	}
+	followCtx, followCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	stopTeardownFollower = followCancel
+	teardownSeen := make(chan proc.Event, 1)
+	followOutput := teardownEventFollowWriter{cancel: followCancel, events: teardownSeen}
+	followerDone := make(chan error, 1)
+	teardownFollowerDone = followerDone
+	go func() {
+		followerDone <- proc.Events(followCtx, state, true, []proc.EventType{proc.EventTeardown}, 0, &followOutput)
+	}()
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
 	if !waitUntil(5*time.Second, func() bool {
-		listing := proc.List(state)
-		if listing.Error != nil || len(listing.Runs) != 1 ||
-			!listing.Runs[0].Status.Terminal() || countEvents(t, state, "teardown") != 1 {
-			return false
-		}
-		teardown := eventOfType(t, state, proc.EventTeardown)
-		if runtime.GOOS == "darwin" && teardown.Error != "" {
-			if len(teardown.Remaining) == 0 {
-				t.Fatalf("non-clean teardown omitted remaining observations: %+v", teardown)
-			}
-		} else if teardown.Error != "" || len(teardown.Remaining) != 0 {
-			return false
-		}
-		for _, process := range owned {
-			if identity, ok := identityForTest(t, process.PID); ok && identity == process.Identity {
-				if runtime.GOOS == "darwin" && process.Unverified {
-					continue
-				}
+		for pid, identity := range started {
+			current, alive := identityForTest(t, pid)
+			if t.Failed() || alive && current == identity {
 				return false
 			}
 		}
-		return runtime.GOOS == "darwin" && descendantUnverified || !processExists(t, descendant)
+		for _, process := range owned {
+			current, alive := identityForTest(t, process.PID)
+			if t.Failed() || alive && current == process.Identity {
+				return false
+			}
+		}
+		return true
 	}) {
 		events, _ := os.ReadFile(filepath.Join(state, "events.jsonl"))
-		t.Fatalf("supervised tree did not end after supervisor SIGKILL; events: %s; stderr: %s", events, stderr.String())
+		logRawTeardownFieldSizes(t, events)
+		for pid, identity := range started {
+			current, alive := identityForTest(t, pid)
+			t.Logf("supervisor post-SIGKILL identity pid=%d expected=%s current=%s alive=%t same_identity=%t", pid, identity, current, alive, alive && current == identity)
+		}
+		for _, process := range owned {
+			current, alive := identityForTest(t, process.PID)
+			t.Logf("supervisor post-SIGKILL owned pid=%d expected=%s current=%s alive=%t same_identity=%t", process.PID, process.Identity, current, alive, alive && current == process.Identity)
+		}
+		t.Fatalf("recorded process identities survived supervisor SIGKILL; descendant_pid=%d sleep_pid=%d started=%v; stderr: %s",
+			descendant, sleepPID, started, stderr.String())
+	}
+	var followedTeardown proc.Event
+	select {
+	case followedTeardown = <-teardownSeen:
+	case followErr := <-followerDone:
+		followerWaited = true
+		if errors.Is(followErr, context.Canceled) {
+			select {
+			case followedTeardown = <-teardownSeen:
+			default:
+				t.Fatalf("teardown event follower stopped without observing teardown")
+			}
+		} else {
+			t.Fatalf("teardown event follower ended before teardown appeared: %v", followErr)
+		}
+	}
+	if followedTeardown.RunID != listing.Runs[0].RunID || followedTeardown.Type != proc.EventTeardown {
+		t.Fatalf("teardown event follower returned %+v for run %s", followedTeardown, listing.Runs[0].RunID)
+	}
+	select {
+	case followErr := <-followerDone:
+		followerWaited = true
+		if followErr != nil && !errors.Is(followErr, context.Canceled) {
+			t.Fatalf("teardown event follower failed after teardown: %v", followErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("teardown event follower did not stop after teardown")
+	}
+	eventFile, err := os.Open(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("open lifecycle event stream after process identities ended: %v", err)
+	}
+	var teardownEvents []proc.Event
+	eventReadErr := proc.ReadEvents(eventFile, func(event proc.Event) error {
+		if event.Type == proc.EventTeardown {
+			teardownEvents = append(teardownEvents, event)
+		}
+		return nil
+	})
+	closeErr := eventFile.Close()
+	if eventReadErr != nil || closeErr != nil {
+		t.Fatalf("read lifecycle event stream after process identities ended: %v", errors.Join(eventReadErr, closeErr))
+	}
+	if len(teardownEvents) != 1 {
+		t.Fatalf("teardown event count after process identities ended = %d, want 1", len(teardownEvents))
+	}
+	teardown := teardownEvents[0]
+	if teardown.Error != "" || len(teardown.Remaining) != 0 {
+		t.Fatalf("teardown outcome after process identities ended = error %q, remaining %v", teardown.Error, teardown.Remaining)
+	}
+	listing = proc.List(state)
+	if listing.Error != nil {
+		t.Fatalf("read terminal run state after process identities ended: %v", listing.Error)
+	}
+	if len(listing.Runs) != 1 || !listing.Runs[0].Status.Terminal() {
+		t.Fatalf("terminal run state after process identities ended = %+v", listing.Runs)
 	}
 	if err := testutil.WaitAfterPipeRead(cmd, stdoutReadDone); err != nil {
 		t.Logf("wait for SIGKILLed test supervisor: %v", err)
 	}
 	waited = true
+}
+
+type teardownEventFollowWriter struct {
+	cancel context.CancelFunc
+	events chan<- proc.Event
+}
+
+func (writer *teardownEventFollowWriter) Write(data []byte) (int, error) {
+	if err := proc.ReadEvents(bytes.NewReader(data), func(event proc.Event) error {
+		if event.Type == proc.EventTeardown {
+			select {
+			case writer.events <- event:
+			default:
+			}
+			writer.cancel()
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
+
+func logRawTeardownFieldSizes(t *testing.T, data []byte) {
+	t.Helper()
+	for lineNumber, line := range bytes.Split(data, []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(line, &fields); err != nil {
+			t.Logf("raw event line %d bytes=%d decode_error=%q", lineNumber+1, len(line)+1, err)
+			continue
+		}
+		var eventType proc.EventType
+		if err := json.Unmarshal(fields["type"], &eventType); err != nil || eventType != proc.EventTeardown {
+			continue
+		}
+		keys := make([]string, 0, len(fields))
+		for key := range fields {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		t.Logf("raw teardown event line %d total_bytes=%d", lineNumber+1, len(line)+1)
+		for _, key := range keys {
+			t.Logf("raw teardown field %s bytes=%d", key, len(fields[key]))
+		}
+	}
 }
 
 // case: S-237.2
@@ -741,17 +867,17 @@ func TestSilentLeafEmitsOneStallEvent(t *testing.T) {
 	helper := buildHelper(t)
 	leafPIDFile := filepath.Join(state, "leaf.pid")
 	releaseFile := filepath.Join(state, "release-leaves")
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "stall", Stall: 250 * time.Millisecond,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "stall", Stall: 250 * time.Millisecond,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "hold", leafPIDFile, releaseFile},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleanupRun(t, state, run)
+	cleanupRun(t, run)
 	// Registered after cleanupRun, so LIFO order releases the held leaf before
-	// the run kill: the leaf exits on its own and the keeper reaps a live tree.
+	// the run kill: the leaf exits on its own and the keeper reaps the attributable process tree.
 	t.Cleanup(func() { releaseHeldLeaves(t, releaseFile) })
 	if _, err := waitPIDFile(leafPIDFile, 5*time.Second); err != nil {
 		t.Fatal(err)
@@ -795,15 +921,15 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 	helper := buildHelper(t)
 	pidFile := filepath.Join(state, "grandchild.pid")
 	releaseFile := filepath.Join(state, "release-command")
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "darwin-sampled-descendant", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "darwin-sampled-descendant", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "double-fork-system-held", "30", pidFile, releaseFile},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleanupRun(t, state, run)
+	cleanupRun(t, run)
 	t.Cleanup(func() {
 		if err := os.WriteFile(releaseFile, []byte("release after test\n"), 0o600); err != nil && !os.IsNotExist(err) {
 			t.Logf("release test-owned intermediate during cleanup: %v", err)
@@ -819,8 +945,11 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if identity, exists := identityForTest(t, grandchild); exists && identity == grandchildIdentity {
-			if err := syscall.Kill(grandchild, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-				t.Logf("stop test-owned detached grandchild %d: %v", grandchild, err)
+			if err := run.Kill(); err != nil {
+				t.Logf("stop run owning detached grandchild %d: %v", grandchild, err)
+			}
+			if err := run.Wait(); err != nil {
+				t.Logf("wait for run owning detached grandchild %d: %v", grandchild, err)
 			}
 		}
 	})
@@ -880,17 +1009,17 @@ func TestUnrelatedSameUIDProcessIsNotOwnedByRun(t *testing.T) {
 		t.Fatal("test-owned unrelated process exited before the run started")
 	}
 
-	run, err := proc.Start(context.Background(), proc.Config{
-		HelperPath: buildHelper(t), StateDir: state, Tag: "unrelated-same-uid", Stall: time.Hour,
+	run, err := proc.Start(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "unrelated-same-uid", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{sleepPath, "3"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleanupRun(t, state, run)
+	cleanupRun(t, run)
 	if !waitUntil(2*time.Second, func() bool {
-		tree, treeErr := proc.ProcessTree(run.PID, run.RunID)
+		tree, treeErr := proc.ProcessTree(int(run.PID), run.RunID)
 		if treeErr != nil {
 			return false
 		}
@@ -922,17 +1051,16 @@ func wasKilledByTest(err *exec.ExitError) bool {
 // case: S-237.3
 func TestListShowsLiveTreeAndDetectsDeadKeeper(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	runner := buildRunner(t)
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "list", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "list", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "30"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleanupRun(t, state, run)
+	cleanupRun(t, run)
 	output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
 	if err != nil {
 		t.Fatalf("kb-runner ps failed: %v\n%s", err, output)
@@ -959,11 +1087,10 @@ func TestListShowsLiveTreeAndDetectsDeadKeeper(t *testing.T) {
 // case: S-237.4
 func TestEventsAreStructuredJSONL(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	runner := buildRunner(t)
 	runCtx, cancelRun := context.WithTimeout(context.Background(), 15*time.Second)
 	run, err := startTest(runCtx, proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "events", Stall: time.Hour,
+		StateDir: state, Tag: "events", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/usr/bin/true"},
 	})
@@ -999,30 +1126,24 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 			t.Logf("close test event stream: %v", err)
 		}
 	}()
-	counts := make(map[string]int)
+	eventTypes := make([]proc.EventType, 0, 4)
 	exitHasCode := false
-	s := bufio.NewScanner(f)
-	s.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for s.Scan() {
-		var event proc.Event
-		if err := json.Unmarshal(s.Bytes(), &event); err != nil {
-			t.Fatalf("invalid JSONL event: %v", err)
-		}
+	readErr := proc.ReadEvents(f, func(event proc.Event) error {
 		if event.Schema != proc.EventSchema || event.RunID == "" || event.At.IsZero() || event.Type == "" {
-			t.Fatalf("incomplete structured event: %+v", event)
+			return fmt.Errorf("incomplete structured event: %+v", event)
 		}
 		if event.Type == "exit" && event.ExitCode != nil && *event.ExitCode == 0 {
 			exitHasCode = true
 		}
-		counts[string(event.Type)]++
+		eventTypes = append(eventTypes, event.Type)
+		return nil
+	})
+	if readErr != nil {
+		t.Fatal(readErr)
 	}
-	if err := s.Err(); err != nil {
-		t.Fatal(err)
-	}
-	for _, kind := range []string{"start", "exit", "teardown"} {
-		if counts[kind] != 1 {
-			t.Fatalf("%s event count = %d, want one", kind, counts[kind])
-		}
+	wantLifecycle := []proc.EventType{proc.EventQueued, proc.EventStart, proc.EventExit, proc.EventTeardown}
+	if !sameEventTypes(eventTypes, wantLifecycle) {
+		t.Fatalf("lifecycle event sequence = %v, want %v", eventTypes, wantLifecycle)
 	}
 	if !exitHasCode {
 		t.Fatal("normal exit event has no exit code")
@@ -1030,6 +1151,18 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	skipOnTeardownObservationFailure(t, state, run.RunID)
 
 	followState := t.TempDir()
+	followRun, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: followState, Tag: "follow", Stall: time.Hour,
+		StdoutPath: filepath.Join(followState, "stdout.log"), StderrPath: filepath.Join(followState, "stderr.log"),
+		Command: []string{"/usr/bin/true"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := followRun.Wait(); err != nil {
+		skipOnTeardownObservationFailure(t, followState, followRun.RunID)
+		t.Fatal(err)
+	}
 	follow := exec.Command(runner, "events", "--state", followState, "--follow")
 	followStdout, err := follow.StdoutPipe()
 	if err != nil {
@@ -1052,52 +1185,239 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 			}
 		}
 	})
-	followRun, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: followState, Tag: "follow", Stall: time.Hour,
-		StdoutPath: filepath.Join(followState, "stdout.log"), StderrPath: filepath.Join(followState, "stderr.log"),
-		Command: []string{"/usr/bin/true"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := followRun.Wait(); err != nil {
-		skipOnTeardownObservationFailure(t, followState, followRun.RunID)
-		t.Fatal(err)
-	}
-	lines := make(chan []string, 1)
+	followedEvents := make([]proc.Event, 0, 4)
+	lines := make(chan error, 1)
+	firstEvent := make(chan struct{}, 1)
 	go func() {
 		defer close(followReadDone)
-		scanner := bufio.NewScanner(followStdout)
-		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-		var records []string
-		for len(records) < 3 && scanner.Scan() {
-			records = append(records, scanner.Text())
-		}
-		lines <- records
+		lines <- proc.ReadEvents(followStdout, func(event proc.Event) error {
+			followedEvents = append(followedEvents, event)
+			select {
+			case firstEvent <- struct{}{}:
+			default:
+			}
+			return nil
+		})
 	}()
 	select {
-	case records := <-lines:
-		if len(records) != 3 {
-			t.Fatalf("events --follow returned %d lifecycle records: %v; stderr: %s", len(records), records, followStderr.String())
-		}
-		for _, record := range records {
-			var event proc.Event
-			if err := json.Unmarshal([]byte(record), &event); err != nil || event.Schema != proc.EventSchema {
-				t.Fatalf("events --follow emitted an invalid event %q: %v", record, err)
-			}
-		}
+	case <-firstEvent:
 	case <-time.After(5 * time.Second):
-		t.Fatal("events --follow did not stream appended lifecycle events")
+		t.Fatal("events --follow did not emit the existing lifecycle record")
 	}
 	if err := follow.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case readErr := <-lines:
+		if readErr != nil {
+			t.Fatalf("read events --follow output: %v; stderr: %s", readErr, followStderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("events --follow did not terminate and close its stream")
 	}
 	waitErr = testutil.WaitAfterPipeRead(follow, followReadDone)
 	followWaited = true
 	if waitErr != nil {
 		t.Fatalf("stop events --follow: %v; stderr: %s", waitErr, followStderr.String())
 	}
+	gotLifecycle := make([]proc.EventType, len(followedEvents))
+	for i, event := range followedEvents {
+		gotLifecycle[i] = event.Type
+	}
+	if !sameEventTypes(gotLifecycle, wantLifecycle) {
+		t.Fatalf("events --follow lifecycle sequence = %v, want %v; stderr: %s", gotLifecycle, wantLifecycle, followStderr.String())
+	}
+	for _, event := range followedEvents {
+		if event.Schema != proc.EventSchema {
+			t.Fatalf("events --follow emitted incomplete event: %+v", event)
+		}
+	}
 	skipOnTeardownObservationFailure(t, followState, followRun.RunID)
+}
+
+func sameEventTypes(got, want []proc.EventType) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// case: S-237.4
+func TestEventsFollowLiveLifecycleFromRunStart(t *testing.T) {
+	state := t.TempDir()
+	helper := buildHelper(t)
+	runner := buildRunner(t)
+
+	follow := exec.Command(runner, "events", "--state", state, "--follow")
+	followStdout, err := follow.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var followStderr bytes.Buffer
+	follow.Stderr = &followStderr
+	if err := follow.Start(); err != nil {
+		t.Fatal(err)
+	}
+	followerFinished := false
+	followReadDone := make(chan struct{})
+	followEvents := make(chan proc.Event, 8)
+	followDone := make(chan error, 1)
+	go func() {
+		defer close(followReadDone)
+		followDone <- proc.ReadEvents(followStdout, func(event proc.Event) error {
+			followEvents <- event
+			return nil
+		})
+	}()
+	t.Cleanup(func() {
+		if followerFinished {
+			return
+		}
+		if err := follow.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Logf("stop live lifecycle follower: %v", err)
+		}
+		if err := testutil.WaitAfterPipeRead(follow, followReadDone); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Logf("wait for live lifecycle follower: %v", err)
+		}
+	})
+
+	// Start the follower process before proc.Start so it observes this run from
+	// its first append. The test holds the child until queued and start have
+	// crossed the follower, then releases it so exit and teardown are live too.
+	runCtx, cancelRun := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelRun()
+	childPIDPath := filepath.Join(state, "child.pid")
+	releasePath := filepath.Join(state, "release-child")
+	run, err := startTest(runCtx, proc.Config{
+		StateDir: state, Tag: "live-follow", Stall: time.Hour,
+		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
+		Command: []string{helper, "hold", childPIDPath, releasePath},
+	})
+	if err != nil {
+		t.Fatalf("start live-follow run: %v", err)
+	}
+	runFinished := false
+	t.Cleanup(func() {
+		if runFinished {
+			return
+		}
+		if err := run.Kill(); err != nil {
+			t.Logf("stop live-follow run %s: %v", run.RunID, err)
+		}
+		if err := run.Wait(); err != nil {
+			t.Logf("wait for live-follow run %s: %v", run.RunID, err)
+		}
+	})
+	want := []proc.EventType{proc.EventQueued, proc.EventStart, proc.EventExit, proc.EventTeardown}
+	got := make([]proc.Event, 0, len(want))
+	sequenceDeadline := time.NewTimer(10 * time.Second)
+	defer sequenceDeadline.Stop()
+	for len(got) < 2 {
+		select {
+		case event := <-followEvents:
+			got = append(got, event)
+		case err := <-followDone:
+			t.Fatalf("events --follow ended before full live lifecycle: %v; stderr: %s", err, followStderr.String())
+		case <-sequenceDeadline.C:
+			t.Fatalf("events --follow did not receive full live lifecycle, got %v; stderr: %s", eventTypes(got), followStderr.String())
+		}
+	}
+	if got[0].Type != proc.EventQueued || got[1].Type != proc.EventStart {
+		t.Fatalf("live follower prefix = %v, want [queued start]", eventTypes(got))
+	}
+	for _, event := range got {
+		if event.Schema != proc.EventSchema || event.RunID != run.RunID {
+			t.Fatalf("live follower received event for another/incomplete run: %+v; run=%s", event, run.RunID)
+		}
+	}
+	if err := os.WriteFile(releasePath, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Wait(); err != nil {
+		skipOnTeardownObservationFailure(t, state, run.RunID)
+		t.Fatalf("wait for live-follow run: %v", err)
+	}
+	runFinished = true
+	for len(got) < len(want) {
+		select {
+		case event := <-followEvents:
+			got = append(got, event)
+		case err := <-followDone:
+			t.Fatalf("events --follow ended before full live lifecycle: %v; stderr: %s", err, followStderr.String())
+		case <-sequenceDeadline.C:
+			t.Fatalf("events --follow did not receive full live lifecycle, got %v; stderr: %s", eventTypes(got), followStderr.String())
+		}
+	}
+	gotTypes := eventTypes(got)
+	if !sameEventTypes(gotTypes, want) {
+		t.Fatalf("live follower lifecycle = %v, want %v", gotTypes, want)
+	}
+	for _, event := range got {
+		if event.Schema != proc.EventSchema || event.RunID != run.RunID {
+			t.Fatalf("live follower received event for another/incomplete run: %+v; run=%s", event, run.RunID)
+		}
+	}
+	if err := follow.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("stop live lifecycle follower: %v", err)
+	}
+	select {
+	case err := <-followDone:
+		if err != nil {
+			t.Fatalf("read live lifecycle follower: %v; stderr: %s", err, followStderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("events --follow did not shut down after SIGTERM; stderr: %s", followStderr.String())
+	}
+	if err := testutil.WaitAfterPipeRead(follow, followReadDone); err != nil {
+		t.Fatalf("wait for live lifecycle follower: %v; stderr: %s", err, followStderr.String())
+	}
+	followerFinished = true
+}
+
+func eventTypes(events []proc.Event) []proc.EventType {
+	types := make([]proc.EventType, len(events))
+	for index, event := range events {
+		types[index] = event.Type
+	}
+	return types
+}
+
+// case: S-237.4
+func TestOversizedEventLineFailsEventsFollowAndPS(t *testing.T) {
+	runner := buildRunner(t)
+	state := t.TempDir()
+	oversized := strings.Repeat("x", proc.MaxJSONLLineBytes+1) + "\n"
+	if err := os.WriteFile(filepath.Join(state, "events.jsonl"), []byte(oversized), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	follow := exec.CommandContext(ctx, runner, "events", "--state", state, "--follow")
+	var followStdout, followStderr bytes.Buffer
+	follow.Stdout = &followStdout
+	follow.Stderr = &followStderr
+	err := follow.Run()
+	if err == nil {
+		t.Fatalf("events --follow accepted oversized record; stdout=%s stderr=%s", followStdout.String(), followStderr.String())
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("events --follow did not return within bound: %v; stdout=%s stderr=%s", ctx.Err(), followStdout.String(), followStderr.String())
+	}
+	if followStdout.Len() != 0 || !strings.Contains(followStderr.String(), "line-too-long") {
+		t.Fatalf("events --follow stdout=%s stderr=%s; want typed line-size error on stderr", followStdout.String(), followStderr.String())
+	}
+
+	ps := exec.Command(runner, "ps", "--state", state)
+	psOutput, err := ps.CombinedOutput()
+	if err == nil || !strings.Contains(string(psOutput), "line-too-long") {
+		t.Fatalf("ps error = %v, output=%s; want non-zero typed JSONL size error", err, psOutput)
+	}
 }
 
 func buildHelper(t *testing.T) string {
@@ -1138,6 +1458,18 @@ func assertEvent(t *testing.T, state, kind string) {
 	}
 }
 
+func decodeTestEvents(t *testing.T, reader io.Reader) []proc.Event {
+	t.Helper()
+	var events []proc.Event
+	if err := proc.ReadEvents(reader, func(event proc.Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
+
 func eventOfType(t *testing.T, state string, kind proc.EventType) proc.Event {
 	t.Helper()
 	f, err := os.Open(filepath.Join(state, "events.jsonl"))
@@ -1145,19 +1477,10 @@ func eventOfType(t *testing.T, state string, kind proc.EventType) proc.Event {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var event proc.Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatal(err)
-		}
+	for _, event := range decodeTestEvents(t, f) {
 		if event.Type == kind {
 			return event
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatal(err)
 	}
 	t.Fatalf("event %q not found", kind)
 	return proc.Event{}
@@ -1170,19 +1493,10 @@ func outputRunID(t *testing.T, state, tag string) string {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var event proc.Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatal(err)
-		}
+	for _, event := range decodeTestEvents(t, f) {
 		if event.Tag == tag {
 			return event.RunID
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatal(err)
 	}
 	t.Fatalf("run tag %q has no lifecycle event", tag)
 	return ""
@@ -1207,18 +1521,15 @@ func assertSignalExitEvent(t *testing.T, state string) {
 			t.Logf("close test event stream: %v", err)
 		}
 	}()
-	s := bufio.NewScanner(f)
-	s.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for s.Scan() {
-		var event proc.Event
-		if json.Unmarshal(s.Bytes(), &event) == nil && event.Type == "exit" && event.Signal != "" {
+	for _, event := range decodeTestEvents(t, f) {
+		if event.Type == "exit" && event.Signal != "" {
 			return
 		}
 	}
 	t.Fatal("missing signal exit event")
 }
 
-func cleanupRun(t *testing.T, state string, run *proc.Run) {
+func cleanupRun(t *testing.T, run *proc.Run) {
 	t.Helper()
 	t.Cleanup(func() {
 		if err := run.Kill(); err != nil {
@@ -1227,7 +1538,6 @@ func cleanupRun(t *testing.T, state string, run *proc.Run) {
 		if err := run.Wait(); err != nil {
 			t.Logf("wait for stopped test run: %v", err)
 		}
-		forceKillRecordedTree(t, state)
 	})
 }
 
@@ -1241,27 +1551,16 @@ func releaseHeldLeaves(t *testing.T, releaseFile string) {
 	}
 }
 
-func forceKillRecordedTree(t *testing.T, state string) {
+func signalRecordedKeepers(t *testing.T, state string) {
 	t.Helper()
 	listing := proc.List(state)
 	if listing.Error != nil {
+		t.Logf("list recorded keepers during cleanup: %v", listing.Error)
 		return
 	}
 	for _, run := range listing.Runs {
-		for _, child := range run.Tree {
-			if child.Unverified {
-				continue
-			}
-			if identity, ok := identityForTest(t, child.PID); ok && identity == child.Identity {
-				if err := syscall.Kill(child.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-					t.Logf("cleanup test process %d: %v", child.PID, err)
-				}
-			}
-		}
-		if identity, ok := identityForTest(t, run.PID); ok && identity == run.Identity {
-			if err := syscall.Kill(run.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-				t.Logf("cleanup test keeper %d: %v", run.PID, err)
-			}
+		if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGTERM); err != nil {
+			t.Logf("stop recorded test keeper %s: %v", run.RunID, err)
 		}
 	}
 }
@@ -1278,11 +1577,8 @@ func countEvents(t *testing.T, state, kind string) int {
 		}
 	}()
 	n := 0
-	s := bufio.NewScanner(f)
-	s.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for s.Scan() {
-		var event proc.Event
-		if json.Unmarshal(s.Bytes(), &event) == nil && string(event.Type) == kind {
+	for _, event := range decodeTestEvents(t, f) {
+		if string(event.Type) == kind {
 			n++
 		}
 	}
@@ -1300,11 +1596,8 @@ func eventLeaves(t *testing.T, state, kind string) []proc.Process {
 			t.Logf("close test event stream: %v", err)
 		}
 	}()
-	s := bufio.NewScanner(f)
-	s.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for s.Scan() {
-		var event proc.Event
-		if json.Unmarshal(s.Bytes(), &event) == nil && string(event.Type) == kind {
+	for _, event := range decodeTestEvents(t, f) {
+		if string(event.Type) == kind {
 			return event.Leaves
 		}
 	}
@@ -1351,26 +1644,26 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 	helper := buildHelper(t)
 	pidFile := filepath.Join(state, "grandchild.pid")
 	releaseFile := filepath.Join(state, "release-command")
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "double-fork", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "double-fork", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "double-fork-held", "30", pidFile, releaseFile},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleanupRun(t, state, run)
+	cleanupRun(t, run)
 	grandchild, err := waitPIDFile(pidFile, 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !waitUntil(3*time.Second, func() bool {
-		tree, treeErr := proc.ProcessTree(run.PID, run.RunID)
+		tree, treeErr := proc.ProcessTree(int(run.PID), run.RunID)
 		if treeErr != nil {
 			t.Fatalf("process tree for run %s: %v", run.RunID, treeErr)
 		}
 		for _, child := range tree {
-			if child.PID == grandchild && child.PPID == run.PID {
+			if child.PID == grandchild && child.PPID == int(run.PID) {
 				return true
 			}
 		}
@@ -1392,19 +1685,18 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 // case: S-237.4
 func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	const count = 8
 	runs := make([]*proc.Run, 0, count)
 	for i := 0; i < count; i++ {
-		run, err := startTest(context.Background(), proc.Config{
-			HelperPath: helper, StateDir: state, Tag: fmt.Sprintf("parallel-%d", i), Stall: time.Hour,
+		run, err := startTest(cancellableTestContext(t), proc.Config{
+			StateDir: state, Tag: fmt.Sprintf("parallel-%d", i), Stall: time.Hour,
 			StdoutPath: filepath.Join(state, fmt.Sprintf("out-%d", i)), StderrPath: filepath.Join(state, fmt.Sprintf("err-%d", i)),
 			Command: []string{"/bin/sleep", "0.3"},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		cleanupRun(t, state, run)
+		cleanupRun(t, run)
 		runs = append(runs, run)
 	}
 	for _, run := range runs {
@@ -1420,18 +1712,13 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 	defer f.Close()
 	countLines := 0
 	types := make(map[proc.EventType]int)
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var event proc.Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatalf("event line %d is invalid JSON: %v", countLines+1, err)
-		}
+	readErr := proc.ReadEvents(f, func(event proc.Event) error {
 		countLines++
 		types[event.Type]++
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatal(err)
+		return nil
+	})
+	if readErr != nil {
+		t.Fatalf("read lifecycle events: %v", readErr)
 	}
 	if countLines != count*4 {
 		t.Fatalf("event lines = %d, want %d (queued, start, exit, teardown per keeper); event types: %v", countLines, count*4, types)
@@ -1449,112 +1736,41 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 }
 
 // case: S-237.5
-func TestStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
-	testStartRejectsHelperWithoutKeeperDispatchPromptly(t)
-}
-
-// case: S-237.41
-func TestStartupErrorTeardownReportsScratchOutcome(t *testing.T) {
-	testStartRejectsHelperWithoutKeeperDispatchPromptly(t)
-}
-
-func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
+func TestCallerSurvivesInProcessRunTeardown(t *testing.T) {
 	state := t.TempDir()
-	badHelper := filepath.Join(state, "wrong-helper")
-	pidFile := filepath.Join(state, "bad-helper.pid")
-	if err := os.WriteFile(badHelper, []byte("#!/bin/sh\nprintf '%s\\n' \"$$\" > \""+pidFile+"\"\nexec /bin/sleep 30\n"), 0o700); err != nil {
-		t.Fatal(err)
+	callerPID := os.Getpid()
+	callerIdentity, alive, err := proc.ProcessIdentity(callerPID)
+	if err != nil || !alive {
+		t.Fatalf("inspect supervising test process: alive=%t err=%v", alive, err)
 	}
-	killBadHelper := func() {
-		data, readErr := os.ReadFile(pidFile)
-		if readErr == nil {
-			if pid, ready, parseErr := parsePIDFile(data); parseErr == nil && ready {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			}
-		}
-	}
-	t.Cleanup(killBadHelper)
-	started := time.Now()
-	type startResult struct {
-		err error
-	}
-	startedResult := make(chan startResult, 1)
-	startCtx, cancelStart := context.WithCancel(context.Background())
-	t.Cleanup(cancelStart)
-	go func() {
-		_, err := startTest(startCtx, proc.Config{
-			HelperPath: badHelper, StateDir: state, Tag: "wrong-helper", Stall: time.Hour,
-			StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
-			Command: []string{"/usr/bin/true"},
-		})
-		startedResult <- startResult{err: err}
-	}()
-	var err error
-	select {
-	case result := <-startedResult:
-		err = result.err
-	case <-time.After(4 * time.Second):
-		cancelStart()
-		killBadHelper()
-		select {
-		case <-startedResult:
-			t.Fatal("Start did not reject an incorrect helper within four seconds")
-		case <-time.After(2 * time.Second):
-			t.Fatal("Start did not stop after its context was cancelled")
-		}
-	}
-	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
-		t.Fatalf("Start error = %v, want clear helper-dispatch error", err)
-	}
-	pid, readErr := waitPIDFile(pidFile, 5*time.Second)
-	if readErr != nil {
-		t.Fatalf("invalid helper did not record a complete process id: %v", readErr)
-	}
-	if identity, alive := identityForTest(t, pid); alive {
-		t.Fatalf("invalid helper process %d remains alive with identity %s", pid, identity)
-	}
-	if time.Since(started) > 4*time.Second {
-		t.Fatalf("invalid helper took too long to reject: %s", time.Since(started))
-	}
-	assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceAlreadyGone))
-}
-
-// case: S-237.5
-func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
-	state := t.TempDir()
-	helper := buildHelper(t)
-	run, err := startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "replace-helper", Stall: time.Hour,
+	run, err := startTest(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "caller-survival", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
-		Command: []string{"/bin/sleep", "1"},
+		Command: []string{"/bin/sleep", "0.1"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleanupRun(t, state, run)
-	replacement := filepath.Join(state, "replacement")
-	if err := os.WriteFile(replacement, []byte("#!/bin/sh\nexit 99\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(replacement, helper); err != nil {
-		t.Fatal(err)
-	}
-	if identity, alive := identityForTest(t, run.PID); !alive || identity != run.StartedAt {
-		t.Fatalf("running keeper changed identity after on-disk replacement: pid=%d identity=%q alive=%t", run.PID, identity, alive)
-	}
-	if err := run.Wait(); err != nil {
-		skipOnTeardownObservationFailure(t, state, run.RunID)
-		t.Fatalf("running keeper failed after on-disk helper replacement: %v", err)
-	}
-	_, err = startTest(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "replacement-next-run", Stall: time.Hour,
-		StdoutPath: filepath.Join(state, "next-stdout.log"), StderrPath: filepath.Join(state, "next-stderr.log"),
-		Command: []string{"/usr/bin/true"},
+	t.Cleanup(func() {
+		if err := run.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Logf("stop caller-survival run: %v", err)
+		}
+		if err := run.Wait(); err != nil {
+			t.Logf("wait for caller-survival run: %v", err)
+		}
 	})
-	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
-		t.Fatalf("future run with replacement helper error = %v", err)
+	waitErr := run.Wait()
+	identityAfter, alive, err := proc.ProcessIdentity(callerPID)
+	if err != nil || !alive || identityAfter != callerIdentity {
+		t.Fatalf("supervising caller changed across teardown: pid=%d identity=%q after=%q alive=%t err=%v", callerPID, callerIdentity, identityAfter, alive, err)
 	}
-	skipOnTeardownObservationFailure(t, state, run.RunID)
+	if waitErr != nil {
+		skipOnTeardownObservationFailure(t, state, run.RunID)
+		t.Fatalf("in-process run did not finish with clean teardown: %v", waitErr)
+	}
+	if event := eventOfType(t, state, proc.EventTeardown); event.RunID != run.RunID {
+		t.Fatalf("teardown event run id = %q, want %q", event.RunID, run.RunID)
+	}
 }
 
 // case: S-237.6
@@ -1615,7 +1831,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 				}
 			}
 		}
-		forceKillRecordedTree(t, state)
+		signalRecordedKeepers(t, state)
 	})
 	for i := range commands {
 		tag := fmt.Sprintf("worker-%d", i+1)
@@ -1646,7 +1862,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 	secondQueued := queuedTagAtPosition(t, ps, 2)
 	firstActive := activeTags(t, ps)
 	for _, tag := range firstActive[:1] {
-		stopSlotProcess(t, pidFiles[tagIndex(tag)])
+		stopSlotProcess(t, state, pidFiles[tagIndex(tag)])
 	}
 	firstQueuedIndex := tagIndex(firstQueued)
 	if _, err := waitPIDFile(pidFiles[firstQueuedIndex], 5*time.Second); err != nil {
@@ -1660,7 +1876,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 	active := activeTags(t, ps)
 	for _, tag := range active {
 		if tag != firstQueued {
-			stopSlotProcess(t, pidFiles[tagIndex(tag)])
+			stopSlotProcess(t, state, pidFiles[tagIndex(tag)])
 			break
 		}
 	}
@@ -1672,8 +1888,8 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 	if err != nil || !strings.Contains(string(order), firstQueued+"\n"+secondQueued+"\n") {
 		t.Fatalf("slot admission order = %q, err=%v", order, err)
 	}
-	stopSlotProcess(t, pidFiles[firstQueuedIndex])
-	stopSlotProcess(t, pidFiles[secondQueuedIndex])
+	stopSlotProcess(t, state, pidFiles[firstQueuedIndex])
+	stopSlotProcess(t, state, pidFiles[secondQueuedIndex])
 	for i, command := range commands {
 		if err := command.Wait(); err == nil {
 			t.Fatal("slot command returned success after SIGTERM")
@@ -1707,7 +1923,6 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 	}
 	first := start("stale-holder", firstPIDFile)
 	var second *exec.Cmd
-	ownedChildren := make(map[int]string)
 	t.Cleanup(func() {
 		if first.Process != nil {
 			_ = first.Process.Kill()
@@ -1717,24 +1932,16 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 			_ = second.Process.Kill()
 			_ = second.Wait()
 		}
-		for pid, identity := range ownedChildren {
-			if current, alive := identityForTest(t, pid); alive && current == identity {
-				if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-					t.Logf("cleanup owned slot-test child %d: %v", pid, err)
-				}
-			}
-		}
-		forceKillRecordedTree(t, state)
+		signalRecordedKeepers(t, state)
 	})
 	firstChild, err := waitPIDFile(firstPIDFile, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstIdentity, alive := identityForTest(t, firstChild)
+	_, alive := identityForTest(t, firstChild)
 	if !alive {
 		t.Fatalf("cannot verify first command identity for PID %d", firstChild)
 	}
-	ownedChildren[firstChild] = firstIdentity
 	listing := proc.List(state)
 	if listing.Error != nil || len(listing.Runs) != 1 {
 		t.Fatalf("list first run: %+v", listing)
@@ -1760,7 +1967,7 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 	}) {
 		t.Fatalf("keeper never persisted the live descendant identity before SIGKILL")
 	}
-	if err := syscall.Kill(firstRun.PID, syscall.SIGKILL); err != nil {
+	if err := proc.SignalRecordedKeeper(state, firstRun.RunID, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
 	second = start("stale-waiter", secondPIDFile)
@@ -1768,11 +1975,10 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("queued run did not acquire slot after keeper death: %v; ps: %s", err, outputPS(t, runner, state))
 	}
-	secondIdentity, alive := identityForTest(t, secondChild)
+	_, alive = identityForTest(t, secondChild)
 	if !alive {
 		t.Fatalf("cannot verify second command identity for PID %d", secondChild)
 	}
-	ownedChildren[secondChild] = secondIdentity
 	if !waitUntil(5*time.Second, func() bool {
 		listing := proc.List(state)
 		if listing.Error != nil {
@@ -1795,41 +2001,27 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
 		t.Fatalf("lost-run scratch remains at %s: %v; teardown=%+v", scratch, err, teardown.Resources)
 	}
-	if _, err := os.Stat(filepath.Join(state, "runs", firstRun.RunID, "resources.json")); err != nil {
-		t.Fatalf("lost-run resource ledger was not persisted for audit: %v", err)
-	}
 	removedPath, removedScratch := false, false
-	ledger, err := os.ReadFile(filepath.Join(state, "runs", firstRun.RunID, "resources.json"))
+	entries, err := proc.ResourceOutcomes(state, firstRun.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var entries []proc.Resource
-	if err := json.Unmarshal(ledger, &entries); err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 || entries[0].Kind != proc.ResourcePath {
+	if len(entries) != 2 || entries[0].Kind != proc.ResourcePath || entries[1].Kind != "scratch" {
 		t.Fatalf("lost run ledger entries = %+v", entries)
 	}
-	for _, outcome := range teardown.Resources {
-		if outcome.Resource.Kind == "scratch" && outcome.Outcome == proc.ResourceRemoved {
+	for _, entry := range entries {
+		if entry.Outcome != proc.ResourceRemoved {
+			t.Fatalf("lost-run resource outcome was not persisted: %+v", entry)
+		}
+		if entry.Kind == proc.ResourcePath {
+			removedPath = true
+		}
+		if entry.Kind == "scratch" {
 			removedScratch = true
 		}
 	}
-	for _, entry := range entries {
-		found := false
-		for _, outcome := range teardown.Resources {
-			if outcome.Resource.Kind == entry.Kind && outcome.Resource.ID == entry.ID && outcome.Outcome == proc.ResourceRemoved {
-				found = true
-				removedPath = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("lost-run teardown omitted outcome for ledger entry %+v: %+v", entry, teardown.Resources)
-		}
-	}
-	if len(teardown.Resources) != len(entries)+1 || !removedPath || !removedScratch {
-		t.Fatalf("lost-run teardown omitted resource outcomes: %+v", teardown.Resources)
+	if teardown.Resources.Counts[proc.ResourceRemoved] != len(entries) || !removedPath || !removedScratch {
+		t.Fatalf("lost-run teardown summary=%+v, run record=%+v", teardown.Resources, entries)
 	}
 }
 
@@ -1858,15 +2050,14 @@ func eventForRunAndType(t *testing.T, state, runID string, eventType proc.EventT
 		t.Fatal(err)
 	}
 	var found *proc.Event
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var event proc.Event
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatal(err)
-		}
+	if err := proc.ReadEvents(bytes.NewReader(data), func(event proc.Event) error {
 		if event.RunID == runID && event.Type == eventType {
 			copy := event
 			found = &copy
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if found == nil {
 		t.Fatalf("event %s for run %s not found", eventType, runID)
@@ -1877,10 +2068,9 @@ func eventForRunAndType(t *testing.T, state, runID string, eventType proc.EventT
 // case: S-237.17
 func TestRunWaitRecordsKeeperLossWithoutRegistryReader(t *testing.T) {
 	state := t.TempDir()
-	helper := buildHelper(t)
 	childFile := filepath.Join(state, "daemon-child.pid")
-	run, err := proc.Start(context.Background(), proc.Config{
-		HelperPath: helper, StateDir: state, Tag: "daemon:wait-owner", Stall: time.Hour,
+	run, err := proc.Start(cancellableTestContext(t), proc.Config{
+		StateDir: state, Tag: "daemon:wait-owner", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", childFile},
 	})
@@ -1890,20 +2080,11 @@ func TestRunWaitRecordsKeeperLossWithoutRegistryReader(t *testing.T) {
 	var childPID int
 	var childIdentity string
 	t.Cleanup(func() {
-		if _, alive := identityForTest(t, run.PID); alive {
-			if err := syscall.Kill(run.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-				t.Logf("cleanup test-owned keeper %d: %v", run.PID, err)
-			}
+		if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGTERM); err != nil {
+			t.Logf("cleanup test-owned keeper %d: %v", run.PID, err)
 		}
 		if err := run.Wait(); err != nil {
 			t.Logf("wait for test-owned keeper %d: %v", run.PID, err)
-		}
-		if childPID > 0 && childIdentity != "" {
-			if identity, alive := identityForTest(t, childPID); alive && identity == childIdentity {
-				if err := syscall.Kill(childPID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-					t.Logf("cleanup test-owned command child %d: %v", childPID, err)
-				}
-			}
 		}
 	})
 	childPID, err = waitPIDFile(childFile, 5*time.Second)
@@ -1914,7 +2095,7 @@ func TestRunWaitRecordsKeeperLossWithoutRegistryReader(t *testing.T) {
 	if !alive {
 		t.Fatalf("cannot identify test-owned command child %d", childPID)
 	}
-	if err := syscall.Kill(run.PID, syscall.SIGKILL); err != nil {
+	if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGKILL); err != nil {
 		t.Fatalf("SIGKILL test-owned keeper %d: %v", run.PID, err)
 	}
 	if err := run.Wait(); err == nil {
@@ -1974,7 +2155,7 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 			_ = holder.Process.Kill()
 			_ = holder.Wait()
 		}
-		forceKillRecordedTree(t, state)
+		signalRecordedKeepers(t, state)
 	})
 	if _, err := waitPIDFile(holderPID, 5*time.Second); err != nil {
 		t.Fatal(err)
@@ -2007,7 +2188,7 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 	if _, err := waitPIDFile(waiterPID, 5*time.Second); err != nil {
 		t.Fatalf("dead holder did not release gate: %v; ps=%s", err, outputPS(t, runner, state))
 	}
-	stopSlotProcess(t, waiterPID)
+	stopSlotProcess(t, state, waiterPID)
 	if err := waiter.Wait(); err == nil {
 		t.Fatal("terminated waiter command returned success")
 	}
@@ -2048,13 +2229,13 @@ func TestGateWaitDoesNotBlockUnrelatedRun(t *testing.T) {
 	holderStarted := filepath.Join(state, "holder.started")
 	holderRelease := filepath.Join(state, "holder.release")
 	holder := startHeld("admission-holder", "maintenance", holderStarted, holderRelease)
-	t.Cleanup(func() { stop(holder); forceKillRecordedTree(t, state) })
+	t.Cleanup(func() { stop(holder); signalRecordedKeepers(t, state) })
 	if _, err := waitFile(t, holderStarted, 5*time.Second); err != nil {
 		t.Fatalf("gate holder did not start: %v; ps=%s", err, outputPS(t, runner, state))
 	}
 	waiterStarted := filepath.Join(state, "waiter.started")
 	waiter := start("admission-waiter", "--wait-gate", "maintenance", "--", "/bin/sh", "-c", `touch "$1"; exec /bin/sleep 30`, "sh", waiterStarted)
-	t.Cleanup(func() { stop(waiter); forceKillRecordedTree(t, state) })
+	t.Cleanup(func() { stop(waiter); signalRecordedKeepers(t, state) })
 	if !waitUntil(5*time.Second, func() bool {
 		return strings.Contains(outputPS(t, runner, state), "admission-waiter\t") && strings.Contains(outputPS(t, runner, state), "BLOCKED")
 	}) {
@@ -2062,7 +2243,7 @@ func TestGateWaitDoesNotBlockUnrelatedRun(t *testing.T) {
 	}
 	freeStarted := filepath.Join(state, "unrelated.started")
 	unrelated := start("admission-unrelated", "--", "/bin/sh", "-c", `touch "$1"; exec /bin/sleep 30`, "sh", freeStarted)
-	t.Cleanup(func() { stop(unrelated); forceKillRecordedTree(t, state) })
+	t.Cleanup(func() { stop(unrelated); signalRecordedKeepers(t, state) })
 	if _, err := waitFile(t, freeStarted, 5*time.Second); err != nil {
 		t.Fatalf("unrelated run was held behind gate waiter: %v; ps=%s", err, outputPS(t, runner, state))
 	}
@@ -2103,7 +2284,7 @@ func TestGateWaitUsesLittleCPU(t *testing.T) {
 		}
 	}
 	holder := start("gate", "hold", "maintenance", "--tag", "cpu-holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "holder.out"), "--stderr", filepath.Join(state, "holder.err"), "--", "/bin/sleep", "30")
-	t.Cleanup(func() { stop(holder); forceKillRecordedTree(t, state) })
+	t.Cleanup(func() { stop(holder); signalRecordedKeepers(t, state) })
 	var gateStatErr error
 	if !waitUntil(5*time.Second, func() bool {
 		_, held, err := proc.GateStatus(state, "maintenance")
@@ -2120,7 +2301,7 @@ func TestGateWaitUsesLittleCPU(t *testing.T) {
 	}
 	waiterStarted := filepath.Join(state, "waiter.started")
 	waiter := start("run", "--tag", "cpu-waiter", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "waiter.out"), "--stderr", filepath.Join(state, "waiter.err"), "--wait-gate", "maintenance", "--", "/bin/sh", "-c", `touch "$1"; exec /bin/sleep 30`, "sh", waiterStarted)
-	t.Cleanup(func() { stop(waiter); forceKillRecordedTree(t, state) })
+	t.Cleanup(func() { stop(waiter); signalRecordedKeepers(t, state) })
 	if !waitUntil(5*time.Second, func() bool {
 		ps := outputPS(t, runner, state)
 		return strings.Contains(ps, "cpu-waiter\t") && strings.Contains(ps, "\tBLOCKED\tblocked: position=") && strings.Contains(ps, "gate: maintenance")
@@ -2169,7 +2350,7 @@ func TestMinFreeWaitIsVisibleAndEmitsOneEvent(t *testing.T) {
 			_ = command.Process.Kill()
 			_ = command.Wait()
 		}
-		forceKillRecordedTree(t, state)
+		signalRecordedKeepers(t, state)
 	})
 	if !waitUntil(5*time.Second, func() bool {
 		output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
@@ -2202,7 +2383,7 @@ func TestWaitReturnsRecordedExitAndFilteredEvents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(func() {
 		cancel()
-		forceKillRecordedTree(t, state)
+		signalRecordedKeepers(t, state)
 	})
 	command := exec.CommandContext(ctx, runner,
 		"run", "--tag", "result", "--state", state, "--stall", "100ms",
@@ -2225,15 +2406,11 @@ func TestWaitReturnsRecordedExitAndFilteredEvents(t *testing.T) {
 		t.Fatalf("filtered events: %v: %s", err, eventOutput)
 	}
 	var seen []proc.EventType
-	for _, line := range bytes.Split(bytes.TrimSpace(eventOutput), []byte("\n")) {
-		if len(line) == 0 {
-			continue
-		}
-		var event proc.Event
-		if err := json.Unmarshal(line, &event); err != nil {
-			t.Fatalf("invalid filtered event: %v: %s", err, line)
-		}
+	if err := proc.ReadEvents(bytes.NewReader(eventOutput), func(event proc.Event) error {
 		seen = append(seen, event.Type)
+		return nil
+	}); err != nil {
+		t.Fatalf("invalid filtered events: %v", err)
 	}
 	if len(seen) != 2 || seen[0] != proc.EventStall || seen[1] != proc.EventExit {
 		t.Fatalf("filtered lifecycle types = %v, want [stall exit]", seen)
@@ -2258,7 +2435,10 @@ func TestEventsStartsAtPersistedByteOffset(t *testing.T) {
 		t.Fatalf("events from byte offset failed: %v; output=%s", err, output)
 	}
 	var event proc.Event
-	if err := json.Unmarshal(bytes.TrimSpace(output), &event); err != nil {
+	if err := proc.ReadEvents(bytes.NewReader(output), func(decoded proc.Event) error {
+		event = decoded
+		return nil
+	}); err != nil {
 		t.Fatalf("decode event from byte offset: %v; output=%s", err, output)
 	}
 	if event.Tag != "agent:new" {
@@ -2285,16 +2465,10 @@ func TestEventsFollowStreamsLaterFilteredRecords(t *testing.T) {
 	readEvents := make(chan followedEvent, 8)
 	readDone := make(chan error, 1)
 	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			var event proc.Event
-			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-				readEvents <- followedEvent{err: err}
-				continue
-			}
+		readDone <- proc.ReadEvents(stdout, func(event proc.Event) error {
 			readEvents <- followedEvent{event: event}
-		}
-		readDone <- scanner.Err()
+			return nil
+		})
 	}()
 	stopped := false
 	stopFollower := func() error {
@@ -2385,7 +2559,7 @@ func TestPSShowsRunningQueuedBlockedAndStalledTogether(t *testing.T) {
 				_ = command.Wait()
 			}
 		}
-		forceKillRecordedTree(t, state)
+		signalRecordedKeepers(t, state)
 	})
 	start := func(args ...string) *exec.Cmd {
 		t.Helper()
@@ -2510,18 +2684,12 @@ func eventsForRun(t *testing.T, state, runID string) []proc.Event {
 		t.Fatal(err)
 	}
 	var matches []proc.Event
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var event proc.Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatal(err)
-		}
+	if err := proc.ReadEvents(bytes.NewReader(data), func(event proc.Event) error {
 		if event.RunID == runID {
 			matches = append(matches, event)
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return matches
@@ -2590,15 +2758,27 @@ func readText(t *testing.T, path string) string {
 	return string(data)
 }
 
-func stopSlotProcess(t *testing.T, pidFile string) {
+func stopSlotProcess(t *testing.T, state, pidFile string) {
 	t.Helper()
 	pid, err := waitPIDFile(pidFile, 5*time.Second)
 	if err != nil {
 		t.Fatalf("read complete process PID from %s: %v", pidFile, err)
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		t.Fatalf("release slot by terminating process %d: %v", pid, err)
+	listing := proc.List(state)
+	if listing.Error != nil {
+		t.Fatalf("list runs before stopping slot process %d: %v", pid, listing.Error)
 	}
+	for _, run := range listing.Runs {
+		for _, process := range run.Tree {
+			if process.PID == pid {
+				if err := proc.SignalRecordedKeeper(state, run.RunID, syscall.SIGTERM); err != nil {
+					t.Fatalf("stop run %s containing slot process %d: %v", run.RunID, pid, err)
+				}
+				return
+			}
+		}
+	}
+	t.Fatalf("slot process %d is absent from every recorded run tree", pid)
 }
 
 func killTestProcessGroup(command *exec.Cmd) error {
@@ -2707,4 +2887,198 @@ func waitFile(t *testing.T, path string, timeout time.Duration) ([]byte, error) 
 		time.Sleep(10 * time.Millisecond)
 	}
 	return nil, fmt.Errorf("timed out waiting for %s", path)
+}
+
+// case: S-237.69
+func TestOuterRunReapsDetachedNestedCommand(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	pidFile := filepath.Join(state, "detached.pid")
+	var pid int
+	var identity string
+	t.Cleanup(func() {
+		if pid == 0 {
+			data, readErr := os.ReadFile(pidFile)
+			if readErr != nil {
+				return
+			}
+			parsed, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+			if parseErr != nil {
+				t.Errorf("decode detached child pid during cleanup %q: %v", data, parseErr)
+				return
+			}
+			pid = parsed
+		}
+		current, live, identityErr := proc.ProcessIdentity(pid)
+		if identityErr != nil {
+			t.Errorf("inspect test-owned detached child during cleanup: %v", identityErr)
+			return
+		}
+		if identity == "" {
+			identity = current
+		}
+		if live && current == identity {
+			if killErr := syscall.Kill(pid, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+				t.Errorf("kill test-owned detached child: %v", killErr)
+			}
+		}
+	})
+	command := exec.Command(runner, "run", "--tag", "outer-with-detached-nested", "--state", state,
+		"--stall", "1h", "--stdout", filepath.Join(state, "outer.out"), "--stderr", filepath.Join(state, "outer.err"),
+		"--", "/bin/sh", "-c", `(/bin/sh -c 'echo $$ > "$1"; exec /bin/sleep 60' sh "$1" >/dev/null 2>&1 </dev/null) >/dev/null 2>&1 & exit 0`, "sh", pidFile)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("outer run returned %v: %s", err, output)
+	}
+	runID := outputRunID(t, state, "outer-with-detached-nested")
+	if _, err := waitFile(t, pidFile, 5*time.Second); err != nil {
+		t.Fatalf("detached nested command did not start: %v", err)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err = strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("decode detached child pid %q: %v", data, err)
+	}
+	var alive bool
+	identity, alive, err = proc.ProcessIdentity(pid)
+	if err != nil {
+		t.Fatalf("inspect detached child after outer completion: %v", err)
+	}
+	if alive {
+		teardown := eventForRunAndType(t, state, runID, proc.EventTeardown)
+		t.Logf("run identity history at teardown: %+v", teardown.TeardownHistory)
+		t.Logf("teardown outcome: error=%q reaped=%+v unverified=%+v remaining=%+v", teardown.Error, teardown.Reaped, teardown.Unverified, teardown.Remaining)
+		for _, sample := range teardown.TeardownInventory {
+			t.Logf("teardown inventory sample %d omitted=%d membership_changed=%t", sample.Index, sample.OmittedProcesses, sample.MembershipChanged)
+			if sample.SnapshotErr != "" {
+				t.Logf("teardown inventory sample %d error: %s", sample.Index, sample.SnapshotErr)
+			}
+			logProcess := func(process proc.ProcessTreeInventoryEvidence) {
+				t.Logf("teardown inventory sample=%d pid=%d ppid=%d pgid=%d sid=%d sid_error=%q uid=%d identity=%s marker=%s marker_error=%q token=%s token_error=%q unverified_reason=%s membership=%s",
+					sample.Index, process.PID, process.PPID, process.PGID, process.SID, process.SIDError, process.UID, process.Identity, process.MarkerResult, process.MarkerError, process.TokenResult, process.TokenError, process.OwnershipUnverifiedReason, process.Membership)
+			}
+			for _, process := range sample.Processes {
+				logProcess(process)
+			}
+			for _, process := range sample.RejectedExamples {
+				logProcess(process)
+			}
+			for _, rejected := range sample.RejectedCounts {
+				t.Logf("teardown inventory sample=%d rejected membership=%s marker=%s token=%s uid=%s potential_setuid_owner=%t count=%d",
+					sample.Index, rejected.Membership, rejected.MarkerResult, rejected.TokenResult, rejected.UIDClass, rejected.PotentialSetuidOwner, rejected.Count)
+			}
+		}
+		t.Fatalf("nested detached command PID %d (identity %s) outlived the outer run", pid, identity)
+	}
+}
+
+// case: S-237.69
+func TestNestedRunTokenOwnershipIsIsolated(t *testing.T) {
+	root := t.TempDir()
+	outerState := filepath.Join(root, "outer-state")
+	innerState := filepath.Join(root, "inner-state")
+	pidFile := filepath.Join(root, "inner-detached.pid")
+	runner := buildRunner(t)
+	detachedCommand := `(/bin/sh -c 'echo $$ > "$1"; exec /bin/sleep 60' sh "$1" >/dev/null 2>&1 </dev/null) >/dev/null 2>&1 & exit 0`
+	innerArgs := []string{"run", "--tag", "inner-token-run", "--state", innerState, "--stall", "1h",
+		"--stdout", filepath.Join(root, "inner.out"), "--stderr", filepath.Join(root, "inner.err"),
+		"--", "/bin/sh", "-c", detachedCommand, "sh", pidFile}
+	outerArgs := []string{"run", "--tag", "outer-token-run", "--state", outerState, "--stall", "1h",
+		"--stdout", filepath.Join(root, "outer.out"), "--stderr", filepath.Join(root, "outer.err"), "--", runner}
+	outerArgs = append(outerArgs, innerArgs...)
+	command := exec.Command(runner, outerArgs...)
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Start(); err != nil {
+		t.Fatalf("start outer run: %v", err)
+	}
+	t.Cleanup(func() {
+		if command.ProcessState == nil {
+			if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				t.Errorf("stop nested-run fixture: %v", err)
+			}
+			if err := command.Wait(); err != nil {
+				t.Logf("wait for stopped nested-run fixture: %v", err)
+			}
+		}
+	})
+	data, err := waitFile(t, pidFile, 5*time.Second)
+	if err != nil {
+		t.Fatalf("inner detached child did not start: %v; output=%s", err, output.String())
+	}
+	innerPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("decode inner detached PID %q: %v", data, err)
+	}
+	innerIdentity, alive, err := proc.ProcessIdentity(innerPID)
+	if err != nil || !alive {
+		t.Fatalf("inspect inner detached process: alive=%t identity=%s err=%v", alive, innerIdentity, err)
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatalf("outer nested run returned %v: %s", err, output.String())
+	}
+	innerRunID := outputRunID(t, innerState, "inner-token-run")
+	outerRunID := outputRunID(t, outerState, "outer-token-run")
+	if innerRunID == outerRunID {
+		t.Fatalf("nested runs reused run identity %q", innerRunID)
+	}
+	innerTeardown := eventForRunAndType(t, innerState, innerRunID, proc.EventTeardown)
+	outerTeardown := eventForRunAndType(t, outerState, outerRunID, proc.EventTeardown)
+	var innerReaped *proc.Process
+	for i := range innerTeardown.Reaped {
+		if innerTeardown.Reaped[i].PID == innerPID {
+			innerReaped = &innerTeardown.Reaped[i]
+			break
+		}
+	}
+	if innerReaped == nil || innerReaped.Identity != innerIdentity {
+		t.Fatalf("inner teardown reaped=%+v, want detached PID %d identity %s", innerTeardown.Reaped, innerPID, innerIdentity)
+	}
+	containsPID := func(processes []proc.Process) bool {
+		for _, process := range processes {
+			if process.PID == innerPID {
+				return true
+			}
+		}
+		return false
+	}
+	if containsPID(outerTeardown.ProcessTree) || containsPID(outerTeardown.Leaves) || containsPID(outerTeardown.Reaped) ||
+		containsPID(outerTeardown.Unverified) || containsPID(outerTeardown.Remaining) {
+		t.Fatalf("outer teardown attributed inner-owned PID %d: %+v", innerPID, outerTeardown)
+	}
+	for _, evidence := range outerTeardown.TeardownHistory {
+		if evidence.PID == innerPID {
+			t.Fatalf("outer teardown history attributed inner-owned PID %d: %+v", innerPID, evidence)
+		}
+	}
+	for _, sample := range outerTeardown.TeardownInventory {
+		for _, evidence := range sample.Processes {
+			if evidence.PID == innerPID {
+				t.Fatalf("outer teardown accepted inner-owned PID %d: %+v", innerPID, evidence)
+			}
+		}
+		for _, evidence := range sample.RejectedExamples {
+			if evidence.PID == innerPID && !strings.HasPrefix(evidence.Membership, "rejected:") {
+				t.Fatalf("outer teardown did not reject inner-owned PID %d: %+v", innerPID, evidence)
+			}
+		}
+	}
+	for _, run := range []struct {
+		state string
+		runID string
+	}{{innerState, innerRunID}, {outerState, outerRunID}} {
+		teardownCount := 0
+		for _, event := range eventsForRun(t, run.state, run.runID) {
+			if event.Type == proc.EventTeardown {
+				teardownCount++
+			}
+		}
+		if teardownCount != 1 {
+			t.Fatalf("run %s teardown event count = %d, want exactly 1", run.runID, teardownCount)
+		}
+	}
 }

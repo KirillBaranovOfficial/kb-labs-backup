@@ -391,6 +391,20 @@ func (s *jobStore) Update(id string, fn func(*Job) error) (returnErr error) {
 	return s.write(j)
 }
 func (s *jobStore) List() ([]Job, error) {
+	jobs, err := s.ListRecords()
+	if err != nil {
+		return nil, err
+	}
+	for index := range jobs {
+		jobs[index], err = s.reconcileWorker(jobs[index])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return jobs, nil
+}
+
+func (s *jobStore) ListRecords() ([]Job, error) {
 	entries, err := os.ReadDir(s.dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return []Job{}, nil
@@ -415,10 +429,6 @@ func (s *jobStore) List() ([]Job, error) {
 	out := make([]Job, 0, len(ids))
 	for id := range ids {
 		j, e := s.Get(id)
-		if e != nil {
-			return nil, e
-		}
-		j, e = s.reconcileWorker(j)
 		if e != nil {
 			return nil, e
 		}

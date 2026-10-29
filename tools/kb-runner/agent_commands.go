@@ -89,18 +89,30 @@ func readStatusLimits(state string, root runnerRoot) []VendorLimit {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(state, "limits", vendor+".json"))
+		var limits []VendorLimit
 		if err == nil {
 			var cache struct {
 				At     time.Time     `json:"at"`
 				Limits []VendorLimit `json:"limits"`
 			}
 			if json.Unmarshal(b, &cache) == nil && len(cache.Limits) > 0 {
-				all = append(all, cache.Limits...)
-				continue
+				limits = cache.Limits
 			}
 		}
-		err = fmt.Errorf("no cached Codex usage; next: %s limits --state %s", root.InvocationCommand(), shellQuote(state))
-		all = append(all, unavailableLimits(vendor, "cache", err)[0])
+		recorded, active, recordedErr := newVendorLimitStateStore(state, time.Now).Active(vendor)
+		if recordedErr != nil {
+			all = append(all, unavailableLimits(vendor, "recorded", recordedErr)...)
+			continue
+		}
+		if active {
+			limits = append(limits, recorded)
+		}
+		if len(limits) == 0 {
+			err = fmt.Errorf("no cached Codex usage; next: %s limits --state %s", root.InvocationCommand(), shellQuote(state))
+			all = append(all, unavailableLimits(vendor, "cache", err)[0])
+			continue
+		}
+		all = append(all, limits...)
 	}
 	return all
 }
@@ -264,6 +276,10 @@ func limitsCommandWithProviderFactory(root runnerRoot, args []string, out, errOu
 			cached, sourceErr = cachedLimits(filepath.Join(*state, "limits", vendor+".json"), *ttl, contextLimitProvider{ctx: ctx, adapter: provider}, time.Now)
 		}
 		cancel()
+		cached, recordedErr := limitsWithRecordedVendorState(cached, newVendorLimitStateStore(*state, time.Now), vendor)
+		if recordedErr != nil {
+			sourceErr = errors.Join(sourceErr, fmt.Errorf("read recorded vendor limit: %w", recordedErr))
+		}
 		if sourceErr != nil {
 			if *captureDir == "" {
 				all = append(all, unavailableLimits(vendor, "provider", sourceErr)...)

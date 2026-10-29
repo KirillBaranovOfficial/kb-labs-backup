@@ -46,6 +46,13 @@ func runKeeper(cfg keeperConfig) int {
 	if ready == nil {
 		return 2
 	}
+	return runKeeperWithReady(cfg, ready)
+}
+
+func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
+	// The readiness descriptor belongs only to the keeper. Prevent commands
+	// started below this boundary from inheriting it across exec.
+	syscall.CloseOnExec(int(ready.Fd()))
 	defer func() {
 		if ready != nil {
 			if err := ready.Close(); err != nil {
@@ -71,9 +78,8 @@ func runKeeper(cfg keeperConfig) int {
 		writeReadyError(ready, err)
 		return 1
 	}
-	// The run directory is the resource ledger's parent: the ledger owner
-	// places it, and the keeper only creates and owns the directory itself.
-	runDirectory := filepath.Dir(ledgerPath(cfg.StateDir, cfg.RunID))
+	// The run directory contains the durable run record and owned scratch.
+	runDirectory := filepath.Join(cfg.StateDir, "runs", cfg.RunID)
 	runDirectoryIdentity, runDirectoryOwned, err := createOwnedDirectory(runDirectory, unixScratchDirectoryOps{})
 	if err != nil {
 		var cleanupErr error
@@ -98,7 +104,35 @@ func runKeeper(cfg keeperConfig) int {
 		return 1
 	}
 	cfg.Keep = resolveKeepPaths(scratch, cfg.Keep)
-	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, PID: os.Getpid(), Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusStarting, Scratch: scratch, ScratchDevice: scratchIdentity.Device, ScratchInode: scratchIdentity.Inode, Keep: append([]string(nil), cfg.Keep...), CostClass: cfg.CostClass}
+	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, PID: os.Getpid(), Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusStarting, Scratch: scratch, ScratchDevice: scratchIdentity.Device, ScratchInode: scratchIdentity.Inode, Keep: append([]string(nil), cfg.Keep...), CostClass: cfg.CostClass,
+		ProtectedAncestors: []ProcessIdentityEvidence{{PID: cfg.ParentPID, Identity: cfg.ParentIdentity}}}
+	runToken, err := createRunToken(scratch)
+	if err != nil {
+		return keeperError(rec, "create run ownership token", err)
+	}
+	runTokenReleased := false
+	runTokenClosed := false
+	closeRunToken := func() error {
+		if runTokenClosed {
+			return nil
+		}
+		if err := runToken.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			return err
+		}
+		runTokenClosed = true
+		return nil
+	}
+	defer func() {
+		if runTokenReleased {
+			return
+		}
+		if err := closeRunToken(); err != nil {
+			fmt.Fprintln(os.Stderr, "proc: close run ownership token:", err)
+		}
+		if err := removeRunToken(cfg.RunID); err != nil {
+			fmt.Fprintln(os.Stderr, "proc: remove run ownership token:", err)
+		}
+	}()
 	startedAt, ok, identityErr := ProcessIdentity(os.Getpid())
 	if identityErr != nil {
 		return keeperError(rec, "inspect keeper process identity", identityErr)
@@ -141,7 +175,9 @@ func runKeeper(cfg keeperConfig) int {
 	cmd := exec.Command(cfg.Command[0], cfg.Command[1:]...)
 	cmd.Dir = cfg.Dir
 	cmd.Env = environmentFor(cfg.Config, os.Environ())
-	if err := configureCommand(cmd, cfg.RunID, cfg.StateDir, scratch); err != nil {
+	// ExtraFiles is the only inheritance path for the close-on-exec token.
+	cmd.ExtraFiles = []*os.File{runToken}
+	if err := configureCommand(cmd, cfg.RunID, cfg.StateDir, scratch, cfg.CommandTempDir); err != nil {
 		writeReadyError(ready, err)
 		return keeperError(rec, "configure command", err)
 	}
@@ -185,6 +221,17 @@ func runKeeper(cfg keeperConfig) int {
 	if startErr != nil {
 		writeReadyError(ready, startErr)
 		return keeperError(rec, "start command", startErr)
+	}
+	// Keep the token only in the supervised command after Start returns.
+	if err := closeRunToken(); err != nil {
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			fmt.Fprintln(os.Stderr, "proc: stop command after run token close failure:", killErr)
+		}
+		if waitErr := cmd.Wait(); waitErr != nil {
+			fmt.Fprintln(os.Stderr, "proc: wait after run token close failure:", waitErr)
+		}
+		writeReadyError(ready, fmt.Errorf("close keeper copy of run ownership token: %w", err))
+		return keeperError(rec, "close keeper run token after command start", err)
 	}
 	commandIdentity, commandAlive, commandIdentityErr := ProcessIdentity(cmd.Process.Pid)
 	if commandIdentityErr != nil {
@@ -308,7 +355,7 @@ func runKeeper(cfg keeperConfig) int {
 			readersRemaining--
 			if copyErr != nil {
 				outputError = errors.Join(outputError, copyErr)
-				result := killTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
+				result := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
 				cleanup = mergeCleanup(cleanup, result)
 				cleanupError = errors.Join(cleanupError, result.err)
 				waitErr = <-waitDone
@@ -319,7 +366,7 @@ func runKeeper(cfg keeperConfig) int {
 			if parentErr != nil {
 				parentMonitorError = parentErr.Error()
 			}
-			result := killTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
+			result := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
 			cleanup = mergeCleanup(cleanup, result)
 			cleanupError = errors.Join(cleanupError, result.err)
 			waitErr = <-waitDone
@@ -411,9 +458,16 @@ func runKeeper(cfg keeperConfig) int {
 	if metricSamples == 0 {
 		rec.MeasurementPartial = true
 	}
-	result := killTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
+	result := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
 	cleanup = mergeCleanup(cleanup, result)
 	cleanupError = errors.Join(cleanupError, result.err)
+	if err := closeRunToken(); err != nil {
+		cleanupError = errors.Join(cleanupError, fmt.Errorf("close run ownership token: %w", err))
+	}
+	if err := removeRunToken(cfg.RunID); err != nil {
+		cleanupError = errors.Join(cleanupError, err)
+	}
+	runTokenReleased = true
 	for readersRemaining > 0 {
 		if copyErr := <-copyDone; copyErr != nil {
 			outputError = errors.Join(outputError, copyErr)
@@ -463,15 +517,13 @@ func runKeeper(cfg keeperConfig) int {
 	reapEvent := eventFor(rec, EventTeardown)
 	reapEvent.Status = exitEvent.Status
 	reapEvent.DurationMS = exitEvent.DurationMS
-	reapEvent.Reaped = cleanup.Reaped
-	reapEvent.Unverified = cleanup.Unverified
-	reapEvent.Remaining = cleanup.Remaining
+	applyCleanupToEvent(&reapEvent, cleanup)
 	resourceFailure := false
 	if cleanupError != nil {
 		reapEvent.Error = cleanupError.Error()
 	}
-	reapEvent.Resources = cleanupResources(cfg.StateDir, cfg.RunID)
-	if resourceErr := resourceOutcomesError(reapEvent.Resources); resourceErr != nil {
+	resourceOutcomes := cleanupResources(cfg.StateDir, cfg.RunID)
+	if resourceErr := resourceOutcomesError(resourceOutcomes); resourceErr != nil {
 		resourceFailure = true
 		cleanupError = errors.Join(cleanupError, resourceErr)
 		if reapEvent.Error == "" {
@@ -482,7 +534,9 @@ func runKeeper(cfg keeperConfig) int {
 	}
 	scratchOutcome, scratchErr := cleanupScratchOutcome(cfg.StateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, cfg.Keep)
 	if scratch != "" {
-		reapEvent.Resources = append(reapEvent.Resources, scratchOutcome)
+		if err := appendResourceOutcome(cfg.StateDir, cfg.RunID, scratchOutcome); err != nil {
+			scratchErr = errors.Join(scratchErr, fmt.Errorf("persist scratch cleanup outcome: %w", err))
+		}
 	}
 	if scratchErr != nil {
 		reapEvent.Status = StatusDirty
@@ -614,20 +668,28 @@ func keeperError(rec record, action string, err error) int {
 	fmt.Fprintf(os.Stderr, "proc: %s: %v\n", action, err)
 	e := eventFor(rec, EventExit)
 	e.Error = err.Error()
-	if cleanupErr := killTree(rec.PID, rec.RunID); cleanupErr != nil {
+	if cleanupErr := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors).err; cleanupErr != nil {
 		e.Error = errors.Join(err, cleanupErr).Error()
 		fmt.Fprintln(os.Stderr, "proc: reap command tree:", cleanupErr)
+	}
+	if tokenErr := removeRunToken(rec.RunID); tokenErr != nil {
+		e.Error = errors.Join(errors.New(e.Error), tokenErr).Error()
 	}
 	if appendErr := appendEvent(rec.StateDir, e); appendErr != nil {
 		fmt.Fprintln(os.Stderr, "proc: record command failure:", appendErr)
 	}
 	reapEvent := eventFor(rec, EventTeardown)
 	reapEvent.Error = e.Error
-	reapEvent.Resources = cleanupResources(rec.StateDir, rec.RunID)
+	resourceOutcomes := cleanupResources(rec.StateDir, rec.RunID)
+	if resourceErr := resourceOutcomesError(resourceOutcomes); resourceErr != nil {
+		reapEvent.Error = errors.Join(errors.New(reapEvent.Error), resourceErr).Error()
+	}
 	scratch := rec.Scratch
 	if scratch != "" {
 		scratchOutcome, scratchErr := cleanupScratchOutcome(rec.StateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
-		reapEvent.Resources = append(reapEvent.Resources, scratchOutcome)
+		if persistErr := appendResourceOutcome(rec.StateDir, rec.RunID, scratchOutcome); persistErr != nil {
+			scratchErr = errors.Join(scratchErr, fmt.Errorf("persist scratch cleanup outcome: %w", persistErr))
+		}
 		if scratchErr != nil {
 			if dirtyErr := markRunDirty(rec.StateDir, rec.RunID, "scratch cleanup failed: "+scratchErr.Error()); dirtyErr != nil {
 				fmt.Fprintln(os.Stderr, "proc: mark scratch cleanup failure dirty:", dirtyErr)
@@ -654,7 +716,7 @@ func sampleDescendants(rec record, previous []Process) ([]Process, error) {
 			observed[processObservationKey(process)] = process
 		}
 	}
-	tree, err := ProcessTree(rec.PID, rec.RunID)
+	tree, err := processTreeWithKnownAncestors(osProcessSource{}, rec.PID, rec.RunID, nil, rec.ProtectedAncestors)
 	for _, process := range tree {
 		if !process.Unverified {
 			observed[processObservationKey(process)] = process
@@ -675,6 +737,10 @@ func sampleDescendants(rec record, previous []Process) ([]Process, error) {
 
 func processObservationKey(process Process) string {
 	return fmt.Sprintf("%d:%s", process.PID, process.Identity)
+}
+
+func processIdentityEvidenceKey(evidence ProcessIdentityEvidence) string {
+	return processObservationKey(Process{PID: evidence.PID, Identity: evidence.Identity})
 }
 
 func saveProgress(rec record, lastOutput int64) error {
@@ -718,20 +784,91 @@ func mergeCleanup(left, right treeCleanup) treeCleanup {
 	left.Reaped = appendUnique(left.Reaped, right.Reaped)
 	left.Unverified = appendUnique(left.Unverified, right.Unverified)
 	left.Remaining = appendUnique(left.Remaining, right.Remaining)
+	seenHistory := make(map[string]bool, len(left.History)+len(right.History))
+	for _, evidence := range left.History {
+		seenHistory[processIdentityEvidenceKey(evidence)] = true
+	}
+	for _, evidence := range right.History {
+		key := processIdentityEvidenceKey(evidence)
+		if !seenHistory[key] {
+			seenHistory[key] = true
+			left.History = append(left.History, evidence)
+		}
+	}
+	nextInventoryIndex := 1
+	if len(left.Inventory) > 0 {
+		nextInventoryIndex = left.Inventory[len(left.Inventory)-1].Index + 1
+	}
+	for _, sample := range right.Inventory {
+		sample.Index = nextInventoryIndex
+		nextInventoryIndex++
+		left.appendInventory(sample)
+	}
+	left.InventorySamplesOmitted += right.InventorySamplesOmitted
 	left.err = errors.Join(left.err, right.err)
 	return left
 }
 
-func signalKeeper(pid int, identity string) error {
+func applyCleanupToEvent(event *Event, cleanup treeCleanup) {
+	event.Reaped = cleanup.Reaped
+	event.Unverified = cleanup.Unverified
+	event.Remaining = cleanup.Remaining
+	event.TeardownHistory = cleanup.History
+	event.TeardownInventory = cleanup.Inventory
+	event.TeardownInventoryOmitted = cleanup.InventorySamplesOmitted
+}
+
+func signalKeeper(pid RecordedKeeperPID, identity, runID string, signal syscall.Signal, source processSource) error {
 	if pid <= 0 {
 		return errors.New("proc: invalid keeper pid")
 	}
-	current, alive, err := inspectIdentity(pid)
+	current, alive, err := source.Identity(int(pid))
 	if err != nil {
 		return err
 	}
 	if !alive || current != identity {
 		return nil
 	}
-	return syscall.Kill(pid, syscall.SIGTERM)
+	if int(pid) == os.Getpid() {
+		fmt.Fprintf(os.Stderr, "proc: keeper signal refused pid=%d identity=%q signal=%s run=%q outcome=%q attribution=caller\n", pid, identity, signal, runID, KeeperSignalRefusedCaller)
+		return &KeeperSignalError{Outcome: KeeperSignalRefusedCaller, PID: int(pid)}
+	}
+	parentSource, ok := source.(processParentSource)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "proc: keeper signal refused pid=%d identity=%q signal=%s run=%q outcome=%q attribution=caller-ancestry-unverifiable\n", pid, identity, signal, runID, KeeperSignalRefusedUnverifiable)
+		return &KeeperSignalError{Outcome: KeeperSignalRefusedUnverifiable, PID: int(pid)}
+	}
+	ancestors, err := callerAncestorPIDs(os.Getpid(), parentSource.ParentPID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "proc: keeper signal refused pid=%d identity=%q signal=%s run=%q outcome=%q attribution=caller-ancestry-unverifiable\n", pid, identity, signal, runID, KeeperSignalRefusedUnverifiable)
+		return &KeeperSignalError{Outcome: KeeperSignalRefusedUnverifiable, PID: int(pid)}
+	}
+	if _, protected := ancestors[int(pid)]; protected {
+		fmt.Fprintf(os.Stderr, "proc: keeper signal refused pid=%d identity=%q signal=%s run=%q outcome=%q attribution=caller-ancestor\n", pid, identity, signal, runID, KeeperSignalRefusedCaller)
+		return &KeeperSignalError{Outcome: KeeperSignalRefusedCaller, PID: int(pid)}
+	}
+	fmt.Fprintf(os.Stderr, "proc: keeper signal pid=%d identity=%q signal=%s run=%q attribution=run-record-keeper\n", pid, identity, signal, runID)
+	return source.Signal(int(pid), signal)
+}
+
+type processParentSource interface {
+	ParentPID(pid int) (int, error)
+}
+
+func callerAncestorPIDs(callerPID int, parentPID func(int) (int, error)) (map[int]struct{}, error) {
+	ancestors := make(map[int]struct{})
+	seen := make(map[int]bool)
+	for pid := callerPID; pid > 0 && !seen[pid]; {
+		seen[pid] = true
+		ancestors[pid] = struct{}{}
+		if pid == 1 {
+			break
+		}
+		parent, err := parentPID(pid)
+		if err != nil {
+			return nil, fmt.Errorf("inspect caller ancestry at process %d: %w", pid, err)
+		}
+		pid = parent
+	}
+	return ancestors, nil
 }

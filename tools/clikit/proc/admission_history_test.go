@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/kb-labs/clikit/internal/testdeadline"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,9 +113,9 @@ func TestAdmissionWaitCostIsIndependentOfFinishedHistory(t *testing.T) {
 		if err != nil {
 			t.Fatalf("admission did not start after the disk floor cleared: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		cancel()
-		t.Fatal("admission did not start within 5s of clearing the disk floor")
+		t.Fatal("admission did not start before the test deadline after the disk floor cleared")
 	}
 	rec, err := readAdmissionRecord(state, "history-waiter")
 	if err != nil || rec.Status != StatusStarting {
@@ -217,7 +218,7 @@ func TestTerminalTransitionRetiresRecordAndKeepsItVisible(t *testing.T) {
 	if err != nil || rec.Status != StatusCompleted || rec.ExitCode == nil || *rec.ExitCode != 0 {
 		t.Fatalf("completed record = %+v, err=%v", rec, err)
 	}
-	waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	waitCtx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	info, err := WaitTag(waitCtx, state, "completing")
 	if err != nil {
@@ -268,7 +269,7 @@ func TestWaitRunCostIsIndependentOfFinishedHistory(t *testing.T) {
 	}
 	result := make(chan waitResult, 1)
 	go func() {
-		info, err := waitRun(ctx, state, "waited", false)
+		info, err := waitRun(ctx, state, "waited", waitByTag, 0)
 		result <- waitResult{info: info, err: err}
 	}()
 	window := 3 * time.Second
@@ -303,9 +304,9 @@ func TestWaitRunCostIsIndependentOfFinishedHistory(t *testing.T) {
 		if outcome.info.Status != StatusFailed || outcome.info.ExitCode == nil || *outcome.info.ExitCode != 7 {
 			t.Fatalf("waited run info = %+v, want failed with exit 7", outcome.info)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		cancel()
-		t.Fatal("tag wait did not return within 5s of the run completing")
+		t.Fatal("tag wait did not return before the test deadline after the run completed")
 	}
 }
 
@@ -320,7 +321,7 @@ func TestWaitRunReturnsRunThatFinishesBetweenPolls(t *testing.T) {
 	done := make(chan RunInfo, 1)
 	errs := make(chan error, 1)
 	go func() {
-		info, err := waitRun(ctx, state, "late", false)
+		info, err := waitRun(ctx, state, "late", waitByTag, 0)
 		errs <- err
 		done <- info
 	}()
@@ -350,9 +351,52 @@ func TestWaitRunReturnsRunThatFinishesBetweenPolls(t *testing.T) {
 		if info.Status != StatusCompleted || info.ExitCode == nil || *info.ExitCode != 0 {
 			t.Fatalf("between-polls run info = %+v, want completed with exit 0", info)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testdeadline.Budget(t)):
 		cancel()
 		t.Fatal("wait never observed the run that finished between two polls")
+	}
+}
+
+// case: S-237.138
+func TestWaitLatestTagAppearanceWindowAcceptsAppearingRecord(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result := make(chan struct {
+		info RunInfo
+		err  error
+	}, 1)
+	go func() {
+		info, err := WaitLatestTagWithin(ctx, state, "appearing", time.Second)
+		result <- struct {
+			info RunInfo
+			err  error
+		}{info: info, err: err}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	code := 0
+	if err := withStateLock(state, func() error {
+		order, err := nextQueueOrderLocked(state)
+		if err != nil {
+			return err
+		}
+		return writeRecordAtomic(record{
+			RunID: "appeared", Tag: "agent:stream:appeared", LatestTag: "appearing", Status: StatusCompleted,
+			QueueOrder: order, StateDir: state, ExitCode: &code, Command: []string{"/bin/true"},
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case outcome := <-result:
+		if outcome.err != nil || outcome.info.RunID != "appeared" || outcome.info.ExitCode == nil || *outcome.info.ExitCode != 0 {
+			t.Fatalf("wait result = %+v err=%v", outcome.info, outcome.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("wait did not accept a latest-tag record that appeared within its window")
 	}
 }
 

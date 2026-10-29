@@ -3,9 +3,11 @@
 package proc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,8 +16,115 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/internal/testdeadline"
+
 	"golang.org/x/sys/unix"
 )
+
+// case: S-237.47
+func TestThousandsOfResourceOutcomesRemainInRunRecordAndTeardownSummary(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	identity, alive, err := ProcessIdentity(os.Getpid())
+	if err != nil || !alive {
+		t.Fatalf("identify test process: alive=%t err=%v", alive, err)
+	}
+	const runID = "thousands-of-resources"
+	rec := record{RunID: runID, StateDir: state, PID: os.Getpid(), StartedAt: identity, Status: StatusRunning}
+	if err := writeRecordAtomic(rec); err != nil {
+		t.Fatal(err)
+	}
+	originalDockerCommand := dockerCommand
+	dockerCommand = func(_ context.Context, args ...string) ([]byte, error) {
+		if len(args) >= 1 && args[0] == "ps" {
+			return []byte("fixture-container\n"), nil
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { dockerCommand = originalDockerCommand })
+
+	const resourceCount = 2000
+	for i := 0; i < resourceCount; i++ {
+		resource := Resource{Kind: ResourceContainer, ID: fmt.Sprintf("container-%04d", i)}
+		if err := RegisterResource(state, runID, resource); err != nil {
+			t.Fatalf("register resource %d: %v", i, err)
+		}
+	}
+	outcomes := cleanupResources(state, runID)
+	if len(outcomes) != resourceCount {
+		t.Fatalf("cleanup returned %d outcomes, want %d", len(outcomes), resourceCount)
+	}
+	rec, err = readRecordLocked(state, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Status = StatusCompleted
+	if err := writeRecordAtomic(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendEvent(state, eventFor(rec, EventExit)); err != nil {
+		t.Fatalf("append exit event: %v", err)
+	}
+	teardown := eventFor(rec, EventTeardown)
+	if err := appendEvent(state, teardown); err != nil {
+		t.Fatalf("append teardown event after %d valid resource cleanups: %v", resourceCount, err)
+	}
+
+	var events []Event
+	if err := ReadEvents(bytes.NewReader(mustReadFile(t, filepath.Join(state, "events.jsonl"))), func(event Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("read lifecycle events: %v", err)
+	}
+	if len(events) < 2 || events[len(events)-1].Type != EventTeardown {
+		t.Fatalf("lifecycle ended with %v; want teardown after resource cleanup", events)
+	}
+	if got := events[len(events)-1].Resources.Counts[ResourceRemoved]; got != resourceCount {
+		t.Fatalf("teardown summary removed count = %d, want %d", got, resourceCount)
+	}
+	if len(events[len(events)-1].Resources.Remaining) != 0 || events[len(events)-1].Resources.Omitted != 0 {
+		t.Fatalf("successful cleanup summary has remaining identities: %+v", events[len(events)-1].Resources)
+	}
+	if got, err := ResourceOutcomes(state, runID); err != nil || len(got) != resourceCount {
+		t.Fatalf("proc API returned %d resource outcomes, want %d: %v", len(got), resourceCount, err)
+	} else {
+		for i := range got {
+			if got[i].ID != fmt.Sprintf("container-%04d", i) || got[i].Outcome != ResourceRemoved {
+				t.Fatalf("resource outcome %d = %+v", i, got[i])
+			}
+		}
+	}
+	line, err := json.Marshal(List(state))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listing struct {
+		Runs []json.RawMessage `json:"runs"`
+	}
+	if err := json.Unmarshal(line, &listing); err != nil || len(listing.Runs) != 1 {
+		t.Fatalf("decode ps listing: runs=%d err=%v", len(listing.Runs), err)
+	}
+	var run map[string]json.RawMessage
+	if err := json.Unmarshal(listing.Runs[0], &run); err != nil {
+		t.Fatal(err)
+	}
+	var storedOutcomes []json.RawMessage
+	if err := json.Unmarshal(run["resource_outcomes"], &storedOutcomes); err != nil || len(storedOutcomes) != resourceCount {
+		t.Fatalf("ps run record has %d resource outcomes, want %d: err=%v", len(storedOutcomes), resourceCount, err)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
 
 // case: S-237.43
 func TestRegisterAndCleanupRunOwnedPath(t *testing.T) {
@@ -39,7 +148,7 @@ func TestRegisterAndCleanupRunOwnedPath(t *testing.T) {
 	if err := CreateOwnedPath(state, run.RunID, file, OwnedFile); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := readResourceLedger(state, run.RunID)
+	entries, err := readRunResources(state, run.RunID)
 	if err != nil || len(entries) != 2 || entries[0].ownerToken == "" || entries[1].ownerToken == "" {
 		t.Fatalf("recorded path owner token = %+v, %v", entries, err)
 	}
@@ -94,7 +203,7 @@ func TestCreateOwnedPathRefusesRecreatedPathWithDifferentOwnerNonce(t *testing.T
 	if err := CreateOwnedPath(state, "nonce-run", path, OwnedFile); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := readResourceLedger(state, "nonce-run")
+	entries, err := readRunResources(state, "nonce-run")
 	if err != nil || len(entries) != 1 || !strings.HasPrefix(entries[0].ownerToken, "nonce-run:") {
 		t.Fatalf("ownership token ledger = %+v, %v", entries, err)
 	}
@@ -131,7 +240,7 @@ func TestCleanupRequiresOwnerNonceWhenDeviceAndInodeMatch(t *testing.T) {
 	if err := CreateOwnedPath(state, "nonce-match-run", path, OwnedFile); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := readResourceLedger(state, "nonce-match-run")
+	entries, err := readRunResources(state, "nonce-match-run")
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("ownership ledger = %+v, %v", entries, err)
 	}
@@ -252,7 +361,7 @@ func TestRegisterComposePersistsCallerPrefix(t *testing.T) {
 	if !reflect.DeepEqual(gotPrefix, resource.ComposePrefix) {
 		t.Fatalf("compose preflight prefix = %v", gotPrefix)
 	}
-	entries, err := readResourceLedger(state, "compose-run")
+	entries, err := readRunResources(state, "compose-run")
 	if err != nil || len(entries) != 1 || !reflect.DeepEqual(entries[0].ComposePrefix, resource.ComposePrefix) {
 		t.Fatalf("stored Compose prefix = %+v, %v", entries, err)
 	}
@@ -445,7 +554,7 @@ func TestWaitReturnsForLostRunWithFailedResourceCleanup(t *testing.T) {
 	if err := recordObservedKeeperLoss(state, run.RunID); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	got, err := WaitTag(ctx, state, run.Tag)
 	if err != nil {
@@ -485,7 +594,7 @@ func TestWaitReturnsForLostRunWithFailedScratchCleanup(t *testing.T) {
 	if err := recordObservedKeeperLoss(state, run.RunID); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
 	defer cancel()
 	got, err := WaitTag(ctx, state, run.Tag)
 	if err != nil {
@@ -517,19 +626,13 @@ func TestLedgerPersistenceFailureLeavesDirtyPendingEntryForGC(t *testing.T) {
 	}
 	t.Cleanup(func() { dockerCommand = originalDocker })
 
-	originalWrite := writeResourceLedgerFile
-	writeFailed := false
-	writeResourceLedgerFile = func(path string, data []byte, mode os.FileMode) error {
-		if !writeFailed {
-			writeFailed = true
-			return errors.New("injected ledger persistence failure")
-		}
-		return originalWrite(path, data, mode)
+	tmpPath := recordPath(state, "ledger-write-run", false) + ".tmp"
+	if err := os.MkdirAll(tmpPath, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { writeResourceLedgerFile = originalWrite })
 
 	outcomes := cleanupResources(state, "ledger-write-run")
-	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceRemoved || !strings.Contains(outcomes[0].Error, "injected ledger persistence failure") {
+	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceRemoved || !strings.Contains(outcomes[0].Error, "persist resource cleanup ledger") {
 		t.Fatalf("processed cleanup outcome = %+v", outcomes)
 	}
 	if err := completeRecord(state, "ledger-write-run", nil, "", time.Second, record{}); err != nil {
@@ -542,6 +645,9 @@ func TestLedgerPersistenceFailureLeavesDirtyPendingEntryForGC(t *testing.T) {
 	leftovers, err := Leftovers(state)
 	if err != nil || len(leftovers) != 1 || leftovers[0].Outcome != ResourcePending {
 		t.Fatalf("pending leftovers = %+v, %v", leftovers, err)
+	}
+	if err := os.RemoveAll(tmpPath); err != nil {
+		t.Fatal(err)
 	}
 
 	outcomes, err = GarbageCollect(state)
@@ -607,7 +713,7 @@ func TestCleanupOwnedDirectoryRemovesSymlinkWithoutFollowingItsTarget(t *testing
 	if err := os.Symlink(outside, link); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := readResourceLedger(state, "nested-link-run")
+	entries, err := readRunResources(state, "nested-link-run")
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("owned ledger = %+v, %v", entries, err)
 	}
@@ -794,16 +900,15 @@ func TestPruneStartingKeeperRemovesItsScratch(t *testing.T) {
 		t.Fatal(err)
 	}
 	var teardown Event
-	for _, line := range strings.Split(strings.TrimSpace(string(eventData)), "\n") {
-		var event Event
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatal(err)
-		}
+	if err := ReadEvents(bytes.NewReader(eventData), func(event Event) error {
 		if event.Type == EventTeardown {
 			teardown = event
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if teardown.Type != EventTeardown || len(teardown.Resources) != 1 || teardown.Resources[0].Resource.Kind != "scratch" || teardown.Resources[0].Outcome != ResourceRemoved {
+	if teardown.Type != EventTeardown || teardown.Resources.Counts[ResourceRemoved] != 1 {
 		t.Fatalf("starting keeper teardown did not report scratch removal: %+v", teardown)
 	}
 }
@@ -831,7 +936,7 @@ func TestHangingDockerCleanupIsStalledAndBounded(t *testing.T) {
 	t.Cleanup(func() { dockerCommand = original })
 	started := time.Now()
 	outcomes := cleanupResources(state, "hang-run")
-	if time.Since(started) > composeCleanupBound()+2*time.Second {
+	if time.Since(started) > composeCleanupBound()+testdeadline.ResourceCleanupSlack(t) {
 		t.Fatalf("Docker cleanup exceeded its %s bound: %s", composeCleanupBound(), time.Since(started))
 	}
 	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceFailed || !strings.Contains(outcomes[0].Error, "stalled Docker cleanup") {
@@ -842,12 +947,11 @@ func TestHangingDockerCleanupIsStalledAndBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var event Event
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatal(err)
-		}
+	if err := ReadEvents(bytes.NewReader(data), func(event Event) error {
 		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if len(events) != 1 || events[0].Type != EventStall {
 		t.Fatalf("hanging cleanup stall events = %+v", events)

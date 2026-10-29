@@ -4,6 +4,24 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-27
+
+### macOS process ownership uses an inherited run-token descriptor
+
+macOS does not expose environment strings for Apple platform binaries through
+`kern.procargs2`, so the run environment marker cannot prove ownership of
+commands such as `/bin/sh` and `/bin/sleep` after exec and detachment. Each
+supervised command therefore inherits a run-unique file descriptor; the process
+owner matches the descriptor's vnode device and inode for same-UID processes
+across process inventory snapshots. This survives exec of platform binaries,
+setsid, and reparenting. A readable environment marker and recorded PID/start
+identity remain additional evidence. Foreign-UID unreadable candidates remain
+visible as potential setuid owners but are not accepted without other ownership
+proof. A recorded process that closes the token and loses its marker remains
+visible as unverified. A process that closes every inherited descriptor before
+it is observed and then detaches cannot be attributed after that point. Cases:
+S-237.1, S-237.7.
+
 ## 2026-10-23
 
 ### Built-in scenario plugins are Marketplace install specs
@@ -488,11 +506,11 @@ Owner intent (2026-10-02): “главное сделать платформен
 
 Cases: S-007.4, S-041.7 to S-041.10, S-041.12, S-255.7 to S-255.10, S-045.5, S-104, S-140.6.
 
-### Bind persistent built-in adapters on every fresh install
+### Persistent adapter defaults and analytics persistence disclosure
 
 "The idea is that the user has no headache at the base level and doesn't need to configure everything from scratch. Instead of an InMemory fallback, the minimum is FS/SQLite or something cheap and easy to install. No local databases with lots of replicas are needed, but later the user can replace adapters with the ones they need."
 
-Fresh local and secured installs resolve the same built-in adapter for every platform slot with a persistent local implementation, including when the user has not added a binding. Defaults are replaceable through `kb adapter bind <slot> <package>`; replacing a provider does not migrate or delete data held by the previous provider. An available persistent adapter must never be silently replaced by an InMemory fallback. OpenAI remains the implicit LLM provider; its adapter can construct without a key and reports `KB_ADAPTER_CREDENTIALS_MISSING` only when used. Missing credentials for optional capabilities are warning-severity doctor findings and do not make an otherwise healthy install fail; use reports the typed credentials error. Adapter manifests may declare required credential options as secret values with environment sources; these credentials may be missing at construction, while required structural options such as a service map exclude a provider from implicit defaults. Embeddings and vector store remain unconfigured and return typed adapter-required errors without configured providers. Durable account, workflow, KV, document, and analytics data survives a host restart. Doctor diagnosis is read-only; `kb-create doctor --fix` is the explicit repair operation for missing installed manifest projections.
+Fresh local and secured installs resolve the SQLite analytics adapter from the shipped platform release index, so a fresh install displays real aggregate stats with durable persistence and no volatility notice. If no persistent analytics binding resolves, the runtime can use its in-memory analytics buffer; Studio then states that those real stats cover only the current host process and reset on restart, and shows the catalog-owned `KB_ANALYTICS_PERSISTENCE_VOLATILE` hint for configuring a persistent adapter. Each adapter declares persistence through its structured stats capability; Studio does not infer it from provider names. Defaults are replaceable through `kb adapter bind <slot> <package>`; replacing a provider does not migrate or delete data held by the previous provider. An available persistent adapter must never be silently replaced by an InMemory fallback. OpenAI remains the implicit LLM provider; its adapter can construct without a key and reports `KB_ADAPTER_CREDENTIALS_MISSING` only when used. Missing credentials for optional capabilities are warning-severity doctor findings and do not make an otherwise healthy install fail; use reports the typed credentials error. Adapter manifests may declare required credential options as secret values with environment sources; these credentials may be missing at construction, while required structural options such as a service map exclude a provider from implicit defaults. Embeddings and vector store remain unconfigured and return typed adapter-required errors without configured providers. Durable account, workflow, KV, and document data survives a host restart. Doctor diagnosis is read-only; `kb-create doctor --fix` is the explicit repair operation for missing installed manifest projections. Cases: S-121.6, S-275.1.
 
 The sealed base install includes `@kb-labs/adapters-openai` so the runtime can
 select it through `defaultFor: { llm: ["llm"] }` without writing an explicit

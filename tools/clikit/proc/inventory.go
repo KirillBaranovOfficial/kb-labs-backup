@@ -25,6 +25,9 @@ type ProcessInventoryEntry struct {
 	PPID             int      `json:"ppid"`
 	UID              uint32   `json:"uid"`
 	Identity         string   `json:"identity"`
+	Command          string   `json:"command"`
+	CWD              string   `json:"cwd,omitempty"`
+	CwdError         string   `json:"cwd_error,omitempty"`
 	Argv             []string `json:"argv"`
 	Unverified       bool     `json:"unverified"`
 	ArgvError        string   `json:"argv_error,omitempty"`
@@ -48,7 +51,7 @@ func ProcessInventory() ([]ProcessInventoryEntry, error) {
 	currentUID := uint32(syscall.Getuid())
 	entries := make([]ProcessInventoryEntry, 0, len(processes))
 	for _, process := range processes {
-		entry, include := inventoryEntry(process, currentUID, readProcessArguments, readProcessIdentity)
+		entry, include := inventoryEntryWithReaders(process, currentUID, readProcessArguments, readProcessIdentity, readProcessCWD)
 		if !include {
 			continue
 		}
@@ -58,9 +61,25 @@ func ProcessInventory() ([]ProcessInventoryEntry, error) {
 }
 
 func inventoryEntry(process Process, currentUID uint32, readArguments func(int) ([]string, error), readIdentity func(int) (string, bool, error)) (ProcessInventoryEntry, bool) {
+	return inventoryEntryWithReaders(process, currentUID, readArguments, readIdentity, func(int) (string, error) { return "", nil })
+}
+
+func inventoryEntryWithReaders(process Process, currentUID uint32, readArguments func(int) ([]string, error), readIdentity func(int) (string, bool, error), readCWD func(int) (string, error)) (ProcessInventoryEntry, bool) {
 	entry := ProcessInventoryEntry{
-		PID: process.PID, PPID: process.PPID, UID: process.uid, Identity: process.Identity,
+		PID: process.PID, PPID: process.PPID, UID: process.uid, Identity: process.Identity, Command: process.Command,
 		Argv: []string{}, SettleMS: inventorySettleWindow.Milliseconds(),
+	}
+	cwd, cwdErr := readCWD(process.PID)
+	identity, alive, identityErr := readIdentity(process.PID)
+	if processGone(identityErr) || (identityErr == nil && (!alive || identity != process.Identity)) {
+		return ProcessInventoryEntry{}, false
+	}
+	if identityErr != nil {
+		entry.ObservationError = fmt.Sprintf("PID/start identity could not be rechecked after cwd read: %v", identityErr)
+	} else if cwdErr != nil {
+		entry.CwdError = cwdErr.Error()
+	} else {
+		entry.CWD = cwd
 	}
 	if process.uid != currentUID {
 		entry.ArgvError = fmt.Sprintf("argv not inspected: process uid %d differs from caller uid %d", process.uid, currentUID)

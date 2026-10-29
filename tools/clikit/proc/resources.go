@@ -22,20 +22,19 @@ import (
 type ResourceKind string
 
 const (
-	ResourcePath           ResourceKind = "path"
-	ResourceCompose        ResourceKind = "docker-compose"
-	ResourceContainer      ResourceKind = "docker-container"
-	ResourceNetwork        ResourceKind = "docker-network"
-	ResourceVolume         ResourceKind = "docker-volume"
-	ResourceRemoved                     = "removed"
-	ResourceAlreadyGone                 = "already-gone"
-	ResourceRefused                     = "refused"
-	ResourceFailed                      = "failed"
-	ResourcePending                     = "pending"
-	resourceStateEnv                    = "KBLABS_CLIPROC_STATE"
-	resourceLedgerFilename              = "resources.json"
-	composeStopTimeout                  = 10 * time.Second
-	composeCleanupMargin                = 5 * time.Second
+	ResourcePath         ResourceKind = "path"
+	ResourceCompose      ResourceKind = "docker-compose"
+	ResourceContainer    ResourceKind = "docker-container"
+	ResourceNetwork      ResourceKind = "docker-network"
+	ResourceVolume       ResourceKind = "docker-volume"
+	ResourceRemoved                   = "removed"
+	ResourceAlreadyGone               = "already-gone"
+	ResourceRefused                   = "refused"
+	ResourceFailed                    = "failed"
+	ResourcePending                   = "pending"
+	resourceStateEnv                  = "KBLABS_CLIPROC_STATE"
+	composeStopTimeout                = 10 * time.Second
+	composeCleanupMargin              = 5 * time.Second
 )
 
 type OwnedPathType string
@@ -140,8 +139,6 @@ var setPathOwnerXattr = func(path string, value []byte) error {
 	return unix.Lsetxattr(path, pathOwnerXattrName, value, 0)
 }
 
-var writeResourceLedgerFile = os.WriteFile
-
 var getPathOwnerXattr = func(path string) ([]byte, error) {
 	size, err := unix.Lgetxattr(path, pathOwnerXattrName, nil)
 	if err != nil {
@@ -168,10 +165,6 @@ func resourceCommand(ctx context.Context, prefix []string, args ...string) ([]by
 	command.Stdout, command.Stderr = &output, &output
 	err := child.Run(ctx, command, ChildProcessObserver())
 	return output.Bytes(), err
-}
-
-func ledgerPath(stateDir, runID string) string {
-	return filepath.Join(stateDir, "runs", runID, resourceLedgerFilename)
 }
 
 // RegisterResource records an explicitly owned external resource in run order.
@@ -211,13 +204,13 @@ func RegisterResource(stateDir, runID string, resource Resource) error {
 		default:
 			return fmt.Errorf("unsupported resource kind %q", resource.Kind)
 		}
-		entries, err := readResourceLedger(stateDir, runID)
+		entries, err := readRunResources(stateDir, runID)
 		if err != nil {
 			return err
 		}
 		resource.Outcome = ResourcePending
 		entries = append(entries, resource)
-		return writeResourceLedger(stateDir, runID, entries)
+		return writeRunResources(stateDir, runID, entries)
 	})
 }
 
@@ -290,10 +283,10 @@ func CreateOwnedPath(stateDir, runID, path string, pathType OwnedPathType) error
 			return errors.Join(fmt.Errorf("write path ownership xattr on %q: %w", absolute, err), rollbackErr)
 		}
 		resource := Resource{Kind: ResourcePath, ID: absolute, Device: identity.Device, Inode: identity.Inode, ownerToken: ownerToken, Outcome: ResourcePending}
-		entries, err := readResourceLedger(stateDir, runID)
+		entries, err := readRunResources(stateDir, runID)
 		if err == nil {
 			entries = append(entries, resource)
-			err = writeResourceLedger(stateDir, runID, entries)
+			err = writeRunResources(stateDir, runID, entries)
 		}
 		if err != nil {
 			return errors.Join(err, removeOwnedPath(stateDir, runID, resource))
@@ -463,7 +456,7 @@ func cleanupScratch(stateDir, scratch string, expected fileIdentity, keepPaths [
 }
 
 func cleanupScratchOutcome(stateDir, scratch string, expected fileIdentity, keepPaths []string) (ResourceOutcome, error) {
-	outcome := ResourceOutcome{Resource: Resource{Kind: "scratch", ID: scratch}}
+	outcome := ResourceOutcome{Resource: Resource{Kind: "scratch", ID: scratch, Device: expected.Device, Inode: expected.Inode}}
 	if scratch == "" {
 		return outcome, nil
 	}
@@ -486,31 +479,60 @@ func cleanupScratchOutcome(stateDir, scratch string, expected fileIdentity, keep
 	return outcome, nil
 }
 
-func readResourceLedger(stateDir, runID string) ([]Resource, error) {
-	data, err := os.ReadFile(ledgerPath(stateDir, runID))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+func readRunResources(stateDir, runID string) ([]Resource, error) {
+	rec, err := readRecordLocked(stateDir, runID)
 	if err != nil {
 		return nil, err
 	}
-	var entries []Resource
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("decode resource ledger for run %s: %w", runID, err)
-	}
-	return entries, nil
+	return rec.Resources, nil
 }
 
-func writeResourceLedger(stateDir, runID string, entries []Resource) error {
-	path := ledgerPath(stateDir, runID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(entries, "", "  ")
+func writeRunResources(stateDir, runID string, entries []Resource) error {
+	rec, err := readRecordLocked(stateDir, runID)
 	if err != nil {
 		return err
 	}
-	return writeResourceLedgerFile(path, data, 0o600)
+	rec.Resources = entries
+	return writeRecordAtomic(rec)
+}
+
+// ResourceOutcomes returns the durable per-resource cleanup results for a run.
+func ResourceOutcomes(stateDir, runID string) ([]Resource, error) {
+	var resources []Resource
+	err := withStateLock(stateDir, func() error {
+		rec, err := readRecordLocked(stateDir, runID)
+		if err != nil {
+			return err
+		}
+		resources = append([]Resource(nil), rec.Resources...)
+		return nil
+	})
+	return resources, err
+}
+
+func appendResourceOutcomeLocked(stateDir, runID string, outcome ResourceOutcome) error {
+	entries, err := readRunResources(stateDir, runID)
+	if err != nil {
+		return err
+	}
+	resource := outcome.Resource
+	resource.Outcome, resource.Error = outcome.Outcome, outcome.Error
+	if resource.Kind == "scratch" {
+		for i := range entries {
+			if entries[i].Kind == resource.Kind && entries[i].ID == resource.ID {
+				entries[i] = resource
+				return writeRunResources(stateDir, runID, entries)
+			}
+		}
+	}
+	entries = append(entries, resource)
+	return writeRunResources(stateDir, runID, entries)
+}
+
+func appendResourceOutcome(stateDir, runID string, outcome ResourceOutcome) error {
+	return withStateLock(stateDir, func() error {
+		return appendResourceOutcomeLocked(stateDir, runID, outcome)
+	})
 }
 
 func cleanupResources(stateDir, runID string) []ResourceOutcome {
@@ -572,7 +594,7 @@ func mergePendingResourceFailures(processed, pending []ResourceOutcome) []Resour
 }
 
 func cleanupResourcesLocked(stateDir, runID string) ([]ResourceOutcome, error) {
-	entries, err := readResourceLedger(stateDir, runID)
+	entries, err := readRunResources(stateDir, runID)
 	if err != nil {
 		return nil, errors.Join(err, markRunDirtyLocked(stateDir, runID, err.Error()))
 	}
@@ -581,7 +603,7 @@ func cleanupResourcesLocked(stateDir, runID string) ([]ResourceOutcome, error) {
 		outcome := cleanupResource(stateDir, runID, entries[i])
 		outcomes = append(outcomes, outcome)
 		entries[i].Outcome, entries[i].Error = outcome.Outcome, outcome.Error
-		if err := writeResourceLedger(stateDir, runID, entries); err != nil {
+		if err := writeRunResources(stateDir, runID, entries); err != nil {
 			markErr := markRunDirtyLocked(stateDir, runID, err.Error())
 			return outcomes, errors.Join(fmt.Errorf("persist resource cleanup ledger: %w", err), markErr)
 		}
@@ -659,7 +681,7 @@ func markRunLost(stateDir, runID, reason string) error {
 }
 
 func pendingResourceFailures(stateDir, runID string, cause error) []ResourceOutcome {
-	entries, err := readResourceLedger(stateDir, runID)
+	entries, err := readRunResources(stateDir, runID)
 	if err != nil {
 		return nil
 	}
@@ -903,6 +925,9 @@ func GarbageCollect(stateDir string) ([]ResourceOutcome, error) {
 			if rec.Scratch != "" {
 				scratchOutcome, _ := cleanupScratchOutcome(stateDir, rec.Scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
 				outcomes = append(outcomes, scratchOutcome)
+				if err := appendResourceOutcomeLocked(stateDir, rec.RunID, scratchOutcome); err != nil {
+					return fmt.Errorf("persist scratch cleanup outcome: %w", err)
+				}
 			}
 			all = append(all, outcomes...)
 			failed := false
@@ -912,6 +937,10 @@ func GarbageCollect(stateDir string) ([]ResourceOutcome, error) {
 				}
 			}
 			stored, err := readRecordLocked(stateDir, rec.RunID)
+			if err != nil {
+				return err
+			}
+			stored.Resources, err = readRunResources(stateDir, rec.RunID)
 			if err != nil {
 				return err
 			}
@@ -925,7 +954,6 @@ func GarbageCollect(stateDir string) ([]ResourceOutcome, error) {
 				return err
 			}
 			event := eventFor(stored, EventTeardown)
-			event.Resources = outcomes
 			if err := appendEvent(stateDir, event); err != nil {
 				return err
 			}
@@ -957,10 +985,7 @@ func Leftovers(stateDir string) ([]LeftoverEntry, error) {
 			return err
 		}
 		for _, rec := range records {
-			entries, err := readResourceLedger(stateDir, rec.RunID)
-			if err != nil {
-				return err
-			}
+			entries := rec.Resources
 			for _, entry := range entries {
 				if entry.Outcome == ResourceFailed || entry.Outcome == ResourceRefused || entry.Outcome == ResourcePending || entry.Outcome == "" {
 					all = append(all, LeftoverEntry{RunID: rec.RunID, Kind: string(entry.Kind), ID: entry.ID, Outcome: entry.Outcome, Error: entry.Error})

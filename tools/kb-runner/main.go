@@ -43,9 +43,6 @@ func executeInvocation(invocation string, args []string, stdout, stderr io.Write
 		}
 		return diag.SuccessStatus()
 	}
-	if len(args) > 0 && args[0] == "__keeper" {
-		return diag.ProcessExitStatus(proc.KeeperMain())
-	}
 	if len(args) > 0 && args[0] == "__agent_worker" {
 		code, err := agentStartCommand(root, args[1:], stdout, stderr)
 		if err != nil {
@@ -126,8 +123,10 @@ var runnerCommands = []runnerCommand{
 	{name: "status", execute: statusCommand},
 	{name: "limits", execute: limitsCommand},
 	{name: "agent", execute: agentCommand},
+	{name: "test-channel", execute: testChannelRequestCommand},
 	{name: "verify", execute: verifyCommand},
 	{name: "worktree", execute: worktreeCommand},
+	{name: "hygiene", execute: hygieneCommand},
 	{name: "land", execute: landCommand},
 	{name: "sched", execute: schedulerCommand},
 	{name: "self-install", execute: selfInstallCommand},
@@ -199,6 +198,7 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	stdinPath := fs.String("stdin", "", "read command stdin from this file")
 	slotGroup := fs.String("slot-group", "", "serialize starts within this capacity group")
 	slots := fs.Int("slots", 0, "maximum live runs allowed in the slot group")
+	slotWeight := fs.Int("slot-weight", 0, "tokens acquired in the slot group (default 1)")
 	waitGate := fs.String("wait-gate", "", "wait for this named gate to be released")
 	holdGate := fs.String("hold-gate", "", "hold this named gate for the command tree lifetime")
 	minFree := fs.String("min-free", "", "minimum free bytes on the state filesystem")
@@ -225,6 +225,11 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	if *tag == "" || *state == "" || *stall <= 0 || *stdoutPath == "" || *stderrPath == "" {
 		return 2, fmt.Errorf("%s run: --tag, --state, positive --stall, --stdout, and --stderr are required; next: %s run --help", root.Name(), root.InvocationCommand())
 	}
+	canonicalState, err := proc.CanonicalStateDir(*state)
+	if err != nil {
+		return 1, fmt.Errorf("%s run: resolve --state: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
+	}
+	*state = canonicalState
 	costClass, err := proc.ParseCostClass(*cost)
 	if err != nil {
 		return 2, fmt.Errorf("%s run: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
@@ -260,12 +265,16 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	helper, err := os.Executable()
+	workdir, err := os.Getwd()
 	if err != nil {
-		return 1, fmt.Errorf("kb-runner run: locate keeper executable: %w", err)
+		return 1, fmt.Errorf("%s run: inspect current workdir for lease: %w", root.Name(), err)
+	}
+	leasePaths, err := runnerWorktreeLeasePaths(workdir)
+	if err != nil {
+		return 1, fmt.Errorf("%s run: acquire owned-worktree lease: %w", root.Name(), err)
 	}
 	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
-	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
+	run, err := proc.Start(ctx, proc.Config{StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, SlotWeight: *slotWeight, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, SharedLeasePaths: leasePaths, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("%s run: %w\nInspect state directory access before retrying:\nnext: ls -ld %s\nnext: %s", root.Name(), err, shellQuote(*state), shellJoin(os.Args))
 	}
@@ -280,7 +289,7 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 		}
 		return 1, keeperWaitFailure(root, *state, err)
 	}
-	completed, err := proc.WaitTag(context.Background(), *state, *tag)
+	completed, err := proc.WaitRunID(context.Background(), *state, run.RunID)
 	if err != nil {
 		return 1, keeperWaitFailure(root, *state, err)
 	}
@@ -448,6 +457,9 @@ func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	}
 	listing := proc.List(*state)
 	if listing.Error != nil {
+		if older := olderEventFormatDiagnostic(root, *state, listing.Error); older != nil {
+			return 1, older
+		}
 		return 1, fmt.Errorf("%s ps: read run state: %w\nnext: ls -ld %s", root.Name(), listing.Error, shellQuote(*state))
 	}
 	if *jsonOutput {
@@ -533,12 +545,18 @@ func eventsCommand(root runnerRoot, args []string, output io.Writer) (int, error
 		return 1, fmt.Errorf("%s events: reconcile agent jobs: %w; next: %s status --state %s --json", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 	}
 	if err := proc.Events(ctx, *state, *follow, filters, *offset, output); err != nil && !errors.Is(err, context.Canceled) {
+		if older := olderEventFormatDiagnostic(root, *state, err); older != nil {
+			return 1, older
+		}
 		return 1, fmt.Errorf("%s events: %w\nnext: ls -l %s", root.Name(), err, shellQuote(filepath.Join(*state, "events.jsonl")))
 	}
 	return 0, nil
 }
 
 func gateCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
+	if len(args) > 0 && args[0] == "command" {
+		return gateCommandExec(root, args, stdout, stderr)
+	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		_, err := fmt.Fprintf(stdout, "Usage: %s gate status <name> --state <dir> | %s gate hold <name> [run flags] -- <command>\n", root.Name(), root.Name())
 		if err != nil {
@@ -597,6 +615,7 @@ func waitCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int,
 	tag := fs.String("tag", "", "run tag to await")
 	latestTag := fs.String("latest-tag", "", "stable stream key whose newest run record to await")
 	state := fs.String("state", "", "directory for run records")
+	appearWithin := fs.Duration("appear-within", 2*time.Minute, "maximum time to wait for a --latest-tag run record to appear")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
@@ -608,11 +627,24 @@ func waitCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int,
 	var run proc.RunInfo
 	var err error
 	if *latestTag != "" {
-		run, err = proc.WaitLatestTag(ctx, *state, *latestTag)
+		run, err = proc.WaitLatestTagWithin(ctx, *state, *latestTag, *appearWithin)
 	} else {
 		run, err = proc.WaitTag(ctx, *state, *tag)
 	}
 	if err != nil {
+		var notFound *proc.WaitNotFoundError
+		if errors.As(err, &notFound) {
+			entry, ok := diag.LookupCatalog("KB_RUNTIME_JOB_NOT_FOUND")
+			if !ok {
+				return 1, errors.New("kb-runner wait: not-found diagnostic is missing from the platform catalog")
+			}
+			next := fmt.Sprintf("%s ps --state %s", root.InvocationCommand(), shellQuote(*state))
+			return 1, waitDiagnosticError{diagnostic: diag.New(entry.Code, entry.Message,
+				diag.WithReason(notFound.Error()),
+				diag.WithHint("next: "+next),
+				diag.WithBinary(root.InvocationCommand()),
+			)}
+		}
 		return 1, fmt.Errorf("%s wait: %w; next: %s ps --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 	}
 	return renderWaitOutcome(run, *state, stdout, root.Invocation())
@@ -661,6 +693,25 @@ func renderWaitOutcome(run proc.RunInfo, state string, stdout io.Writer, executa
 
 type waitDiagnosticError struct {
 	diagnostic *diag.Diag
+}
+
+func olderEventFormatDiagnostic(root runnerRoot, state string, err error) error {
+	var oldFormat *proc.OlderEventFormatError
+	if !errors.As(err, &oldFormat) {
+		return nil
+	}
+	entry, ok := diag.LookupCatalog("KB_RUNTIME_INPUT_INVALID")
+	if !ok {
+		return errors.New("kb-runner state diagnostic is missing from the platform catalog")
+	}
+	rotated := state + ".pre-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	next := fmt.Sprintf("mv %s %s && mkdir %s", shellQuote(state), shellQuote(rotated), shellQuote(state))
+	diagnostic := diag.New(entry.Code, entry.Message,
+		diag.WithReason(err.Error()),
+		diag.WithHint("Drain all keepers, then rotate the state directory.\nnext: "+next),
+		diag.WithBinary(root.InvocationCommand()),
+	)
+	return waitDiagnosticError{diagnostic: diagnostic}
 }
 
 func (err waitDiagnosticError) Error() string {
