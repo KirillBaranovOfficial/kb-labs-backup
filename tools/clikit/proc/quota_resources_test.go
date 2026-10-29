@@ -453,7 +453,7 @@ func (source *governorFixtureProcessSource) Metrics(tree []Process) ([]Process, 
 	return out, nil
 }
 
-func (source *governorFixtureProcessSource) Signal(pid int, signal syscall.Signal) error {
+func (source *governorFixtureProcessSource) Signal(pid int, _ string, signal syscall.Signal) error {
 	source.signals = append(source.signals, capturedSignal{pid: pid, signal: signal})
 	return source.signalErr
 }
@@ -1491,7 +1491,7 @@ type metricsProcessSource struct{ processes []Process }
 
 func (source metricsProcessSource) Snapshot(string) ([]Process, error) { return source.processes, nil }
 func (metricsProcessSource) Identity(int) (string, bool, error)        { return "", false, nil }
-func (metricsProcessSource) Signal(int, syscall.Signal) error          { return nil }
+func (metricsProcessSource) Signal(int, string, syscall.Signal) error  { return nil }
 
 // case: S-237.33
 func TestUnreadableProcessRSSMarksMeasurementPartial(t *testing.T) {
