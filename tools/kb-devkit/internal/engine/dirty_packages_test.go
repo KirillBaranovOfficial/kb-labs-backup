@@ -42,7 +42,7 @@ func TestDirtyPackagesExcludesCleanState(t *testing.T) {
 	cacheRoot := filepath.Join(root, ".kb", "devkit")
 	states := cache.NewStateStore(cacheRoot)
 	def := TaskDef{Name: "build", Command: "true", Cache: true}
-	inputHash, err := hashTaskInputs(workspace.Package{Name: "@kb/app", Dir: pkgDir}, def, nil, cache.RuntimeFingerprint())
+	inputHash, err := hashTaskInputs(workspace.Package{Name: "@kb/app", Dir: pkgDir}, root, def, nil, cache.RuntimeFingerprint())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,11 +113,11 @@ func TestDirtyPackagesAllTasksMustBeClean(t *testing.T) {
 	states := cache.NewStateStore(cacheRoot)
 	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{{Name: "@kb/app", Dir: pkgDir}}}
 	cfg := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}, "test": {{Command: "true"}}}}
-	buildHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "build", ""), nil, cache.RuntimeFingerprint())
+	buildHash, err := hashTaskInputs(ws.Packages[0], root, *ResolveTaskDef(cfg, "build", ""), nil, cache.RuntimeFingerprint())
 	if err != nil {
 		t.Fatal(err)
 	}
-	testHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "test", ""), nil, cache.RuntimeFingerprint())
+	testHash, err := hashTaskInputs(ws.Packages[0], root, *ResolveTaskDef(cfg, "test", ""), nil, cache.RuntimeFingerprint())
 	if err != nil {
 		t.Fatal(err)
 	}
