@@ -18,24 +18,24 @@ var affectedCmd = &cobra.Command{
 			return err
 		}
 
-		pkgs, err := engine.AffectedPackages(ws, cfg)
+		selection, err := engine.AffectedPackages(ws, cfg)
 		if err != nil {
 			return fmt.Errorf("affected: %w", err)
 		}
 
 		if jsonMode {
-			packages := make([]string, 0, len(pkgs))
-			for _, pkg := range pkgs {
+			packages := make([]string, 0, len(selection.Packages))
+			for _, pkg := range selection.Packages {
 				packages = append(packages, pkg.Name)
 			}
-			return JSONOut(map[string]any{"packages": packages})
+			return JSONOut(map[string]any{"packages": packages, "selectionReason": selection.Reason})
 		}
 
-		if len(pkgs) == 0 {
+		if len(selection.Packages) == 0 {
 			newOutput().OK("No affected packages")
 			return nil
 		}
-		for _, pkg := range pkgs {
+		for _, pkg := range selection.Packages {
 			clikitcommand.Println(pkg.Name)
 		}
 		return nil

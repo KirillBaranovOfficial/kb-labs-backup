@@ -15,6 +15,7 @@ export function runPrepareStage({ env = process.env, runCommand = defaultRunComm
   const planPath = env.REMOTE_TEST_PLAN;
   const started = now();
   let selectedPackageCount = 0;
+  let selectionReason = '';
   const operations = [];
   const failures = [];
 
@@ -54,10 +55,11 @@ export function runPrepareStage({ env = process.env, runCommand = defaultRunComm
     if (succeeded && item.name === 'resolve-package-selection') {
       try {
         const selection = JSON.parse(readFileSync(affectedPath, 'utf8'));
-        if (!Number.isSafeInteger(selection.selectedPackageCount) || selection.selectedPackageCount < 0) {
-          throw new Error('selection result is missing its selected package count');
+        if (!Number.isSafeInteger(selection.selectedPackageCount) || selection.selectedPackageCount < 0 || typeof selection.data?.selectionReason !== 'string') {
+          throw new Error('selection result is missing its selected package count or reason');
         }
         selectedPackageCount = selection.selectedPackageCount;
+        selectionReason = selection.data.selectionReason;
       } catch (error) {
         operation.status = 'fail';
         operation.logTail = error.message;
@@ -77,6 +79,7 @@ export function runPrepareStage({ env = process.env, runCommand = defaultRunComm
     name: 'prepare',
     status: failures.length === 0 ? 'pass' : 'fail',
     selectedPackageCount,
+    selectionReason,
     failures,
     logTail: boundedTail(operations.map((operation) => operation.logTail).filter(Boolean).join('\n')),
     operations,

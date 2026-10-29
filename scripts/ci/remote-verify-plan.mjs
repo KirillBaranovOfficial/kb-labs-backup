@@ -26,7 +26,9 @@ export function parseAffectedSelection(output, profileName) {
   if (packages.length === 0 && (profileName === 'candidate' || changedPathCount > 0)) {
     throw new Error(`KB_REMOTE_EMPTY_SELECTION: ${profileName} resolved ${changedPathCount} changed path(s) to zero workspace packages. Check the base-ref input and registry, then rerun the prepare selector: ${selectionCommand}.`);
   }
-  return { packages, changedPathCount };
+  const selectionReason = envelope?.data?.selectionReason ?? '';
+  if (typeof selectionReason !== 'string') throw new Error(`kb-devkit affected selection returned an invalid selection reason. Rerun the prepare selector: ${selectionCommand}.`);
+  return { packages, changedPathCount, selectionReason };
 }
 
 export function createTestMatrix(packages, independentStages, buildDependentStages, packageTestStage, shardLimit) {
@@ -53,14 +55,14 @@ export function createTestMatrix(packages, independentStages, buildDependentStag
 function main() {
   const [profileName, affectedPath, planPath, outputPath] = process.argv.slice(2);
   if (!profileName || !affectedPath || !planPath || !outputPath) throw new Error('Usage: node scripts/ci/remote-verify-plan.mjs <stream|candidate> <affected-json> <plan-json> <github-output>');
-  const { packages, changedPathCount } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
+  const { packages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
   const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
   const independentStages = profile.independentTestStages[profileName];
   const buildDependentStages = profile.buildDependentTestStages[profileName];
   if (!independentStages || !buildDependentStages) throw new Error(`Unknown verification profile ${profileName}; use stream or candidate.`);
   const matrix = createTestMatrix(packages, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
   writeFileSync(planPath, `${JSON.stringify(matrix)}\n`);
-  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_package_count=${packages.length}\nmax_parallel=${profile.maxParallel}\n`);
+  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_package_count=${packages.length}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\n`);
   process.stdout.write(`Planned ${matrix.include.length} test shard(s) from ${packages.length} kb-devkit-selected package(s).\n`);
 }
 

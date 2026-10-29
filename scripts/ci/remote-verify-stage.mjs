@@ -1,8 +1,7 @@
 import { appendFileSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import os from 'node:os';
-import { deriveBuildLimits, resourcePeaks, sampleRunnerResources } from './remote-build-resources.mjs';
+import { resourcePeaks, sampleRunnerResources } from './remote-build-resources.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
@@ -25,11 +24,12 @@ export async function runStage({
   stage, packageNames, packages, selectedPackageCount, shard, runCommand, now = Date.now, cache = {},
   resourceSamplePath, partialResultPath, sampleIntervalMs = 30_000,
   sampleResources = () => sampleRunnerResources({ workspaceRoot: root, now }),
-  buildLimits = deriveBuildLimits({ cpuCount: os.availableParallelism(), memTotalBytes: os.totalmem() }),
+  buildLimits, measureBuildLimits,
 }) {
   const definition = stageDefinitions.find((entry) => entry.id === stage);
   if (!definition) throw new Error(`Unknown verification stage ${stage}; use the registered stages in scripts/ci/verification-profile.json.`);
   if (!Number.isSafeInteger(selectedPackageCount) || selectedPackageCount < 0) throw new Error(`${stage} requires the selected package count from the remote verification plan.`);
+  const startedAt = now();
   let command;
   let args;
   let name = stage;
@@ -45,7 +45,6 @@ export async function runStage({
       };
     }
     command = './tools/kb-devkit/kb-devkit';
-    args = ['run', 'build', '--packages', selected.join(','), '--concurrency', String(buildLimits.concurrency), '--json'];
   } else if (stage === profile.packageTestStage) {
     if (!Array.isArray(packageNames) || packageNames.length === 0 || packageNames.some((packageName) => typeof packageName !== 'string' || !packageName)) throw new Error(`${profile.packageTestStage} requires packages selected by kb-devkit affected --json.`);
     if (!Number.isSafeInteger(shard) || shard < 1) throw new Error(`${profile.packageTestStage} requires a positive shard number from the remote verification plan.`);
@@ -55,7 +54,6 @@ export async function runStage({
   } else {
     [command, args] = commandFor(definition);
   }
-  const startedAt = now();
   const buildSamples = [];
   const sampleFailures = [];
   const persistPartial = (status = 'running') => {
@@ -69,6 +67,30 @@ export async function runStage({
     };
     writeAtomicJSON(partialResultPath, partial);
   };
+  if (stage === profile.buildStage) {
+    persistPartial();
+    try {
+      if (measureBuildLimits) buildLimits = measureBuildLimits();
+      if (!buildLimits) throw new Error('Runner capacity measurement did not produce build limits.');
+    } catch (error) {
+      const finishedAt = now();
+      process.stderr.write(`build capacity measurement failed: ${error.message}\n`);
+      const result = {
+        name,
+        status: 'fail',
+        selectedPackageCount,
+        failures: [`build capacity measurement failed: ${error.message}`],
+        logTail: `Build was not started because capacity measurement failed: ${error.message}`,
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: new Date(finishedAt).toISOString(),
+        durationMs: Math.max(0, finishedAt - startedAt),
+        cache: cacheRecord(cache),
+      };
+      if (partialResultPath) writeAtomicJSON(partialResultPath, result);
+      return result;
+    }
+    args = ['run', 'build', '--packages', (packages ?? []).join(','), '--concurrency', String(buildLimits.concurrency), '--json'];
+  }
   const captureResourceSample = () => {
     try {
       const sample = sampleResources();

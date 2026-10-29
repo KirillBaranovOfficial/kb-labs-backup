@@ -857,22 +857,33 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 // explicit. Normal --affected runs use last-successful input hashes.
 func AffectedRunPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []string, cacheRoot string, diffOnly bool) ([]workspace.Package, error) {
 	if diffOnly {
-		return AffectedPackages(ws, cfg)
+		selection, err := AffectedPackages(ws, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return selection.Packages, nil
 	}
 	return DirtyPackages(ws, cfg, tasks, cacheRoot), nil
 }
 
 // ─── Affected packages ────────────────────────────────────────────────────────
 
+// AffectedSelection is the package set and reason chosen for a configured diff.
+type AffectedSelection struct {
+	Packages []workspace.Package
+	Reason   string
+}
+
 // AffectedPackages returns all packages affected by current changes:
-// directly changed packages + all their downstream dependents (BFS).
+// directly changed packages + all their downstream dependents (BFS). If any
+// changed path is not owned by a discovered package, it selects the full graph.
 //
 // Strategy is controlled by cfg.Affected.Strategy (default: "git").
 //
 //	git        — single `git diff --name-only HEAD` from ws root
 //	submodules — walks .gitmodules, runs git diff inside each submodule
 //	command    — runs cfg.Affected.Command, reads file paths from stdout
-func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) ([]workspace.Package, error) {
+func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) (AffectedSelection, error) {
 	strategy := cfg.Affected.Strategy
 	if strategy == "" {
 		strategy = "git"
@@ -880,18 +891,32 @@ func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) ([]work
 
 	changedFiles, err := collectChangedFiles(ws.Root, strategy, cfg.Affected.Command)
 	if err != nil {
-		return nil, fmt.Errorf("affected: collect changed files: %w", err)
+		return AffectedSelection{}, fmt.Errorf("affected: collect changed files: %w", err)
 	}
+	return selectAffectedPackages(ws, changedFiles)
+}
 
+func selectAffectedPackages(ws *workspace.Workspace, changedFiles []string) (AffectedSelection, error) {
 	directlyChanged := make(map[string]bool)
+	unowned := make([]string, 0)
 	for _, absFile := range changedFiles {
 		if pkg, ok := ws.PackageByPath(absFile); ok {
 			directlyChanged[pkg.Name] = true
+		} else {
+			relative, err := filepath.Rel(ws.Root, absFile)
+			if err != nil {
+				return AffectedSelection{}, fmt.Errorf("affected: make changed path relative: %w", err)
+			}
+			unowned = append(unowned, filepath.ToSlash(relative))
 		}
+	}
+	if len(unowned) > 0 {
+		sort.Strings(unowned)
+		return AffectedSelection{Packages: append([]workspace.Package(nil), ws.Packages...), Reason: "full: unowned path " + unowned[0]}, nil
 	}
 
 	if len(directlyChanged) == 0 {
-		return nil, nil
+		return AffectedSelection{}, nil
 	}
 
 	var direct []workspace.Package
@@ -900,7 +925,7 @@ func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) ([]work
 			direct = append(direct, p)
 		}
 	}
-	return packagesAndDependents(ws, direct), nil
+	return AffectedSelection{Packages: packagesAndDependents(ws, direct)}, nil
 }
 
 func packagesAndDependents(ws *workspace.Workspace, direct []workspace.Package) []workspace.Package {

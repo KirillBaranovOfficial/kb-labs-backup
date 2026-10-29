@@ -6,9 +6,10 @@ export const BUILD_MEMORY_BUDGET_FRACTION = 0.7;
 // Largest observed task-process RSS in run 40424362740, read from the 30-second resource samples.
 export const CALIBRATED_TASK_FOOTPRINT_BYTES = 2_536_468_480;
 
-export function deriveBuildLimits({ cpuCount, memTotalBytes, expectedTaskFootprintBytes = CALIBRATED_TASK_FOOTPRINT_BYTES }) {
+export function deriveBuildLimits({ cpuCount, memTotalBytes, memAvailableBytes, expectedTaskFootprintBytes = CALIBRATED_TASK_FOOTPRINT_BYTES }) {
   if (!Number.isSafeInteger(cpuCount) || cpuCount < 1) throw new Error('Runner CPU count must be a positive integer.');
   if (!Number.isSafeInteger(memTotalBytes) || memTotalBytes < 1) throw new Error('Runner MemTotal must be a positive integer.');
+  if (!Number.isSafeInteger(memAvailableBytes) || memAvailableBytes < 1) throw new Error('Runner MemAvailable must be a positive integer.');
   if (!Number.isSafeInteger(expectedTaskFootprintBytes) || expectedTaskFootprintBytes < 1) throw new Error('Expected task footprint must be a positive integer measured in bytes.');
   const memoryBudgetBytes = Math.floor(memTotalBytes * BUILD_MEMORY_BUDGET_FRACTION);
   const memoryBoundConcurrency = Math.max(1, Math.floor(memoryBudgetBytes / expectedTaskFootprintBytes));
@@ -16,8 +17,14 @@ export function deriveBuildLimits({ cpuCount, memTotalBytes, expectedTaskFootpri
   return { cpuCount, memoryBudgetBytes, concurrency, expectedTaskFootprintBytes };
 }
 
-export function readRunnerMemTotalBytes() {
-  return parseMeminfo(readFileSync('/proc/meminfo', 'utf8')).totalBytes;
+export function readRunnerMemory(readMeminfo = () => readFileSync('/proc/meminfo', 'utf8')) {
+  let content;
+  try {
+    content = readMeminfo();
+  } catch (error) {
+    throw new Error(`Could not read Linux /proc/meminfo: ${error.message}`, { cause: error });
+  }
+  return parseMeminfo(content);
 }
 
 export function sampleRunnerResources({
@@ -28,7 +35,7 @@ export function sampleRunnerResources({
   run = (command, args) => execFileSync(command, args, { encoding: 'utf8' }),
   now = Date.now,
 }) {
-  const memory = parseMeminfo(readMeminfo());
+  const memory = readRunnerMemory(readMeminfo);
   const diskOutput = run('df', ['-Pk', workspaceRoot]);
   const diskRows = diskOutput.trim().split(/\r?\n/);
   const diskFields = diskRows.at(-1)?.trim().split(/\s+/) ?? [];
@@ -62,6 +69,9 @@ function parseMeminfo(content) {
   }));
   const totalBytes = fields.get('MemTotal');
   const availableBytes = fields.get('MemAvailable');
-  if (!Number.isSafeInteger(totalBytes) || !Number.isSafeInteger(availableBytes)) throw new Error('Linux /proc/meminfo must contain MemTotal and MemAvailable.');
+  if (!Number.isSafeInteger(totalBytes)) throw new Error('Linux /proc/meminfo is missing a valid MemTotal value.');
+  if (!Number.isSafeInteger(availableBytes)) throw new Error('Linux /proc/meminfo is missing a valid MemAvailable value.');
+  if (totalBytes < 1) throw new Error('Runner MemTotal must be a positive integer.');
+  if (availableBytes < 1) throw new Error('Runner MemAvailable must be a positive integer.');
   return { totalBytes, availableBytes };
 }
