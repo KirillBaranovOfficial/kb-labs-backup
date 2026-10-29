@@ -1263,6 +1263,117 @@ func TestRunIdentityHistoryRetainsDetachedDescendantOwnership(t *testing.T) {
 	}
 }
 
+// case: S-237.69
+func TestSubreaperContainmentTargetsDescendantsAcrossRunMarkerBoundaries(t *testing.T) {
+	source := &subreaperContainmentFixture{
+		live: map[int]Process{
+			100: {PID: 100, Identity: "keeper-start"},
+			101: {PID: 101, PPID: 100, processGroupID: 901, sessionID: 901, Identity: "outer-command", markerResult: "match", runMarker: true, processState: "S"},
+			102: {PID: 102, PPID: 101, processGroupID: 902, sessionID: 902, Identity: "nested-keeper", markerResult: "other-run", processState: "S"},
+			103: {PID: 103, PPID: 102, processGroupID: 903, sessionID: 903, Identity: "setsid-descendant", markerResult: "other-run", processState: "S"},
+		},
+	}
+	cleanup := cleanupTreeWithSource(100, "outer-run", nil, source)
+	if cleanup.err != nil || len(cleanup.Remaining) != 0 {
+		t.Fatalf("subreaper cleanup = %+v; want empty tree without errors", cleanup)
+	}
+	if len(source.signals) != 3 {
+		t.Fatalf("subreaper signals = %+v; want every descendant signalled independent of markers or process groups", source.signals)
+	}
+	if source.snapshots < 3 {
+		t.Fatalf("subreaper snapshots = %d, want repeated empty-tree confirmation", source.snapshots)
+	}
+	for _, signal := range source.signals {
+		if signal.signal != syscall.SIGTERM {
+			t.Fatalf("subreaper signal = %+v; want initial SIGTERM", signal)
+		}
+	}
+}
+
+func TestProcessDescendantsFromSnapshotIncludesDetachedMarkerBoundary(t *testing.T) {
+	snapshot := []Process{
+		{PID: 100, Identity: "keeper"},
+		{PID: 101, PPID: 100, Identity: "command", markerResult: "match"},
+		{PID: 102, PPID: 101, processGroupID: 700, sessionID: 700, Identity: "setsid", markerResult: "other-run"},
+		{PID: 103, PPID: 1, Identity: "unrelated"},
+	}
+	got := processDescendantsFromSnapshot(snapshot, 100)
+	if len(got) != 2 || got[0].PID != 101 || got[1].PID != 102 {
+		t.Fatalf("keeper descendants = %+v, want command and detached descendant only", got)
+	}
+}
+
+func TestSubreaperCleanupReportsNamedSurvivorsAtDeadline(t *testing.T) {
+	clock := &advancingCleanupClock{start: time.Unix(400, 0), now: time.Unix(400, 0)}
+	source := &subreaperContainmentFixture{
+		clock:   clock,
+		blocked: true,
+		live: map[int]Process{
+			100: {PID: 100, Identity: "keeper-start"},
+			101: {PID: 101, PPID: 100, processGroupID: 901, sessionID: 901, Identity: "outer-command", processState: "S"},
+			102: {PID: 102, PPID: 101, processGroupID: 902, sessionID: 902, Identity: "setsid-survivor", processState: "S"},
+		},
+	}
+	cleanup := cleanupTreeWithClock(100, "outer-run", nil, source, clock)
+	if cleanup.err == nil || !strings.Contains(cleanup.err.Error(), "pid=102 state=S ppid=101 pgid=902 sid=902") {
+		t.Fatalf("survivor cleanup error = %v, want PID/state/PPID/PGID/SID for PID 102", cleanup.err)
+	}
+}
+
+type subreaperContainmentFixture struct {
+	live      map[int]Process
+	blocked   bool
+	clock     *advancingCleanupClock
+	snapshots int
+	signals   []struct {
+		pid      int
+		signal   syscall.Signal
+		identity string
+	}
+}
+
+func (source *subreaperContainmentFixture) Snapshot(string) ([]Process, error) {
+	source.snapshots++
+	if source.clock != nil {
+		source.clock.now = source.clock.now.Add(cleanupPoll)
+	}
+	processes := make([]Process, 0, len(source.live))
+	for _, process := range source.live {
+		processes = append(processes, process)
+	}
+	return processes, nil
+}
+
+func (source *subreaperContainmentFixture) Identity(pid int) (string, bool, error) {
+	process, ok := source.live[pid]
+	return process.Identity, ok, nil
+}
+
+func (source *subreaperContainmentFixture) Signal(pid int, identity string, signal syscall.Signal) error {
+	source.signals = append(source.signals, struct {
+		pid      int
+		signal   syscall.Signal
+		identity string
+	}{pid: pid, signal: signal, identity: identity})
+	if !source.blocked {
+		delete(source.live, pid)
+	}
+	return nil
+}
+
+func (source *subreaperContainmentFixture) ContainedDescendants(root int, snapshot []Process) ([]Process, bool, error) {
+	if _, exists := source.live[root]; !exists {
+		return nil, false, nil
+	}
+	descendants := make([]Process, 0, len(snapshot)-1)
+	for _, process := range snapshot {
+		if process.PID != root {
+			descendants = append(descendants, process)
+		}
+	}
+	return descendants, true, nil
+}
+
 func TestDetachedDescendantClosingTokenAndClearingMarkerBeforeFirstSnapshotIsUnowned(t *testing.T) {
 	source := &detachedHistorySource{alive: true}
 	snapshot := []Process{

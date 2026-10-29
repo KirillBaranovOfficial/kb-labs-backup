@@ -249,6 +249,7 @@ type Process struct {
 	processGroupID            int
 	sessionID                 int
 	sessionIDError            string
+	processState              string
 	Command                   string    `json:"command"` // OS process command name, never the argument vector.
 	StartedAt                 time.Time `json:"started_at"`
 	ElapsedMS                 int64     `json:"elapsed_ms"`
@@ -392,6 +393,10 @@ type processSource interface {
 	Snapshot(runID string) ([]Process, error)
 	Identity(pid int) (string, bool, error)
 	Signal(pid int, identity string, signal syscall.Signal) error
+}
+
+type containedProcessSource interface {
+	ContainedDescendants(root int, snapshot []Process) ([]Process, bool, error)
 }
 
 type processMetricsSource interface {
@@ -1201,6 +1206,35 @@ func processTreeFromSnapshotWithMembership(all []Process, root int) ([]Process, 
 	return out, membership
 }
 
+func processDescendantsFromSnapshot(snapshot []Process, root int) []Process {
+	children := make(map[int][]int, len(snapshot))
+	byPID := make(map[int]Process, len(snapshot))
+	for _, process := range snapshot {
+		children[process.PPID] = append(children[process.PPID], process.PID)
+		byPID[process.PID] = process
+	}
+	seen := map[int]bool{root: true}
+	queue := []int{root}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		for _, child := range children[parent] {
+			if !seen[child] {
+				seen[child] = true
+				queue = append(queue, child)
+			}
+		}
+	}
+	descendants := make([]Process, 0, len(seen)-1)
+	for pid := range seen {
+		if pid != root {
+			descendants = append(descendants, byPID[pid])
+		}
+	}
+	sort.Slice(descendants, func(i, j int) bool { return descendants[i].PID < descendants[j].PID })
+	return descendants
+}
+
 func processBelongsToAnotherRun(process Process) bool {
 	return process.markerResult == "other-run" && !process.runMarker && !process.runToken
 }
@@ -1545,9 +1579,12 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 		}
 	}
 	deadline := clock.Now().Add(cleanupBound)
+	containedSource, supportsContainment := source.(containedProcessSource)
 	targets := make(map[string]Process, len(observed))
-	for _, process := range observed {
-		targets[processObservationKey(process)] = process
+	if !supportsContainment {
+		for _, process := range observed {
+			targets[processObservationKey(process)] = process
+		}
 	}
 	observedTree := append([]Process(nil), observed...)
 	termSent := make(map[string]time.Time)
@@ -1556,11 +1593,44 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 	var lastSnapshotErr error
 	snapshotFailureRecorded := false
 	inventoryIndex := 0
+	containmentOwnerSeen := false
 	for clock.Now().Before(deadline) {
 		inventoryIndex++
 		snapshot, inventoryErr := source.Snapshot(runID)
 		protected := keeperAncestry(root, snapshot)
-		tree, membership, historyErr := processTreeWithHistorySnapshot(source, root, observedTree, snapshot, protectedAncestors)
+		var tree []Process
+		var membership map[string]string
+		var historyErr error
+		if supportsContainment {
+			contained, ownerPresent, containmentErr := containedSource.ContainedDescendants(root, snapshot)
+			if ownerPresent {
+				if !containmentOwnerSeen {
+					targets = make(map[string]Process)
+				}
+				containmentOwnerSeen = true
+				tree = contained
+				membership = make(map[string]string, len(contained))
+				for _, process := range contained {
+					membership[processObservationKey(process)] = "accepted:keeper-subreaper-descendant"
+				}
+				historyErr = nil
+				if containmentErr != nil {
+					historyErr = containmentErr
+				}
+			} else {
+				tree, membership, historyErr = processTreeWithHistorySnapshot(source, root, observedTree, snapshot, protectedAncestors)
+				if !containmentOwnerSeen {
+					for _, process := range observed {
+						targets[processObservationKey(process)] = process
+					}
+				} else if containmentErr == nil {
+					containmentErr = errors.New("Linux subreaper owner disappeared during process-tree cleanup")
+				}
+				historyErr = errors.Join(historyErr, containmentErr)
+			}
+		} else {
+			tree, membership, historyErr = processTreeWithHistorySnapshot(source, root, observedTree, snapshot, protectedAncestors)
+		}
 		for _, process := range protectedAncestors {
 			key := processObservationKey(Process{PID: process.PID, Identity: process.Identity})
 			protected[key] = "protected:recorded-supervisor-ancestor"
@@ -1707,7 +1777,19 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 		}
 	}
 	if len(result.Remaining) > 0 && !clock.Now().Before(deadline) {
-		recordFailure(errors.New("tree cleanup deadline expired with owned processes remaining"))
+		if containmentOwnerSeen {
+			survivors := make([]string, 0, len(result.Remaining))
+			for _, process := range result.Remaining {
+				state := process.processState
+				if state == "" {
+					state = "unknown"
+				}
+				survivors = append(survivors, fmt.Sprintf("pid=%d state=%s ppid=%d pgid=%d sid=%d identity=%q", process.PID, state, process.PPID, process.processGroupID, process.sessionID, process.Identity))
+			}
+			recordFailure(fmt.Errorf("Linux subreaper cleanup deadline expired with survivors: %s", strings.Join(survivors, "; ")))
+		} else {
+			recordFailure(errors.New("tree cleanup deadline expired with owned processes remaining"))
+		}
 	}
 	result.err = errors.Join(failures...)
 	return result
