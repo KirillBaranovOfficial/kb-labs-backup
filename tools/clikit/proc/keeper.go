@@ -177,12 +177,9 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 	cmd.Env = environmentFor(cfg.Config, os.Environ())
 	// ExtraFiles is the only inheritance path for the close-on-exec token.
 	cmd.ExtraFiles = []*os.File{runToken}
-	if err := configureCommand(cmd, cfg.RunID, cfg.StateDir, scratch, cfg.CommandTempDir); err != nil {
+	if err := configureCommand(cmd, cfg.Config, cfg.RunID, cfg.StateDir, scratch); err != nil {
 		writeReadyError(ready, err)
 		return keeperError(rec, "configure command", err)
-	}
-	if cfg.GrantedCPUs > 0 || cfg.MemoryBytes > 0 {
-		cmd.Env = append(filteredEnv(cmd.Env), fmt.Sprintf("KB_RUNNER_CPUS=%d", cfg.GrantedCPUs), fmt.Sprintf("KB_RUNNER_MEM_BYTES=%d", cfg.MemoryBytes))
 	}
 	if cfg.StdinPath != "" {
 		stdin, err := os.Open(cfg.StdinPath)

@@ -1881,10 +1881,17 @@ func runStartedAt(rec record) *time.Time {
 
 func commandText(command []string) string { return strings.Join(command, " ") }
 
-func configureCommand(cmd *exec.Cmd, runID, stateDir, scratch, commandTempDir string) error {
+// configureCommand is the single owner of the supervisor-controlled command
+// environment: run identity, resource state, scratch, temp dirs, and the
+// resource grant are set together after one filtering pass.
+func configureCommand(cmd *exec.Cmd, cfg Config, runID, stateDir, scratch string) error {
+	commandTempDir := cfg.CommandTempDir
 	if commandTempDir == "" {
 		commandTempDir = scratch
 	}
 	cmd.Env = append(filteredEnv(cmd.Env), runEnv+"="+runID, resourceStateEnv+"="+stateDir, "KB_RUNNER_SCRATCH="+scratch, "TMPDIR="+commandTempDir, "TMP="+commandTempDir, "TEMP="+commandTempDir)
+	if cfg.GrantedCPUs > 0 || cfg.MemoryBytes > 0 {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("KB_RUNNER_CPUS=%d", cfg.GrantedCPUs), fmt.Sprintf("KB_RUNNER_MEM_BYTES=%d", cfg.MemoryBytes))
+	}
 	return child.Configure(cmd, child.ProcessGroup)
 }
