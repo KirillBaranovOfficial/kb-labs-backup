@@ -194,6 +194,7 @@ export type CatalogErrorCode =
   | "KB_RESTART_WORK_IN_FLIGHT"
   | "KB_RUNNER_LAND_BASE_REPORT_TRACKED"
   | "KB_RUNNER_SCHEDULER_ALREADY_RUNNING"
+  | "KB_RUNNER_STATE_INSIDE_WORKTREE"
   | "KB_RUNNER_ZAI_KEY_FILE_INVALID"
   | "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE"
   | "KB_RUNTIME_APPROVAL_INPUT_INVALID"
@@ -474,6 +475,7 @@ export interface CatalogTemplateParameters {
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": { "nextCommand": string; "paths": string };
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": { "nextCommand": string };
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": { "nextCommand": string };
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string };
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
@@ -754,6 +756,7 @@ export interface CatalogDetailsFor {
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string; "items": readonly { "kind": string; "id": string; "owningService": string }[] };
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": { "nextCommand": string; "paths": string };
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": { "nextCommand": string };
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": { "nextCommand": string };
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string; "keyFile"?: string };
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<string, never>;
@@ -1057,6 +1060,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["nextCommand","paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -1337,6 +1341,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RESTART_WORK_IN_FLIGHT": [],
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": [],
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": [],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": [],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -1617,6 +1622,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["nextCommand"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -1897,6 +1903,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["nextCommand","paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -2177,6 +2184,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RESTART_WORK_IN_FLIGHT": [],
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": [],
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": [],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": [],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -2457,6 +2465,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RESTART_WORK_IN_FLIGHT": ["interruptCommand"],
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["nextCommand"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": ["nextCommand"],
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": ["nextCommand"],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["binary"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": ["binary"],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -2737,6 +2746,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RESTART_WORK_IN_FLIGHT": ["items"],
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": ["paths"],
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": [],
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": [],
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": ["keyFile"],
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
@@ -3017,6 +3027,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": { "paths": string };
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": Record<never, never>;
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": Record<never, never>;
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": Record<never, never>;
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
@@ -3297,6 +3308,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RESTART_WORK_IN_FLIGHT": { "interruptCommand": string };
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": { "nextCommand": string };
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": { "nextCommand": string };
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": { "nextCommand": string };
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": { "binary": string };
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": { "binary": string };
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;
@@ -3577,6 +3589,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RESTART_WORK_IN_FLIGHT": Record<never, never>;
   "KB_RUNNER_LAND_BASE_REPORT_TRACKED": Record<never, never>;
   "KB_RUNNER_SCHEDULER_ALREADY_RUNNING": Record<never, never>;
+  "KB_RUNNER_STATE_INSIDE_WORKTREE": Record<never, never>;
   "KB_RUNNER_ZAI_KEY_FILE_INVALID": Record<never, never>;
   "KB_RUNNER_ZCODE_SANDBOX_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<never, never>;

@@ -19,6 +19,17 @@ import (
 	"github.com/kb-labs/clikit/diag"
 )
 
+func replaceTestEnvironment(environment []string, key, value string) []string {
+	result := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, key+"=") {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return append(result, key+"="+value)
+}
+
 // case: S-237.128
 func TestSchedulerReadyClaimIsAtomicAcrossStoreInstances(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
@@ -129,7 +140,7 @@ func TestTwoSchedulerProcessesShareOneRunLeaseAndWatcher(t *testing.T) {
 		}
 	}
 	second := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSchedulerLeaseSubprocess$")
-	second.Env = append(replaceEnvironment(os.Environ(), "FAKE_GH_BLOCK", "0"), baseEnv[:2]...)
+	second.Env = append(replaceTestEnvironment(os.Environ(), "FAKE_GH_BLOCK", "0"), baseEnv[:2]...)
 	var secondOutput strings.Builder
 	second.Stdout, second.Stderr = &secondOutput, &secondOutput
 	secondDone := make(chan error, 1)

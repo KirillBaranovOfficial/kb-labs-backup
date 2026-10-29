@@ -11,8 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/kb-labs/clikit/proc"
 )
 
 func agentLifecycleCommand(root runnerRoot, args []string, out io.Writer) (int, error) {
@@ -52,11 +50,11 @@ func agentLifecycleCommand(root runnerRoot, args []string, out io.Writer) (int, 
 	if streamArg == "" || len(fs.Args()) > 0 {
 		return 2, fmt.Errorf("%s agent %s: one stream is required; next: %s agent --help", root.Name(), operation, root.InvocationCommand())
 	}
-	canonicalState, err := proc.CanonicalStateDir(*statePath)
+	resolvedState, err := resolveRunnerState(root, "agent "+operation, *statePath)
 	if err != nil {
-		return 1, fmt.Errorf("%s agent %s: resolve --state: %w; next: %s agent --help", root.Name(), operation, err, root.InvocationCommand())
+		return 2, err
 	}
-	*statePath = canonicalState
+	*statePath = resolvedState
 	streamName := streamArg
 	store := newSchedulerStore(*statePath)
 	stream, err := store.stream(streamName)
@@ -109,8 +107,10 @@ func agentLifecycleCommand(root runnerRoot, args []string, out io.Writer) (int, 
 			return 2, fmt.Errorf("%s agent review: stream %s has no READY review task; next: %s sched ps --state %q", root.Name(), streamName, root.InvocationCommand(), *statePath)
 		}
 	}
-	options := schedulerRunOptions{store: store, root: root, state: *statePath, slots: 5}
-	if err := options.runSelected(context.Background(), selected); err != nil {
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: root, state: *statePath, slots: 5, supervisor: root.supervisor})
+	ctx, cancelLifecycle := schedulerLifecycleContext(context.Background())
+	defer cancelLifecycle()
+	if err := options.runSelected(ctx, selected); err != nil {
 		return 1, err
 	}
 	_, err = fmt.Fprintf(out, "completed %s for stream %s\n", operation, streamName)
@@ -143,7 +143,7 @@ func composeRoundPrompt(message, definition string) string {
 	return strings.TrimRight(message, "\n") + "\n\n" + strings.TrimLeft(definition, "\n")
 }
 
-func prepareRoundPrompt(task SchedulerTask, state string) (string, error) {
+func prepareRoundPrompt(task SchedulerTask, state string, stateIO runnerStateStore) (string, error) {
 	message, err := os.ReadFile(task.Prompt)
 	if err != nil {
 		return "", fmt.Errorf("read worker round message: %w", err)
@@ -153,7 +153,7 @@ func prepareRoundPrompt(task SchedulerTask, state string) (string, error) {
 		return "", fmt.Errorf("read embedded definition of done: %w", err)
 	}
 	path := filepath.Join(state, "sched", "prompts", task.ID+"-round.md")
-	if err := writeAtomicFile(path, []byte(composeRoundPrompt(string(message), string(definition)))); err != nil {
+	if err := stateIO.AtomicWrite(path, []byte(composeRoundPrompt(string(message), string(definition)))); err != nil {
 		return "", fmt.Errorf("render worker round prompt: %w", err)
 	}
 	return path, nil
@@ -166,23 +166,19 @@ func schedulerMessagePath(task SchedulerTask) string {
 	return ""
 }
 
-func resolveReviewVerdict(paths []string) (verdict, source string, resultErr error) {
-	var lastErr error
-	for _, path := range paths {
-		if path == "" {
-			continue
-		}
-		candidate, _, err := readReport(path)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if candidate == "ACCEPT" || candidate == "REJECT" {
-			return candidate, path, nil
+func resolveReviewVerdict(report []byte) (string, error) {
+	first, body, err := readReportBytes(report)
+	if err != nil {
+		return "", err
+	}
+	if first == "ACCEPT" || first == "REJECT" {
+		return first, nil
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		verdict := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Verdict:"))
+		if verdict == "ACCEPT" || verdict == "REJECT" {
+			return verdict, nil
 		}
 	}
-	if lastErr == nil {
-		lastErr = errors.New("no report contains an ACCEPT or REJECT first line")
-	}
-	return "", "", lastErr
+	return "", errors.New("review output has no ACCEPT or REJECT verdict")
 }

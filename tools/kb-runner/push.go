@@ -27,8 +27,9 @@ func (push verificationPush) ref() (string, string, error) {
 	if err := validateSchedulerKey(push.stream, "verification stream"); err != nil {
 		return "", "", err
 	}
-	if !fullGitSHA.MatchString(push.sha) {
-		return "", "", fmt.Errorf("verification push requires a full commit SHA, got %q", push.sha)
+	objectID, err := storedGitObjectID(push.sha)
+	if err != nil {
+		return "", "", fmt.Errorf("verification push requires a full commit SHA, got %q: %w", push.sha, err)
 	}
 	name := push.stream
 	if push.kind == verificationPushCandidate {
@@ -36,8 +37,8 @@ func (push verificationPush) ref() (string, string, error) {
 	} else if push.kind == verificationPushBisect {
 		name = "bisect-" + name
 	}
-	branch := "verify/" + name + "-" + push.sha[:7]
-	return branch, push.sha + ":refs/heads/" + branch, nil
+	branch := "verify/" + name + "-" + objectID.String()[:7]
+	return branch, objectID.String() + ":refs/heads/" + branch, nil
 }
 
 func pushVerificationCommit(repoRoot string, push verificationPush) (string, error) {

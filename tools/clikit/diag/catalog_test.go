@@ -505,11 +505,15 @@ func TestExitStatusTypeRejectsIntegerAndWrappedLiteralMutations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	module := fmt.Sprintf("module exitstatusmutation\n\ngo 1.22\n\nrequire github.com/kb-labs/clikit v0.0.0\n\nreplace github.com/kb-labs/clikit => %s\n", filepath.ToSlash(root))
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(module), 0o600); err != nil {
+	dir, err := os.MkdirTemp(root, ".exitstatusmutation-")
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove mutation fixtures: %v", err)
+		}
+	})
 	fixtures := []string{
 		`package mutation
 import ("github.com/kb-labs/clikit/diag"; "github.com/kb-labs/clikit/result")
@@ -532,7 +536,7 @@ func bad() { _ = result.StreamComplete(middle()) }`,
 		if err := os.WriteFile(filepath.Join(fixtureDir, "mutation.go"), []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		command := exec.Command("go", "test", "-mod=mod", ".")
+		command := exec.Command("go", "test", "-mod=readonly", ".")
 		command.Dir = fixtureDir
 		command.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
 		if output, err := command.CombinedOutput(); err == nil {

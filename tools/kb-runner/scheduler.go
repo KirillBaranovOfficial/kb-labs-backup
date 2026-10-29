@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -30,24 +31,28 @@ const (
 )
 
 type SchedulerTask struct {
-	ID             string    `json:"id"`
-	Stream         string    `json:"stream"`
-	Prompt         string    `json:"prompt_path,omitempty"`
-	PromptTemplate string    `json:"prompt_template,omitempty"`
-	Workdir        string    `json:"workdir"`
-	RepoRoot       string    `json:"repo_root"`
-	Base           string    `json:"base_branch"`
-	Priority       int       `json:"priority"`
-	DependsOn      []string  `json:"depends_on,omitempty"`
-	Vendor         string    `json:"vendor"`
-	Effort         string    `json:"effort"`
-	Role           string    `json:"role"`
-	Review         string    `json:"review"`
-	Reviewers      []string  `json:"reviewers"`
-	WorktreeRoot   string    `json:"worktree_root"`
-	ReviewerKey    string    `json:"reviewer_key,omitempty"`
-	ReviewerFocus  string    `json:"reviewer_focus,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string     `json:"id"`
+	Stream         string     `json:"stream"`
+	Prompt         string     `json:"prompt_path,omitempty"`
+	PromptTemplate string     `json:"prompt_template,omitempty"`
+	Workdir        string     `json:"workdir"`
+	RepoRoot       string     `json:"repo_root"`
+	Base           string     `json:"base_branch"`
+	Priority       int        `json:"priority"`
+	DependsOn      []string   `json:"depends_on,omitempty"`
+	Vendor         string     `json:"vendor"`
+	Effort         string     `json:"effort"`
+	Role           string     `json:"role"`
+	Review         string     `json:"review"`
+	Reviewers      []string   `json:"reviewers"`
+	WorktreeRoot   string     `json:"worktree_root"`
+	ReviewerKey    string     `json:"reviewer_key,omitempty"`
+	ReviewerFocus  string     `json:"reviewer_focus,omitempty"`
+	ReviewerKind   ReviewRole `json:"reviewer_kind,omitempty"`
+	ReviewTreeHash string     `json:"review_tree_hash,omitempty"`
+	Model          string     `json:"model,omitempty"`
+	OutsideSuites  []string   `json:"outside_suites,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type SchedulerStreamState string
@@ -71,12 +76,15 @@ type SchedulerStream struct {
 	WaitingFor       string               `json:"waiting_for,omitempty"`
 	NextStep         string               `json:"next_step,omitempty"`
 	ThreadID         string               `json:"thread_id,omitempty"`
+	JobID            string               `json:"job_id,omitempty"`
+	RunID            string               `json:"run_id,omitempty"`
 	Submission       *SchedulerSubmission `json:"submission,omitempty"`
 	Cause            string               `json:"cause,omitempty"`
 	ReviewResults    map[string]string    `json:"review_results,omitempty"`
-	ReviewReports    []string             `json:"review_reports,omitempty"`
+	ReviewRunIDs     []string             `json:"review_run_ids,omitempty"`
 	RejectRounds     int                  `json:"reject_rounds,omitempty"`
 	ReviewGeneration int                  `json:"review_generation,omitempty"`
+	Advance          *StreamAdvance       `json:"advance,omitempty"`
 }
 
 type SchedulerSubmission struct {
@@ -127,8 +135,16 @@ type SchedulerIntegration struct {
 }
 
 type schedulerStore struct {
-	dir string
-	mu  sync.Mutex
+	dir     string
+	mu      sync.Mutex
+	stateIO runnerStateStore
+}
+
+type autoTransitionRecord struct {
+	ID      string            `json:"id"`
+	Streams []SchedulerStream `json:"streams"`
+	Tasks   []SchedulerTask   `json:"tasks,omitempty"`
+	Events  []json.RawMessage `json:"events,omitempty"`
 }
 
 var errSchedulerAlreadyRunning = errors.New("scheduler already owns this state directory")
@@ -145,7 +161,22 @@ func (values *schedulerDependencyFlag) Set(value string) error {
 }
 
 func newSchedulerStore(state string) *schedulerStore {
-	return &schedulerStore{dir: filepath.Join(state, "sched")}
+	return newSchedulerStoreWithStateIO(state, filesystemRunnerStateStore{})
+}
+
+func newSchedulerStoreWithStateIO(state string, stateIO runnerStateStore) *schedulerStore {
+	if stateIO == nil {
+		panic("scheduler state store is required")
+	}
+	return &schedulerStore{dir: filepath.Join(state, "sched"), stateIO: stateIO}
+}
+
+func (s *schedulerStore) writeAtomic(path string, data []byte) error {
+	return s.stateIO.AtomicWrite(path, data)
+}
+
+func (s *schedulerStore) appendDurable(path string, data []byte, mode os.FileMode) error {
+	return s.stateIO.Append(path, data, mode)
 }
 
 func (s *schedulerStore) tasksDir() string   { return filepath.Join(s.dir, "tasks") }
@@ -175,8 +206,11 @@ func (s *schedulerStore) writeIntegration(state SchedulerIntegration) error {
 }
 
 func (s *schedulerStore) recordIntegrationMerge(merge SchedulerMergeRecord) error {
-	if !fullGitSHA.MatchString(merge.CommitSHA) || !fullGitSHA.MatchString(merge.ParentSHA) {
-		return fmt.Errorf("integration merge for %s must have full parent and commit SHAs", merge.Stream)
+	if _, err := storedGitObjectID(merge.CommitSHA); err != nil {
+		return fmt.Errorf("integration merge for %s must have a full parent and commit SHA: %w", merge.Stream, err)
+	}
+	if _, err := storedGitObjectID(merge.ParentSHA); err != nil {
+		return fmt.Errorf("integration merge for %s must have a full parent SHA: %w", merge.Stream, err)
 	}
 	if err := validateSchedulerKey(merge.Stream, "integration merge stream"); err != nil {
 		return err
@@ -211,8 +245,8 @@ func (s *schedulerStore) recordIntegrationMerge(merge SchedulerMergeRecord) erro
 }
 
 func (s *schedulerStore) markIntegrationGreen(sha string) error {
-	if !fullGitSHA.MatchString(sha) {
-		return fmt.Errorf("green candidate must have a full commit SHA, got %q", sha)
+	if _, err := storedGitObjectID(sha); err != nil {
+		return fmt.Errorf("green candidate must have a full commit SHA, got %q: %w", sha, err)
 	}
 	return s.withLock(func() error {
 		var state SchedulerIntegration
@@ -248,10 +282,6 @@ func validateSchedulerKey(value, label string) error {
 	return nil
 }
 
-func privateReviewReportPath(task SchedulerTask) string {
-	return filepath.Join(task.Workdir, ".review-report-"+task.Stream+".md")
-}
-
 func (s *schedulerStore) withLock(operation func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -272,6 +302,41 @@ func (s *schedulerStore) withLock(operation func() error) error {
 }
 
 func (s *schedulerStore) add(task SchedulerTask) (SchedulerTask, error) {
+	return s.addWithSnapshots(task, nil)
+}
+
+func (s *schedulerStore) addWithSnapshots(task SchedulerTask, related []SchedulerStream, events ...any) (SchedulerTask, error) {
+	return s.addWithSnapshotsAndRunID(task, "", related, events...)
+}
+
+func normalizeSchedulerTaskReviewPolicy(task *SchedulerTask) error {
+	if len(task.OutsideSuites) > 0 {
+		if task.Review != "" || len(task.Reviewers) != 0 {
+			return errors.New("auto-advance review routes are selected by review role; manual --review and --reviewer policy cannot be combined with outside suites")
+		}
+		return nil
+	}
+	if task.Review == "" {
+		task.Review = "single"
+	}
+	if task.Review != "single" && task.Review != "cross" {
+		return fmt.Errorf("review policy %q is unsupported", task.Review)
+	}
+	if len(task.Reviewers) == 0 {
+		task.Reviewers = []string{task.Vendor}
+	}
+	if task.Review == "cross" && len(task.Reviewers) < 2 {
+		return errors.New("cross review requires at least two reviewers")
+	}
+	return nil
+}
+
+func (s *schedulerStore) addWithSnapshotsAndRunID(task SchedulerTask, runID string, related []SchedulerStream, events ...any) (SchedulerTask, error) {
+	if runID != "" {
+		if err := validateSchedulerKey(runID, "run ID"); err != nil {
+			return SchedulerTask{}, err
+		}
+	}
 	if err := validateSchedulerKey(task.Stream, "stream"); err != nil {
 		return SchedulerTask{}, err
 	}
@@ -291,17 +356,13 @@ func (s *schedulerStore) add(task SchedulerTask) (SchedulerTask, error) {
 		if err := requireRegularFile(task.Prompt, "prompt"); err != nil {
 			return SchedulerTask{}, err
 		}
-		if task.Review == "" {
-			task.Review = "single"
+		for _, suite := range task.OutsideSuites {
+			if _, _, err := parseOutsideSuiteSpec(suite); err != nil {
+				return SchedulerTask{}, err
+			}
 		}
-		if task.Review != "single" && task.Review != "cross" {
-			return SchedulerTask{}, fmt.Errorf("review policy %q is unsupported", task.Review)
-		}
-		if len(task.Reviewers) == 0 {
-			task.Reviewers = []string{task.Vendor}
-		}
-		if task.Review == "cross" && len(task.Reviewers) < 2 {
-			return SchedulerTask{}, errors.New("cross review requires at least two reviewers")
+		if err := normalizeSchedulerTaskReviewPolicy(&task); err != nil {
+			return SchedulerTask{}, err
 		}
 	} else {
 		if task.PromptTemplate == "" {
@@ -361,15 +422,15 @@ func (s *schedulerStore) add(task SchedulerTask) (SchedulerTask, error) {
 				return fmt.Errorf("dependency task %q does not exist: %w", dependency, err)
 			}
 		}
-		if err := s.bindRepositoryLocked(repoRoot); err != nil {
+		if err := s.validateRepositoryBindingLocked(repoRoot); err != nil {
 			return err
 		}
-		if err := s.writeJSON(s.taskPath(task.ID), task); err != nil {
-			return fmt.Errorf("persist scheduler task: %w", err)
-		}
-		stream := SchedulerStream{Stream: task.Stream, TaskID: task.ID}
-		if err := s.transitionLocked(stream, SchedulerReady, "", "wait for dispatch admission"); err != nil {
-			return errors.Join(fmt.Errorf("initialize scheduler stream: %w", err), os.Remove(s.taskPath(task.ID)))
+		stream := SchedulerStream{Stream: task.Stream, TaskID: task.ID, State: SchedulerReady, RunID: runID, WaitingFor: "", NextStep: "wait for dispatch admission", ChangedAt: time.Now().UTC()}
+		event := map[string]any{"kind": "scheduler.transition", "stream": stream.Stream, "from": "", "to": SchedulerReady, "waiting_for": stream.WaitingFor, "next_step": stream.NextStep, "cause": "", "time": stream.ChangedAt}
+		streams := append([]SchedulerStream{stream}, related...)
+		txEvents := append([]any{event}, events...)
+		if err := s.commitAutoTransitionLockedWithTasks(streams, []SchedulerTask{task}, txEvents...); err != nil {
+			return fmt.Errorf("persist scheduler task and initialize stream atomically: %w", err)
 		}
 		return nil
 	})
@@ -383,11 +444,11 @@ type schedulerRepositoryBinding struct {
 	Root string `json:"root"`
 }
 
-func (s *schedulerStore) bindRepositoryLocked(root string) error {
+func (s *schedulerStore) validateRepositoryBindingLocked(root string) error {
 	var binding schedulerRepositoryBinding
 	err := readSchedulerJSON(s.repositoryPath(), &binding)
 	if errors.Is(err, os.ErrNotExist) {
-		return s.writeJSON(s.repositoryPath(), schedulerRepositoryBinding{Root: root})
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read scheduler repository binding: %w", err)
@@ -425,7 +486,185 @@ func (s *schedulerStore) writeJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomicFile(path, append(data, '\n'))
+	return s.writeAtomic(path, append(data, '\n'))
+}
+
+func (s *schedulerStore) commitAutoTransition(streams []SchedulerStream, events ...any) error {
+	if len(streams) == 0 {
+		return errors.New("auto transition requires at least one stream snapshot")
+	}
+	return s.withLock(func() error { return s.commitAutoTransitionLocked(streams, events...) })
+}
+
+func (s *schedulerStore) commitAutoTransitionWithTasks(streams []SchedulerStream, tasks []SchedulerTask, events ...any) error {
+	if len(streams) == 0 {
+		return errors.New("auto transition requires at least one stream snapshot")
+	}
+	return s.withLock(func() error { return s.commitAutoTransitionLockedWithTasks(streams, tasks, events...) })
+}
+
+func (s *schedulerStore) commitAutoTransitionLocked(streams []SchedulerStream, events ...any) error {
+	return s.commitAutoTransitionLockedWithTasks(streams, nil, events...)
+}
+
+func (s *schedulerStore) commitAutoTransitionLockedWithTasks(streams []SchedulerStream, tasks []SchedulerTask, events ...any) error {
+	for i := range streams {
+		if streams[i].Stream == "" || streams[i].TaskID == "" {
+			return errors.New("auto transition stream snapshots require stream and task IDs")
+		}
+		streams[i].ChangedAt = time.Now().UTC()
+	}
+	dir := filepath.Join(s.dir, "auto-transitions")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create auto-transition journal: %w", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read auto-transition journal: %w", err)
+	}
+	var sequence uint64
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		value, parseErr := strconv.ParseUint(strings.TrimSuffix(entry.Name(), ".json"), 10, 64)
+		if parseErr != nil {
+			return fmt.Errorf("invalid auto-transition journal entry %s: %w", entry.Name(), parseErr)
+		}
+		if value > sequence {
+			sequence = value
+		}
+	}
+	if sequence == ^uint64(0) {
+		return errors.New("auto-transition journal sequence is exhausted")
+	}
+	id := fmt.Sprintf("%020d", sequence+1)
+	encodedEvents := make([]json.RawMessage, 0, len(events))
+	for _, event := range events {
+		data, err := json.Marshal(event)
+		if err != nil {
+			return fmt.Errorf("encode scheduler outbox event: %w", err)
+		}
+		var header struct {
+			Kind   string `json:"kind"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(data, &header); err != nil {
+			return fmt.Errorf("decode scheduler outbox event header: %w", err)
+		}
+		if header.Kind == "orchestrator.event" {
+			switch header.Status {
+			case "accepted", "escalated", "vendor-limit", "stall", "disk":
+			default:
+				return fmt.Errorf("unsupported orchestrator event status %q", header.Status)
+			}
+		}
+		encodedEvents = append(encodedEvents, data)
+	}
+	record := autoTransitionRecord{ID: id, Streams: streams, Tasks: tasks, Events: encodedEvents}
+	if err := s.persistAutoTransitionRecord(record); err != nil {
+		return fmt.Errorf("persist auto-transition record %s: %w", id, err)
+	}
+	return s.applyAutoTransition(record)
+}
+
+func (s *schedulerStore) persistAutoTransitionRecord(record autoTransitionRecord) error {
+	sequence, err := strconv.ParseUint(record.ID, 10, 64)
+	if err != nil || sequence == 0 {
+		return fmt.Errorf("auto-transition record ID %q must be a nonzero decimal sequence", record.ID)
+	}
+	if len(record.Streams) == 0 {
+		return errors.New("auto-transition record requires at least one stream snapshot")
+	}
+	for _, stream := range record.Streams {
+		if err := validateSchedulerKey(stream.Stream, "stream ID"); err != nil {
+			return err
+		}
+		if err := validateSchedulerKey(stream.TaskID, "task ID"); err != nil {
+			return err
+		}
+	}
+	for _, task := range record.Tasks {
+		if err := validateSchedulerKey(task.ID, "task ID"); err != nil {
+			return err
+		}
+	}
+	dir := filepath.Join(s.dir, "auto-transitions")
+	path := filepath.Join(dir, record.ID+".json")
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("auto-transition record %s already exists", record.ID)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect auto-transition record path %s: %w", path, err)
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode auto-transition record: %w", err)
+	}
+	if err := s.writeAtomic(path, append(data, '\n')); err != nil {
+		return fmt.Errorf("persist auto-transition record %s: %w", record.ID, err)
+	}
+	return nil
+}
+
+func (s *schedulerStore) applyAutoTransition(record autoTransitionRecord) error {
+	if len(record.Tasks) > 0 {
+		root := record.Tasks[0].RepoRoot
+		if root == "" {
+			return errors.New("auto-transition task has no repository root")
+		}
+		for _, task := range record.Tasks[1:] {
+			if task.RepoRoot != root {
+				return errors.New("auto-transition tasks must share one repository root")
+			}
+		}
+		if err := s.writeJSON(s.repositoryPath(), schedulerRepositoryBinding{Root: root}); err != nil {
+			return fmt.Errorf("project auto-transition repository binding: %w", err)
+		}
+	}
+	for _, task := range record.Tasks {
+		if err := s.writeJSON(s.taskPath(task.ID), task); err != nil {
+			return fmt.Errorf("project auto-transition task %s: %w", task.ID, err)
+		}
+	}
+	for _, stream := range record.Streams {
+		if err := s.writeJSON(s.streamPath(stream.Stream), stream); err != nil {
+			return fmt.Errorf("project auto-transition stream %s: %w", stream.Stream, err)
+		}
+	}
+	for index, event := range record.Events {
+		eventID := fmt.Sprintf("%s-%d", record.ID, index)
+		if err := s.appendEventWithID(event, eventID); err != nil {
+			return fmt.Errorf("deliver auto-transition outbox event %s: %w", eventID, err)
+		}
+	}
+	return nil
+}
+
+func (s *schedulerStore) replayAutoTransitions() error {
+	dir := filepath.Join(s.dir, "auto-transitions")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read auto-transition journal: %w", err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return s.withLock(func() error {
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			var record autoTransitionRecord
+			if err := readSchedulerJSON(filepath.Join(dir, entry.Name()), &record); err != nil {
+				return fmt.Errorf("read auto-transition record %s: %w", entry.Name(), err)
+			}
+			if err := s.applyAutoTransition(record); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func readSchedulerJSON(path string, value any) error {
@@ -460,7 +699,7 @@ func (s *schedulerStore) stream(id string) (SchedulerStream, error) {
 	}
 	data, err := os.ReadFile(s.streamPath(id))
 	if err != nil {
-		return SchedulerStream{}, err
+		return SchedulerStream{}, fmt.Errorf("read stream projection for %s: %w", id, err)
 	}
 	var stream SchedulerStream
 	if err := json.Unmarshal(data, &stream); err != nil {
@@ -527,21 +766,50 @@ func (s *schedulerStore) cancel(id string) error {
 }
 
 func (s *schedulerStore) updateTask(task SchedulerTask) error {
+	if task.Role == schedulerWorkerRole {
+		if err := normalizeSchedulerTaskReviewPolicy(&task); err != nil {
+			return err
+		}
+	}
 	return s.withLock(func() error {
 		repoRoot, err := filepath.Abs(task.RepoRoot)
 		if err != nil {
 			return fmt.Errorf("resolve repository root: %w", err)
 		}
-		if err := s.bindRepositoryLocked(repoRoot); err != nil {
+		if err := s.validateRepositoryBindingLocked(repoRoot); err != nil {
 			return err
 		}
 		task.RepoRoot = repoRoot
-		return s.writeJSON(s.taskPath(task.ID), task)
+		stream, err := s.stream(task.Stream)
+		if err != nil {
+			return fmt.Errorf("read stream for task update: %w", err)
+		}
+		return s.commitAutoTransitionLockedWithTasks([]SchedulerStream{stream}, []SchedulerTask{task})
 	})
 }
 
 func (s *schedulerStore) transition(stream SchedulerStream, next SchedulerStreamState, waiting, action string) error {
 	return s.withLock(func() error { return s.transitionLocked(stream, next, waiting, action) })
+}
+
+func (s *schedulerStore) setAdmissionProjection(streamName, runID, waiting, nextStep string) error {
+	return s.withLock(func() error {
+		stream, err := s.stream(streamName)
+		if err != nil {
+			return fmt.Errorf("read stream while updating admission projection: %w", err)
+		}
+		matchesRun := stream.RunID == runID || (stream.Advance != nil && stream.Advance.RunID == runID)
+		if !matchesRun {
+			return fmt.Errorf("stream %s no longer owns admission run %s", streamName, runID)
+		}
+		if stream.WaitingFor == waiting && stream.NextStep == nextStep {
+			return nil
+		}
+		stream.WaitingFor = waiting
+		stream.NextStep = nextStep
+		stream.ChangedAt = time.Now().UTC()
+		return s.commitAutoTransitionLocked([]SchedulerStream{stream})
+	})
 }
 
 func (s *schedulerStore) claimReady(streamName, taskID string) (SchedulerStream, bool, error) {
@@ -554,6 +822,63 @@ func (s *schedulerStore) claimReady(streamName, taskID string) (SchedulerStream,
 		}
 		if current.State != SchedulerReady || current.TaskID != taskID {
 			return nil
+		}
+		if err := s.transitionLocked(current, SchedulerRunning, "agent round", "wait for agent report"); err != nil {
+			return err
+		}
+		claimed, err = s.stream(streamName)
+		if err != nil {
+			return err
+		}
+		didClaim = true
+		return nil
+	})
+	return claimed, didClaim, err
+}
+
+func (s *schedulerStore) claimForDispatch(streamName, taskID, jobID, replacementRunID string) (SchedulerStream, bool, error) {
+	var claimed SchedulerStream
+	var didClaim bool
+	err := s.withLock(func() error {
+		current, err := s.stream(streamName)
+		if err != nil {
+			return err
+		}
+		if current.TaskID != taskID {
+			return nil
+		}
+		if current.State == SchedulerRunning {
+			if current.JobID == "" || current.RunID == "" {
+				return fmt.Errorf("running scheduler stream %s has no persisted job and run identity", streamName)
+			}
+			claimed = current
+			didClaim = true
+			return nil
+		}
+		if current.State != SchedulerReady {
+			return nil
+		}
+		current.JobID = jobID
+		if replacementRunID != "" {
+			current.RunID = replacementRunID
+		} else if current.RunID == "" {
+			current.RunID, err = proc.AllocateRunID()
+			if err != nil {
+				return fmt.Errorf("allocate scheduler run identity for %s: %w", streamName, err)
+			}
+		}
+		// Rework dispatch is one durable transition: after a restart the worker
+		// run identity and AdvanceWorking state must describe the same job.
+		task, err := s.task(taskID)
+		if err != nil {
+			return err
+		}
+		if task.Role == schedulerWorkerRole && isAutoAdvanceTask(task) && current.Advance != nil && current.Advance.State == AdvanceRework {
+			current.Advance, err = nextAdvanceSnapshot(current, AdvanceWorking, "", "", current.Advance.TreeHash)
+			if err != nil {
+				return fmt.Errorf("journal rework worker dispatch for %s: %w", streamName, err)
+			}
+			current.Advance.RunID = current.RunID
 		}
 		if err := s.transitionLocked(current, SchedulerRunning, "agent round", "wait for agent report"); err != nil {
 			return err
@@ -595,25 +920,61 @@ func releaseRunLease(lease *os.File) error {
 }
 
 func (s *schedulerStore) transitionLocked(stream SchedulerStream, next SchedulerStreamState, waiting, action string) error {
+	if next == SchedulerReady && stream.State != SchedulerReady && stream.JobID != "" {
+		if _, err := carryWorkerSessionFromJob(filepath.Dir(s.dir), &stream); err != nil {
+			return err
+		}
+		stream.RunID = ""
+	}
+	updated, event, err := schedulerTransitionSnapshot(stream, next, waiting, action)
+	if err != nil {
+		return err
+	}
+	return s.commitAutoTransitionLocked([]SchedulerStream{updated}, event)
+}
+
+type workerJobRecordState uint8
+
+const (
+	workerJobRecordAbsent workerJobRecordState = iota
+	workerJobRecordPresent
+)
+
+func carryWorkerSessionFromJob(state string, stream *SchedulerStream) (workerJobRecordState, error) {
+	if stream.JobID == "" {
+		return workerJobRecordAbsent, fmt.Errorf("stream %s cannot resume without a persisted worker job ID", stream.Stream)
+	}
+	job, err := newJobStore(state).Get(stream.JobID)
+	if errors.Is(err, os.ErrNotExist) {
+		return workerJobRecordAbsent, nil
+	}
+	if err != nil {
+		return workerJobRecordAbsent, fmt.Errorf("read worker job %s before queuing resume: %w", stream.JobID, err)
+	}
+	if job.SessionID == "" {
+		return workerJobRecordPresent, fmt.Errorf("worker job %s has no persisted provider session ID", job.ID)
+	}
+	stream.ThreadID = job.SessionID
+	return workerJobRecordPresent, nil
+}
+
+func schedulerTransitionSnapshot(stream SchedulerStream, next SchedulerStreamState, waiting, action string) (SchedulerStream, map[string]any, error) {
 	if !validSchedulerTransition(stream.State, next) {
-		return fmt.Errorf("invalid scheduler transition %q -> %q for stream %s", stream.State, next, stream.Stream)
+		return SchedulerStream{}, nil, fmt.Errorf("invalid scheduler transition %q -> %q for stream %s", stream.State, next, stream.Stream)
 	}
 	if next == SchedulerAwaitingOrchestrator && !validSchedulerDecisionCause(stream.Cause) {
-		return fmt.Errorf("stream %s cannot await the orchestrator with unsupported cause %q", stream.Stream, stream.Cause)
+		return SchedulerStream{}, nil, fmt.Errorf("stream %s cannot await the orchestrator with unsupported cause %q", stream.Stream, stream.Cause)
 	}
 	previous := stream.State
 	stream.State, stream.WaitingFor, stream.NextStep = next, waiting, action
 	stream.ChangedAt = time.Now().UTC()
-	if err := s.writeJSON(s.streamPath(stream.Stream), stream); err != nil {
-		return fmt.Errorf("persist stream transition: %w", err)
-	}
 	event := map[string]any{"kind": "scheduler.transition", "stream": stream.Stream, "from": previous, "to": next, "waiting_for": waiting, "next_step": action, "cause": stream.Cause, "time": stream.ChangedAt}
-	return s.appendEvent(event)
+	return stream, event, nil
 }
 
 func validSchedulerDecisionCause(cause string) bool {
 	switch cause {
-	case "plan-question", "review-disagreement", "review-missing", "review-unavailable", "third-reject", "outage-after-retries", "no-proposed-commits", "bisect-inconclusive":
+	case "plan-question", "review-disagreement", "review-missing", "review-unavailable", "landing-refused", "third-reject", "outage-after-retries", "no-proposed-commits", "bisect-inconclusive", "blocked", "partial-twice", "invalid-worker-status", "auto-rework-limit", "worker-stalled", "admission-timeout", "unknown-run":
 		return true
 	default:
 		return false
@@ -673,12 +1034,7 @@ func (s *schedulerStore) appendEvent(value any) error {
 			return err
 		}
 	}
-	file, err := os.OpenFile(filepath.Join(s.dir, "events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := file.Write(append(data, '\n'))
-	if err := errors.Join(writeErr, file.Close()); err != nil {
+	if err := s.appendDurable(filepath.Join(s.dir, "events.jsonl"), append(data, '\n'), 0o600); err != nil {
 		return err
 	}
 	if streamName == "" {
@@ -687,14 +1043,60 @@ func (s *schedulerStore) appendEvent(value any) error {
 	return s.projectHandoff(data)
 }
 
+func (s *schedulerStore) appendEventWithID(payload []byte, id string) error {
+	if id == "" {
+		return errors.New("scheduler outbox event ID is required")
+	}
+	path := filepath.Join(s.dir, "events.jsonl")
+	if data, err := os.ReadFile(path); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			var existing struct {
+				EventID string `json:"event_id"`
+			}
+			if json.Unmarshal([]byte(line), &existing) == nil && existing.EventID == id {
+				return nil
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read scheduler outbox delivery log: %w", err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(payload, &value); err != nil {
+		return fmt.Errorf("decode scheduler outbox event: %w", err)
+	}
+	value["event_id"] = id
+	return s.appendEvent(value)
+}
+
 func (s *schedulerStore) projectHandoff(data []byte) error {
 	var event map[string]any
 	if err := json.Unmarshal(data, &event); err != nil {
 		return fmt.Errorf("decode scheduler event for HANDOFF: %w", err)
 	}
+	delete(event, "event_id")
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("encode scheduler HANDOFF projection: %w", err)
+	}
 	streamName, _ := event["stream"].(string)
 	if streamName == "" {
 		return nil
+	}
+	stream, streamErr := s.stream(streamName)
+	if streamErr != nil && !errors.Is(streamErr, os.ErrNotExist) {
+		return fmt.Errorf("resolve HANDOFF stream %s: %w", streamName, streamErr)
+	}
+	if streamErr == nil && stream.Advance != nil {
+		kind, _ := event["kind"].(string)
+		status, _ := event["status"].(string)
+		switch status {
+		case "accepted", "escalated", "vendor-limit", "stall", "disk":
+		default:
+			return nil
+		}
+		if kind != "orchestrator.event" {
+			return nil
+		}
 	}
 	handoff, _ := event["handoff_path"].(string)
 	if handoff == "" {
@@ -718,22 +1120,20 @@ func (s *schedulerStore) projectHandoff(data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(handoff), 0o700); err != nil {
 		return fmt.Errorf("create HANDOFF parent: %w", err)
 	}
-	handoffFile, err := os.OpenFile(handoff, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("open scheduler HANDOFF: %w", err)
-	}
 	line := fmt.Sprintf("scheduler=%s %s", streamName, strings.TrimSpace(string(data)))
 	existing, readErr := os.ReadFile(handoff)
 	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return errors.Join(fmt.Errorf("read scheduler HANDOFF for idempotency: %w", readErr), handoffFile.Close())
+		return fmt.Errorf("read scheduler HANDOFF for idempotency: %w", readErr)
 	}
 	for _, previous := range strings.Split(string(existing), "\n") {
 		if previous == line {
-			return handoffFile.Close()
+			return nil
 		}
 	}
-	_, writeErr := fmt.Fprintln(handoffFile, line)
-	return errors.Join(writeErr, handoffFile.Close())
+	if err := s.appendDurable(handoff, []byte(line+"\n"), 0o600); err != nil {
+		return fmt.Errorf("append scheduler HANDOFF: %w", err)
+	}
+	return nil
 }
 
 func (s *schedulerStore) replayHandoff() error {
@@ -819,26 +1219,50 @@ func schedulerAddCommand(root runnerRoot, args []string, out io.Writer) (int, er
 	base := fs.String("base", "", "base branch")
 	priority := fs.Int("priority", 0, "task priority")
 	vendor := fs.String("vendor", defaultAgentVendor, "agent vendor")
-	effort := fs.String("effort", "high", "agent reasoning effort")
+	effort := fs.String("effort", "medium", "agent reasoning effort")
 	role := fs.String("role", schedulerWorkerRole, "worker or review")
-	review := fs.String("review", "single", "single or cross review")
+	review := fs.String("review", "", "single or cross review (manual review tasks only)")
 	var reviewers schedulerDependencyFlag
 	fs.Var(&reviewers, "reviewer", "review vendor (repeatable)")
 	var dependencies schedulerDependencyFlag
 	fs.Var(&dependencies, "depends-on", "dependency task ID (repeatable)")
+	var outsideSuites schedulerDependencyFlag
+	fs.Var(&outsideSuites, "outside-suite", "outside Go test suite module:packages (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return 2, fmt.Errorf("%s sched add: %w; next: %s sched add --help", root.Name(), err, root.InvocationCommand())
 	}
 	if len(fs.Args()) != 0 {
 		return 2, fmt.Errorf("%s sched add: unexpected arguments; next: %s sched add --help", root.Name(), root.InvocationCommand())
 	}
-	canonicalState, err := proc.CanonicalStateDir(*state)
+	resolvedState, err := resolveRunnerState(root, "sched add", *state)
 	if err != nil {
-		return 1, fmt.Errorf("%s sched add: resolve --state: %w; next: %s sched add --help", root.Name(), err, root.InvocationCommand())
+		return 2, fmt.Errorf("%s sched add: invalid runner state path: %w; next: %s sched add --help", root.Name(), err, root.InvocationCommand())
 	}
-	*state = canonicalState
+	*state = resolvedState
+	for _, suite := range outsideSuites {
+		if _, _, err := parseOutsideSuiteSpec(suite); err != nil {
+			return 2, fmt.Errorf("%s sched add: %w; next: %s sched add --help", root.Name(), err, root.InvocationCommand())
+		}
+	}
 	if *stream == "" || *base == "" {
 		return 2, fmt.Errorf("%s sched add: --stream and --base are required; next: %s sched add --help", root.Name(), root.InvocationCommand())
+	}
+	explicitEffort := false
+	fs.Visit(func(field *flag.Flag) {
+		if field.Name == "effort" {
+			explicitEffort = true
+		}
+	})
+	if !explicitEffort && *prompt != "" {
+		promptBody, err := os.ReadFile(*prompt)
+		if err != nil {
+			return 1, fmt.Errorf("%s sched add: read worker prompt %s: %w; next: %s sched add --help", root.Name(), *prompt, err, root.InvocationCommand())
+		}
+		if declared, found, err := promptEffort(promptBody); err != nil {
+			return 2, fmt.Errorf("%s sched add: invalid prompt effort: %w; next: %s sched add --help", root.Name(), err, root.InvocationCommand())
+		} else if found {
+			*effort = declared
+		}
 	}
 	repoRoot, err := schedulerCommandOutput("", "git", "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -867,7 +1291,7 @@ func schedulerAddCommand(root runnerRoot, args []string, out io.Writer) (int, er
 	if *role == schedulerReviewRole && template == "" {
 		template = runnerReviewTemplate
 	}
-	task, err := newSchedulerStore(*state).add(SchedulerTask{Stream: *stream, Prompt: *prompt, PromptTemplate: template, Workdir: resolvedWorkdir, WorktreeRoot: worktreeRootPath, RepoRoot: repoRoot, Base: *base, Priority: *priority, DependsOn: dependencies, Vendor: *vendor, Effort: *effort, Role: *role, Review: *review, Reviewers: reviewers})
+	task, err := newSchedulerStore(resolvedState).add(SchedulerTask{Stream: *stream, Prompt: *prompt, PromptTemplate: template, Workdir: resolvedWorkdir, WorktreeRoot: worktreeRootPath, RepoRoot: repoRoot, Base: *base, Priority: *priority, DependsOn: dependencies, Vendor: *vendor, Effort: *effort, Role: *role, Review: *review, Reviewers: reviewers, OutsideSuites: outsideSuites})
 	if err != nil {
 		return 1, fmt.Errorf("%s sched add: %w; next: %s sched add --help", root.Name(), err, root.InvocationCommand())
 	}
@@ -882,7 +1306,11 @@ func schedulerListCommand(root runnerRoot, operation string, args []string, out 
 	if err := fs.Parse(args); err != nil {
 		return 2, fmt.Errorf("%s sched %s: %w; next: %s sched %s --help", root.Name(), operation, err, root.InvocationCommand(), operation)
 	}
-	store := newSchedulerStore(*state)
+	resolvedState, err := resolveRunnerState(root, "sched "+operation, *state)
+	if err != nil {
+		return 2, fmt.Errorf("%s sched %s: invalid runner state path: %w; next: %s sched %s --help", root.Name(), operation, err, root.InvocationCommand(), operation)
+	}
+	store := newSchedulerStore(resolvedState)
 	if operation == "ls" {
 		tasks, err := store.tasks()
 		if err != nil {
@@ -932,10 +1360,14 @@ func schedulerCancelCommand(root runnerRoot, args []string, out io.Writer) (int,
 	if err := fs.Parse(args[:len(args)-1]); err != nil {
 		return 2, fmt.Errorf("%s sched cancel: %w; next: %s sched cancel --help", root.Name(), err, root.InvocationCommand())
 	}
-	if err := newSchedulerStore(*state).cancel(id); err != nil {
-		return 1, fmt.Errorf("%s sched cancel: %w; next: %s sched ls --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
+	resolvedState, err := resolveRunnerState(root, "sched cancel", *state)
+	if err != nil {
+		return 2, fmt.Errorf("%s sched cancel: invalid runner state path: %w; next: %s sched cancel --help", root.Name(), err, root.InvocationCommand())
 	}
-	_, err := fmt.Fprintf(out, "cancelled task %s\n", id)
+	if err := newSchedulerStore(resolvedState).cancel(id); err != nil {
+		return 1, fmt.Errorf("%s sched cancel: %w; next: %s sched ls --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(resolvedState))
+	}
+	_, err = fmt.Fprintf(out, "cancelled task %s\n", id)
 	return 0, err
 }
 
@@ -950,18 +1382,22 @@ func schedulerCompleteCommand(root runnerRoot, args []string, out io.Writer) (in
 	if err := fs.Parse(args[:len(args)-1]); err != nil {
 		return 2, fmt.Errorf("%s sched complete: %w; next: %s sched complete --help", root.Name(), err, root.InvocationCommand())
 	}
-	store := newSchedulerStore(*state)
+	resolvedState, err := resolveRunnerState(root, "sched complete", *state)
+	if err != nil {
+		return 2, fmt.Errorf("%s sched complete: invalid runner state path: %w; next: %s sched complete --help", root.Name(), err, root.InvocationCommand())
+	}
+	store := newSchedulerStore(resolvedState)
 	stream, err := store.stream(streamName)
 	if err != nil {
-		return 1, fmt.Errorf("%s sched complete: %w; next: %s sched ps --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
+		return 1, fmt.Errorf("%s sched complete: %w; next: %s sched ps --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(resolvedState))
 	}
 	if stream.State != SchedulerAwaitingOrchestrator {
-		return 1, fmt.Errorf("%s sched complete: stream %s is %s; only an awaiting-orchestrator stream can be completed; next: %s sched ps --state %s --json", root.Name(), streamName, stream.State, root.InvocationCommand(), shellQuote(*state))
+		return 1, fmt.Errorf("%s sched complete: stream %s is %s; only an awaiting-orchestrator stream can be completed; next: %s sched ps --state %s --json", root.Name(), streamName, stream.State, root.InvocationCommand(), shellQuote(resolvedState))
 	}
 	if err := store.transition(stream, SchedulerDone, "", "dependencies may now dispatch"); err != nil {
 		return 1, err
 	}
-	(schedulerRunOptions{store: store, root: root, state: *state}).startHygieneSweep(context.Background(), true)
+	(newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: root, state: resolvedState})).startHygieneSweep(context.Background(), true)
 	_, err = fmt.Fprintf(out, "completed stream %s\n", streamName)
 	return 0, err
 }

@@ -53,11 +53,11 @@ func TestMergeResolutionIsReverifiedAndPublishedThroughSharedLanding(t *testing.
 			git("add", "conflict.txt")
 			git("commit", "-m", "feat: worker conflict side")
 			workerSHA := git("rev-parse", "HEAD")
-			verifiedSHA, _, err := snapshotWorktree(repo, "resolution-worker")
+			verifiedSHA, _, err := snapshotWorktree(filesystemRunnerStateStore{}, repo, "resolution-worker")
 			if err != nil {
 				t.Fatal(err)
 			}
-			workerTree, err := treeSHAForCommit(repo, verifiedSHA)
+			workerTree, err := treeSHAForCommit(repo, verifiedSHA.String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +89,7 @@ func TestMergeResolutionIsReverifiedAndPublishedThroughSharedLanding(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			workerState.Submission = &SchedulerSubmission{SHA: verifiedSHA, TreeSHA: workerTree, ExpectedRefSHA: workerSHA, Status: "completed", Conclusion: "success"}
+			workerState.Submission = &SchedulerSubmission{SHA: workerSHA, TreeSHA: workerTree.String(), ExpectedRefSHA: workerSHA, Status: "completed", Conclusion: "success"}
 			workerState.ReviewResults = map[string]string{"codex": "ACCEPT"}
 			if err := store.transition(workerState, SchedulerRunning, "worker", "worker complete"); err != nil {
 				t.Fatal(err)
@@ -150,7 +150,7 @@ exec "$REAL_GIT" "$@"
 			} else {
 				t.Setenv("LAND_INJECT_WORKER_REF_RACE", "0")
 			}
-			options := schedulerRunOptions{store: store, root: runnerRoot{invocation: "kb-runner"}, state: state}
+			options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: state})
 			mergeState, _ = store.stream(mergeTask.Stream)
 			finishErr := options.finishMerge(mergeTask, mergeState)
 			if raceWorker {
@@ -174,7 +174,7 @@ exec "$REAL_GIT" "$@"
 			if err != nil {
 				t.Fatal(err)
 			}
-			resolvedEntries, err := landingTreeEntries(repo, resolvedTree)
+			resolvedEntries, err := landingTreeEntries(repo, resolvedTree.String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,7 +182,8 @@ exec "$REAL_GIT" "$@"
 				t.Fatal("merge-resolution commit contains the stream report artifact")
 			}
 			workerState, err = store.stream(worker.Stream)
-			if err != nil || workerState.State != SchedulerAwaitingRemote || workerState.Submission == nil || workerState.Submission.SHA == resolvedSHA || workerState.Submission.SHA == integrationSHA || workerState.Submission.TreeSHA == resolvedTree || workerState.Submission.ExpectedRefSHA != resolvedSHA {
+			workerState, err = store.stream(worker.Stream)
+			if err != nil || workerState.State != SchedulerAwaitingRemote || workerState.Submission == nil || workerState.Submission.SHA == resolvedSHA || workerState.Submission.SHA == integrationSHA || workerState.Submission.TreeSHA == resolvedTree.String() || workerState.Submission.ExpectedRefSHA != resolvedSHA {
 				t.Fatalf("resolver snapshot did not preserve the worker report against the resolved branch: stream=%+v wantRefSHA=%s tree=%s err=%v", workerState, resolvedSHA, resolvedTree, err)
 			}
 			if resolverPushes, readErr := os.ReadFile(pushLog); readErr != nil || !strings.Contains(string(resolverPushes), "push backup "+workerState.Submission.SHA+":refs/heads/verify/resolution-worker-") {

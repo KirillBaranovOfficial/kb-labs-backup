@@ -95,6 +95,14 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 		if err := pruneStateLocked(cfg.StateDir); err != nil {
 			return err
 		}
+		for _, terminal := range []bool{false, true} {
+			path := recordPath(cfg.StateDir, runID, terminal)
+			if _, err := os.Lstat(path); err == nil {
+				return fmt.Errorf("proc: run ID %s already has a durable record", runID)
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("proc: inspect run ID %s record: %w", runID, err)
+			}
+		}
 		order, err := nextQueueOrderLocked(cfg.StateDir)
 		if err != nil {
 			return err

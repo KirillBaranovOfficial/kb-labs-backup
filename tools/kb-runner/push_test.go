@@ -13,7 +13,7 @@ import (
 func TestWorkerCandidateAndBisectPushCallSitesUseOnlyVerifyHeads(t *testing.T) {
 	f := newSchedulerFixture(t, `[]`, `{"schemaVersion":1,"sha":"`+schedulerTestSHA+`","status":"pass","jobs":[],"diagnostics":[]}`)
 	t.Setenv("FAKE_CHANGED_FILES", "")
-	options := schedulerRunOptions{store: newSchedulerStore(f.state), root: runnerRoot{invocation: "kb-runner"}, state: f.state}
+	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
 	worker := f.addTask(t, "worker-push", "worker")
 	if err := os.MkdirAll(worker.Workdir, 0o700); err != nil {
 		t.Fatal(err)

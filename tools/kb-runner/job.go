@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -118,6 +119,7 @@ type Job struct {
 	OutputTokens    uint64            `json:"outputTokens,omitempty"`
 	SlotGroup       string            `json:"slotGroup,omitempty"`
 	SlotCeiling     int               `json:"slotCeiling,omitempty"`
+	RunID           string            `json:"runId,omitempty"`
 	WorkerPID       int               `json:"workerPid,omitempty"`
 	WorkerStartedAt string            `json:"workerStartedAt,omitempty"`
 	Attempts        []ProviderAttempt `json:"attempts,omitempty"`
@@ -125,11 +127,20 @@ type Job struct {
 }
 
 type jobStore struct {
-	dir string
-	mu  sync.Mutex
+	dir     string
+	mu      sync.Mutex
+	stateIO runnerStateStore
 }
 
-func newJobStore(dir string) *jobStore    { return &jobStore{dir: filepath.Join(dir, "jobs")} }
+func newJobStore(dir string) *jobStore {
+	return newJobStoreWithStateIO(dir, filesystemRunnerStateStore{})
+}
+func newJobStoreWithStateIO(dir string, stateIO runnerStateStore) *jobStore {
+	if stateIO == nil {
+		panic("job store requires a runner state store")
+	}
+	return &jobStore{dir: filepath.Join(dir, "jobs"), stateIO: stateIO}
+}
 func (s *jobStore) path(id string) string { return filepath.Join(s.dir, id+".json") }
 func (s *jobStore) terminalPath(id string) string {
 	return filepath.Join(s.dir, id+".terminal.json")
@@ -240,17 +251,18 @@ func (s *jobStore) reconcileWorker(job Job) (Job, error) {
 	if job.State != JobRunning {
 		return job, nil
 	}
-	if job.WorkerPID <= 0 || job.WorkerStartedAt == "" {
-		return s.markJobLost(job, "worker process identity was not recorded")
+	next := shellQuote(os.Args[0]) + " ps --state " + shellQuote(filepath.Dir(s.dir)) + " --json"
+	if job.RunID == "" || job.WorkerPID <= 0 || job.WorkerStartedAt == "" {
+		return Job{}, fmt.Errorf("job %s has no complete clikit run and worker identity; process liveness is unknown; next: %s", job.ID, next)
 	}
-	identity, alive, err := proc.ProcessIdentity(job.WorkerPID)
+	alive, err := proc.RunOwnsProcess(filepath.Dir(s.dir), job.RunID, job.WorkerPID, job.WorkerStartedAt)
 	if err != nil {
-		return Job{}, fmt.Errorf("inspect worker PID %d for job %s: %w", job.WorkerPID, job.ID, err)
+		return Job{}, fmt.Errorf("inspect clikit run %s for worker PID %d of job %s: %w; next: %s", job.RunID, job.WorkerPID, job.ID, err, next)
 	}
-	if alive && identity == job.WorkerStartedAt {
+	if alive {
 		return job, nil
 	}
-	return s.markJobLost(job, fmt.Sprintf("worker PID %d identity %s is no longer live", job.WorkerPID, job.WorkerStartedAt))
+	return s.markJobLost(job, fmt.Sprintf("worker PID %d identity %s is not owned by live clikit run %s", job.WorkerPID, job.WorkerStartedAt, job.RunID))
 }
 
 func (s *jobStore) markJobLost(job Job, reason string) (Job, error) {
@@ -288,17 +300,91 @@ func (s *jobStore) write(j Job) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomicFile(s.path(j.ID), b)
+	return s.stateIO.AtomicWrite(s.path(j.ID), b)
 }
-func writeAtomicFile(path string, b []byte) error {
+
+type runnerStateStore interface {
+	AtomicWrite(path string, data []byte) error
+	Append(path string, data []byte, mode os.FileMode) error
+	GitMutation(dir string, environment []string, args ...string) (string, error)
+}
+
+type filesystemRunnerStateStore struct{}
+
+func (filesystemRunnerStateStore) AtomicWrite(path string, b []byte) (returnErr error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".state-write-*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	name := tmp.Name()
+	defer func() {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("remove state-write temporary file: %w", err))
+		}
+	}()
+	if err := tmp.Chmod(0600); err != nil {
+		return errors.Join(err, tmp.Close())
+	}
+	if _, err := tmp.Write(b); err != nil {
+		return errors.Join(err, tmp.Close())
+	}
+	if err := tmp.Sync(); err != nil {
+		return errors.Join(err, tmp.Close())
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	if err := errors.Join(directory.Sync(), directory.Close()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (filesystemRunnerStateStore) Append(path string, b []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.Write(b)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (filesystemRunnerStateStore) GitMutation(dir string, environment []string, args ...string) (string, error) {
+	gitArgs := append([]string{"-C", dir}, args...)
+	command := exec.Command("git", gitArgs...)
+	command.Dir = dir
+	command.Env = append(os.Environ(), environment...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return string(output), nil
+}
+
+func writeAtomicFile(path string, data []byte) error {
+	return filesystemRunnerStateStore{}.AtomicWrite(path, data)
+}
+
+func appendDurableFile(path string, data []byte, mode os.FileMode) error {
+	return filesystemRunnerStateStore{}.Append(path, data, mode)
 }
 func (s *jobStore) writeTerminalFallback(id string, terminal JobTerminal) error {
 	if !terminal.State.Terminal() {
@@ -312,7 +398,7 @@ func (s *jobStore) writeTerminalFallback(id string, terminal JobTerminal) error 
 	if err != nil {
 		return err
 	}
-	return writeAtomicFile(s.terminalPath(id), b)
+	return s.stateIO.AtomicWrite(s.terminalPath(id), b)
 }
 func (s *jobStore) Terminate(id string, terminal JobTerminal) (returnErr error) {
 	if !terminal.State.Terminal() {

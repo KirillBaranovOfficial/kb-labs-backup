@@ -76,6 +76,7 @@ func execute(args []string, stdout, stderr io.Writer) (int, error) {
 type runnerRoot struct {
 	command.Root
 	invocation string
+	supervisor schedulerJobSupervisor
 }
 
 func (root runnerRoot) Invocation() string { return root.invocation }
@@ -129,6 +130,9 @@ var runnerCommands = []runnerCommand{
 	{name: "hygiene", execute: hygieneCommand},
 	{name: "land", execute: landCommand},
 	{name: "sched", execute: schedulerCommand},
+	{name: "streams", execute: func(root runnerRoot, args []string, stdout, _ io.Writer) (int, error) {
+		return streamsCommand(root, args, stdout)
+	}},
 	{name: "self-install", execute: selfInstallCommand},
 }
 
@@ -225,11 +229,11 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	if *tag == "" || *state == "" || *stall <= 0 || *stdoutPath == "" || *stderrPath == "" {
 		return 2, fmt.Errorf("%s run: --tag, --state, positive --stall, --stdout, and --stderr are required; next: %s run --help", root.Name(), root.InvocationCommand())
 	}
-	canonicalState, err := proc.CanonicalStateDir(*state)
+	resolvedState, err := resolveRunnerState(root, "run", *state)
 	if err != nil {
-		return 1, fmt.Errorf("%s run: resolve --state: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
+		return 2, fmt.Errorf("%s run: invalid runner state path: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
 	}
-	*state = canonicalState
+	*state = resolvedState
 	costClass, err := proc.ParseCostClass(*cost)
 	if err != nil {
 		return 2, fmt.Errorf("%s run: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
@@ -350,6 +354,11 @@ func quotaCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int
 		}
 		return 2, fmt.Errorf("%s quota: --state is required; next: %s quota %s --help", root.Name(), root.InvocationCommand(), helpAction)
 	}
+	resolvedState, err := resolveRunnerState(root, "quota "+action, *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	switch action {
 	case "set":
 		if *memory == "" && *cpus == "" && *minFree == "" {
@@ -427,6 +436,11 @@ func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	if *state == "" {
 		return 2, fmt.Errorf("%s ps: --state is required; next: %s ps --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "ps", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	if err := reconcileJobsForState(*state); err != nil {
 		return 1, fmt.Errorf("%s ps: reconcile agent jobs: %w; next: %s status --state %s --json", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 	}
@@ -528,6 +542,11 @@ func eventsCommand(root runnerRoot, args []string, output io.Writer) (int, error
 	if *state == "" {
 		return 2, fmt.Errorf("%s events: --state is required; next: %s events --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "events", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	if *offset < 0 {
 		return 2, fmt.Errorf("%s events: --offset must not be negative; next: %s events --help", root.Name(), root.InvocationCommand())
 	}
@@ -581,6 +600,11 @@ func gateCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int,
 		if *state == "" {
 			return 2, fmt.Errorf("%s gate status: --state is required; next: %s gate status --help", root.Name(), root.InvocationCommand())
 		}
+		resolvedState, err := resolveRunnerState(root, "gate status", *state)
+		if err != nil {
+			return 2, err
+		}
+		*state = resolvedState
 		gate, held, err := proc.GateStatus(*state, args[1])
 		if err != nil {
 			return 1, fmt.Errorf("%s gate status: %w; next: %s ps --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
@@ -622,10 +646,14 @@ func waitCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int,
 	if (*tag == "") == (*latestTag == "") || *state == "" {
 		return 2, fmt.Errorf("%s wait: provide exactly one of --tag or --latest-tag, and --state; next: %s wait --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "wait", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	var run proc.RunInfo
-	var err error
 	if *latestTag != "" {
 		run, err = proc.WaitLatestTagWithin(ctx, *state, *latestTag, *appearWithin)
 	} else {
@@ -844,6 +872,11 @@ func gcCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	if *state == "" {
 		return 2, fmt.Errorf("%s gc: --state is required; next: %s gc --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "gc", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	outcomes, err := proc.GarbageCollect(*state)
 	if err != nil {
 		return 1, fmt.Errorf("%s gc: cleanup failed: %w\nnext: %s ps --state %s --leftovers", root.Name(), err, root.InvocationCommand(), shellQuote(*state))

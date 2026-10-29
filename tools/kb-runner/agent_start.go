@@ -24,6 +24,8 @@ import (
 	"github.com/kb-labs/clikit/proc"
 )
 
+const defaultAgentStall = 30 * time.Minute
+
 // maxProviderRecoveryAttempts bounds how many times one job resumes the same
 // vendor session after transient provider failures.
 const maxProviderRecoveryAttempts = 3
@@ -72,7 +74,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	cost := fs.String("cost", "light", "expected resource cost class: light or heavy")
 	costKey := fs.String("cost-key", "", "key used to learn completed run resource costs")
 	priority := fs.Int("priority", 0, "run priority; lower values are paused first under hard pressure")
-	stall := fs.Duration("stall", 30*time.Minute, "fail the job after this no-output interval")
+	stall := fs.Duration("stall", defaultAgentStall, "fail the job after this no-output interval")
 	fiveHour := fs.Float64("five-hour-threshold", 95, "quota admission threshold")
 	week := fs.Float64("week-threshold", 98, "weekly quota admission threshold")
 	providerFailureThreshold := fs.Int("provider-failure-threshold", 3, "consecutive transient provider errors before recording a sustained outage")
@@ -88,11 +90,11 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	if *testChannel != "on" && *testChannel != "off" {
 		return 2, fmt.Errorf("%s agent start: --test-channel must be on or off; next: %s agent start --help", root.Name(), root.InvocationCommand())
 	}
-	canonicalState, err := proc.CanonicalStateDir(*state)
+	resolvedState, err := resolveRunnerState(root, "agent start", *state)
 	if err != nil {
-		return 1, fmt.Errorf("%s agent start: resolve --state: %w; next: %s agent start --help", root.Name(), err, root.InvocationCommand())
+		return 2, fmt.Errorf("%s agent start: invalid runner state path: %w; next: %s agent start --help", root.Name(), err, root.InvocationCommand())
 	}
-	*state = canonicalState
+	*state = resolvedState
 	costClass, err := proc.ParseCostClass(*cost)
 	if err != nil {
 		return 2, fmt.Errorf("%s agent start: %w; next: %s agent start --help", root.Name(), err, root.InvocationCommand())
@@ -150,7 +152,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		run, err := proc.Start(ctx, proc.Config{StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, SharedLeasePaths: leasePaths, Command: append([]string{helper}, argsForWorker...)})
+		run, err := root.jobSupervisor().Start(ctx, proc.Config{StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, SharedLeasePaths: leasePaths, Command: append([]string{helper}, argsForWorker...)})
 		if err != nil {
 			return failAgentJob(store, id, PhaseAdmission, ReasonSetup, root, finalPath, fmt.Errorf("agent process admission failed: %w", err))
 		}
@@ -206,7 +208,11 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	if !workerAlive {
 		return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, errors.New("agent worker process identity is not live"))
 	}
+	runID := proc.CurrentRunID()
 	if err := store.Update(id, func(job *Job) error {
+		if runID != "" {
+			job.RunID = runID
+		}
 		job.WorkerPID = os.Getpid()
 		job.WorkerStartedAt = workerIdentity
 		return nil

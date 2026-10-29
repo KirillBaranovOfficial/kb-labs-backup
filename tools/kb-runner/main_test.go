@@ -1589,7 +1589,7 @@ func persistedEventKinds(t *testing.T, path string) map[proc.EventType]struct{} 
 	return kinds
 }
 
-// case: S-237.140
+// case: S-237.149
 func TestWaitLatestTagMissingRecordIsBounded(t *testing.T) {
 	missingState := filepath.Join(t.TempDir(), "missing-state")
 	started := time.Now()
