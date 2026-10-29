@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -25,6 +26,8 @@ func TestRunCommandLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	childReady := filepath.Join(root, "run-child-ready")
 	runner := buildRunnerBinary(t)
 	command := exec.Command(runner, "run", "--tag", "lease-child", "--state", state, "--stall", "1m", "--stdout", filepath.Join(state, "child.stdout"), "--stderr", filepath.Join(state, "child.stderr"), "--", "/bin/sh", "-c", "printf ready > \"$1\"; exec /bin/sleep 60", "sh", childReady)
+	var runnerStdout, runnerStderr bytes.Buffer
+	command.Stdout, command.Stderr = &runnerStdout, &runnerStderr
 	command.Dir = worktree
 	command.Env = os.Environ()
 	if err := command.Start(); err != nil {
@@ -37,7 +40,11 @@ func TestRunCommandLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 		}
 	})
 	if err := waitForFile(childReady); err != nil {
-		t.Fatalf("runner child did not reach its readiness marker: %v", err)
+		exit := command.Process.Signal(os.Interrupt)
+		waitErr := command.Wait()
+		waited = true
+		childStderr, _ := os.ReadFile(filepath.Join(state, "child.stderr"))
+		t.Fatalf("runner child did not reach its readiness marker: %v; interrupt=%v runner-exit=%v stdout=%q stderr=%q child-stderr=%q", err, exit, waitErr, runnerStdout.String(), runnerStderr.String(), childStderr)
 	}
 
 	leasePath := derivedWorktreeLeasePath(t, worktree)
@@ -81,6 +88,8 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	t.Setenv("CODEX_BIN", fakeCodex)
 	runner := buildRunnerBinary(t)
 	command := exec.Command(runner, "agent", "start", "--state", state, "--stream", "worker", "--vendor", "codex", "--workdir", worktree, "--prompt-file", prompt, "--stall", "1m")
+	var runnerStdout, runnerStderr bytes.Buffer
+	command.Stdout, command.Stderr = &runnerStdout, &runnerStderr
 	command.Env = os.Environ()
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
@@ -118,7 +127,7 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 		}
 		waitForFixtureExit(t, command, 1)
 		waited = true
-		t.Fatalf("agent start did not reach the provider child: %v", err)
+		t.Fatalf("agent start did not reach the provider child: %v; runner-stdout=%q runner-stderr=%q", err, runnerStdout.String(), runnerStderr.String())
 	}
 	var err error
 	releaseWriter, err = os.OpenFile(releaseFIFO, os.O_WRONLY, 0)

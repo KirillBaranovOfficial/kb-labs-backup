@@ -238,11 +238,8 @@ printf '%s\n' "${FAKE_ZCODE_VERDICT:-ACCEPT}" > "$FAKE_ZCODE_REPORT"
 	if err := os.MkdirAll(filepath.Join(fixture.worktrees, "prompts"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	projectPrompts := filepath.Join(filepath.Dir(repoSource), "prompts")
-	for _, name := range []string{"00-rules.md"} {
-		if err := os.Symlink(filepath.Join(projectPrompts, name), filepath.Join(fixture.worktrees, "prompts", name)); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(fixture.worktrees, "prompts", "00-rules.md"), []byte("fixture-owned review rules"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(fixture.worktrees, "reports"), 0o700); err != nil {
 		t.Fatal(err)
@@ -3381,7 +3378,7 @@ func TestGemReviewUsesGoAssembledInputAndPersistsFirstPartyReport(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, fragment := range []string{"delta focus", "task for gem-review-worker", "worker report", "# Stream diff", "case expectation body", "untracked.go", "# Rules for every agent"} {
+	for _, fragment := range []string{"delta focus", "task for gem-review-worker", "worker report", "# Stream diff", "case expectation body", "untracked.go", "fixture-owned review rules"} {
 		if !strings.Contains(string(input), fragment) {
 			t.Fatalf("Gem review input omitted %q: %s", fragment, input)
 		}

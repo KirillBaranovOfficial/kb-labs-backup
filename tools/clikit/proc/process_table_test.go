@@ -1112,6 +1112,39 @@ type persistentMarkerProcessSource struct{ signals []syscall.Signal }
 func (*persistentMarkerProcessSource) Snapshot(string) ([]Process, error) {
 	return []Process{{PID: 102, PPID: 1, Identity: "marker-start", runMarker: true, markerResult: "match"}}, nil
 }
+
+func TestCleanupEscalatesPreviouslySignalledIdentityAtDeadline(t *testing.T) {
+	clock := &advancingCleanupClock{start: time.Unix(250, 0), now: time.Unix(250, 0)}
+	source := &deadlineAfterTermSource{clock: clock}
+	cleanup := cleanupTreeWithClock(100, "outer-run", nil, source, clock)
+	if !reflect.DeepEqual(source.signals, []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}) {
+		t.Fatalf("signals for previously verified process = %v, want SIGTERM then SIGKILL", source.signals)
+	}
+	if len(cleanup.Remaining) != 1 || cleanup.Remaining[0].PID != 102 {
+		t.Fatalf("persistent process outcome = %+v, want retained PID 102 after verified escalation", cleanup)
+	}
+}
+
+type deadlineAfterTermSource struct {
+	clock     *advancingCleanupClock
+	snapshots int
+	signals   []syscall.Signal
+}
+
+func (source *deadlineAfterTermSource) Snapshot(string) ([]Process, error) {
+	source.snapshots++
+	if source.snapshots == 2 {
+		source.clock.now = source.clock.start.Add(cleanupBound)
+	}
+	return []Process{{PID: 102, PPID: 1, Identity: "marker-start", runMarker: true, markerResult: "match"}}, nil
+}
+func (*deadlineAfterTermSource) Identity(pid int) (string, bool, error) {
+	return "marker-start", pid == 102, nil
+}
+func (source *deadlineAfterTermSource) Signal(_ int, signal syscall.Signal) error {
+	source.signals = append(source.signals, signal)
+	return nil
+}
 func (*persistentMarkerProcessSource) Identity(pid int) (string, bool, error) {
 	if pid == 102 {
 		return "marker-start", true, nil

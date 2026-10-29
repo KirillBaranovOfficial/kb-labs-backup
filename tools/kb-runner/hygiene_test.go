@@ -80,6 +80,25 @@ func TestHygieneLivenessUsesSchedulerStateAndObservedWorktreePath(t *testing.T) 
 	}
 }
 
+func TestHygieneUnreadableProcessBlocksOnlyWithVerifiedCandidatePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worker")
+	for _, test := range []struct {
+		name, argv string
+		wantLive   bool
+	}{
+		{name: "unrelated unreadable cwd", argv: strings.Join([]string{"systemd", "--user"}, "\x00")},
+		{name: "absolute candidate argument", argv: strings.Join([]string{"runner", "--workdir", path}, "\x00"), wantLive: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			process := processInfo{pid: 19, identity: "start-19", command: "process", argv: test.argv, cwdError: "permission denied"}
+			live, err := streamIsLive("worker", path, nil, nil, []processInfo{process})
+			if err != nil || live != test.wantLive {
+				t.Fatalf("candidate liveness = %t, %v; want %t", live, err, test.wantLive)
+			}
+		})
+	}
+}
+
 func TestHygieneKeepsQueuedZeroCommitStreamLive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queued-stream")
 	states := map[string]SchedulerStream{
