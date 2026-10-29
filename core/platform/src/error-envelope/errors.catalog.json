@@ -823,6 +823,19 @@
       "httpStatus": 409
     },
     {
+      "code": "KB_RUNNER_STATE_INSIDE_WORKTREE",
+      "area": "runtime",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "The runner state directory is inside a Git worktree.",
+      "hint": "Choose a state directory outside every Git worktree, then run `{nextCommand}`.",
+      "templateParameters": ["nextCommand"],
+      "requiredTemplateParameters": ["nextCommand"],
+      "httpStatus": 400
+    },
+    {
       "code": "KB_HOST_CONTROL_UNAUTHORIZED",
       "area": "host",
       "stage": "run",

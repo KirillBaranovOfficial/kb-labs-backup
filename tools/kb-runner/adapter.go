@@ -45,6 +45,7 @@ const (
 
 type vendorSpec struct {
 	agent          bool
+	review         bool
 	binaryEnv      string
 	binaryDefault  string
 	childEnv       []string
@@ -59,6 +60,7 @@ var vendorRegistry = map[string]vendorSpec{
 	"claude": {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsRecorded, failures: textStreamFailureTable, usageOnFailure: usageUnknownOnFailure, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("claude", line) }},
 	"zai":    {agent: true, binaryEnv: "CLAUDE_BIN", binaryDefault: "claude", limitsMode: vendorLimitsLedger, failures: textStreamFailureTable, usageOnFailure: usageUnknownOnFailure, parser: func(line []byte) (VendorEvent, error) { return parseClaudeCodexEvent("claude", line) }},
 	"zcode":  {agent: true, binaryEnv: "ZCODE_BIN", binaryDefault: "~/Desktop/work/zcode/zcode", limitsMode: vendorLimitsLedger, failures: zcodeFailureTable, usageOnFailure: usageUnknownOnFailure, parser: parseZcodeEvent},
+	"gem":    {review: true, binaryEnv: "GEM_BIN", binaryDefault: "gem"},
 }
 
 func vendors() []string {
@@ -68,7 +70,7 @@ func vendors() []string {
 func vendorNamesFor(mode *vendorLimitsMode) []string {
 	names := make([]string, 0, len(vendorRegistry))
 	for name, spec := range vendorRegistry {
-		if mode == nil || spec.limitsMode == *mode {
+		if spec.agent && (mode == nil || spec.limitsMode == *mode) {
 			names = append(names, name)
 		}
 	}

@@ -60,6 +60,7 @@ const (
 type Config struct {
 	StateDir         string
 	Tag              string
+	RunID            string
 	LatestTag        string
 	Stall            time.Duration
 	StdoutPath       string
@@ -285,6 +286,65 @@ func ProcessIdentity(pid int) (string, bool, error) {
 	return inspectIdentity(pid)
 }
 
+// CurrentRunID returns the clikit run identity inherited by a supervised
+// process. An empty value means the process was not started under clikit.
+func CurrentRunID() string { return os.Getenv(runEnv) }
+
+// AllocateRunID creates an identity that callers can persist before dispatch.
+func AllocateRunID() (string, error) { return newID() }
+
+// RunOwnsProcess reports whether a live clikit run owns the exact worker
+// process identity. Run membership is established by the run ID, the live
+// keeper PID/start identity from the registry, and the worker PID/start
+// identity in that run's observed tree. Process-table and registry errors are
+// returned so callers can preserve an explicit unknown state.
+func RunOwnsProcess(stateDir, runID string, workerPID int, workerIdentity string) (bool, error) {
+	if runID == "" || workerPID <= 0 || workerIdentity == "" {
+		return false, errors.New("proc: run ownership requires run ID and worker PID/start identity")
+	}
+	listing := List(stateDir)
+	if listing.Error != nil {
+		return false, listing.Error
+	}
+	return runOwnsProcess(listing, runID, workerPID, workerIdentity), nil
+}
+
+// RunTagActive reports whether a nonterminal supervised run with the exact
+// tag still has its recorded keeper identity alive.
+func RunTagActive(stateDir, tag string) (bool, error) {
+	if tag == "" {
+		return false, errors.New("proc: run tag is required")
+	}
+	listing := List(stateDir)
+	if listing.Error != nil {
+		return false, listing.Error
+	}
+	return runTagActive(listing, tag), nil
+}
+
+func runTagActive(listing Listing, tag string) bool {
+	for _, run := range listing.Runs {
+		if run.RunID != "" && run.Tag == tag && run.PID > 0 && run.Identity != "" && !run.Status.Terminal() {
+			return true
+		}
+	}
+	return false
+}
+
+func runOwnsProcess(listing Listing, runID string, workerPID int, workerIdentity string) bool {
+	for _, run := range listing.Runs {
+		if run.RunID != runID || run.PID <= 0 || run.Identity == "" || run.Status.Terminal() {
+			continue
+		}
+		for _, process := range run.Tree {
+			if process.PID == workerPID && process.Identity == workerIdentity {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func ProcessExists(pid int) (bool, error) {
 	_, alive, err := ProcessIdentity(pid)
 	return alive, err
@@ -475,9 +535,12 @@ func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSou
 	if err := os.MkdirAll(liveRecordsDir(cfg.StateDir), 0o700); err != nil {
 		return nil, fmt.Errorf("proc: create state directory: %w", err)
 	}
-	runID, err := newID()
-	if err != nil {
-		return nil, fmt.Errorf("proc: create run id: %w", err)
+	runID := cfg.RunID
+	if runID == "" {
+		runID, err = newID()
+		if err != nil {
+			return nil, fmt.Errorf("proc: create run id: %w", err)
+		}
 	}
 	if _, err := runScratchPath(runID); err != nil {
 		return nil, err

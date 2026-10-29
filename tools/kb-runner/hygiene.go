@@ -100,6 +100,11 @@ func hygieneCommand(root runnerRoot, args []string, out, _ io.Writer) (status in
 		}
 		return 2, fmt.Errorf("%s hygiene sweep: %w; next: %s hygiene sweep --help", root.Name(), err, root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "hygiene sweep", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	if *worktreeRoot == "" {
 		return 2, fmt.Errorf("%s hygiene sweep: --root or KBLABS_WORKTREES_ROOT is required; next: %s hygiene sweep --root <orchestration-root> --dry-run --json", root.Name(), root.InvocationCommand())
 	}

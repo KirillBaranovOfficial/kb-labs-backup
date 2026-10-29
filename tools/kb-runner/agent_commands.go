@@ -33,6 +33,11 @@ func agentStatusCommandWithRoot(root runnerRoot, args []string, out io.Writer) (
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
+	resolvedState, err := resolveRunnerState(root, "status", *state)
+	if err != nil {
+		return 2, err
+	}
+	state = &resolvedState
 	store := newJobStore(*state)
 	jobs, err := store.List()
 	if err != nil {
@@ -163,6 +168,11 @@ func limitsRecordCommand(root runnerRoot, args []string, out io.Writer) (int, er
 	if len(fs.Args()) != 0 || *session < 0 || *weekly < 0 || *sessionResets == "" || *weeklyResets == "" {
 		return 2, fmt.Errorf("%s limits record claude: provide --session, --session-resets, --weekly, and --weekly-resets; next: %s limits record claude --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "limits record claude", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	store := newClaudeReadingStore(*state, time.Now, time.Local)
 	if err := store.Record(*session, *sessionResets, *weekly, *weeklyResets); err != nil {
 		var saveErr claudeReadingWriteError
@@ -192,6 +202,11 @@ func limitsRecordVendorGrantCommand(root runnerRoot, vendor string, args []strin
 	if len(fs.Args()) != 0 || *grant == "" {
 		return 2, fmt.Errorf("%s limits record %s: provide --grant; next: %s limits record %s --help", root.Name(), vendor, root.InvocationCommand(), vendor)
 	}
+	resolvedState, err := resolveRunnerState(root, "limits record "+vendor, *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	recorded, err := newVendorGrantStore(*state, vendor, time.Now).Record(*grant)
 	if err != nil {
 		return 1, fmt.Errorf("%s limits record %s: %w; next: %s limits record %s --help", root.Name(), vendor, err, root.InvocationCommand(), vendor)
@@ -219,6 +234,11 @@ func limitsCommandWithProviderFactory(root runnerRoot, args []string, out, errOu
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
+	resolvedState, err := resolveRunnerState(root, "limits", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	all := []VendorLimit{}
 	var captureFailures []error
 	for _, vendor := range vendors() {
@@ -336,6 +356,11 @@ func agentWaitCommand(root runnerRoot, args []string, out, errOut io.Writer) (in
 	if *any == *all || len(fs.Args()) == 0 {
 		return 2, fmt.Errorf("%s wait: choose --any or --all and name at least one job or stream; next: %s wait --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "wait", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	store := newJobStore(*state)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

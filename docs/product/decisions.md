@@ -4,6 +4,12 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-29
+
+### Auto-advance review and landing outcomes follow durable side effects
+
+A review child with no valid verdict is a decision-needed outcome for both the child and its parent, committed through one transition and one orchestrator event; recovery does not recreate an already escalated review. For auto-advance acceptance, commit-only landing must succeed before the accepted advancement and event become durable. A landing refusal is escalated without accepted status. Scheduler recovery re-derives the worker run after the atomic rework handoff from its persisted run identity, so a restarted scheduler consumes the resumed worker result. The crash matrix observes all kb-runner durable state writes through `runnerStateStore`; clikit run-record internals remain covered at the Start API boundaries because their write is owned by clikit. Case: S-237.140.
+
 ## 2026-10-23
 
 ### Built-in scenario plugins are Marketplace install specs

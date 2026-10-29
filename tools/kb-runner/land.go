@@ -29,6 +29,11 @@ func landCommand(root runnerRoot, args []string, out, _ io.Writer) (status int, 
 	if streamArg == "" || len(fs.Args()) > 0 {
 		return 2, fmt.Errorf("%s land: one stream is required; next: %s land --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "land", *statePath)
+	if err != nil {
+		return 2, fmt.Errorf("%s land: invalid runner state path: %w; next: %s land --help", root.Name(), err, root.InvocationCommand())
+	}
+	*statePath = resolvedState
 	store := newSchedulerStore(*statePath)
 	lease, err := store.acquireRunLease()
 	if err != nil {
@@ -53,7 +58,7 @@ func landCommand(root runnerRoot, args []string, out, _ io.Writer) (status int, 
 	if !gate.allowsLand() {
 		return 2, fmt.Errorf("%s land: stream %s %s; every required reviewer must ACCEPT; next: %s sched ps --state %q", root.Name(), streamArg, gate.refusal(), root.InvocationCommand(), *statePath)
 	}
-	options := schedulerRunOptions{store: store, root: root, state: *statePath}
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: root, state: *statePath})
 	landed, _, err := options.landAccepted(task, stream)
 	if err != nil {
 		return 1, err

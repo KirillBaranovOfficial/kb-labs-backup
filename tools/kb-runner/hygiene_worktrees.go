@@ -350,8 +350,13 @@ func schedulerActiveWorktrees(state string, streams map[string]SchedulerStream) 
 }
 
 func streamIsLive(stream, path string, states map[string]SchedulerStream, activeWorktrees []string, processes []processInfo) (bool, error) {
-	if state, exists := states[stream]; exists && (state.State == SchedulerReady || state.State == SchedulerRunning) {
-		return true, nil
+	if state, exists := states[stream]; exists {
+		if state.State == SchedulerReady || state.State == SchedulerRunning {
+			return true, nil
+		}
+		if state.Advance != nil && state.Advance.State != AdvanceAccepted && state.Advance.State != AdvanceEscalated {
+			return true, nil
+		}
 	}
 	for _, active := range activeWorktrees {
 		if active == path || withinRoot(path, active) {

@@ -39,6 +39,14 @@ type goPackage struct {
 	Dir        string
 }
 
+func parseOutsideSuiteSpec(specification string) (string, string, error) {
+	module, packages, ok := strings.Cut(specification, ":")
+	if !ok || module == "" || packages == "" || strings.ContainsAny(module, "/\\\x00") || strings.ContainsAny(packages, "\x00") {
+		return "", "", fmt.Errorf("outside suite %q must use module:packages", specification)
+	}
+	return module, packages, nil
+}
+
 func verifyCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
 	if len(args) == 0 || args[0] != "outside" {
 		return 2, fmt.Errorf("%s verify: usage: %s verify outside <worktree> [module:pkgs…] [--json]; next: %s --help", root.Name(), root.Name(), root.InvocationCommand())
@@ -97,9 +105,9 @@ func verifyCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, 
 	}
 	result := verifyOutsideResult{Worktree: worktree, Modules: make([]verifyOutsideModuleResult, 0, len(modules))}
 	for _, specification := range modules {
-		module, packages, ok := strings.Cut(specification, ":")
-		if !ok || module == "" || packages == "" || strings.ContainsAny(module, "/\\\x00") {
-			return 2, fmt.Errorf("%s verify outside: module %q must be module:pkgs; next: %s verify --help", root.Name(), specification, root.InvocationCommand())
+		module, packages, err := parseOutsideSuiteSpec(specification)
+		if err != nil {
+			return 2, fmt.Errorf("%s verify outside: %w; next: %s verify --help", root.Name(), err, root.InvocationCommand())
 		}
 		moduleDir := filepath.Join(worktree, "tools", module)
 		if err := verifyOutsideModule(moduleDir, packages, filepath.Join(logsDir, name+".outside."+strings.ReplaceAll(module, "/", "-")+".jsonl"), &result.Modules); err != nil {
