@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CALIBRATED_TASK_FOOTPRINT_BYTES, deriveBuildLimits, sampleRunnerResources } from './remote-build-resources.mjs';
+import { CALIBRATED_TASK_FOOTPRINT_BYTES, deriveBuildLimits, measureBuildLimits, sampleRunnerResources } from './remote-build-resources.mjs';
 
 // case: S-262.7
 test('build concurrency derives from runner capacity without a per-process heap ceiling', () => {
   const limits = deriveBuildLimits({
     cpuCount: 4,
-    memTotalBytes: 16 * 1024 ** 3,
-    memAvailableBytes: 12 * 1024 ** 3,
+    totalBytes: 16 * 1024 ** 3,
+    availableBytes: 12 * 1024 ** 3,
     expectedTaskFootprintBytes: CALIBRATED_TASK_FOOTPRINT_BYTES,
   });
   assert.deepEqual(limits, {
@@ -19,10 +19,21 @@ test('build concurrency derives from runner capacity without a per-process heap 
   assert.equal('nodeHeapMb' in limits, false);
   assert.equal(deriveBuildLimits({
     cpuCount: 2,
-    memTotalBytes: 4 * 1024 ** 3,
-    memAvailableBytes: 3 * 1024 ** 3,
+    totalBytes: 4 * 1024 ** 3,
+    availableBytes: 3 * 1024 ** 3,
     expectedTaskFootprintBytes: CALIBRATED_TASK_FOOTPRINT_BYTES,
   }).concurrency, 1);
+});
+
+// case: S-262.7
+test('production capacity composition measures real-format meminfo and returns positive limits', () => {
+  const limits = measureBuildLimits({
+    readCpuCount: () => 4,
+    readMeminfo: () => 'MemTotal:       16777216 kB\nMemFree: 100000 kB\nMemAvailable:   12582912 kB\n',
+  });
+  assert.equal(limits.cpuCount, 4);
+  assert.ok(limits.memoryBudgetBytes > 0);
+  assert.ok(limits.concurrency > 0);
 });
 
 // case: S-262.7
@@ -166,7 +177,7 @@ test('capacity measurement preserves missing meminfo, invalid MemTotal, and CPU 
     /Runner MemTotal must be a positive integer/,
   );
   assert.throws(
-    () => deriveBuildLimits({ cpuCount: 0, memTotalBytes: 1024, memAvailableBytes: 512 }),
+    () => deriveBuildLimits({ cpuCount: 0, totalBytes: 1024, availableBytes: 512 }),
     /Runner CPU count must be a positive integer/,
   );
 });

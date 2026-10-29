@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { RemoteOperationError, runRemoteVerification } from './remote-verify-core.mjs';
 
 const sha = 'a'.repeat(40);
-const pass = { schemaVersion: 1, sha, status: 'pass', jobs: [{ name: 'build', status: 'pass', failures: [], logTail: '' }] };
-const run = (overrides = {}) => ({ id: 17, event: 'push', head_branch: 'verify/stream/20261025T120000Z-' + sha, head_sha: sha, path: '.github/workflows/remote-verify.yml', status: 'completed', conclusion: 'success', ...overrides });
+const pass = { schemaVersion: 1, sha, profile: 'stream', status: 'pass', jobs: [{ name: 'build', status: 'pass', failures: [], logTail: '' }] };
+const run = (overrides = {}) => { const head_branch = overrides.head_branch ?? 'verify/stream/20261025T120000Z-' + sha; return { id: 17, event: 'push', head_branch, head_sha: sha, path: '.github/workflows/remote-verify.yml', display_title: `Remote agent verification (stream) for ${head_branch}`, status: 'completed', conclusion: 'success', ...overrides }; };
 
 function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteRef = async () => {}, resolveRef = async () => sha, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '' } = {}) {
   let time = 0;
@@ -13,6 +13,7 @@ function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteR
   const recordGitRemote = () => calls.remoteTimes.push(time);
   const gh = {
     listRuns: async (...args) => { recordGh(); calls.lists += 1; return listRuns ? listRuns(...args) : [run({ head_branch: args[1] })]; },
+    dispatchRun: async () => { recordGh(); },
     getRun: async (...args) => { recordGh(); calls.gets += 1; return getRun ? getRun(...args) : run(); },
     downloadVerdict: async (...args) => { recordGh(); calls.artifacts += 1; return downloadVerdict(...args); },
     failureJobs: async (...args) => { recordGh(); return failureJobs(...args); },
@@ -43,6 +44,23 @@ test('a transient GitHub poll failure retries and the recovered run can pass', a
   assert.equal(h.calls.lists, 2);
   assert.equal(h.calls.pushes.length, 1);
   assertMinimumRemoteSpacing(h.calls.remoteTimes);
+});
+
+// case: S-262.7
+test('candidate requests one dispatch run on its isolated ref and records the profile', async () => {
+  const candidateRun = (branch) => run({ event: 'workflow_dispatch', head_branch: branch, display_title: `Remote agent verification (candidate) for ${branch}` });
+  let dispatched = 0;
+  const h = harness({
+    downloadVerdict: async () => ({ ...pass, profile: 'candidate' }),
+    listRuns: async (_repo, branch, event) => { assert.equal(event, 'workflow_dispatch'); return [candidateRun(branch)]; },
+  });
+  h.executors.gh.dispatchRun = async (_repo, ref, profile) => { dispatched += 1; assert.match(ref, /^verify-candidate\//); assert.equal(profile, 'candidate'); };
+  const verdict = await runRemoteVerification({ stream: 'release', profile: 'candidate', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'pass');
+  assert.equal(verdict.profile, 'candidate');
+  assert.equal(dispatched, 1);
+  assert.equal(h.calls.pushes.length, 1);
+  assert.equal(h.calls.deletes.length, 1);
 });
 
 test('persistent GitHub failures exhaust the outage budget and classify as outage', async () => {
