@@ -88,9 +88,6 @@ func sweepWorktrees(options hygieneOptions, report *hygieneReport) error {
 		if err := reportSnapshotObservations(root, snapshot, report); err != nil {
 			return err
 		}
-		if len(snapshot.UnreadableOwned) > 0 {
-			return nil
-		}
 	}
 	for _, candidate := range candidates {
 		if options.Context != nil {
@@ -125,7 +122,7 @@ func reportSnapshotObservations(root string, snapshot livenessSnapshot, report *
 		if cause == "" {
 			cause = "argv was not verified"
 		}
-		if err := appendHygieneAction(report, hygieneAction{Rule: "worktree", Path: root, Action: "alert", Cause: fmt.Sprintf("same-uid process pid=%d command=%q cwd=%q is unreadable (%s); worktree removals skipped this round", process.pid, process.command, process.cwd, cause)}); err != nil {
+		if err := appendHygieneAction(report, hygieneAction{Rule: "worktree", Path: root, Action: "alert", Cause: fmt.Sprintf("same-uid process pid=%d command=%q cwd=%q is unreadable (%s); candidate checks require a verified path or runner lease", process.pid, process.command, process.cwd, cause)}); err != nil {
 			return err
 		}
 	}
@@ -151,10 +148,8 @@ func sweepWorktreeCandidate(options hygieneOptions, root, integration string, ca
 	if err := reportSnapshotObservations(root, snapshot, report); err != nil {
 		return err
 	}
-	if len(snapshot.UnreadableOwned) > 0 {
-		return errWorktreeRuleUnsafe
-	}
-	live, err := streamIsLive(streamName, path, states, active, snapshot.Processes)
+	processes := append(snapshot.Processes, snapshot.UnreadableOwned...)
+	live, err := streamIsLive(streamName, path, states, active, processes)
 	if err != nil {
 		return err
 	}
@@ -364,11 +359,17 @@ func streamIsLive(stream, path string, states map[string]SchedulerStream, active
 		}
 	}
 	for _, process := range processes {
+		if process.unverified || process.observationError != "" {
+			continue
+		}
 		if process.cwd == path || withinRoot(path, process.cwd) {
 			return true, nil
 		}
 		for _, arg := range strings.Split(process.argv, "\x00") {
 			candidate := arg
+			if process.cwdError != "" && !filepath.IsAbs(candidate) {
+				continue
+			}
 			if !filepath.IsAbs(candidate) {
 				candidate = filepath.Join(process.cwd, candidate)
 			}

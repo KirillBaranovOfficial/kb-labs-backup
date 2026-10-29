@@ -1662,6 +1662,30 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 		}
 		clock.Wait(cleanupPoll)
 	}
+	// The deadline bounds discovery and polling. Give already-attributed targets
+	// one final identity check and escalation; never discover or signal new PIDs here.
+	for key, firstSignal := range termSent {
+		if killSent[key] || clock.Now().Sub(firstSignal) < termGrace {
+			continue
+		}
+		process, exists := targets[key]
+		if !exists || process.Unverified {
+			continue
+		}
+		identity, alive, identityErr := source.Identity(process.PID)
+		if identityErr != nil {
+			recordFailure(fmt.Errorf("verify process %d before final SIGKILL: %w", process.PID, identityErr))
+			continue
+		}
+		if !alive || identity != process.Identity {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "proc: teardown signal pid=%d identity=%q signal=SIGKILL attribution=accepted:recorded-pid-start-identity\n", process.PID, process.Identity)
+		if signalErr := source.Signal(process.PID, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+			recordFailure(fmt.Errorf("send final SIGKILL to process %d: %w", process.PID, signalErr))
+		}
+		killSent[key] = true
+	}
 	for _, process := range targets {
 		if process.Unverified {
 			result.Unverified = append(result.Unverified, process)
