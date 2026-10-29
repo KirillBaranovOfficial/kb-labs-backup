@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -54,6 +55,9 @@ func TestLauncherExitTerminatesItsSpawnedRun(t *testing.T) {
 	command := exec.Command(runner, "run", "--tag", "launcher-owned", "--state", state,
 		"--stall", "1h", "--stdout", filepath.Join(state, "out"), "--stderr", filepath.Join(state, "err"),
 		"--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", childPIDFile)
+	var launcherOutput lockedTestBuffer
+	command.Stdout = &launcherOutput
+	command.Stderr = &launcherOutput
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +114,16 @@ func TestLauncherExitTerminatesItsSpawnedRun(t *testing.T) {
 	if childPID == 0 || childIdentity == "" {
 		t.Fatalf("launcher did not start a verifiable child: pid=%d identity=%q", childPID, childIdentity)
 	}
+	var recordObservationError string
+	if !waitUntil(5*time.Second, func() bool {
+		observed, err := runRecordContainsProcess(state, childPID, childIdentity)
+		if err != nil {
+			recordObservationError = err.Error()
+		}
+		return observed
+	}) {
+		t.Fatalf("keeper did not record launcher-owned child before launcher termination: %s; %s", recordObservationError, processTestDiagnostic(t, childPID, state, launcherOutput.String()))
+	}
 	if err := command.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +138,35 @@ func TestLauncherExitTerminatesItsSpawnedRun(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("launcher-owned child %d survived launcher termination", childPID)
+	t.Fatalf("launcher-owned child survived launcher termination: %s", processTestDiagnostic(t, childPID, state, launcherOutput.String()))
+}
+
+func runRecordContainsProcess(stateDir string, pid int, identity string) (bool, error) {
+	paths, err := filepath.Glob(filepath.Join(stateDir, "runs", "*.json"))
+	if err != nil {
+		return false, fmt.Errorf("find run records: %w", err)
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false, fmt.Errorf("read run record %s: %w", path, err)
+		}
+		var record struct {
+			Observed []struct {
+				PID      int    `json:"pid"`
+				Identity string `json:"identity"`
+			} `json:"observed"`
+		}
+		if err := json.Unmarshal(data, &record); err != nil {
+			return false, fmt.Errorf("decode run record %s: %w", path, err)
+		}
+		for _, process := range record.Observed {
+			if process.PID == pid && process.Identity == identity {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // case: S-237.1
@@ -742,11 +784,11 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 		logRawTeardownFieldSizes(t, events)
 		for pid, identity := range started {
 			current, alive := identityForTest(t, pid)
-			t.Logf("supervisor post-SIGKILL identity pid=%d expected=%s current=%s state=%s alive=%t same_identity=%t", pid, identity, current, processStateForTest(pid), alive, alive && current == identity)
+			t.Logf("supervisor post-SIGKILL identity expected=%s current=%s alive=%t %s", identity, current, alive, processTestDiagnostic(t, pid, state, stderr.String()))
 		}
 		for _, process := range owned {
 			current, alive := identityForTest(t, process.PID)
-			t.Logf("supervisor post-SIGKILL owned pid=%d expected=%s current=%s state=%s alive=%t same_identity=%t", process.PID, process.Identity, current, processStateForTest(process.PID), alive, alive && current == process.Identity)
+			t.Logf("supervisor post-SIGKILL owned expected=%s current=%s alive=%t %s", process.Identity, current, alive, processTestDiagnostic(t, process.PID, state, stderr.String()))
 		}
 		t.Fatalf("recorded process identities survived supervisor SIGKILL; descendant_pid=%d sleep_pid=%d started=%v; stderr: %s",
 			descendant, sleepPID, started, stderr.String())
@@ -1673,23 +1715,66 @@ func identityForTest(t testing.TB, pid int) (string, bool) {
 	return identity, alive
 }
 
-func processStateForTest(pid int) string {
-	if runtime.GOOS != "linux" {
-		return "not exposed by darwin process table"
+type lockedTestBuffer struct {
+	mu sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (writer *lockedTestBuffer) Write(data []byte) (int, error) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.buffer.Write(data)
+}
+
+func (writer *lockedTestBuffer) String() string {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.buffer.String()
+}
+
+func processTestDiagnostic(t testing.TB, pid int, stateDir, processOutput string) string {
+	t.Helper()
+	details := fmt.Sprintf("pid=%d", pid)
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+		if err != nil {
+			details += " proc_stat=" + err.Error()
+		} else {
+			close := strings.LastIndexByte(string(data), ')')
+			fields := strings.Fields(string(data[close+1:]))
+			if close < 0 || len(fields) <= 19 || len(fields[0]) != 1 {
+				details += " proc_stat=malformed"
+			} else {
+				details += fmt.Sprintf(" state=%s ppid=%s pgid=%s sid=%s start_ticks=%s", fields[0], fields[1], fields[2], fields[3], fields[19])
+			}
+		}
+	} else {
+		details += " state/ppid/pgid/sid=not exposed by darwin process table"
 	}
-	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
-	if err != nil {
-		return "unreadable: " + err.Error()
+	var targets []string
+	for _, line := range strings.Split(processOutput, "\n") {
+		if strings.Contains(line, "teardown signal") && strings.Contains(line, fmt.Sprintf("pid=%d ", pid)) {
+			targets = append(targets, "process-output:"+line)
+		}
 	}
-	close := strings.LastIndexByte(string(data), ')')
-	if close < 0 {
-		return "malformed"
+	for _, name := range []string{"err", "events.jsonl"} {
+		path := filepath.Join(stateDir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, strconv.Itoa(pid)) {
+				targets = append(targets, name+":"+line)
+			}
+		}
 	}
-	fields := strings.Fields(string(data[close+1:]))
-	if len(fields) == 0 || len(fields[0]) != 1 {
-		return "malformed"
+	if len(targets) == 0 {
+		details += " teardown_target=not-recorded-in-run-logs"
+	} else {
+		details += " teardown_target=" + strings.Join(targets, " | ")
 	}
-	return fields[0]
+	return details
 }
 
 func processExists(t testing.TB, pid int) bool {
