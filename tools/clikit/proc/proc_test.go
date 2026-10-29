@@ -742,11 +742,11 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 		logRawTeardownFieldSizes(t, events)
 		for pid, identity := range started {
 			current, alive := identityForTest(t, pid)
-			t.Logf("supervisor post-SIGKILL identity pid=%d expected=%s current=%s alive=%t same_identity=%t", pid, identity, current, alive, alive && current == identity)
+			t.Logf("supervisor post-SIGKILL identity pid=%d expected=%s current=%s state=%s alive=%t same_identity=%t", pid, identity, current, processStateForTest(pid), alive, alive && current == identity)
 		}
 		for _, process := range owned {
 			current, alive := identityForTest(t, process.PID)
-			t.Logf("supervisor post-SIGKILL owned pid=%d expected=%s current=%s alive=%t same_identity=%t", process.PID, process.Identity, current, alive, alive && current == process.Identity)
+			t.Logf("supervisor post-SIGKILL owned pid=%d expected=%s current=%s state=%s alive=%t same_identity=%t", process.PID, process.Identity, current, processStateForTest(process.PID), alive, alive && current == process.Identity)
 		}
 		t.Fatalf("recorded process identities survived supervisor SIGKILL; descendant_pid=%d sleep_pid=%d started=%v; stderr: %s",
 			descendant, sleepPID, started, stderr.String())
@@ -1671,6 +1671,25 @@ func identityForTest(t testing.TB, pid int) (string, bool) {
 		return "", false
 	}
 	return identity, alive
+}
+
+func processStateForTest(pid int) string {
+	if runtime.GOOS != "linux" {
+		return "not exposed by darwin process table"
+	}
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "unreadable: " + err.Error()
+	}
+	close := strings.LastIndexByte(string(data), ')')
+	if close < 0 {
+		return "malformed"
+	}
+	fields := strings.Fields(string(data[close+1:]))
+	if len(fields) == 0 || len(fields[0]) != 1 {
+		return "malformed"
+	}
+	return fields[0]
 }
 
 func processExists(t testing.TB, pid int) bool {

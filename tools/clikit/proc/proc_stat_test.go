@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+func TestLinuxProcessStatesTreatZombieAndDeadAsNotLive(t *testing.T) {
+	for _, test := range []struct {
+		state byte
+		want  bool
+	}{{'R', true}, {'S', true}, {'Z', false}, {'X', false}} {
+		if got := processStateIsLive(test.state); got != test.want {
+			t.Errorf("state %q live=%t, want %t", test.state, got, test.want)
+		}
+	}
+}
+
 func TestParseProcStatUsesFinalCommDelimiter(t *testing.T) {
 	data := "42 (name ) (with ) delimiters) S 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 987654 4096 42\n"
 	got, err := parseProcStat(data)

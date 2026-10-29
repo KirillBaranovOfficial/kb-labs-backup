@@ -1114,7 +1114,7 @@ func (*persistentMarkerProcessSource) Snapshot(string) ([]Process, error) {
 }
 
 func TestCleanupEscalatesPreviouslySignalledIdentityAtDeadline(t *testing.T) {
-	clock := &advancingCleanupClock{start: time.Unix(250, 0), now: time.Unix(250, 0)}
+	clock := &deadlineAfterTermClock{start: time.Unix(250, 0), now: time.Unix(250, 0)}
 	source := &deadlineAfterTermSource{clock: clock}
 	cleanup := cleanupTreeWithClock(100, "outer-run", nil, source, clock)
 	if !reflect.DeepEqual(source.signals, []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}) {
@@ -1126,14 +1126,21 @@ func TestCleanupEscalatesPreviouslySignalledIdentityAtDeadline(t *testing.T) {
 }
 
 type deadlineAfterTermSource struct {
-	clock     *advancingCleanupClock
+	clock     *deadlineAfterTermClock
 	snapshots int
 	signals   []syscall.Signal
 }
 
+type deadlineAfterTermClock struct{ start, now time.Time }
+
+func (clock *deadlineAfterTermClock) Now() time.Time     { return clock.now }
+func (clock *deadlineAfterTermClock) Wait(time.Duration) { clock.now = clock.start.Add(cleanupBound) }
+
 func (source *deadlineAfterTermSource) Snapshot(string) ([]Process, error) {
 	source.snapshots++
-	if source.snapshots == 2 {
+	if source.snapshots == 1 {
+		source.clock.now = source.clock.start.Add(cleanupBound - 100*time.Millisecond)
+	} else if source.snapshots == 2 {
 		source.clock.now = source.clock.start.Add(cleanupBound)
 	}
 	return []Process{{PID: 102, PPID: 1, Identity: "marker-start", runMarker: true, markerResult: "match"}}, nil
