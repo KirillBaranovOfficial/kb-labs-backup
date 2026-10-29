@@ -3,6 +3,7 @@
 package proc
 
 import (
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -29,5 +30,32 @@ func TestKeeperDispatchMarkerNeverReachesSupervisedEnvironment(t *testing.T) {
 				t.Fatalf("keeper dispatch marker leaked into supervised environment: %q", got)
 			}
 		}
+	}
+}
+
+// case: S-237.146
+func TestConfigureCommandHonorsExplicitCommandTempDir(t *testing.T) {
+	stateDir := t.TempDir()
+	runScratch := t.TempDir()
+	commandTempDir := t.TempDir()
+	config := Config{CommandTempDir: commandTempDir}
+	command := exec.Command("/bin/true")
+	if err := configureCommand(command, "tempdir-run", stateDir, runScratch, config.CommandTempDir); err != nil {
+		t.Fatalf("configure command environment: %v", err)
+	}
+	environment := make(map[string]string)
+	for _, item := range command.Env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			environment[key] = value
+		}
+	}
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		if environment[name] != commandTempDir {
+			t.Fatalf("%s = %q, want configured command temp dir %q", name, environment[name], commandTempDir)
+		}
+	}
+	if environment["KB_RUNNER_SCRATCH"] != runScratch {
+		t.Fatalf("KB_RUNNER_SCRATCH = %q, want proc run scratch %q", environment["KB_RUNNER_SCRATCH"], runScratch)
 	}
 }

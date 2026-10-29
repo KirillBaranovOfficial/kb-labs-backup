@@ -26,11 +26,17 @@ import (
 )
 
 var testIsolatedHome string
+var testRunnerHome string
 
 func TestMain(m *testing.M) {
 	// Every package test and every runner subprocess inherits an isolated home
 	// and explicit fake vendor executables. Provider discovery can never fall
 	// through to the lead's installed binaries or credentials.
+	testRunnerHome = os.Getenv("HOME")
+	if testRunnerHome == "" {
+		fmt.Fprintln(os.Stderr, "HOME is required to resolve the runner Go module cache")
+		os.Exit(2)
+	}
 	home, err := os.MkdirTemp("", "kb-runner-tests-home-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -92,6 +98,14 @@ func TestMain(m *testing.M) {
 		}
 	}
 	os.Exit(code)
+}
+
+func setTestRunnerHome(t *testing.T) {
+	t.Helper()
+	if testRunnerHome == "" {
+		t.Fatal("real runner HOME was not captured by TestMain")
+	}
+	t.Setenv("HOME", testRunnerHome)
 }
 
 func setTestEnv(key, value string) {

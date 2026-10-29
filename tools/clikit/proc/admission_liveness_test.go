@@ -191,6 +191,64 @@ func TestCancellingProductionQueuedAdmissionWritesTerminalTeardown(t *testing.T)
 	}
 }
 
+// case: S-237.144
+func TestCancelledQueuedAdmissionReturnsTypedWaitReason(t *testing.T) {
+	state := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	const tag = "agent:typed-admission-cancel"
+	go func() {
+		defer close(finished)
+		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{StateDir: state, Tag: tag, Stall: time.Hour,
+			StdoutPath: filepath.Join(state, "out"), StderrPath: filepath.Join(state, "err"),
+			MinFree: math.MaxUint64, Command: []string{"/bin/sleep", "30"},
+		}, stableHostResourceSource{})
+		done <- err
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(testdeadline.Budget(t)):
+			t.Errorf("queued admission did not return after cancellation")
+		}
+	})
+
+	var eventReason string
+	deadline := time.Now().Add(testdeadline.Budget(t))
+	for time.Now().Before(deadline) {
+		for _, event := range readAdmissionEvents(t, state) {
+			if event.Tag == tag && event.Reason != "" && (event.Type == proc.EventQueued || event.Type == proc.EventBlocked) {
+				eventReason = event.Reason
+			}
+		}
+		if eventReason != "" {
+			break
+		}
+		select {
+		case startErr := <-done:
+			t.Fatalf("admission returned before a queued reason was recorded: %v", startErr)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if eventReason == "" {
+		t.Fatal("production admission did not record a queued decision reason")
+	}
+	cancel()
+	err := <-done
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled admission error = %v, want context cancellation", err)
+	}
+	var admissionErr *proc.AdmissionCanceledError
+	if !errors.As(err, &admissionErr) {
+		t.Fatalf("cancelled admission error type = %T, want *proc.AdmissionCanceledError", err)
+	}
+	if admissionErr.WaitReason != eventReason {
+		t.Fatalf("typed wait reason = %q, queued event reason = %q", admissionErr.WaitReason, eventReason)
+	}
+}
+
 func readAdmissionEvents(t *testing.T, state string) []proc.Event {
 	t.Helper()
 	var output bytes.Buffer
