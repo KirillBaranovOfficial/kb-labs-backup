@@ -129,6 +129,7 @@ test('workflow base-ref wiring selects real workspace packages without origin/HE
       assert.deepEqual(parseAffectedSelection(JSON.stringify(selection), profile), {
         packages: selection.data.packages,
         changedPathCount: selection.data.changedPathCount,
+        selectionReason: selection.data.selectionReason,
       });
       assert.equal(selection.selectedPackageCount, selection.data.packages.length);
       assert.ok(selection.data.changedPathCount > 0, `${profile} workflow inputs produced an empty diff: ${result.stdout}`);

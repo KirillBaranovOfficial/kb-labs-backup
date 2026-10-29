@@ -64,7 +64,7 @@ test('rejects unsuccessful or malformed affected-package output instead of widen
 // case: S-262.7
 test('rejects zero packages for a non-empty stream diff and for every candidate selection', () => {
   const emptyChangedStream = JSON.stringify({ ok: true, data: { packages: [], changedPathCount: 0 } });
-  assert.deepEqual(parseAffectedSelection(emptyChangedStream, 'stream'), { packages: [], changedPathCount: 0 });
+  assert.deepEqual(parseAffectedSelection(emptyChangedStream, 'stream'), { packages: [], changedPathCount: 0, selectionReason: '' });
   assert.throws(
     () => parseAffectedSelection(JSON.stringify({ ok: true, data: { packages: [], changedPathCount: 3 } }), 'stream'),
     /KB_REMOTE_EMPTY_SELECTION/,
@@ -73,4 +73,17 @@ test('rejects zero packages for a non-empty stream diff and for every candidate 
     () => parseAffectedSelection(emptyChangedStream, 'candidate'),
     /KB_REMOTE_EMPTY_SELECTION/,
   );
+});
+
+// case: S-262.7
+test('carries the kb-devkit full-selection reason into prepare plan evidence', () => {
+  const selection = JSON.stringify({
+    ok: true,
+    data: { packages: ['@kb-labs/core', '@kb-labs/cli'], changedPathCount: 2, selectionReason: 'full: unowned path tsconfig.base.json' },
+  });
+  assert.deepEqual(parseAffectedSelection(selection, 'stream'), {
+    packages: ['@kb-labs/core', '@kb-labs/cli'],
+    changedPathCount: 2,
+    selectionReason: 'full: unowned path tsconfig.base.json',
+  });
 });

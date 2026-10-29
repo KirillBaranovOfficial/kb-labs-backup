@@ -296,8 +296,8 @@ func TestAffectedBuildSelectsChangedInputsAfterMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AffectedPackages: %v", err)
 	}
-	if len(changed) != 0 {
-		t.Fatalf("committed merge has Git-diff packages %v, want none", packageNames(changed))
+	if len(changed.Packages) != 0 {
+		t.Fatalf("committed merge has Git-diff packages %v, want none", packageNames(changed.Packages))
 	}
 	selected, err := AffectedRunPackages(ws, cfg, []string{"build"}, cacheRoot, false)
 	if err != nil {
@@ -308,7 +308,7 @@ func TestAffectedBuildSelectsChangedInputsAfterMerge(t *testing.T) {
 	sort.Strings(got)
 	sort.Strings(want)
 	if len(got) != len(want) || strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("--affected selected %v (git changes %v), want %v", got, packageNames(changed), want)
+		t.Fatalf("--affected selected %v (git changes %v), want %v", got, packageNames(changed.Packages), want)
 	}
 	completed, err := Run(ws, cfg, RunOptions{Tasks: []string{"build"}, WSRoot: root, CacheRoot: cacheRoot, Concurrency: 1})
 	if err != nil || !completed.OK {
@@ -329,8 +329,8 @@ func TestAffectedBuildSelectsChangedInputsAfterMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AffectedRunPackages after README change: %v", err)
 	}
-	if len(diffOnly) == 0 || len(diffOnlySelection) != len(diffOnly) || len(unchangedInputs) != 0 {
-		t.Fatalf("Git diff = %v, diff-only selection = %v, input-hash selection = %v; want a selected Git diff and empty input-hash selection", packageNames(diffOnly), packageNames(diffOnlySelection), packageNames(unchangedInputs))
+	if len(diffOnly.Packages) == 0 || len(diffOnlySelection) != len(diffOnly.Packages) || len(unchangedInputs) != 0 {
+		t.Fatalf("Git diff = %v, diff-only selection = %v, input-hash selection = %v; want a selected Git diff and empty input-hash selection", packageNames(diffOnly.Packages), packageNames(diffOnlySelection), packageNames(unchangedInputs))
 	}
 }
 

@@ -76,6 +76,15 @@ test('aggregates the prepare stage and fails with its named cause', () => {
 });
 
 // case: S-262.7
+test('selection reason is preserved in prepare verdict evidence', () => {
+  const prepare = { ...passingPrepare(), selectionReason: 'full: unowned path tsconfig.base.json' };
+  const verdict = aggregateVerdict({
+    sha: 'f'.repeat(40), prepare, build: undefined, matrix: { include: [] }, results: [], selectedPackageCount: 41,
+  });
+  assert.equal(verdict.jobs[0].selectionReason, 'full: unowned path tsconfig.base.json');
+});
+
+// case: S-262.7
 test('missing build result after runner shutdown retains the last persisted resource sample', () => {
   const sample = {
     sampledAt: '2026-10-26T23:51:45.000Z',

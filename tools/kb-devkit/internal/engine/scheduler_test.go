@@ -146,6 +146,51 @@ func TestBuildPkgDepMapKeepsLegitDeps(t *testing.T) {
 	}
 }
 
+func TestAffectedPackagesSelectsFullGraphForUnownedPaths(t *testing.T) {
+	root := t.TempDir()
+	writeRootWorkspace(t, root)
+	core := newPkg(t, root, "packages/core", "@fixture/core", `{"name":"@fixture/core"}`)
+	app := newPkg(t, root, "apps/app", "@fixture/app", `{"name":"@fixture/app","dependencies":{"@fixture/core":"workspace:*"}}`)
+	cfg := &config.DevkitConfig{
+		Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{Name: "packages", Category: config.CategoryConfig{Match: []string{"packages/*", "apps/*"}, Preset: "node-lib"}}}},
+		Tasks:     map[string]config.TaskConfig{"build": {{Command: "echo build"}}},
+	}
+	ws, err := workspace.New(root, cfg)
+	if err != nil {
+		t.Fatalf("workspace.New error: %v", err)
+	}
+	t.Run("mixed package and root configuration", func(t *testing.T) {
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(core.Dir, "src", "index.ts"), filepath.Join(root, "tsconfig.base.json")})
+		if err != nil {
+			t.Fatalf("AffectedPackages error: %v", err)
+		}
+		if len(selection.Packages) != len(ws.Packages) || selection.Reason != "full: unowned path tsconfig.base.json" {
+			t.Fatalf("selection = (%v, %q), want full graph and root-path reason", packageNames(selection.Packages), selection.Reason)
+		}
+	})
+
+	t.Run("root only", func(t *testing.T) {
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(root, "pnpm-workspace.yaml")})
+		if err != nil {
+			t.Fatalf("AffectedPackages error: %v", err)
+		}
+		if len(selection.Packages) != len(ws.Packages) || selection.Reason != "full: unowned path pnpm-workspace.yaml" {
+			t.Fatalf("selection = (%v, %q), want full graph and root-path reason", packageNames(selection.Packages), selection.Reason)
+		}
+	})
+
+	t.Run("package only", func(t *testing.T) {
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(core.Dir, "src", "index.ts")})
+		if err != nil {
+			t.Fatalf("AffectedPackages error: %v", err)
+		}
+		if len(selection.Packages) != 2 || selection.Reason != "" {
+			t.Fatalf("selection = (%v, %q), want changed package and dependent without full-selection reason", packageNames(selection.Packages), selection.Reason)
+		}
+	})
+	_ = app
+}
+
 // case: S-179.37
 func TestBuildDAGRejectsWorkspaceBuildDependencyWithoutTaskNode(t *testing.T) {
 	root := t.TempDir()

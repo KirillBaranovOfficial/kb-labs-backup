@@ -7,6 +7,7 @@ test('build concurrency derives from runner capacity without a per-process heap 
   const limits = deriveBuildLimits({
     cpuCount: 4,
     memTotalBytes: 16 * 1024 ** 3,
+    memAvailableBytes: 12 * 1024 ** 3,
     expectedTaskFootprintBytes: CALIBRATED_TASK_FOOTPRINT_BYTES,
   });
   assert.deepEqual(limits, {
@@ -19,6 +20,7 @@ test('build concurrency derives from runner capacity without a per-process heap 
   assert.equal(deriveBuildLimits({
     cpuCount: 2,
     memTotalBytes: 4 * 1024 ** 3,
+    memAvailableBytes: 3 * 1024 ** 3,
     expectedTaskFootprintBytes: CALIBRATED_TASK_FOOTPRINT_BYTES,
   }).concurrency, 1);
 });
@@ -108,4 +110,63 @@ test('build fails visibly when its required resource sampler cannot produce evid
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
+});
+
+// case: S-262.7
+test('capacity measurement failure is written as a failed partial build with its typed cause', async () => {
+  const { runStage } = await import('./remote-verify-stage.mjs');
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-build-measurement-failure-'));
+  const resultPath = path.join(temporaryRoot, 'stage.json');
+  let commandRan = false;
+  try {
+    const result = await runStage({
+      stage: 'workspace-build', packages: ['@fixture/a'], selectedPackageCount: 1,
+      partialResultPath: resultPath,
+      measureBuildLimits: () => {
+        const partial = JSON.parse(readFileSync(resultPath, 'utf8'));
+        assert.equal(partial.status, 'running');
+        throw new Error('Runner MemAvailable must be a positive integer.');
+      },
+      runCommand: async () => { commandRan = true; return { status: 0, stdout: 'built', stderr: '' }; },
+    });
+    assert.equal(commandRan, false);
+    assert.equal(result.status, 'fail');
+    assert.deepEqual(result.failures, ['build capacity measurement failed: Runner MemAvailable must be a positive integer.']);
+    assert.deepEqual(JSON.parse(readFileSync(resultPath, 'utf8')), result);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+// case: S-262.7
+test('zero MemAvailable is rejected by the capacity measurement parser', async () => {
+  const { readRunnerMemory } = await import('./remote-build-resources.mjs');
+  assert.throws(
+    () => readRunnerMemory(() => 'MemTotal: 16777216 kB\nMemAvailable: 0 kB\n'),
+    /MemAvailable must be a positive integer/,
+  );
+});
+
+// case: S-262.7
+test('capacity measurement preserves missing meminfo, invalid MemTotal, and CPU causes', async () => {
+  const { deriveBuildLimits, readRunnerMemory } = await import('./remote-build-resources.mjs');
+  assert.throws(
+    () => readRunnerMemory(() => { throw new Error('fixture has no /proc/meminfo'); }),
+    /Could not read Linux \/proc\/meminfo: fixture has no \/proc\/meminfo/,
+  );
+  assert.throws(
+    () => readRunnerMemory(() => 'MemAvailable: 100 kB\n'),
+    /missing a valid MemTotal value/,
+  );
+  assert.throws(
+    () => readRunnerMemory(() => 'MemTotal: 0 kB\nMemAvailable: 100 kB\n'),
+    /Runner MemTotal must be a positive integer/,
+  );
+  assert.throws(
+    () => deriveBuildLimits({ cpuCount: 0, memTotalBytes: 1024, memAvailableBytes: 512 }),
+    /Runner CPU count must be a positive integer/,
+  );
 });
