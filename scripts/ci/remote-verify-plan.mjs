@@ -62,7 +62,7 @@ function main() {
   if (!independentStages || !buildDependentStages) throw new Error(`Unknown verification profile ${profileName}; use stream or candidate.`);
   const matrix = createTestMatrix(packages, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
   writeFileSync(planPath, `${JSON.stringify(matrix)}\n`);
-  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_package_count=${packages.length}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\n`);
+  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_package_count=${packages.length}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
   process.stdout.write(`Planned ${matrix.include.length} test shard(s) from ${packages.length} kb-devkit-selected package(s).\n`);
 }
 
