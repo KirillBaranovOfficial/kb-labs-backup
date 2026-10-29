@@ -84,6 +84,7 @@ export async function runStage({
         startedAt: new Date(startedAt).toISOString(),
         finishedAt: new Date(finishedAt).toISOString(),
         durationMs: Math.max(0, finishedAt - startedAt),
+        ...(typeof error.code === 'string' ? { measurementErrorCode: error.code } : {}),
         cache: cacheRecord(cache),
       };
       if (partialResultPath) writeAtomicJSON(partialResultPath, result);
