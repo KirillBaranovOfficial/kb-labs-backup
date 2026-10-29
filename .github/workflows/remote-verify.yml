@@ -35,6 +35,7 @@ jobs:
       packages: ${{ steps.plan.outputs.packages }}
       selected_package_count: ${{ steps.plan.outputs.selected_package_count }}
       max_parallel: ${{ steps.plan.outputs.max_parallel }}
+      shard_timeout_minutes: ${{ steps.plan.outputs.shard_timeout_minutes }}
     env:
       GOTOOLCHAIN: local
       VERIFICATION_PROFILE: ${{ github.event.inputs.profile || 'stream' }}
@@ -93,6 +94,7 @@ jobs:
       build_dependent_matrix: ${{ needs.prepare.outputs.build_dependent_matrix }}
       selected_package_count: ${{ needs.prepare.outputs.selected_package_count }}
       max_parallel: ${{ needs.prepare.outputs.max_parallel }}
+      shard_timeout_minutes: ${{ needs.prepare.outputs.shard_timeout_minutes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -167,7 +169,7 @@ jobs:
     needs: prepare
     if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}
     name: Independent test ${{ matrix.stage }}
     strategy:
       fail-fast: ${{ inputs.profile != 'candidate' }}
@@ -224,7 +226,7 @@ jobs:
     needs: build
     if: needs.build.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: ${{ fromJSON(needs.build.outputs.shard_timeout_minutes) }}
     name: Build-dependent test ${{ matrix.shard || matrix.stage }}
     strategy:
       fail-fast: ${{ inputs.profile != 'candidate' }}
@@ -288,6 +290,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      checks: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -307,6 +310,7 @@ jobs:
           BUILD_JOB_RESULT: ${{ needs.build.result }}
           BUILD_RESOURCE_SAMPLES: remote-results/stage-resource-samples.jsonl
           VERIFICATION_PROFILE: ${{ github.event.inputs.profile || 'stream' }}
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/ci/aggregate-remote-verdict.mjs remote-results verdict.json
       - name: Upload commit-bound verdict
         if: always()

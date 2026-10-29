@@ -42,6 +42,10 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(dependent.strategy['max-parallel'], '${{ fromJSON(needs.build.outputs.max_parallel) }}');
   assert.equal(build.outputs.build_dependent_matrix, '${{ needs.prepare.outputs.build_dependent_matrix }}');
   assert.equal(prepare.outputs.selected_package_count, '${{ steps.plan.outputs.selected_package_count }}');
+  assert.equal(prepare.outputs.shard_timeout_minutes, '${{ steps.plan.outputs.shard_timeout_minutes }}');
+  assert.equal(build.outputs.shard_timeout_minutes, '${{ needs.prepare.outputs.shard_timeout_minutes }}');
+  assert.equal(independent['timeout-minutes'], '${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}');
+  assert.equal(dependent['timeout-minutes'], '${{ fromJSON(needs.build.outputs.shard_timeout_minutes) }}');
   assert.equal(build.outputs.selected_package_count, '${{ needs.prepare.outputs.selected_package_count }}');
   assert.equal(independent.env.REMOTE_SELECTED_PACKAGE_COUNT, '${{ needs.prepare.outputs.selected_package_count }}');
   assert.equal(dependent.env.REMOTE_SELECTED_PACKAGE_COUNT, '${{ needs.build.outputs.selected_package_count }}');
@@ -62,6 +66,7 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(resourceUpload.with.path, 'stage-result-build.json\nstage-resource-samples.jsonl\n');
   assert.equal(aggregateStep.env.BUILD_JOB_RESULT, '${{ needs.build.result }}');
   assert.equal(aggregateStep.env.BUILD_RESOURCE_SAMPLES, 'remote-results/stage-resource-samples.jsonl');
+  assert.equal(aggregateStep.env.GH_TOKEN, '${{ github.token }}');
   assert.ok(finalize.needs.includes('independent-test-shards'));
   assert.ok(finalize.needs.includes('build-dependent-test-shards'));
   assert.equal(buildSteps.filter((step) => step.name === 'Build selected workspace packages once').length, 1);

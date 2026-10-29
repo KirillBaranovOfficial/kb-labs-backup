@@ -11,6 +11,7 @@ test('verification profile owns each build and test stage definition exactly onc
   const references = [profile.buildStage, profile.packageTestStage, ...Object.values(profile.independentTestStages).flat(), ...Object.values(profile.buildDependentTestStages).flat()];
 
   assert.ok(references.every((stage) => stageIds.includes(stage)));
+  assert.ok(Number.isSafeInteger(profile.shardTimeoutMinutes) && profile.shardTimeoutMinutes > 0);
   for (const profileName of Object.keys(profile.independentTestStages)) {
     const assigned = [...profile.independentTestStages[profileName], ...profile.buildDependentTestStages[profileName]];
     assert.equal(new Set(assigned).size, assigned.length);

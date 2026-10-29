@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { aggregateVerdict } from './aggregate-remote-verdict.mjs';
+import { aggregateVerdict, fetchGitHubJobEvidence } from './aggregate-remote-verdict.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -40,15 +40,17 @@ test('marks matrix shards cancelled by stream fail-fast as skipped, never as a p
     sha: 'b'.repeat(40),
     prepare: passingPrepare(),
     build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 41, failures: [], logTail: '', durationMs: 300 },
-    matrix: { include: [{ stage: profile.buildDependentTestStages.candidate[0] }, { stage: profile.independentTestStages.candidate[1] }] },
-    results: [{ name: profile.buildDependentTestStages.candidate[0], status: 'fail', selectedPackageCount: 41, failures: ['failed'], logTail: 'failed', durationMs: 70 }],
-    selectedPackageCount: 41,
+    matrix: { include: [{ stage: profile.packageTestStage, shard: 1, packages: ['@kb-labs/a'] }, { stage: profile.packageTestStage, shard: 2, packages: ['@kb-labs/b'] }] },
+    results: [{ name: `${profile.packageTestStage}:shard-1`, status: 'fail', selectedPackageCount: 1, failures: ['failed'], logTail: 'failed', durationMs: 70 }],
+    githubJobs: [{ name: 'Build-dependent test 2', conclusion: 'cancelled', steps: [], annotations: [] }],
+    selectedPackageCount: 41, verificationProfile: 'stream',
   });
 
   assert.equal(verdict.status, 'fail');
-  assert.equal(verdict.jobs[3].name, 'kb-create-go-suite');
+  assert.equal(verdict.jobs[3].name, `${profile.packageTestStage}:shard-2`);
   assert.equal(verdict.jobs[3].status, 'skipped');
-  assert.equal(verdict.jobs[3].selectedPackageCount, 41);
+  assert.match(verdict.jobs[3].failures[0], /cancelled by fail-fast/);
+  assert.equal(verdict.jobs[3].selectedPackageCount, 1);
 });
 
 
@@ -153,4 +155,98 @@ test('real prepare result producer records a named command failure for aggregati
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
+});
+
+// case: S-262.7
+test('missing shard artifacts retain GitHub runner-loss conclusion, failed steps, and annotations', () => {
+  const shard = { stage: profile.buildDependentTestStages.candidate[0] };
+  const verdict = aggregateVerdict({
+    sha: 'a'.repeat(40), prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 41, failures: [], logTail: '' },
+    matrix: { include: [shard] }, results: [], selectedPackageCount: 41,
+    githubJobs: [{
+      name: `Build-dependent test ${shard.stage}`, conclusion: 'failure',
+      steps: [{ name: 'Run build-dependent test', conclusion: 'in_progress' }],
+      annotations: [{ message: 'The hosted runner lost communication with the server.' }],
+    }], verificationProfile: 'candidate',
+  });
+
+  const job = verdict.jobs.at(-1);
+  assert.equal(job.status, 'fail');
+  assert.equal(job.githubConclusion, 'failure');
+  assert.deepEqual(job.steps, [{ name: 'Run build-dependent test', conclusion: 'in_progress' }]);
+  assert.match(job.failures.join('\n'), /lost communication with the server/);
+  assert.match(job.logTail, /in_progress/);
+});
+
+// case: S-262.7
+test('only a cancelled peer in the same fail-fast matrix is reported as skipped by fail-fast', () => {
+  const stage = profile.packageTestStage;
+  const verdict = aggregateVerdict({
+    sha: 'b'.repeat(40), prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 41, failures: [], logTail: '' },
+    matrix: { include: [{ stage, shard: 1, packages: ['@kb-labs/a'] }, { stage, shard: 2, packages: ['@kb-labs/b'] }] },
+    results: [{ name: `${stage}:shard-1`, status: 'fail', selectedPackageCount: 1, failures: ['test failed'], logTail: 'test failed' }],
+    selectedPackageCount: 41,
+    githubJobs: [{ name: `Build-dependent test 2`, conclusion: 'cancelled', steps: [], annotations: [] }],
+    verificationProfile: 'stream',
+  });
+
+  assert.equal(verdict.jobs.at(-1).status, 'skipped');
+  assert.deepEqual(verdict.jobs.at(-1).failures, ['cancelled by fail-fast after a peer in the same test matrix failed']);
+  assert.equal(verdict.jobs.at(-1).logTail, 'cancelled by fail-fast after a peer in the same test matrix failed');
+});
+
+// case: S-262.7
+test('a missing shard with GitHub timed_out conclusion is a named timeout', () => {
+  const stage = profile.buildDependentTestStages.candidate[0];
+  const verdict = aggregateVerdict({
+    sha: 'c'.repeat(40), prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 41, failures: [], logTail: '' },
+    matrix: { include: [{ stage }] }, results: [], selectedPackageCount: 41,
+    githubJobs: [{ name: `Build-dependent test ${stage}`, conclusion: 'timed_out', steps: [], annotations: [] }],
+    verificationProfile: 'candidate',
+  });
+
+  assert.equal(verdict.jobs.at(-1).name, stage);
+  assert.equal(verdict.jobs.at(-1).status, 'timeout');
+  assert.match(verdict.jobs.at(-1).failures.join('\n'), /timed out/);
+});
+
+// case: S-262.7
+test('GitHub job evidence API failure names the missing shard and API error', () => {
+  const stage = profile.buildDependentTestStages.candidate[0];
+  const verdict = aggregateVerdict({
+    sha: 'd'.repeat(40), prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 41, failures: [], logTail: '' },
+    matrix: { include: [{ stage }] }, results: [], selectedPackageCount: 41,
+    githubJobsError: 'gh api: HTTP 403',
+  });
+
+  assert.equal(verdict.jobs.at(-1).status, 'fail');
+  assert.match(verdict.jobs.at(-1).failures.join('\n'), /GitHub job evidence API read failed: gh api: HTTP 403/);
+});
+
+
+// case: S-262.7
+test('GitHub job evidence fetch reads job steps and annotations from the Actions API', () => {
+  const calls = [];
+  const evidence = fetchGitHubJobEvidence({
+    repository: 'kb-labs/workspace', runId: '42',
+    plannedJobs: [{ stage: profile.buildDependentTestStages.candidate[0] }],
+    runCommand: (endpoint) => {
+      calls.push(endpoint);
+      if (endpoint.endsWith('/jobs?per_page=100')) return JSON.stringify({ jobs: [{
+        name: 'Build-dependent test journey-unit-suite', conclusion: 'failure', steps: [{ name: 'test', conclusion: 'in_progress' }],
+        check_run_url: 'https://api.github.com/repos/kb-labs/workspace/check-runs/123',
+      }] });
+      return JSON.stringify([{ message: 'hosted runner lost communication' }]);
+    },
+  });
+
+  assert.equal(calls.length, 2);
+  assert.match(calls[0], /actions\/runs\/42\/jobs/);
+  assert.match(calls[1], /check-runs\/123\/annotations/);
+  assert.equal(evidence[0].steps[0].conclusion, 'in_progress');
+  assert.equal(evidence[0].annotations[0].message, 'hosted runner lost communication');
 });

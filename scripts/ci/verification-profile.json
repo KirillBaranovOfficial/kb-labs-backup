@@ -3,6 +3,7 @@
   "buildStage": "workspace-build",
   "packageTestStage": "workspace-unit-tests",
   "maxParallel": 20,
+  "shardTimeoutMinutes": 30,
   "stages": {
     "workspace-build": { "runner": "kb-devkit-build" },
     "workspace-unit-tests": { "runner": "kb-devkit-test" },
