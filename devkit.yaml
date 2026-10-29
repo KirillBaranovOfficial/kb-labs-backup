@@ -713,7 +713,10 @@ tasks:
         - "go.sum"
         - "Makefile"
         - "internal/manifest/manifest.json"
+        - "^dist/**"
       outputs: []
+      deps:
+        - "^build"
 
   test:coverage:
     - categories: [ts-lib, ts-app]

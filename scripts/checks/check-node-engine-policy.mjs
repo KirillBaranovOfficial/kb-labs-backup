@@ -57,7 +57,9 @@ if (workspaceRoot === undefined) {
 if (workspaceRoot !== undefined && rootPolicy !== undefined) {
   const { requiredMajor } = parseNodeEnginePolicy(rootPolicy);
   try {
-    for (const item of nodeImageIssues(workspaceRoot, requiredMajor)) {
+    for (const item of nodeImageIssues(workspaceRoot, requiredMajor, {
+      includeJourneyRunnerContract: workspaceRoot === repositoryRoot,
+    })) {
       issue(item.file, item.message);
     }
   } catch (error) {

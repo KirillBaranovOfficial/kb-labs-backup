@@ -67,14 +67,16 @@ export function parseDockerfileFromInstructions(source) {
   return instructions;
 }
 
-export function nodeImageIssues(repositoryRoot, requiredMajor) {
+export function nodeImageIssues(repositoryRoot, requiredMajor, { includeJourneyRunnerContract = false } = {}) {
   const issues = [];
-  const toolchainContract = readToolchainContract();
+  const toolchainContract = includeJourneyRunnerContract ? readToolchainContract() : undefined;
   for (const relativeFile of trackedDockerfiles(repositoryRoot)) {
     const absoluteFile = path.join(repositoryRoot, relativeFile);
     const source = readFileSync(absoluteFile, 'utf8');
     const fromInstructions = parseDockerfileFromInstructions(source);
-    const toolchainStage = fromInstructions.find((from) => from.stage === toolchainContract.toolchainStage);
+    const toolchainStage = toolchainContract
+      ? fromInstructions.find((from) => from.stage === toolchainContract.toolchainStage)
+      : undefined;
     for (const from of fromInstructions) {
       if (from.error) {
         issues.push({ file: `${relativeFile}:${from.line}`, message: from.error });
@@ -82,7 +84,7 @@ export function nodeImageIssues(repositoryRoot, requiredMajor) {
       }
 
       if (from.externalImage !== undefined) {
-        const isDerivedRunnerImage = relativeFile === toolchainContract.dockerfile
+        const isDerivedRunnerImage = toolchainContract !== undefined && relativeFile === toolchainContract.dockerfile
           && from.externalArgs.length === 1
           && from.externalArgs[0] === toolchainContract.imageArgument
           && from.externalImage === `\${${toolchainContract.imageArgument}}`

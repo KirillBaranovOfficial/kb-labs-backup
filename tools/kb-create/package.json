@@ -14,6 +14,14 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@kb-labs/adapters-openai": "workspace:*",
+    "@kb-labs/core-config": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/gateway-app": "workspace:*",
+    "@kb-labs/host-app": "workspace:*",
+    "@kb-labs/marketplace-app": "workspace:*",
+    "@kb-labs/marketplace-npm": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*"
   }
 }
