@@ -65,30 +65,33 @@ const (
 )
 
 type Config struct {
-	StateDir         string
-	Tag              string
-	LatestTag        string
-	Stall            time.Duration
-	StdoutPath       string
-	StderrPath       string
-	StdinPath        string
-	SlotGroup        string
-	Slots            int
-	SlotWeight       int
-	WaitGate         string
-	HoldGate         string
-	MinFree          uint64
-	CostKey          string
-	CostClass        CostClass
-	Priority         int
-	MemoryBytes      uint64
-	CPUsMin          int
-	CPUsMax          int
-	DiskBytes        uint64
-	GrantedCPUs      int
-	Command          []string
-	Dir              string
-	Env              []string
+	StateDir    string
+	Tag         string
+	LatestTag   string
+	Stall       time.Duration
+	StdoutPath  string
+	StderrPath  string
+	StdinPath   string
+	SlotGroup   string
+	Slots       int
+	SlotWeight  int
+	WaitGate    string
+	HoldGate    string
+	MinFree     uint64
+	CostKey     string
+	CostClass   CostClass
+	Priority    int
+	MemoryBytes uint64
+	CPUsMin     int
+	CPUsMax     int
+	DiskBytes   uint64
+	GrantedCPUs int
+	Command     []string
+	Dir         string
+	Env         []string
+	// CommandTempDir overrides TMPDIR, TMP, and TEMP for the supervised command.
+	// The caller creates and owns this directory; empty keeps the proc run scratch.
+	CommandTempDir   string
 	CostKeyLeaseMode LeaseMode
 	SharedLeasePaths []string
 	// CleanEnv makes Env the complete environment for both the keeper and its command.
@@ -525,6 +528,23 @@ type KeeperExitError struct {
 	Err    error
 }
 
+// AdmissionCanceledError reports cancellation while a run is waiting for admission.
+type AdmissionCanceledError struct {
+	WaitReason string
+	Cause      error
+}
+
+func (e *AdmissionCanceledError) Error() string {
+	if e.WaitReason == "" {
+		return fmt.Sprintf("proc: admission cancelled: %v", e.Cause)
+	}
+	return fmt.Sprintf("proc: admission cancelled while %s: %v", e.WaitReason, e.Cause)
+}
+
+func (e *AdmissionCanceledError) Unwrap() error {
+	return e.Cause
+}
+
 func (e *KeeperExitError) Error() string {
 	if e.Err != nil {
 		return fmt.Sprintf("proc: keeper exited before ready: %s: %v", e.Status, e.Err)
@@ -584,6 +604,9 @@ func validateStartContext(ctx context.Context) error {
 func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSource, executable string) (startedRun *Run, returnErr error) {
 	if source == nil {
 		return nil, errors.New("proc: resource source is required")
+	}
+	if err := validateCommandTempDir(cfg.CommandTempDir); err != nil {
+		return nil, err
 	}
 	if executable == "" || cfg.StateDir == "" || cfg.Tag == "" || cfg.Stall <= 0 || cfg.StdoutPath == "" || cfg.StderrPath == "" || len(cfg.Command) == 0 {
 		return nil, errors.New("proc: executable path, state directory, tag, positive stall duration, output paths, and command are required")
@@ -773,6 +796,23 @@ keeperReady:
 		}
 	}()
 	return run, nil
+}
+
+func validateCommandTempDir(path string) error {
+	if path == "" {
+		return nil
+	}
+	if !filepath.IsAbs(path) {
+		return errors.New("proc: command temporary directory must be absolute")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("proc: inspect command temporary directory %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("proc: command temporary path %q is not a directory", path)
+	}
+	return nil
 }
 
 func keeperExitError(wait *processWait, handshakeErr error) *KeeperExitError {
@@ -1778,7 +1818,10 @@ func runStartedAt(rec record) *time.Time {
 
 func commandText(command []string) string { return strings.Join(command, " ") }
 
-func configureCommand(cmd *exec.Cmd, runID, stateDir, scratch string) error {
-	cmd.Env = append(filteredEnv(cmd.Env), runEnv+"="+runID, resourceStateEnv+"="+stateDir, "KB_RUNNER_SCRATCH="+scratch, "TMPDIR="+scratch, "TMP="+scratch, "TEMP="+scratch)
+func configureCommand(cmd *exec.Cmd, runID, stateDir, scratch, commandTempDir string) error {
+	if commandTempDir == "" {
+		commandTempDir = scratch
+	}
+	cmd.Env = append(filteredEnv(cmd.Env), runEnv+"="+runID, resourceStateEnv+"="+stateDir, "KB_RUNNER_SCRATCH="+scratch, "TMPDIR="+commandTempDir, "TMP="+commandTempDir, "TEMP="+commandTempDir)
 	return child.Configure(cmd, child.ProcessGroup)
 }

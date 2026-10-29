@@ -126,10 +126,11 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 	ticker := time.NewTicker(admissionPollInterval)
 	defer ticker.Stop()
 	useFirstDecisionSample := true
+	var waitReason string
 	for {
 		if err := ctx.Err(); err != nil {
 			cleanupAdmission(cfg.StateDir, runID, "cancelled before start")
-			return fmt.Errorf("proc: admission cancelled: %w", err)
+			return &AdmissionCanceledError{WaitReason: waitReason, Cause: err}
 		}
 		admitted := false
 		err := withStateLock(cfg.StateDir, func() error {
@@ -150,6 +151,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 				return err
 			}
 			useFirstDecisionSample = false
+			waitReason = decision.Reason
 			notice := hostResourceNotice(decision.Pressure)
 			if decision.Reason == "" {
 				quota, err := effectiveQuota(cfg.StateDir, source)

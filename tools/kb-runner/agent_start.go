@@ -35,7 +35,7 @@ const providerContinuationPrompt = "The provider connection dropped mid-task (tr
 
 func agentCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprintf(out, "Usage: %s agent <launch|resume|review|rework> <stream> [--state <dir>] | %s agent start --stream <name> --vendor <%s> --workdir <path> --prompt-file <path> [phase commands]\n", root.Name(), root.Name(), strings.Join(vendorNamesFor(nil), "|"))
+		_, err := fmt.Fprintf(out, "Usage: %s agent <launch|resume|review|rework> <stream> [--state <dir>] | %s agent start --stream <name> --vendor <%s> --workdir <path> --prompt-file <path> [--test-channel on|off] [phase commands]\n", root.Name(), root.Name(), strings.Join(vendorNamesFor(nil), "|"))
 		return 0, err
 	}
 	if len(args) == 0 {
@@ -76,6 +76,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	fiveHour := fs.Float64("five-hour-threshold", 95, "quota admission threshold")
 	week := fs.Float64("week-threshold", 98, "weekly quota admission threshold")
 	providerFailureThreshold := fs.Int("provider-failure-threshold", 3, "consecutive transient provider errors before recording a sustained outage")
+	testChannel := fs.String("test-channel", "on", "outside Go test channel: on or off")
 	var writable pathListFlag
 	fs.Var(&writable, "add-dir", "additional writable directory (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -83,6 +84,9 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	}
 	if *stream == "" || *workdir == "" || *promptFile == "" {
 		return 2, fmt.Errorf("%s agent start: --stream, --workdir, and --prompt-file are required; next: %s agent --help", root.Name(), root.InvocationCommand())
+	}
+	if *testChannel != "on" && *testChannel != "off" {
+		return 2, fmt.Errorf("%s agent start: --test-channel must be on or off; next: %s agent start --help", root.Name(), root.InvocationCommand())
 	}
 	canonicalState, err := proc.CanonicalStateDir(*state)
 	if err != nil {
@@ -111,6 +115,12 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}
 		if _, err := store.Create(Job{ID: id, Stream: *stream, Vendor: *vendor, Model: *model, State: JobQueued, Phase: PhaseWorktree, SlotGroup: *slotGroup, SlotCeiling: *slots, MessagePath: finalPath}); err != nil {
 			return 1, err
+		}
+		if *testChannel == "on" {
+			spool := testChannelSpool(*state, id)
+			if err := os.MkdirAll(spool, 0o700); err != nil {
+				return failAgentJob(store, id, PhaseWorktree, ReasonSetup, root, finalPath, fmt.Errorf("create outside test request spool: %w", err))
+			}
 		}
 		minFreeBytes := uint64(0)
 		if *minFree != "" {
@@ -182,6 +192,13 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	if finalPath == "" {
 		finalPath = filepath.Join(*state, "jobs", id+".last.md")
 	}
+	spool := ""
+	if *testChannel == "on" {
+		spool = testChannelSpool(*state, id)
+		if err := os.MkdirAll(spool, 0o700); err != nil {
+			return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("create outside test request spool: %w", err))
+		}
+	}
 	workerIdentity, workerAlive, identityErr := proc.ProcessIdentity(os.Getpid())
 	if identityErr != nil {
 		return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("inspect agent worker identity: %w", identityErr))
@@ -248,7 +265,14 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	}); err != nil {
 		return failAgentJob(store, id, PhaseRun, ReasonSetup, root, finalPath, fmt.Errorf("record provider attempt: %w", err))
 	}
-	req := AgentRequest{Prompt: string(prompt), Workdir: *workdir, Effort: *effort, Model: *model, SessionID: *session, WritableDirs: writable, FinalPath: finalPath, StateDir: *state, JobID: id}
+	req := AgentRequest{Prompt: string(prompt), Workdir: *workdir, Effort: *effort, Model: *model, SessionID: *session, WritableDirs: writable, TestChannelSpool: spool, FinalPath: finalPath, StateDir: *state, JobID: id}
+	channelContext, stopTestChannel := context.WithCancel(context.Background())
+	channelErrors := make(chan error, 1)
+	if spool != "" {
+		broker := &testChannelBroker{state: *state, jobID: id, stream: *stream, worktree: *workdir, spool: spool, executor: newTestChannelExecutor(nil)}
+		go func() { channelErrors <- broker.serve(channelContext) }()
+	}
+	defer stopTestChannel()
 	var cmd *exec.Cmd
 	if *session != "" {
 		cmd, err = adapter.Resume(context.Background(), req)
@@ -367,8 +391,14 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		}
 	}
 	waitErr := cmd.Wait()
+	stopTestChannel()
+	if spool != "" {
+		if channelErr := <-channelErrors; channelErr != nil {
+			waitErr = errors.Join(waitErr, fmt.Errorf("outside test channel broker failed: %w", channelErr))
+		}
+	}
 	if scanErr != nil {
-		waitErr = scanErr
+		waitErr = errors.Join(waitErr, scanErr)
 	}
 	completedJob, getErr := store.Get(id)
 	if getErr != nil {

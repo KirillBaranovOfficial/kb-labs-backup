@@ -84,6 +84,29 @@ func installCommandShims(state, jobID, runner string) (string, error) {
 			return "", fmt.Errorf("install %s command shim: %w", tool, err)
 		}
 	}
+	spool := filepath.Join(state, "jobs", jobID, "test-channel", "spool")
+	info, spoolErr := os.Stat(spool)
+	if spoolErr == nil && !info.IsDir() {
+		return "", fmt.Errorf("agent test-channel spool %q is not a directory", spool)
+	}
+	if spoolErr != nil && !errors.Is(spoolErr, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect agent test-channel spool: %w", spoolErr)
+	}
+	if spoolErr == nil {
+		script := strings.Join([]string{
+			"#!/bin/sh",
+			"exec " + shellQuote(runner) + " test-channel request --spool " + shellQuote(spool) + " -- \"$@\"",
+			"",
+		}, "\n")
+		path := filepath.Join(directory, "kb-test")
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, []byte(script), 0o700); err != nil {
+			return "", fmt.Errorf("write kb-test command shim: %w", err)
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			return "", fmt.Errorf("install kb-test command shim: %w", err)
+		}
+	}
 	return directory, nil
 }
 
