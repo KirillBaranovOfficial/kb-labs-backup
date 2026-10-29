@@ -72,6 +72,7 @@ test('failed kb-devkit task contributes the task log tail identified by structur
       `      command: 'sh -c "echo ENOENT: no such file or directory, mkdir .next/export; echo Error occurred prerendering page /404; exit 1"'`,
       '',
     ].join('\n'));
+    initializeTrackedWorkspace(fixtureRoot);
     execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(repoRoot, 'tools/kb-devkit'), stdio: 'pipe' });
 
     let invocation;
@@ -134,6 +135,7 @@ test('workspace build failures come from structured task errors, not streamed bu
       `        node -e 'console.log("ESM dist/core/services.js.map 72.00 B"); console.error("${diagnostic}"); process.exit(1)'`,
       '',
     ].join('\n'));
+    initializeTrackedWorkspace(fixtureRoot);
     execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(repoRoot, 'tools/kb-devkit'), stdio: 'pipe' });
 
     const result = await runStage({
@@ -159,3 +161,8 @@ test('workspace build failures come from structured task errors, not streamed bu
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
+
+function initializeTrackedWorkspace(root) {
+  execFileSync('git', ['init', '--quiet'], { cwd: root });
+  execFileSync('git', ['add', '--all'], { cwd: root });
+}

@@ -21,6 +21,74 @@ import (
 	"github.com/kb-labs/devkit/internal/workspace"
 )
 
+func TestRunCacheValidityFollowsWorkspaceOwnership(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	aDir := filepath.Join(root, "packages", "a")
+	bDir := filepath.Join(root, "packages", "b")
+	appDir := filepath.Join(root, "packages", "app")
+	writePkg(t, aDir, `{"name":"@fixture/a","files":["src"]}`)
+	writePkg(t, bDir, `{"name":"@fixture/b"}`)
+	writePkg(t, appDir, `{"name":"@fixture/app","dependencies":{"@fixture/a":"workspace:*"}}`)
+	writeEngineFile(t, filepath.Join(aDir, "src", "index.ts"), "export const value = 1\n")
+	writeEngineFile(t, filepath.Join(bDir, "src", "index.ts"), "export const value = 1\n")
+	writeEngineFile(t, filepath.Join(appDir, "src", "index.ts"), "export const app = true\n")
+	writeEngineFile(t, filepath.Join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n")
+	writeEngineFile(t, filepath.Join(root, "services", "tsconfig.base.json"), `{"compilerOptions":{"strict":true}}`)
+	writeEngineFile(t, filepath.Join(root, "services", "vitest.config.ts"), "export default { test: { timeout: 1000 } }\n")
+	if output, err := exec.Command("git", "-C", root, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", root, "add", "--all").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "a", Category: config.CategoryConfig{Match: []string{"packages/a"}, Preset: "node-lib"}},
+		{Name: "b", Category: config.CategoryConfig{Match: []string{"packages/b"}, Preset: "node-lib"}},
+		{Name: "app", Category: config.CategoryConfig{Match: []string{"packages/app"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {{Command: "true", Inputs: []string{"src/**", "package.json", "^dist/**"}, Deps: []string{"^build"}}},
+		"test":  {{Command: "true", Inputs: []string{"src/**", "package.json", "^dist/**"}}},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	run := func() RunResult {
+		t.Helper()
+		result, err := Run(ws, cfg, RunOptions{Tasks: []string{"build", "test"}, WSRoot: root, CacheRoot: cacheRoot, Concurrency: 1})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return result
+	}
+	assertCacheState := func(result RunResult, expected map[string]bool) {
+		t.Helper()
+		for _, task := range result.Results {
+			if task.Cached != expected[task.Package] {
+				t.Errorf("%s cached=%t; want %t", task.Package, task.Cached, expected[task.Package])
+			}
+		}
+	}
+
+	first := run()
+	assertCacheState(first, map[string]bool{"@fixture/a": false, "@fixture/b": false, "@fixture/app": false})
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+	writeEngineFile(t, filepath.Join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n# tracked lock change\n")
+	assertCacheState(run(), map[string]bool{"@fixture/a": false, "@fixture/b": false, "@fixture/app": false})
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+	writeEngineFile(t, filepath.Join(root, "services", "tsconfig.base.json"), `{"compilerOptions":{"strict":false}}`)
+	assertCacheState(run(), map[string]bool{"@fixture/a": false, "@fixture/b": false, "@fixture/app": false})
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+	writeEngineFile(t, filepath.Join(root, "services", "vitest.config.ts"), "export default { test: { timeout: 2000 } }\n")
+	assertCacheState(run(), map[string]bool{"@fixture/a": false, "@fixture/b": false, "@fixture/app": false})
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+	writeEngineFile(t, filepath.Join(aDir, "src", "index.ts"), "export const value = 2\n")
+	assertCacheState(run(), map[string]bool{"@fixture/a": false, "@fixture/b": true, "@fixture/app": false})
+	writeEngineFile(t, filepath.Join(aDir, "src", "untracked-junk.ts"), "ignored by tracked input manifest\n")
+	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
+}
+
 func TestRunE2ECachesAndRestoresOutputs(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceRoot(t, root, []string{"packages/*"})
@@ -793,7 +861,10 @@ func TestDirtyPackagesCoversRetryAfterFailure(t *testing.T) {
 	})
 
 	// DirtyPackages must return @kb/app even though no files changed
-	dirty := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+	dirty, err := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(dirty) != 1 || dirty[0].Name != "@kb/app" {
 		t.Fatalf("DirtyPackages after failure = %v, want [@kb/app]", dirty)
 	}
@@ -807,7 +878,10 @@ func TestDirtyPackagesCoversRetryAfterFailure(t *testing.T) {
 	})
 
 	// Now DirtyPackages must be empty
-	dirty2 := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+	dirty2, err := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(dirty2) != 0 {
 		t.Fatalf("DirtyPackages after fix = %v, want []", dirty2)
 	}
@@ -815,6 +889,14 @@ func TestDirtyPackagesCoversRetryAfterFailure(t *testing.T) {
 
 func mustWorkspace(t *testing.T, root string, cfg *config.DevkitConfig) *workspace.Workspace {
 	t.Helper()
+	if output, err := exec.Command("git", "-C", root, "rev-parse", "--show-toplevel").CombinedOutput(); err != nil {
+		initTrackedFixture(t, root)
+	} else if len(output) == 0 {
+		t.Fatal("git rev-parse returned an empty workspace root")
+	}
+	if output, err := exec.Command("git", "-C", root, "add", "--all").CombinedOutput(); err != nil {
+		t.Fatalf("git add workspace fixture: %v: %s", err, output)
+	}
 	ws, err := workspace.New(root, cfg)
 	if err != nil {
 		t.Fatalf("workspace.New error: %v", err)

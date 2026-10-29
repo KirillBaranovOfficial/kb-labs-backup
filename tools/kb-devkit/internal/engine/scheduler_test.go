@@ -37,7 +37,10 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 	if err != nil {
 		t.Fatalf("discover workspace packages: %v", err)
 	}
-	pkgs := expandBuildDependencyClosure(ws.Packages, ws.Packages)
+	pkgs, err := expandBuildDependencyClosure(ws.Packages, ws.Packages)
+	if err != nil {
+		t.Fatal(err)
+	}
 	nodes, err := buildDAG(pkgs, []string{"build"}, cfg, ws)
 	if err != nil {
 		t.Fatalf("build workspace task DAG: %v", err)
@@ -69,7 +72,11 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 		if def == nil || !containsTask(def.Deps, "^build") {
 			continue
 		}
-		for _, depName := range WorkspaceDeps(node.pkg.Dir, byName) {
+		depNames, err := WorkspaceDeps(node.pkg.Dir, byName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, depName := range depNames {
 			if depName == node.pkg.Name {
 				continue
 			}
@@ -108,7 +115,10 @@ func TestBuildPkgDepMapFiltersSelfReference(t *testing.T) {
 		"@kb/devkit": pkgs[0],
 	}
 
-	depMap := buildPkgDepMap(pkgs, pkgByName)
+	depMap, err := buildPkgDepMap(pkgs, pkgByName)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if deps, ok := depMap["@kb/devkit"]; ok && len(deps) > 0 {
 		t.Fatalf("self-reference not filtered: got deps %v for @kb/devkit", deps)
@@ -137,7 +147,10 @@ func TestBuildPkgDepMapKeepsLegitDeps(t *testing.T) {
 		"@kb/app":   pkgs[1],
 	}
 
-	depMap := buildPkgDepMap(pkgs, pkgByName)
+	depMap, err := buildPkgDepMap(pkgs, pkgByName)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// @kb/app should depend on @kb/types but NOT on itself
 	deps := depMap["@kb/app"]
@@ -237,7 +250,10 @@ func TestExpandBuildDependencyClosureAddsUpstreamPackages(t *testing.T) {
 		{Name: "@kb/core", Dir: coreDir},
 		{Name: "@kb/app", Dir: appDir},
 	}
-	closure := expandBuildDependencyClosure(all[1:], all)
+	closure, err := expandBuildDependencyClosure(all[1:], all)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(closure) != 2 || closure[0].Name != "@kb/core" || closure[1].Name != "@kb/app" {
 		t.Fatalf("closure = %v, want [@kb/core @kb/app]", closure)

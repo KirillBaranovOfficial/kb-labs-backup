@@ -206,7 +206,7 @@ func TestHashInputsIncludesDependencyPublishedAndExportedSurface(t *testing.T) {
 	}
 }
 
-func TestHashInputsIncludesLocalGoReplacementModule(t *testing.T) {
+func TestHashInputsIncludesWorkspaceDependencyWithoutPackageManifest(t *testing.T) {
 	consumerDir := t.TempDir()
 	replacementDir := filepath.Join(consumerDir, "..", "clikit")
 	mustWriteFile(t, filepath.Join(consumerDir, "go.mod"), "module fixture/consumer\n\ngo 1.22\n\nrequire example.com/clikit v0.0.0\n\nreplace example.com/clikit => ../clikit\n")
@@ -215,17 +215,46 @@ func TestHashInputsIncludesLocalGoReplacementModule(t *testing.T) {
 	mustWriteFile(t, filepath.Join(replacementDir, "diag", "envelope.go"), "package diag\nimport _ \"embed\"\n//go:embed prompt.md\nvar prompt string\nfunc Message() string { return prompt }\n")
 	mustWriteFile(t, filepath.Join(replacementDir, "diag", "prompt.md"), "before\n")
 
-	first, err := HashInputs(consumerDir, nil, []string{"**/*.go", "go.mod", "go.sum"})
+	first, err := HashInputs(consumerDir, []string{replacementDir}, []string{"**/*.go", "go.mod", "go.sum"})
 	if err != nil {
 		t.Fatalf("hash initial Go consumer inputs: %v", err)
 	}
 	mustWriteFile(t, filepath.Join(replacementDir, "diag", "prompt.md"), "after\n")
-	second, err := HashInputs(consumerDir, nil, []string{"**/*.go", "go.mod", "go.sum"})
+	second, err := HashInputs(consumerDir, []string{replacementDir}, []string{"**/*.go", "go.mod", "go.sum"})
 	if err != nil {
 		t.Fatalf("hash Go consumer inputs after local replacement change: %v", err)
 	}
 	if first == second {
 		t.Fatal("Go consumer task hash unchanged after its local replacement module changed")
+	}
+}
+
+func TestGlobalInputDigestTracksProvidedTrackedContentOnly(t *testing.T) {
+	root := t.TempDir()
+	lockfile := filepath.Join(root, "pnpm-lock.yaml")
+	untracked := filepath.Join(root, "untracked.txt")
+	mustWriteFile(t, lockfile, "lockfileVersion: 9\n")
+	mustWriteFile(t, untracked, "first\n")
+
+	first, err := GlobalInputDigest(root, []string{lockfile})
+	if err != nil {
+		t.Fatalf("global input digest: %v", err)
+	}
+	mustWriteFile(t, untracked, "second\n")
+	second, err := GlobalInputDigest(root, []string{lockfile})
+	if err != nil {
+		t.Fatalf("global input digest after untracked change: %v", err)
+	}
+	if first != second {
+		t.Fatal("global digest changed when only an untracked path changed")
+	}
+	mustWriteFile(t, lockfile, "lockfileVersion: 9\n# tracked edit\n")
+	third, err := GlobalInputDigest(root, []string{lockfile})
+	if err != nil {
+		t.Fatalf("global input digest after tracked content change: %v", err)
+	}
+	if second == third {
+		t.Fatal("global digest unchanged after tracked lockfile content changed")
 	}
 }
 

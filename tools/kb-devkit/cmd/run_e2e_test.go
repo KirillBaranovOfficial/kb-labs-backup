@@ -436,4 +436,25 @@ func writeRunFixture(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+	if filepath.Base(path) == "package.json" && strings.Contains(content, "\"workspaces\"") {
+		command := exec.Command("git", "-C", filepath.Dir(path), "init", "--quiet")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("initialize run fixture repository: %v: %s", err, output)
+		}
+	}
+	root := filepath.Dir(path)
+	for {
+		if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
+			command := exec.Command("git", "-C", root, "add", "--all")
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("track run fixture files: %v: %s", err, output)
+			}
+			break
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			break
+		}
+		root = parent
+	}
 }
