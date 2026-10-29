@@ -34,12 +34,15 @@ func TestTrackedUnownedFilesUsesPackageOwnershipAndIgnoresUntracked(t *testing.T
 	}
 	mustWritePackage(t, filepath.Join(root, "untracked.txt"), "ignored\n")
 
-	_, got, err := ws.TrackedFiles()
+	got, owned, err := ws.TrackedFileOwnership()
 	if err != nil {
 		t.Fatalf("TrackedFiles: %v", err)
 	}
 	if len(got) != 2 || filepath.Base(got[0]) != "package.json" || filepath.Base(got[1]) != "pnpm-lock.yaml" {
 		t.Fatalf("tracked unowned files = %v; want root package.json and pnpm-lock.yaml", got)
+	}
+	if len(owned["@kb/alpha"]) != 2 || len(owned["@kb/beta"]) != 2 {
+		t.Fatalf("tracked package ownership = %v; want package.json and src file for alpha and beta", owned)
 	}
 }
 

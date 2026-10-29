@@ -89,6 +89,132 @@ func TestRunCacheValidityFollowsWorkspaceOwnership(t *testing.T) {
 	assertCacheState(run(), map[string]bool{"@fixture/a": true, "@fixture/b": true, "@fixture/app": true})
 }
 
+func TestAffectedSelectionAndTaskKeysShareTrackedFileOwnership(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	packages := []struct {
+		name string
+		json string
+	}{
+		{"base", `{"name":"@fixture/base"}`},
+		{"middle", `{"name":"@fixture/middle","dependencies":{"@fixture/base":"workspace:*"}}`},
+		{"app", `{"name":"@fixture/app","dependencies":{"@fixture/middle":"workspace:*"}}`},
+		{"island", `{"name":"@fixture/island"}`},
+		{"clikit", `{"name":"@fixture/clikit"}`},
+		{"runner", `{"name":"@fixture/runner"}`},
+	}
+	for _, pkg := range packages {
+		dir := filepath.Join(root, "packages", pkg.name)
+		writePkg(t, dir, pkg.json)
+		writeEngineFile(t, filepath.Join(dir, "src", "entry.go"), "package main\n")
+	}
+	writeEngineFile(t, filepath.Join(root, "packages", "app", "tests", "outside-glob.test.ts"), "expect(true).toBe(true)\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "runner", "go.mod"), "module fixture/runner\n\ngo 1.22\n\nrequire fixture/clikit v0.0.0\nreplace fixture/clikit => ../clikit\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "runner", "main.go"), "package main\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "clikit", "go.mod"), "module fixture/clikit\n\ngo 1.22\n")
+	writeEngineFile(t, filepath.Join(root, "packages", "clikit", "kit.go"), "package clikit\n")
+	writeEngineFile(t, filepath.Join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n")
+	writeEngineFile(t, filepath.Join(root, "tsconfig.base.json"), `{"compilerOptions":{"strict":true}}`)
+	writeEngineFile(t, filepath.Join(root, "vitest.config.ts"), "export default { test: {} }\n")
+	if output, err := exec.Command("git", "-C", root, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", root, "add", "--all").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+
+	config := testConfig([]config.NamedCategory{{Name: "all", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}}})
+	ws := mustWorkspace(t, root, config)
+	tasks := []TaskDef{
+		{Name: "build", Command: "build", Inputs: []string{"src/**", "package.json", "^dist/**"}, Cache: true},
+		{Name: "test", Command: "test", Inputs: []string{"src/**", "test/**", "__tests__/**", "package.json", "^dist/**"}, Cache: true},
+	}
+	baseline := propertyTaskKeys(t, ws, tasks)
+	unownedFiles, ownedFiles, err := ws.TrackedFileOwnership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked := make([]string, 0)
+	for _, files := range ownedFiles {
+		tracked = append(tracked, files...)
+	}
+	tracked = append(tracked, unownedFiles...)
+	sort.Strings(tracked)
+	for _, file := range tracked {
+		original, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read tracked fixture %s: %v", file, err)
+		}
+		if err := os.WriteFile(file, append(append([]byte(nil), original...), '\n'), 0o644); err != nil {
+			t.Fatalf("mutate tracked fixture %s: %v", file, err)
+		}
+		selection, err := selectAffectedPackages(ws, []string{file})
+		if err != nil {
+			t.Fatalf("select for %s: %v", file, err)
+		}
+		changed := propertyTaskKeys(t, ws, tasks)
+		changedPackages := make(map[string]bool)
+		for name, taskKeys := range baseline {
+			for task, before := range taskKeys {
+				if before != changed[name][task] {
+					changedPackages[name] = true
+				}
+			}
+		}
+		for _, selected := range selection.Packages {
+			for _, task := range tasks {
+				if baseline[selected.Name][task.Name] == changed[selected.Name][task.Name] {
+					t.Errorf("tracked file %s selected %s but left its %s task key unchanged", file, selected.Name, task.Name)
+				}
+			}
+		}
+		selectedNames := make(map[string]bool)
+		for _, selected := range selection.Packages {
+			selectedNames[selected.Name] = true
+		}
+		for name := range baseline {
+			if !selectedNames[name] && changedPackages[name] {
+				t.Errorf("tracked file %s changed unrelated package %s task keys", file, name)
+			}
+		}
+		if err := os.WriteFile(file, original, 0o644); err != nil {
+			t.Fatalf("restore tracked fixture %s: %v", file, err)
+		}
+	}
+}
+
+func propertyTaskKeys(t *testing.T, ws *workspace.Workspace, tasks []TaskDef) map[string]map[string]string {
+	t.Helper()
+	global, owned, dependencies, err := workspaceInputDigests(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		pkgByName[pkg.Name] = pkg
+	}
+	keys := make(map[string]map[string]string, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		depNames, err := WorkspaceDeps(pkg.Dir, pkgByName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		depDirs := make([]string, 0, len(depNames))
+		for _, name := range depNames {
+			depDirs = append(depDirs, pkgByName[name].Dir)
+		}
+		keys[pkg.Name] = make(map[string]string, len(tasks))
+		for _, task := range tasks {
+			key, err := hashTaskInputs(pkg, task, depDirs, "fixture-toolchain", global, owned[pkg.Name], dependencies[pkg.Name])
+			if err != nil {
+				t.Fatalf("hash %s:%s: %v", pkg.Name, task.Name, err)
+			}
+			keys[pkg.Name][task.Name] = key
+		}
+	}
+	return keys
+}
+
 func TestRunE2ECachesAndRestoresOutputs(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceRoot(t, root, []string{"packages/*"})

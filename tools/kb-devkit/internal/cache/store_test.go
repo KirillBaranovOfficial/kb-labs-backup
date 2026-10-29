@@ -185,63 +185,63 @@ func TestHashInputsDepPatternWithNilDepDirsIsNoop(t *testing.T) {
 	}
 }
 
-func TestHashInputsIncludesDependencyPublishedAndExportedSurface(t *testing.T) {
-	consumerDir := t.TempDir()
-	dependencyDir := t.TempDir()
-	mustWriteFile(t, filepath.Join(consumerDir, "src", "index.ts"), "import '@fixture/devkit/tsconfig/base.json'\n")
-	mustWriteFile(t, filepath.Join(dependencyDir, "package.json"), `{"name":"@fixture/devkit","exports":{"./tsconfig/base.json":"./tsconfig/base.json"},"files":["tsconfig"]}`)
-	mustWriteFile(t, filepath.Join(dependencyDir, "tsconfig", "base.json"), `{"compilerOptions":{"strict":true}}`)
-
-	first, err := HashInputs(consumerDir, []string{dependencyDir}, []string{"src/**"})
+func TestHashInputsWithOwnershipTracksPackageAndDependencyDigests(t *testing.T) {
+	root := t.TempDir()
+	packageInput := filepath.Join(root, "packages", "lib", "tests", "input.test.ts")
+	dependencyInput := filepath.Join(root, "packages", "base", "tsconfig.base.json")
+	mustWriteFile(t, packageInput, "expect(true).toBe(true)\n")
+	mustWriteFile(t, dependencyInput, `{"compilerOptions":{"strict":true}}`)
+	own, err := ContentDigest(root, []string{packageInput})
 	if err != nil {
-		t.Fatalf("hash initial consumer inputs: %v", err)
+		t.Fatal(err)
 	}
-	mustWriteFile(t, filepath.Join(dependencyDir, "tsconfig", "base.json"), `{"compilerOptions":{"strict":false}}`)
-	second, err := HashInputs(consumerDir, []string{dependencyDir}, []string{"src/**"})
+	dep, err := ContentDigest(root, []string{dependencyInput})
 	if err != nil {
-		t.Fatalf("hash consumer inputs after exported config change: %v", err)
+		t.Fatal(err)
+	}
+	first, err := HashInputsWithOwnership(root, nil, nil, "test-task", "global", own, CombineContentDigests(map[string]string{"@fixture/base": dep}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, packageInput, "expect(false).toBe(true)\n")
+	own, err = ContentDigest(root, []string{packageInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := HashInputsWithOwnership(root, nil, nil, "test-task", "global", own, CombineContentDigests(map[string]string{"@fixture/base": dep}))
+	if err != nil {
+		t.Fatal(err)
 	}
 	if first == second {
-		t.Fatal("consumer task hash unchanged after only an exported dependency config changed")
+		t.Fatal("task hash unchanged after package-owned test file changed")
+	}
+	mustWriteFile(t, dependencyInput, `{"compilerOptions":{"strict":false}}`)
+	dep, err = ContentDigest(root, []string{dependencyInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := HashInputsWithOwnership(root, nil, nil, "test-task", "global", own, CombineContentDigests(map[string]string{"@fixture/base": dep}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == third {
+		t.Fatal("task hash unchanged after workspace dependency digest changed")
 	}
 }
 
-func TestHashInputsIncludesWorkspaceDependencyWithoutPackageManifest(t *testing.T) {
-	consumerDir := t.TempDir()
-	replacementDir := filepath.Join(consumerDir, "..", "clikit")
-	mustWriteFile(t, filepath.Join(consumerDir, "go.mod"), "module fixture/consumer\n\ngo 1.22\n\nrequire example.com/clikit v0.0.0\n\nreplace example.com/clikit => ../clikit\n")
-	mustWriteFile(t, filepath.Join(consumerDir, "main.go"), "package main\nimport \"example.com/clikit/diag\"\nfunc main() { _ = diag.Message() }\n")
-	mustWriteFile(t, filepath.Join(replacementDir, "go.mod"), "module example.com/clikit\n\ngo 1.22\n")
-	mustWriteFile(t, filepath.Join(replacementDir, "diag", "envelope.go"), "package diag\nimport _ \"embed\"\n//go:embed prompt.md\nvar prompt string\nfunc Message() string { return prompt }\n")
-	mustWriteFile(t, filepath.Join(replacementDir, "diag", "prompt.md"), "before\n")
-
-	first, err := HashInputs(consumerDir, []string{replacementDir}, []string{"**/*.go", "go.mod", "go.sum"})
-	if err != nil {
-		t.Fatalf("hash initial Go consumer inputs: %v", err)
-	}
-	mustWriteFile(t, filepath.Join(replacementDir, "diag", "prompt.md"), "after\n")
-	second, err := HashInputs(consumerDir, []string{replacementDir}, []string{"**/*.go", "go.mod", "go.sum"})
-	if err != nil {
-		t.Fatalf("hash Go consumer inputs after local replacement change: %v", err)
-	}
-	if first == second {
-		t.Fatal("Go consumer task hash unchanged after its local replacement module changed")
-	}
-}
-
-func TestGlobalInputDigestTracksProvidedTrackedContentOnly(t *testing.T) {
+func TestContentDigestTracksProvidedContentOnly(t *testing.T) {
 	root := t.TempDir()
 	lockfile := filepath.Join(root, "pnpm-lock.yaml")
 	untracked := filepath.Join(root, "untracked.txt")
 	mustWriteFile(t, lockfile, "lockfileVersion: 9\n")
 	mustWriteFile(t, untracked, "first\n")
 
-	first, err := GlobalInputDigest(root, []string{lockfile})
+	first, err := ContentDigest(root, []string{lockfile})
 	if err != nil {
 		t.Fatalf("global input digest: %v", err)
 	}
 	mustWriteFile(t, untracked, "second\n")
-	second, err := GlobalInputDigest(root, []string{lockfile})
+	second, err := ContentDigest(root, []string{lockfile})
 	if err != nil {
 		t.Fatalf("global input digest after untracked change: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestGlobalInputDigestTracksProvidedTrackedContentOnly(t *testing.T) {
 		t.Fatal("global digest changed when only an untracked path changed")
 	}
 	mustWriteFile(t, lockfile, "lockfileVersion: 9\n# tracked edit\n")
-	third, err := GlobalInputDigest(root, []string{lockfile})
+	third, err := ContentDigest(root, []string{lockfile})
 	if err != nil {
 		t.Fatalf("global input digest after tracked content change: %v", err)
 	}

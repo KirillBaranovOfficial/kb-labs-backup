@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/cache"
@@ -37,6 +36,7 @@ func TestDirtyPackagesIncludesNeverBuilt(t *testing.T) {
 
 func TestDirtyPackagesExcludesCleanState(t *testing.T) {
 	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
 	pkgDir := filepath.Join(root, "packages", "app")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -47,20 +47,20 @@ func TestDirtyPackagesExcludesCleanState(t *testing.T) {
 	initTrackedFixture(t, root)
 	cacheRoot := filepath.Join(root, ".kb", "devkit")
 	states := cache.NewStateStore(cacheRoot)
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{Name: "app", Category: config.CategoryConfig{Match: []string{"packages/app"}, Preset: "node-lib"}}}}, Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}}}
 	def := TaskDef{Name: "build", Command: "true", Cache: true}
-	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{{Name: "@kb/app", Dir: pkgDir}}}
-	tracked, global, err := workspaceInputDigest(ws)
+	ws := mustWorkspace(t, root, cfg)
+	global, owned, dependencies, err := workspaceInputDigests(ws)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputHash, err := hashTaskInputs(workspace.Package{Name: "@kb/app", Dir: pkgDir}, root, def, nil, cache.RuntimeFingerprint(), global, tracked)
+	inputHash, err := hashTaskInputs(ws.Packages[0], def, nil, cache.RuntimeFingerprint(), global, owned["@kb/app"], dependencies["@kb/app"])
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := states.SetClean("@kb/app", "build", inputHash); err != nil {
 		t.Fatalf("SetClean: %v", err)
 	}
-	cfg := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}}}
 
 	got, err := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
 	if err != nil {
@@ -122,6 +122,7 @@ func TestDirtyPackagesSchedulesTaskWhenInputHashCannotBeRead(t *testing.T) {
 
 func TestDirtyPackagesAllTasksMustBeClean(t *testing.T) {
 	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
 	pkgDir := filepath.Join(root, "packages", "app")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -132,17 +133,17 @@ func TestDirtyPackagesAllTasksMustBeClean(t *testing.T) {
 	initTrackedFixture(t, root)
 	cacheRoot := filepath.Join(root, ".kb", "devkit")
 	states := cache.NewStateStore(cacheRoot)
-	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{{Name: "@kb/app", Dir: pkgDir}}}
-	cfg := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}, "test": {{Command: "true"}}}}
-	tracked, global, err := workspaceInputDigest(ws)
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{Name: "app", Category: config.CategoryConfig{Match: []string{"packages/app"}, Preset: "node-lib"}}}}, Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}, "test": {{Command: "true"}}}}
+	ws := mustWorkspace(t, root, cfg)
+	global, owned, dependencies, err := workspaceInputDigests(ws)
 	if err != nil {
 		t.Fatal(err)
 	}
-	buildHash, err := hashTaskInputs(ws.Packages[0], root, *ResolveTaskDef(cfg, "build", ""), nil, cache.RuntimeFingerprint(), global, tracked)
+	buildHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "build", ""), nil, cache.RuntimeFingerprint(), global, owned[ws.Packages[0].Name], dependencies[ws.Packages[0].Name])
 	if err != nil {
 		t.Fatal(err)
 	}
-	testHash, err := hashTaskInputs(ws.Packages[0], root, *ResolveTaskDef(cfg, "test", ""), nil, cache.RuntimeFingerprint(), global, tracked)
+	testHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "test", ""), nil, cache.RuntimeFingerprint(), global, owned[ws.Packages[0].Name], dependencies[ws.Packages[0].Name])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,22 +183,6 @@ func initTrackedFixture(t *testing.T, root string) {
 			t.Fatalf("git %v: %v: %s", args, err, output)
 		}
 	}
-}
-
-func fixtureTrackedFiles(t *testing.T, root string) map[string]struct{} {
-	t.Helper()
-	command := exec.Command("git", "-C", root, "ls-files", "--cached", "-z")
-	output, err := command.Output()
-	if err != nil {
-		t.Fatalf("git ls-files fixture: %v", err)
-	}
-	files := make(map[string]struct{})
-	for _, rel := range strings.Split(string(output), "\x00") {
-		if rel != "" {
-			files[filepath.Join(root, filepath.FromSlash(rel))] = struct{}{}
-		}
-	}
-	return files
 }
 
 func TestDirtyPackagesEmptyTasks(t *testing.T) {

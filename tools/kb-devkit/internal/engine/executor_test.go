@@ -71,45 +71,6 @@ func TestExecutorStoresAndRestoresOutputsThroughCache(t *testing.T) {
 	}
 }
 
-func TestConsumerBuildIsNotCachedAfterExportedDependencyConfigChanges(t *testing.T) {
-	root := t.TempDir()
-	cacheRoot := filepath.Join(root, ".kb", "devkit")
-	store, err := cache.NewLocalStore(cacheRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	consumerDir := filepath.Join(root, "packages", "consumer")
-	dependencyDir := filepath.Join(root, "infra", "devkit")
-	writeFile(t, filepath.Join(consumerDir, "package.json"), `{"name":"@fixture/consumer"}`)
-	writeFile(t, filepath.Join(consumerDir, "src", "index.ts"), "export {}\n")
-	writeFile(t, filepath.Join(dependencyDir, "package.json"), `{"name":"@fixture/devkit","exports":{"./tsconfig/base.json":"./tsconfig/base.json"},"files":["tsconfig"]}`)
-	writeFile(t, filepath.Join(dependencyDir, "tsconfig", "base.json"), `{"compilerOptions":{"strict":true}}`)
-	initTrackedFixture(t, root)
-
-	exec := &Executor{
-		objects: store, manifests: cache.NewManifestStore(cacheRoot), states: cache.NewStateStore(cacheRoot),
-		wsRoot: root, logRoot: filepath.Join(cacheRoot, "logs"), runtimeFingerprint: "fixture-toolchain",
-		trackedFiles: fixtureTrackedFiles(t, root),
-	}
-	pkg := workspace.Package{Name: "@fixture/consumer", Dir: consumerDir}
-	def := TaskDef{Name: "build", Command: "true", Inputs: []string{"src/**"}, Cache: true}
-	depDirs := []string{dependencyDir}
-
-	first := exec.Run(pkg, def, false, depDirs)
-	if !first.OK || first.Cached {
-		t.Fatalf("first consumer build = %+v, want successful execution", first)
-	}
-	second := exec.Run(pkg, def, false, depDirs)
-	if !second.OK || !second.Cached {
-		t.Fatalf("second consumer build = %+v, want cache hit", second)
-	}
-	writeFile(t, filepath.Join(dependencyDir, "tsconfig", "base.json"), `{"compilerOptions":{"strict":false}}`)
-	third := exec.Run(pkg, def, false, depDirs)
-	if !third.OK || third.Cached {
-		t.Fatalf("consumer build after exported config change = %+v, want a fresh execution", third)
-	}
-}
-
 func TestConsumerBuildIsNotCachedAfterInheritedTsConfigChanges(t *testing.T) {
 	root := t.TempDir()
 	cacheRoot := filepath.Join(root, ".kb", "devkit")
@@ -124,7 +85,7 @@ func TestConsumerBuildIsNotCachedAfterInheritedTsConfigChanges(t *testing.T) {
 	writeFile(t, filepath.Join(appDir, "tsconfig.build.json"), `{"extends":"../tsconfig.base.json","include":["src"]}`)
 	writeFile(t, filepath.Join(gatewayDir, "tsconfig.base.json"), `{"compilerOptions":{"strict":true}}`)
 	initTrackedFixture(t, root)
-	trackedFiles, globalDigest, err := workspaceInputDigest(&workspace.Workspace{Root: root})
+	globalDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(&workspace.Workspace{Root: root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +93,7 @@ func TestConsumerBuildIsNotCachedAfterInheritedTsConfigChanges(t *testing.T) {
 	exec := &Executor{
 		objects: store, manifests: cache.NewManifestStore(cacheRoot), states: cache.NewStateStore(cacheRoot),
 		wsRoot: workspaceRoot, logRoot: filepath.Join(cacheRoot, "logs"), runtimeFingerprint: "fixture-toolchain",
-		trackedFiles: trackedFiles, globalInputDigest: globalDigest,
+		ownedInputDigests: ownedInputDigests, dependencyDigests: dependencyDigests, globalInputDigest: globalDigest,
 	}
 	pkg := workspace.Package{Name: "@fixture/gateway-app", Dir: appDir, Language: "typescript"}
 	def := TaskDef{Name: "build", Command: "true", Inputs: []string{"src/**", "tsconfig*.json"}, Cache: true}
@@ -146,7 +107,7 @@ func TestConsumerBuildIsNotCachedAfterInheritedTsConfigChanges(t *testing.T) {
 		t.Fatalf("second gateway app build = %+v, want cache hit", second)
 	}
 	writeFile(t, filepath.Join(gatewayDir, "tsconfig.base.json"), `{"compilerOptions":{"strict":false}}`)
-	exec.globalInputDigest, err = cache.GlobalInputDigest(root, []string{filepath.Join(gatewayDir, "tsconfig.base.json")})
+	exec.globalInputDigest, err = cache.ContentDigest(root, []string{filepath.Join(gatewayDir, "tsconfig.base.json")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +131,7 @@ func TestConsumerTestIsNotCachedAfterImportedVitestConfigChanges(t *testing.T) {
 	writeFile(t, filepath.Join(appDir, "vitest.config.ts"), "import base from '../../vitest.config.mjs'; export default base\n")
 	writeFile(t, filepath.Join(servicesDir, "vitest.config.mjs"), "export default { test: { testTimeout: 1000 } }\n")
 	initTrackedFixture(t, root)
-	trackedFiles, globalDigest, err := workspaceInputDigest(&workspace.Workspace{Root: root})
+	globalDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(&workspace.Workspace{Root: root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +147,7 @@ func TestConsumerTestIsNotCachedAfterImportedVitestConfigChanges(t *testing.T) {
 	exec := &Executor{
 		objects: store, manifests: cache.NewManifestStore(cacheRoot), states: cache.NewStateStore(cacheRoot),
 		wsRoot: workspaceRoot, logRoot: filepath.Join(cacheRoot, "logs"), runtimeFingerprint: "fixture-toolchain",
-		trackedFiles: trackedFiles, globalInputDigest: globalDigest,
+		ownedInputDigests: ownedInputDigests, dependencyDigests: dependencyDigests, globalInputDigest: globalDigest,
 	}
 	pkg := workspace.Package{Name: "@fixture/gateway-app", Dir: appDir, Language: "typescript"}
 	def := TaskDef{Name: "test", Command: "true", Inputs: []string{"src/**", "vitest.config.*"}, Cache: true}
@@ -200,7 +161,7 @@ func TestConsumerTestIsNotCachedAfterImportedVitestConfigChanges(t *testing.T) {
 		t.Fatalf("second gateway app test = %+v, want cache hit", second)
 	}
 	writeFile(t, filepath.Join(servicesDir, "vitest.config.mjs"), "export default { test: { testTimeout: 2000 } }\n")
-	exec.globalInputDigest, err = cache.GlobalInputDigest(root, []string{filepath.Join(servicesDir, "vitest.config.mjs")})
+	exec.globalInputDigest, err = cache.ContentDigest(root, []string{filepath.Join(servicesDir, "vitest.config.mjs")})
 	if err != nil {
 		t.Fatal(err)
 	}
