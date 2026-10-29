@@ -185,6 +185,50 @@ func TestHashInputsDepPatternWithNilDepDirsIsNoop(t *testing.T) {
 	}
 }
 
+func TestHashInputsIncludesDependencyPublishedAndExportedSurface(t *testing.T) {
+	consumerDir := t.TempDir()
+	dependencyDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(consumerDir, "src", "index.ts"), "import '@fixture/devkit/tsconfig/base.json'\n")
+	mustWriteFile(t, filepath.Join(dependencyDir, "package.json"), `{"name":"@fixture/devkit","exports":{"./tsconfig/base.json":"./tsconfig/base.json"},"files":["tsconfig"]}`)
+	mustWriteFile(t, filepath.Join(dependencyDir, "tsconfig", "base.json"), `{"compilerOptions":{"strict":true}}`)
+
+	first, err := HashInputs(consumerDir, []string{dependencyDir}, []string{"src/**"})
+	if err != nil {
+		t.Fatalf("hash initial consumer inputs: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(dependencyDir, "tsconfig", "base.json"), `{"compilerOptions":{"strict":false}}`)
+	second, err := HashInputs(consumerDir, []string{dependencyDir}, []string{"src/**"})
+	if err != nil {
+		t.Fatalf("hash consumer inputs after exported config change: %v", err)
+	}
+	if first == second {
+		t.Fatal("consumer task hash unchanged after only an exported dependency config changed")
+	}
+}
+
+func TestHashInputsIncludesLocalGoReplacementModule(t *testing.T) {
+	consumerDir := t.TempDir()
+	replacementDir := filepath.Join(consumerDir, "..", "clikit")
+	mustWriteFile(t, filepath.Join(consumerDir, "go.mod"), "module fixture/consumer\n\ngo 1.22\n\nrequire example.com/clikit v0.0.0\n\nreplace example.com/clikit => ../clikit\n")
+	mustWriteFile(t, filepath.Join(consumerDir, "main.go"), "package main\nimport \"example.com/clikit/diag\"\nfunc main() { _ = diag.Message() }\n")
+	mustWriteFile(t, filepath.Join(replacementDir, "go.mod"), "module example.com/clikit\n\ngo 1.22\n")
+	mustWriteFile(t, filepath.Join(replacementDir, "diag", "envelope.go"), "package diag\nimport _ \"embed\"\n//go:embed prompt.md\nvar prompt string\nfunc Message() string { return prompt }\n")
+	mustWriteFile(t, filepath.Join(replacementDir, "diag", "prompt.md"), "before\n")
+
+	first, err := HashInputs(consumerDir, nil, []string{"**/*.go", "go.mod", "go.sum"})
+	if err != nil {
+		t.Fatalf("hash initial Go consumer inputs: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(replacementDir, "diag", "prompt.md"), "after\n")
+	second, err := HashInputs(consumerDir, nil, []string{"**/*.go", "go.mod", "go.sum"})
+	if err != nil {
+		t.Fatalf("hash Go consumer inputs after local replacement change: %v", err)
+	}
+	if first == second {
+		t.Fatal("Go consumer task hash unchanged after its local replacement module changed")
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

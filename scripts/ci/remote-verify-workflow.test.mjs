@@ -81,7 +81,14 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   assert.equal(goSetup.with['cache-dependency-path'], 'tools/kb-create/go.sum');
   assert.equal(cache.with.path, '.kb/devkit/');
   assert.match(cache.with.key, /\$\{\{ github\.sha \}\}/);
-  assert.match(cache.with.key, /hashFiles\(/);
+  const toolchain = cas.runs.steps.find((step) => step.name === 'Identify cache toolchain partition');
+  assert.equal(toolchain.id, 'toolchain');
+  assert.match(toolchain.run, /node --version/);
+  assert.match(toolchain.run, /go version/);
+  assert.match(cache.with.key, /runner\.arch/);
+  assert.match(cache.with.key, /steps\.toolchain\.outputs\.partition/);
+  assert.doesNotMatch(cache.with.key, /hashFiles\(/);
+  assert.equal(cache.with['restore-keys'].trim(), 'devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-');
   assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore.outputs.cache-hit }}');
   assert.ok(profile.buildDependentTestStages.candidate.includes('journey-unit-suite'));
   assert.ok(!profile.buildDependentTestStages.stream.includes('journey-unit-suite'));

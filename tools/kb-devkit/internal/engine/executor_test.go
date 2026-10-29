@@ -71,6 +71,43 @@ func TestExecutorStoresAndRestoresOutputsThroughCache(t *testing.T) {
 	}
 }
 
+func TestConsumerBuildIsNotCachedAfterExportedDependencyConfigChanges(t *testing.T) {
+	root := t.TempDir()
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumerDir := filepath.Join(root, "packages", "consumer")
+	dependencyDir := filepath.Join(root, "infra", "devkit")
+	writeFile(t, filepath.Join(consumerDir, "package.json"), `{"name":"@fixture/consumer"}`)
+	writeFile(t, filepath.Join(consumerDir, "src", "index.ts"), "export {}\n")
+	writeFile(t, filepath.Join(dependencyDir, "package.json"), `{"name":"@fixture/devkit","exports":{"./tsconfig/base.json":"./tsconfig/base.json"},"files":["tsconfig"]}`)
+	writeFile(t, filepath.Join(dependencyDir, "tsconfig", "base.json"), `{"compilerOptions":{"strict":true}}`)
+
+	exec := &Executor{
+		objects: store, manifests: cache.NewManifestStore(cacheRoot), states: cache.NewStateStore(cacheRoot),
+		wsRoot: root, logRoot: filepath.Join(cacheRoot, "logs"), runtimeFingerprint: "fixture-toolchain",
+	}
+	pkg := workspace.Package{Name: "@fixture/consumer", Dir: consumerDir}
+	def := TaskDef{Name: "build", Command: "true", Inputs: []string{"src/**"}, Cache: true}
+	depDirs := []string{dependencyDir}
+
+	first := exec.Run(pkg, def, false, depDirs)
+	if !first.OK || first.Cached {
+		t.Fatalf("first consumer build = %+v, want successful execution", first)
+	}
+	second := exec.Run(pkg, def, false, depDirs)
+	if !second.OK || !second.Cached {
+		t.Fatalf("second consumer build = %+v, want cache hit", second)
+	}
+	writeFile(t, filepath.Join(dependencyDir, "tsconfig", "base.json"), `{"compilerOptions":{"strict":false}}`)
+	third := exec.Run(pkg, def, false, depDirs)
+	if !third.OK || third.Cached {
+		t.Fatalf("consumer build after exported config change = %+v, want a fresh execution", third)
+	}
+}
+
 func TestTaskFingerprintChangesWhenTaskDefinitionChanges(t *testing.T) {
 	exec := &Executor{runtimeFingerprint: "toolchain"}
 	base := TaskDef{Name: "build", Command: "tsup", Inputs: []string{"src/**"}, Outputs: []string{"dist/**"}, Deps: []string{"^build"}, Cache: true}
