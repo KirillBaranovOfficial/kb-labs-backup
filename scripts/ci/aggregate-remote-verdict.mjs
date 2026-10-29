@@ -45,15 +45,6 @@ function failFastReason(shard, matrix, resultsByName, evidenceByName, verificati
   return failedPeer ? 'cancelled by fail-fast after a peer in the same test matrix failed' : undefined;
 }
 
-function plainTestOutput(value) {
-  return typeof value === 'string' ? value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '') : '';
-}
-
-function taskTestFailureLines(task) {
-  const output = plainTestOutput(task.structuredResult?.Stdout ?? task.stdout ?? task.Stdout);
-  return output.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(?:FAIL\s|×\s|--- FAIL:|✖\s)/.test(line));
-}
-
 function isDevkitStage(result) {
   return result.name === profile.buildStage || result.name.startsWith(`${profile.packageTestStage}:shard-`);
 }
@@ -63,17 +54,17 @@ function devkitFailureEvidence(result) {
   const taskFailures = Array.isArray(result.taskFailures) ? result.taskFailures : [];
   let failures;
   if (taskFailures.length) {
-    failures = taskFailures.flatMap((task) => {
+    failures = taskFailures.map((task) => {
       const structured = task.structuredResult ?? task;
       const identity = [task.package ?? structured.Package ?? task.Package, task.task ?? structured.Task ?? task.Task].filter(Boolean).join(':') || 'kb-devkit task';
-      const testLines = taskTestFailureLines(task);
-      if (testLines.length) return testLines.map((line) => `${identity} — ${line}`);
-      const detail = task.errorLine ?? task.error ?? structured.Error ?? structured.Stderr ?? `task exited with code ${String(task.exitCode ?? structured.ExitCode ?? task.ExitCode)}`;
-      return [`${identity} — ${detail}`];
+      const exitCode = task.exitCode ?? structured.ExitCode ?? task.ExitCode;
+      const logPath = task.logPath ?? structured.logPath;
+      const outputTail = [structured.Stdout, structured.Stderr].filter((output) => typeof output === 'string' && output.trim()).join('\n').trim();
+      const summary = `${identity} (exit code ${String(exitCode)}${logPath ? `; log ${logPath}` : ''})`;
+      return outputTail ? `${summary}\n${outputTail}` : summary;
     });
-    failures = [...new Set([...(result.failures ?? []).filter((line) => /^(?:FAIL\s|×\s|--- FAIL:|✖\s)/.test(plainTestOutput(line).trim())), ...failures])];
   } else {
-    const tail = plainTestOutput(result.logTail ?? '').trim().split(/\r?\n/).filter(Boolean).at(-1);
+    const tail = result.logTail?.trim();
     failures = [tail ? `log-tail fallback: ${tail}` : 'log-tail fallback: no task output was recorded'];
   }
   return { ...result, failures };

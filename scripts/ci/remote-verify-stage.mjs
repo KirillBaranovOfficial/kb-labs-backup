@@ -174,7 +174,7 @@ function devkitTaskFailures(stage, result) {
       package: task.Package,
       task: task.Task,
       exitCode: task.ExitCode,
-      structuredResult: { ...task, Stdout: boundedTail(task.Stdout ?? '') },
+      structuredResult: { ...task, Stdout: boundedTail(task.Stdout ?? ''), Stderr: boundedTail(task.Stderr ?? '') },
       errorLine: firstStructuredErrorLine(task),
       logPath: task.logPath,
     };
