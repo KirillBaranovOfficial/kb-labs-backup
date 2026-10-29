@@ -44,7 +44,7 @@ esac
 	if status.Code() != 0 {
 		t.Fatalf("worktree ensure exit=%d stdout=%s stderr=%s", status.Code(), output.String(), stderr.String())
 	}
-	options := schedulerRunOptions{}
+	options := newSchedulerRunOptions(newSchedulerStore(t.TempDir()), schedulerRunOptionsConfig{})
 	if err := options.ensureWorktree(SchedulerTask{RepoRoot: repo, Workdir: filepath.Join(worktrees, "stream-a"), Stream: "stream-a", Base: "main"}); err != nil {
 		t.Fatalf("scheduler ensure: %v", err)
 	}

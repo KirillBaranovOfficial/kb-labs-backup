@@ -41,6 +41,21 @@ func TestHygieneLivenessUsesSchedulerStateAndObservedWorktreePath(t *testing.T) 
 	}
 }
 
+func TestHygieneKeepsQueuedZeroCommitStreamLive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queued-stream")
+	states := map[string]SchedulerStream{
+		"queued-stream": {
+			Stream:  "queued-stream",
+			State:   SchedulerAwaitingOrchestrator,
+			Advance: &StreamAdvance{State: AdvanceVerifying, Round: 0},
+		},
+	}
+	live, err := streamIsLive("queued-stream", path, states, nil, nil)
+	if err != nil || !live {
+		t.Fatalf("queued zero-commit stream was not live: live=%v err=%v", live, err)
+	}
+}
+
 // case: S-276.6
 func TestHygieneProcessSnapshotSeparatesUnreadableUIDClasses(t *testing.T) {
 	entries := []proc.ProcessInventoryEntry{
@@ -329,11 +344,12 @@ func TestHygieneDirtyRetiredWorktreeArchivesBeforeRemoval(t *testing.T) {
 	if err := store.writeJSON(store.streamPath("x-dirty"), SchedulerStream{Stream: "x-dirty", State: SchedulerDone, ChangedAt: time.Now().Add(-72 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runHygieneSweep(hygieneOptions{Root: root, State: state, Integration: integration, Now: time.Now()}); err != nil {
+	report, err := runHygieneSweep(hygieneOptions{Root: root, State: state, Integration: integration, Now: time.Now()})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(worktree); !os.IsNotExist(err) {
-		t.Fatalf("dirty retired worktree still exists: %v", err)
+		t.Fatalf("dirty retired worktree still exists: %v; hygiene actions=%+v", err, report.Actions)
 	}
 	archive := filepath.Join(root, "reports", "abandoned", "x-dirty")
 	for _, name := range []string{"tracked.diff", "untracked.list", "untracked.tgz", "head"} {
@@ -787,7 +803,7 @@ func TestSchedulerDispatchContinuesAfterStartupHygieneFailure(t *testing.T) {
 			_ = logFile.Close()
 		}
 	})
-	options := schedulerRunOptions{store: newSchedulerStore(f.state), root: runnerRoot{invocation: "kb-runner"}, state: f.state, slots: 1}
+	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, slots: 1})
 	result := make(chan struct {
 		code int
 		err  error
@@ -863,11 +879,17 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 	t.Setenv("FAKE_AGENT_RELEASE_FIFO", releaseFIFO)
 	t.Setenv("FAKE_AGENT_BLOCK_STREAM", first.Stream)
 	clock := &controlledSchedulerClock{now: time.Now()}
-	options := schedulerRunOptions{store: newSchedulerStore(f.state), root: runnerRoot{invocation: "kb-runner"}, state: f.state, slots: 2, clock: clock}
+	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, slots: 2, clock: clock})
 	ctx, cancel := context.WithCancel(t.Context())
 	var eventsFile *os.File
 	var workerRelease *os.File
 	var err error
+	runDone := make(chan struct {
+		code int
+		err  error
+	}, 1)
+	runStarted := false
+	startedReaderUsed := false
 	t.Cleanup(func() {
 		cancel()
 		if eventsFile != nil {
@@ -878,11 +900,33 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 			_, _ = workerRelease.WriteString("release\n")
 			_ = workerRelease.Close()
 		}
+		if !startedReaderUsed {
+			select {
+			case file := <-started:
+				_ = file.Close()
+			default:
+				writer, openErr := os.OpenFile(startedFIFO, os.O_WRONLY, 0)
+				if openErr == nil {
+					_, _ = writer.WriteString("cleanup\n")
+					_ = writer.Close()
+					select {
+					case file := <-started:
+						_ = file.Close()
+					case <-time.After(15 * time.Second):
+						t.Errorf("started-FIFO reader did not stop during cleanup")
+					}
+				}
+			}
+		}
+		if runStarted {
+			select {
+			case <-runDone:
+			case <-time.After(15 * time.Second):
+				t.Errorf("scheduler run goroutine did not stop during cleanup")
+			}
+		}
 	})
-	runDone := make(chan struct {
-		code int
-		err  error
-	}, 1)
+	runStarted = true
 	go func() {
 		code, err := options.run(ctx, false)
 		runDone <- struct {
@@ -892,6 +936,7 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 	}()
 	select {
 	case file := <-started:
+		startedReaderUsed = true
 		scanner := bufio.NewScanner(file)
 		if !scanner.Scan() || scanner.Text() != first.Stream {
 			_ = file.Close()
@@ -974,6 +1019,7 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 	cancel()
 	select {
 	case <-runDone:
+		runStarted = false
 	case <-time.After(15 * time.Second):
 		t.Fatal("scheduler did not stop after cancellation")
 	}

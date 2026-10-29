@@ -47,7 +47,7 @@ func TestSchedulerAutoLandRequiresEveryReviewerToAccept(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream, _ = store.stream(task.Stream)
-	options := schedulerRunOptions{store: store, state: f.state}
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: f.state, supervisor: f.supervisor})
 	if err := options.resolveReviewOutcome(task, stream); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestSchedulerReviewSkipWithoutAnotherConfiguredVendorRequestsDecision(t *te
 		t.Fatal(err)
 	}
 	stream, _ = store.stream(task.Stream)
-	if err := (schedulerRunOptions{store: store, state: f.state}).resolveReviewOutcome(task, stream); err != nil {
+	if err := (newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: f.state, supervisor: f.supervisor})).resolveReviewOutcome(task, stream); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.stream(task.Stream)
@@ -163,7 +163,7 @@ func TestSchedulerSubmissionPersistsTreeAndLandIgnoresLaterWorktreeChanges(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := schedulerRunOptions{store: store, state: state}
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: state})
 	submission, err := options.submit(task, stream)
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +209,7 @@ func TestSchedulerSubmissionPersistsTreeAndLandIgnoresLaterWorktreeChanges(t *te
 	if gotSHA := git("rev-parse", "HEAD"); gotSHA == submission.ExpectedRefSHA {
 		t.Fatalf("landing did not move the worker branch to its immutable grouped commit: %s", gotSHA)
 	}
-	if committedTree, err := treeSHAForCommit(repo, git("rev-parse", "HEAD")); err != nil || committedTree != verifiedTree {
+	if committedTree, err := treeSHAForCommit(repo, git("rev-parse", "HEAD")); err != nil || committedTree.String() != verifiedTree {
 		t.Fatalf("worker branch commit differs from verified tree: tree=%s verified=%s err=%v", committedTree, verifiedTree, err)
 	}
 	worktreeBytes, err := os.ReadFile(filepath.Join(repo, "tracked.txt"))
@@ -246,7 +246,7 @@ func TestSchedulerStateDirectoryRejectsTasksFromAnotherRepository(t *testing.T) 
 	if _, err := store.task("r2-repo-second"); !os.IsNotExist(err) {
 		t.Fatalf("refused task was persisted: %v", err)
 	}
-	if err := (schedulerRunOptions{store: store, root: runnerRoot{}, state: f.state}).watchRemote(t.Context()); err != nil {
+	if err := (newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{}, state: f.state, supervisor: f.supervisor})).watchRemote(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	ghCalls, err := os.ReadFile(f.ghCalls)

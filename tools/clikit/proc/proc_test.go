@@ -916,6 +916,54 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 }
 
 // case: S-237.13
+func TestRunOwnershipInspectionKeepsProcessTableFailureUnknown(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "missing-state")
+	owned, err := proc.RunOwnsProcess(state, "run-1", 200, "worker-start")
+	if err == nil || owned {
+		t.Fatalf("RunOwnsProcess = (%t, %v), want explicit inspection error", owned, err)
+	}
+	active, err := proc.RunTagActive(state, "review-task")
+	if err == nil || active {
+		t.Fatalf("RunTagActive = (%t, %v), want explicit inspection error", active, err)
+	}
+}
+
+func TestStartUsesRunIDAllocatedBeforeDispatch(t *testing.T) {
+	state := t.TempDir()
+	runID, err := proc.AllocateRunID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	run, err := proc.Start(ctx, proc.Config{
+		StateDir: state, Tag: runID, RunID: runID, Stall: time.Minute,
+		StdoutPath: filepath.Join(t.TempDir(), "stdout.log"),
+		StderrPath: filepath.Join(t.TempDir(), "stderr.log"),
+		Command:    []string{"/bin/sh", "-c", "exit 0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.RunID != runID {
+		t.Fatalf("started run ID = %q, want preallocated %q", run.RunID, runID)
+	}
+	if err := run.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	listing := proc.List(state)
+	if listing.Error != nil {
+		t.Fatal(listing.Error)
+	}
+	for _, record := range listing.Runs {
+		if record.RunID == runID && record.Status == proc.StatusCompleted {
+			return
+		}
+	}
+	t.Fatalf("completed run %s is missing from durable registry: %+v", runID, listing.Runs)
+}
+
+// case: S-237.13
 func TestUnrelatedSameUIDProcessIsNotOwnedByRun(t *testing.T) {
 	state := t.TempDir()
 	sleepPath, err := exec.LookPath("sleep")

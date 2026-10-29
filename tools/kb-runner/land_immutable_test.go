@@ -33,21 +33,317 @@ func TestLandingCommitObjectsExcludePostVerificationWorktreeEdits(t *testing.T) 
 			if err := os.WriteFile(filepath.Join(repo, "src.go"), []byte("verified change\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			verifiedSHA, _, err := snapshotWorktree(repo, "immutable-"+test.name)
+			verifiedSHA, _, err := snapshotWorktree(filesystemRunnerStateStore{}, repo, "immutable-"+test.name)
 			if err != nil {
 				t.Fatal(err)
 			}
-			verifiedTree, err := treeSHAForCommit(repo, verifiedSHA)
+			verifiedTree, err := treeSHAForCommit(repo, verifiedSHA.String())
 			if err != nil {
 				t.Fatal(err)
 			}
 			test.edit(t, repo)
 			commits := []proposedCommit{{Kind: "case", Subject: "docs(qa): case"}, {Kind: "tests", Subject: "test(kb-runner): tests"}, {Kind: "code", Subject: "fix(kb-runner): code"}}
-			object, err := buildLandingObjects(repo, "immutable-"+test.name, verifiedTree, git("rev-parse", "HEAD"), commits, t.TempDir())
+			object, err := buildLandingObjects(filesystemRunnerStateStore{}, repo, "immutable-"+test.name, verifiedTree.String(), git("rev-parse", "HEAD"), commits, t.TempDir())
 			if err != nil || object.TreeSHA != verifiedTree {
 				t.Fatalf("landing object included post-verification %s edit: commit=%s tree=%s verified tree=%s err=%v", test.name, object.CommitSHA, object.TreeSHA, verifiedTree, err)
 			}
 		})
+	}
+}
+
+// case: S-237.140
+func TestOrphanLandingCommitObjectsAreReusedOrRemainUnreachable(t *testing.T) {
+	repo, git := newImmutableLandRepo(t)
+	base := git("rev-parse", "HEAD")
+	stream := "orphan-landing"
+	git("update-ref", "refs/heads/agent/"+stream, base)
+	for path, body := range map[string]string{
+		"docs/qa/scenarios/S-237-orphan-landing.md": "case update\n",
+		"tools/kb-runner/orphan_landing_test.go":    "package main\n",
+		"src.go":                                    "verified source\n",
+	} {
+		absolute := filepath.Join(repo, path)
+		if err := os.MkdirAll(filepath.Dir(absolute), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(absolute, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", "-A")
+	git("commit", "-m", "fixture: verified worktree")
+	verifiedTree, err := treeSHAForCommit(repo, git("rev-parse", "HEAD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commits := []proposedCommit{{Kind: "case", Subject: "docs(qa): add landing case"}, {Kind: "tests", Subject: "test(kb-runner): prove orphan recovery"}, {Kind: "code", Subject: "fix(kb-runner): reuse accepted identity"}}
+	stateIO := filesystemRunnerStateStore{}
+	first, err := buildLandingObjects(stateIO, repo, stream, verifiedTree.String(), base, commits, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := git("rev-parse", "refs/heads/agent/"+stream); got != base {
+		t.Fatalf("commit-tree side effect moved the landing ref before identity persistence: %s", got)
+	}
+	second, err := buildLandingObjects(stateIO, repo, stream, verifiedTree.String(), base, commits, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.TreeSHA != verifiedTree || second.TreeSHA != verifiedTree {
+		t.Fatalf("orphan or recovered commit tree differs from accepted tree: first=%+v second=%+v", first, second)
+	}
+	for _, object := range []landingObject{first, second} {
+		if got := git("cat-file", "-t", object.CommitSHA.String()); got != "commit" {
+			t.Fatalf("commit-tree object %s is missing after restart boundary: type=%s", object.CommitSHA, got)
+		}
+	}
+	if err := moveLandingRef(stateIO, repo, stream, second, base); err != nil {
+		t.Fatal(err)
+	}
+	landed := git("rev-parse", "refs/heads/agent/"+stream)
+	if landed != second.CommitSHA.String() || treeSHAForCommitMust(t, repo, landed) != verifiedTree.String() {
+		t.Fatalf("landing ref does not identify the recovered commit tree: ref=%s object=%+v", landed, second)
+	}
+	if got := git("rev-list", "--count", base+".."+landed); got != "3" {
+		t.Fatalf("accepted branch contains %s commits after base, want one case/tests/code set", got)
+	}
+	if first.CommitSHA != second.CommitSHA {
+		if ancestor := exec.Command("git", "-C", repo, "merge-base", "--is-ancestor", first.CommitSHA.String(), landed); ancestor.Run() == nil {
+			t.Fatalf("unidentified orphan commit %s became part of the landed history", first.CommitSHA)
+		}
+		unreachable := git("fsck", "--unreachable", "--no-reflogs")
+		if !strings.Contains(unreachable, first.CommitSHA.String()) {
+			t.Fatalf("orphan commit %s is neither reused nor recorded as unreachable: %s", first.CommitSHA, unreachable)
+		}
+	}
+}
+
+func treeSHAForCommitMust(t *testing.T, repo, commit string) string {
+	t.Helper()
+	tree, err := treeSHAForCommit(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree.String()
+}
+
+// case: S-237.140
+func TestAutoAdvanceCommitOnlyLandingKeepsIntegrationBranchUntouched(t *testing.T) {
+	for _, crashPoint := range []string{"before landing", "after ref move", "after accepted event"} {
+		t.Run(crashPoint, func(t *testing.T) {
+			fixture := newAutoCommitLandingFixture(t, "auto-commit-only")
+			switch crashPoint {
+			case "before landing":
+				// The last required review has durably accepted; LandingCommit is absent.
+			case "after ref move":
+				fixture.persistLandingIntent(t)
+				if err := moveLandingRef(filesystemRunnerStateStore{}, fixture.repo, fixture.stream, fixture.object, fixture.oldRef); err != nil {
+					t.Fatal(err)
+				}
+			case "after accepted event":
+				fixture.persistLandingIntent(t)
+				if err := moveLandingRef(filesystemRunnerStateStore{}, fixture.repo, fixture.stream, fixture.object, fixture.oldRef); err != nil {
+					t.Fatal(err)
+				}
+				if err := refreshLandingWorktree(filesystemRunnerStateStore{}, fixture.repo, fixture.repo, fixture.object.CommitSHA.String()); err != nil {
+					t.Fatal(err)
+				}
+				if err := fixture.store.advance(fixture.stream, AdvanceAccepted, "all required reviews accepted", "ACCEPT", fixture.tree); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fixture.recoverAndAssertExactlyOnce(t)
+		})
+	}
+}
+
+func TestAutoAdvanceCommitOnlyLandingWithoutAcceptedReviewsEscalates(t *testing.T) {
+	fixture := newAutoCommitLandingFixture(t, "auto-commit-only-refused")
+	fixture.persistLandingIntent(t)
+	stream, err := fixture.store.stream(fixture.stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.ReviewResults = nil
+	stream.Advance.State = AdvanceAccepted
+	if err := fixture.store.commitAutoTransition([]SchedulerStream{stream}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fixture.options.recoverAutoStreams(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := fixture.store.stream(fixture.stream)
+	if err != nil || got.State != SchedulerAwaitingOrchestrator || got.Advance.State != AdvanceEscalated || got.Cause != "landing-refused" {
+		t.Fatalf("invalid accepted state was not durably escalated: stream=%+v err=%v", got, err)
+	}
+	if gotRef := fixture.git("rev-parse", "refs/heads/agent/"+fixture.stream); gotRef != fixture.oldRef {
+		t.Fatalf("invalid accepted state moved worker ref: got=%s want=%s", gotRef, fixture.oldRef)
+	}
+	events, err := os.ReadFile(filepath.Join(fixture.store.dir, "events.jsonl"))
+	if err != nil || strings.Contains(string(events), `"status":"accepted"`) || strings.Count(string(events), `"status":"escalated"`) != 1 {
+		t.Fatalf("invalid accepted state emitted acceptance or missed escalation: events=%s err=%v", events, err)
+	}
+}
+
+type autoCommitLandingFixture struct {
+	repo    string
+	state   string
+	stream  string
+	base    string
+	oldRef  string
+	tree    string
+	git     func(...string) string
+	task    SchedulerTask
+	store   *schedulerStore
+	options schedulerRunOptions
+	object  landingObject
+}
+
+func newAutoCommitLandingFixture(t *testing.T, stream string) *autoCommitLandingFixture {
+	t.Helper()
+	repo, git := newImmutableLandRepo(t)
+	base := git("rev-parse", "HEAD")
+	git("checkout", "-b", "agent/"+stream)
+	for path, body := range map[string]string{
+		"docs/qa/scenarios/S-237-auto-advance.md": "case\n",
+		"tools/kb-runner/lifecycle_test.go":       "test\n",
+		"tools/kb-runner/lifecycle.go":            "code\n",
+	} {
+		absolute := filepath.Join(repo, path)
+		if err := os.MkdirAll(filepath.Dir(absolute), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(absolute, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report := "Status: DONE\n\n## Design gate\n| root cause | single owner (package/module/file) | rail type | why it is not a shape rail or a copy |\n|---|---|---|---|\n| cause | owner | contract | owner |\n\n## Verification\nPASS\n\n## Open issues\nNone\n\n## Unrequested behaviour changes\nNone\n\n## Debt self-scan\nNone\n\n## Self-review\nComplete\n\n## Proposed commits\n```json\n[{\"kind\":\"case\",\"subject\":\"docs(qa): add auto-advance case\",\"body\":\"\"},{\"kind\":\"tests\",\"subject\":\"test(kb-runner): cover auto landing\",\"body\":\"\"},{\"kind\":\"code\",\"subject\":\"feat(kb-runner): auto advance\",\"body\":\"\"}]\n```\n"
+	if err := os.WriteFile(filepath.Join(repo, ".agent-report.md"), []byte(report), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "docs/qa/scenarios/S-237-auto-advance.md", "tools/kb-runner/lifecycle_test.go", "tools/kb-runner/lifecycle.go", ".agent-report.md")
+	git("commit", "-m", "work: verified stream tree")
+	oldRef := git("rev-parse", "refs/heads/agent/"+stream)
+	verified := git("rev-parse", "HEAD")
+	tree, err := treeSHAForCommit(repo, verified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := t.TempDir()
+	prompt := filepath.Join(t.TempDir(), "worker.md")
+	if err := os.WriteFile(prompt, []byte("worker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	task := SchedulerTask{ID: stream, Stream: stream, Prompt: prompt, Workdir: repo, RepoRoot: repo, WorktreeRoot: t.TempDir(), Base: base, Vendor: "zcode", Effort: "medium", Role: schedulerWorkerRole, OutsideSuites: []string{"kb-runner:./..."}}
+	store := newSchedulerStore(state)
+	if _, err := store.add(task); err != nil {
+		t.Fatal(err)
+	}
+	streamState, err := store.stream(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.transition(streamState, SchedulerRunning, "fixture worker completed", "review verified tree"); err != nil {
+		t.Fatal(err)
+	}
+	streamState, _ = store.stream(stream)
+	if err := store.transition(streamState, SchedulerAwaitingReview, "review task", "run the READY review task"); err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range []StreamAdvanceState{AdvanceWorking, AdvanceVerifying, AdvanceReviewing} {
+		if err := store.advance(stream, next, "", "", tree.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	streamState, err = store.stream(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamState.ReviewResults = map[string]string{string(ReviewStandard): "ACCEPT"}
+	streamState.Advance.LastVerdict = "ACCEPT"
+	streamState.Advance.LastReviewVerdict = "ACCEPT"
+	if err := store.commitAutoTransition([]SchedulerStream{streamState}); err != nil {
+		t.Fatal(err)
+	}
+	commits := []proposedCommit{{Kind: "case", Subject: "docs(qa): add auto-advance case"}, {Kind: "tests", Subject: "test(kb-runner): cover auto landing"}, {Kind: "code", Subject: "feat(kb-runner): auto advance"}}
+	object, err := buildLandingObjects(filesystemRunnerStateStore{}, repo, stream, tree.String(), base, commits, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &autoCommitLandingFixture{repo: repo, state: state, stream: stream, base: base, oldRef: oldRef, tree: tree.String(), git: git, task: task, store: store, options: newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: state}), object: object}
+}
+
+func (fixture *autoCommitLandingFixture) persistLandingIntent(t *testing.T) {
+	t.Helper()
+	stream, err := fixture.store.stream(fixture.stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.Advance.LandingCommit = fixture.object.CommitSHA.String()
+	stream.Advance.LandingExpectedRef = fixture.oldRef
+	if err := fixture.store.commitAutoTransition([]SchedulerStream{stream}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (fixture *autoCommitLandingFixture) recoverAndAssertExactlyOnce(t *testing.T) {
+	t.Helper()
+	if err := fixture.options.recoverAutoStreams(); err != nil {
+		t.Fatalf("recovery: %v", err)
+	}
+	if err := fixture.options.recoverAutoStreams(); err != nil {
+		t.Fatalf("repeated recovery: %v", err)
+	}
+	stream, err := fixture.store.stream(fixture.stream)
+	if err != nil || stream.State != SchedulerDone || stream.Advance.State != AdvanceAccepted {
+		t.Fatalf("landing did not converge: stream=%+v err=%v", stream, err)
+	}
+	commit := fixture.git("rev-parse", "refs/heads/agent/"+fixture.stream)
+	if fixture.git("rev-parse", "HEAD") != commit || treeSHAForCommitMust(t, fixture.repo, commit) != fixture.tree {
+		t.Fatalf("landing ref/worktree mismatch: ref=%s worktree=%s tree=%s want tree=%s", commit, fixture.git("rev-parse", "HEAD"), treeSHAForCommitMust(t, fixture.repo, commit), fixture.tree)
+	}
+	if got := fixture.git("rev-parse", "refs/heads/main"); got != fixture.base {
+		t.Fatalf("integration branch moved from %s to %s", fixture.base, got)
+	}
+	commits := strings.Split(strings.TrimSpace(fixture.git("rev-list", "--reverse", "--parents", fixture.base+".."+commit)), "\n")
+	if len(commits) != 3 {
+		t.Fatalf("commit-only landing has %d commits after base, want case/tests/code: %q", len(commits), commits)
+	}
+	subjects := strings.Split(fixture.git("log", "--reverse", "--format=%s", fixture.base+".."+commit), "\n")
+	wantSubjects := []string{"docs(qa): add auto-advance case", "test(kb-runner): cover auto landing", "feat(kb-runner): auto advance"}
+	if strings.Join(subjects, "\n") != strings.Join(wantSubjects, "\n") {
+		t.Fatalf("commit-only landing order=%q want=%q", subjects, wantSubjects)
+	}
+	for _, entry := range commits {
+		if len(strings.Fields(entry)) != 2 {
+			t.Fatalf("landing commit is not single-parent: %q", entry)
+		}
+	}
+	events, err := os.ReadFile(filepath.Join(fixture.store.dir, "events.jsonl"))
+	if err != nil || strings.Count(string(events), `"status":"accepted"`) != 1 {
+		t.Fatalf("accepted event count=%d events=%s err=%v", strings.Count(string(events), `"status":"accepted"`), events, err)
+	}
+}
+
+// case: S-237.140
+func TestAcceptedTreeContainingRunnerStateFileIsRefused(t *testing.T) {
+	repo, git := newImmutableLandRepo(t)
+	state := filepath.Join(repo, "logs", "runner")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "streams.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "logs/runner/streams.json")
+	git("commit", "-m", "fixture: state file in accepted tree")
+	tree, err := treeSHAForCommit(repo, git("rev-parse", "HEAD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseRunnerStateInTree(repo, state, tree.String()); err == nil {
+		t.Fatal("accepted tree containing a runner state file was allowed to land")
 	}
 }
 
@@ -67,11 +363,11 @@ func TestSchedulerMergeUsesImmutableLandingCommitAfterBranchAmendment(t *testing
 		t.Fatal(err)
 	}
 	expectedOld := git("rev-parse", "HEAD")
-	verifiedSHA, _, err := snapshotWorktree(repo, "immutable-merge")
+	verifiedSHA, _, err := snapshotWorktree(filesystemRunnerStateStore{}, repo, "immutable-merge")
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifiedTree, err := treeSHAForCommit(repo, verifiedSHA)
+	verifiedTree, err := treeSHAForCommit(repo, verifiedSHA.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +423,7 @@ exec "$REAL_GIT" "$@"
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream.Submission = &SchedulerSubmission{SHA: verifiedSHA, TreeSHA: verifiedTree, ExpectedRefSHA: expectedOld, Status: "completed", Conclusion: "success"}
+	stream.Submission = &SchedulerSubmission{SHA: verifiedSHA.String(), TreeSHA: verifiedTree.String(), ExpectedRefSHA: expectedOld, Status: "completed", Conclusion: "success"}
 	stream.ReviewResults = map[string]string{"codex": "ACCEPT"}
 	if err := store.transition(stream, SchedulerRunning, "worker", "worker done"); err != nil {
 		t.Fatal(err)
@@ -141,7 +437,7 @@ exec "$REAL_GIT" "$@"
 		t.Fatal(err)
 	}
 	stream, _ = store.stream(task.Stream)
-	landed, mergeSHA, err := (schedulerRunOptions{store: store, root: runnerRoot{invocation: "kb-runner"}, state: state}).landAccepted(task, stream)
+	landed, mergeSHA, err := (newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: state})).landAccepted(task, stream)
 	if err != nil || !landed {
 		t.Fatalf("immutable landing failed: landed=%t err=%v", landed, err)
 	}
@@ -185,11 +481,11 @@ func TestLandingRefCompareAndSwapRefusesAmendmentAndResubmits(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedOld := git("rev-parse", "HEAD")
-	verifiedSHA, _, err := snapshotWorktree(repo, "immutable-cas")
+	verifiedSHA, _, err := snapshotWorktree(filesystemRunnerStateStore{}, repo, "immutable-cas")
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifiedTree, err := treeSHAForCommit(repo, verifiedSHA)
+	verifiedTree, err := treeSHAForCommit(repo, verifiedSHA.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +544,7 @@ exec "$REAL_GIT" "$@"
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream.Submission = &SchedulerSubmission{SHA: verifiedSHA, TreeSHA: verifiedTree, ExpectedRefSHA: expectedOld, Status: "completed", Conclusion: "success"}
+	stream.Submission = &SchedulerSubmission{SHA: verifiedSHA.String(), TreeSHA: verifiedTree.String(), ExpectedRefSHA: expectedOld, Status: "completed", Conclusion: "success"}
 	stream.ReviewResults = map[string]string{"codex": "ACCEPT"}
 	if err := store.transition(stream, SchedulerRunning, "worker", "worker done"); err != nil {
 		t.Fatal(err)
@@ -262,7 +558,7 @@ exec "$REAL_GIT" "$@"
 		t.Fatal(err)
 	}
 	stream, _ = store.stream(task.Stream)
-	landed, _, err := (schedulerRunOptions{store: store, root: runnerRoot{invocation: "kb-runner"}, state: state}).landAccepted(task, stream)
+	landed, _, err := (newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: state})).landAccepted(task, stream)
 	if err != nil || landed {
 		t.Fatalf("compare-and-swap race should queue fresh verification: landed=%t err=%v", landed, err)
 	}
@@ -298,11 +594,11 @@ func TestIntegrationCASRefusesConcurrentAdvanceWithoutPushingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedWorker := git("rev-parse", "HEAD")
-	verifiedSHA, _, err := snapshotWorktree(repo, "integration-cas")
+	verifiedSHA, _, err := snapshotWorktree(filesystemRunnerStateStore{}, repo, "integration-cas")
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifiedTree, err := treeSHAForCommit(repo, verifiedSHA)
+	verifiedTree, err := treeSHAForCommit(repo, verifiedSHA.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +657,7 @@ exec "$REAL_GIT" "$@"
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream.Submission = &SchedulerSubmission{SHA: verifiedSHA, TreeSHA: verifiedTree, ExpectedRefSHA: expectedWorker, Status: "completed", Conclusion: "success"}
+	stream.Submission = &SchedulerSubmission{SHA: verifiedSHA.String(), TreeSHA: verifiedTree.String(), ExpectedRefSHA: expectedWorker, Status: "completed", Conclusion: "success"}
 	stream.ReviewResults = map[string]string{"codex": "ACCEPT"}
 	if err := store.transition(stream, SchedulerRunning, "worker", "worker done"); err != nil {
 		t.Fatal(err)
@@ -375,7 +671,7 @@ exec "$REAL_GIT" "$@"
 		t.Fatal(err)
 	}
 	stream, _ = store.stream(task.Stream)
-	landed, mergeSHA, err := (schedulerRunOptions{store: store, root: runnerRoot{invocation: "kb-runner"}, state: state}).landAccepted(task, stream)
+	landed, mergeSHA, err := (newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: state})).landAccepted(task, stream)
 	var conflict *integrationRefConflict
 	if !errors.As(err, &conflict) || landed {
 		t.Fatalf("integration compare-and-swap race should refuse landing: landed=%t err=%v", landed, err)

@@ -173,7 +173,7 @@ func TestFirstJobReadMarksDeadOrReusedWorkerIdentityLost(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(jobTemp, "cache"), []byte("lost-cache"), 0o400); err != nil {
 				t.Fatal(err)
 			}
-			job := Job{ID: "lost-worker", Vendor: "zcode", State: JobRunning, WorkerPID: tc.pid, WorkerStartedAt: tc.start}
+			job := Job{ID: "lost-worker", Vendor: "zcode", State: JobRunning, RunID: "foreign-run", WorkerPID: tc.pid, WorkerStartedAt: tc.start}
 			if err := os.MkdirAll(store.dir, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -206,12 +206,29 @@ func TestFirstJobReadMarksDeadOrReusedWorkerIdentityLost(t *testing.T) {
 	}
 }
 
+// case: S-237.67
+func TestJobWithoutRunIdentityRemainsUnknown(t *testing.T) {
+	state := t.TempDir()
+	store := newJobStore(state)
+	job := Job{ID: "unidentified-worker", State: JobRunning, WorkerPID: os.Getpid(), WorkerStartedAt: "present-but-unowned"}
+	if _, err := store.Create(job); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(); err == nil || !strings.Contains(err.Error(), "process liveness is unknown") || !strings.Contains(err.Error(), "next: ") {
+		t.Fatalf("job list error = %v; want explicit unknown liveness", err)
+	}
+	persisted, err := readJobFile(store.path(job.ID))
+	if err != nil || persisted.State != JobRunning || persisted.Final != nil {
+		t.Fatalf("unknown worker was mutated during reconciliation: job=%+v err=%v", persisted, err)
+	}
+}
+
 func TestStatusAndWaitReturnLostWorkerOnFirstRead(t *testing.T) {
 	for _, read := range []string{"status", "wait"} {
 		t.Run(read, func(t *testing.T) {
 			state := t.TempDir()
 			store := newJobStore(state)
-			job := Job{ID: "lost-worker", Stream: "lost-stream", Vendor: "zcode", State: JobRunning, WorkerPID: 2147483647, WorkerStartedAt: "0:1"}
+			job := Job{ID: "lost-worker", Stream: "lost-stream", Vendor: "zcode", State: JobRunning, RunID: "missing-run", WorkerPID: 2147483647, WorkerStartedAt: "0:1"}
 			if err := os.MkdirAll(store.dir, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -251,7 +268,7 @@ func TestPSAndEventsReconcileJobsBeforeReadingRunState(t *testing.T) {
 		t.Run(read, func(t *testing.T) {
 			state := t.TempDir()
 			store := newJobStore(state)
-			job := Job{ID: "lost-worker", Vendor: "zcode", State: JobRunning, WorkerPID: 2147483647, WorkerStartedAt: "0:1"}
+			job := Job{ID: "lost-worker", Vendor: "zcode", State: JobRunning, RunID: "missing-run", WorkerPID: 2147483647, WorkerStartedAt: "0:1"}
 			if err := os.MkdirAll(store.dir, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -300,7 +317,7 @@ func TestPSAndEventsReconcileJobsBeforeReadingRunState(t *testing.T) {
 func TestAgentAdmissionReconcilesStaleJobBeforeProceeding(t *testing.T) {
 	state := t.TempDir()
 	store := newJobStore(state)
-	lost := Job{ID: "lost-before-admission", Vendor: "zcode", State: JobRunning, WorkerPID: 2147483647, WorkerStartedAt: "0:1"}
+	lost := Job{ID: "lost-before-admission", Vendor: "zcode", State: JobRunning, RunID: "missing-run", WorkerPID: 2147483647, WorkerStartedAt: "0:1"}
 	if err := os.MkdirAll(store.dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

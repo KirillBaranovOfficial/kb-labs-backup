@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kb-labs/clikit/proc"
 )
 
 // case: S-237.129
@@ -50,6 +52,18 @@ func TestIndependentReviewCannotConsumeSharedReport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		runID, err := proc.AllocateRunID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream.RunID = runID
+		if err := store.commitAutoTransition([]SchedulerStream{stream}); err != nil {
+			t.Fatal(err)
+		}
+		stream, err = store.stream(task.Stream)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := store.transition(stream, SchedulerRunning, "review", "wait for reviewer"); err != nil {
 			t.Fatal(err)
 		}
@@ -61,26 +75,25 @@ func TestIndependentReviewCannotConsumeSharedReport(t *testing.T) {
 	if err := os.WriteFile(shared, []byte("ACCEPT\nshared verdict\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	options := schedulerRunOptions{store: store, state: f.state}
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{state: f.state, supervisor: f.supervisor})
 	firstStream, err := store.stream(first.Stream)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := options.finishReview(first, firstStream, ""); err != nil {
+	runTestReviewJob(t, f.supervisor, f.state, firstStream.RunID, "")
+	if err := options.finishReview(first, firstStream); err != nil {
 		t.Fatal(err)
 	}
 	missing, err := store.stream(first.Stream)
 	if err != nil || missing.State != SchedulerAwaitingOrchestrator || missing.Cause != "review-missing" {
 		t.Fatalf("missing private report state=%+v err=%v", missing, err)
 	}
-	if err := os.WriteFile(privateReviewReportPath(second), []byte("ACCEPT\nprivate verdict\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	secondStream, err := store.stream(second.Stream)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := options.finishReview(second, secondStream, ""); err != nil {
+	runTestReviewJob(t, f.supervisor, f.state, secondStream.RunID, "Verdict: ACCEPT\n\n## Defects\n\nprivate verdict\n\n## Verification\n\nPASS\n")
+	if err := options.finishReview(second, secondStream); err != nil {
 		t.Fatal(err)
 	}
 	workerStream, err = store.stream(worker.Stream)
@@ -164,7 +177,7 @@ func TestWatchRemotePropagatesOutageHandlerPersistenceFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FAKE_GH_VIEW_FAIL", "1")
-	options := schedulerRunOptions{store: store, root: runnerRoot{invocation: "kb-runner"}, state: f.state}
+	options := newSchedulerRunOptions(store, schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor})
 	if err := options.watchRemote(context.Background()); err == nil || !strings.Contains(err.Error(), "events.jsonl") {
 		t.Fatalf("watcher discarded outage handler persistence error: %v", err)
 	}

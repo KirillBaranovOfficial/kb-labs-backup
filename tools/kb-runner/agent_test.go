@@ -449,7 +449,7 @@ func TestAgentStatusAndWaitCommandsReadPersistedJobs(t *testing.T) {
 	}
 	t.Setenv("CODEX_BIN", fakeCodex)
 	s := newJobStore(state)
-	_, err := s.Create(Job{ID: "status-job", Stream: "stream", Vendor: "claude", Model: "sonnet", Phase: PhaseRun, State: JobRunning, StartedAt: time.Now().Add(-time.Minute).UTC(), SessionID: "sess"})
+	_, err := s.Create(Job{ID: "status-job", Stream: "stream", Vendor: "claude", Model: "sonnet", Phase: PhaseRun, State: JobRunning, RunID: "missing-run", WorkerPID: 2147483647, WorkerStartedAt: "0:1", StartedAt: time.Now().Add(-time.Minute).UTC(), SessionID: "sess"})
 	if err != nil {
 		t.Fatal(err)
 	}
