@@ -353,7 +353,7 @@ function packageRecord(workspaceRoot, relativePath, name) {
 
 function runCheck(workspaceRoot, packages) {
   return spawnSync(process.execPath, [checker], {
-    cwd: root,
+    cwd: workspaceRoot,
     input: JSON.stringify({
       check: 'node-engine-policy',
       workspaceRoot,

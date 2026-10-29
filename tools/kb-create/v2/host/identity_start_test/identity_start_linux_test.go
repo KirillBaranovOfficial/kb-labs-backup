@@ -33,6 +33,7 @@ func TestPostStartIdentityRegression(t *testing.T) {
 		t.Fatal(err)
 	}
 	const starts = 2000
+	testStarted := time.Now()
 	failures := make([]int, 0, 8)
 	failureCount := 0
 	for index := 0; index < starts; index++ {
@@ -57,6 +58,9 @@ func TestPostStartIdentityRegression(t *testing.T) {
 			close(exited)
 		}()
 		identityStatus := host.WaitForProcessIdentityWithReader(command.Process.Pid, identity, exited, time.Now().Add(time.Second), nil)
+		if (index+1)%100 == 0 {
+			t.Logf("progress child_index=%d children=%d/%d elapsed=%s last_identity_status=%d", index, index+1, starts, time.Since(testStarted).Round(time.Millisecond), identityStatus)
+		}
 		_ = stdin.Close()
 		if err := <-waitErr; err != nil {
 			t.Fatalf("child %d exit: %v", index, err)
