@@ -35,8 +35,7 @@ func executeCommand(args []string, stdout, stderr io.Writer) diag.ExitStatus {
 }
 
 func executeInvocation(invocation string, args []string, stdout, stderr io.Writer) diag.ExitStatus {
-	executable, _ := os.Executable()
-	root := runnerRoot{Root: command.InvocationRoot(invocation), invocation: invocation, executable: executable}
+	root := runnerRoot{Root: command.InvocationRoot(invocation), invocation: invocation}
 	if len(args) == 1 && args[0] == "--version" {
 		if _, err := fmt.Fprintln(stdout, runnerVersion); err != nil {
 			fmt.Fprintf(stderr, "%s --version: write version output: %v\n", root.Name(), err)

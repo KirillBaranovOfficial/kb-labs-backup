@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/kb-labs/clikit/proc/internal/processsignal"
 )
 
 const (
@@ -221,7 +223,7 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 	}
 	// Keep the token only in the supervised command after Start returns.
 	if err := closeRunToken(); err != nil {
-		if killErr := cmd.Process.Kill(); killErr != nil {
+		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after run token close failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -232,7 +234,7 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 	}
 	commandIdentity, commandAlive, commandIdentityErr := ProcessIdentity(cmd.Process.Pid)
 	if commandIdentityErr != nil {
-		if killErr := cmd.Process.Kill(); killErr != nil {
+		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after identity observation failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -248,7 +250,7 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 		})
 	}
 	if err := errors.Join(stdoutWriter.Close(), stderrWriter.Close()); err != nil {
-		if killErr := cmd.Process.Kill(); killErr != nil {
+		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after output pipe close failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -277,7 +279,7 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 		return keeperError(rec, "record command start", err)
 	}
 	if err := json.NewEncoder(ready).Encode(readyMessage{Record: rec}); err != nil {
-		if killErr := cmd.Process.Kill(); killErr != nil {
+		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after readiness failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -286,7 +288,7 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 		return keeperError(rec, "signal readiness", err)
 	}
 	if err := ready.Close(); err != nil {
-		if killErr := cmd.Process.Kill(); killErr != nil {
+		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after readiness close failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -845,7 +847,7 @@ func signalKeeper(pid RecordedKeeperPID, identity, runID string, signal syscall.
 		return &KeeperSignalError{Outcome: KeeperSignalRefusedCaller, PID: int(pid)}
 	}
 	fmt.Fprintf(os.Stderr, "proc: keeper signal pid=%d identity=%q signal=%s run=%q attribution=run-record-keeper\n", pid, identity, signal, runID)
-	return source.Signal(int(pid), signal)
+	return source.Signal(int(pid), identity, signal)
 }
 
 type processParentSource interface {
