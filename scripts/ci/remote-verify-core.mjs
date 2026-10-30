@@ -99,22 +99,25 @@ async function waitForRun(lookup, { deadlineAt, policy, clock, callRemote, initi
   }
 }
 
-function validateRun(run, expectedBranch) {
-  if (!run || run.event !== 'push' || run.path !== WORKFLOW_PATH || !/^verify\//.test(run.head_branch ?? '') || !/^[0-9a-f]{40}$/.test(run.head_sha ?? '')) {
-    throw new Error('Attached run is not a valid remote verification push run');
+function validateRun(run, expectedBranch, profile = 'stream') {
+  const event = profile === 'candidate' ? 'workflow_dispatch' : 'push';
+  const namespace = profile === 'candidate' ? /^verify-candidate\// : /^verify\//;
+  const title = `Remote agent verification (${profile}) for ${run?.head_branch}`;
+  if (!run || run.event !== event || run.path !== WORKFLOW_PATH || !namespace.test(run.head_branch ?? '') || run.display_title !== title || !/^[0-9a-f]{40}$/.test(run.head_sha ?? '')) {
+    throw new Error(`Attached run is not a valid remote verification ${profile} run`);
   }
   if (expectedBranch && run.head_branch !== expectedBranch) throw new Error('Attached run branch does not match the requested verification ref');
   return run;
 }
 
-function failureVerdict(sha, diagnostics, details = { jobs: [] }) {
-  return { schemaVersion: 1, sha, status: 'fail', jobs: details.jobs ?? [], diagnostics: [...diagnostics, ...(details.diagnostics ?? [])] };
+function failureVerdict(sha, diagnostics, details = { jobs: [] }, profile = 'stream') {
+  return { schemaVersion: 1, sha, profile, status: 'fail', jobs: details.jobs ?? [], diagnostics: [...diagnostics, ...(details.diagnostics ?? [])] };
 }
 
-function classifyError(error, sha) {
-  if (error instanceof RemoteTimeoutError) return { schemaVersion: 1, sha: sha ?? 'unknown', status: 'timeout', jobs: [], diagnostics: [error.message] };
-  if (error instanceof RemoteOutageError) return { schemaVersion: 1, sha: sha ?? 'unknown', status: 'outage', jobs: [], diagnostics: [error.message] };
-  return failureVerdict(sha ?? 'unknown', [error?.message ?? String(error)]);
+function classifyError(error, sha, profile) {
+  if (error instanceof RemoteTimeoutError) return { schemaVersion: 1, sha: sha ?? 'unknown', profile, status: 'timeout', jobs: [], diagnostics: [error.message] };
+  if (error instanceof RemoteOutageError) return { schemaVersion: 1, sha: sha ?? 'unknown', profile, status: 'outage', jobs: [], diagnostics: [error.message] };
+  return failureVerdict(sha ?? 'unknown', [error?.message ?? String(error)], { jobs: [] }, profile);
 }
 
 function failureDetails(jobsResponse, logTail) {
@@ -131,6 +134,7 @@ function failureDetails(jobsResponse, logTail) {
 export async function runRemoteVerification(options, executors, overrides = {}) {
   if (!options?.out) throw new Error('The --out path is required');
   if (Boolean(options.attach) === Boolean(options.stream)) throw new Error('Provide exactly one stream name or --attach value');
+  options = { ...options, profile: options.profile ?? 'stream' };
   const gh = executors.gh;
   const git = executors.git;
   const clock = overrides.clock ?? { now: Date.now, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) };
@@ -152,14 +156,14 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
         run = validateRun(await retryOperation(() => gh.getRun(repo, options.attach), {
           deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
           callRemote, cadenceMs: policy.pollMs,
-        }));
+        }), undefined, options.profile);
         sha = run.head_sha;
         ref = run.head_branch;
         run = await waitForRun(() => gh.getRun(repo, options.attach), { deadlineAt, policy, clock, callRemote, initialRun: run });
-        validateRun(run, ref);
+        validateRun(run, ref, options.profile);
       } else {
         ref = options.attach;
-        if (!ref.startsWith('verify/')) throw new Error('An attached ref must be under verify/');
+        if (!ref.startsWith(options.profile === 'candidate' ? 'verify-candidate/' : 'verify/')) throw new Error(`An attached ref must be under ${options.profile === 'candidate' ? 'verify-candidate/' : 'verify/'}`);
         const namedSha = ref.match(/\/(?:[0-9]{8}T[0-9]{6}Z)-([0-9a-f]{40})$/)?.[1];
         if (!namedSha) throw new Error('Attached verification ref must include its timestamp and commit SHA');
         sha = await retryOperation(() => git.resolveRef(remote, ref), {
@@ -168,20 +172,21 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
         });
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('Attached verification ref did not resolve to a full commit SHA');
         if (sha !== namedSha) throw new Error(`Attached ref SHA mismatch: ref names ${namedSha}, remote ref resolves to ${sha}`);
-        run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref), { branch: ref, sha, workflowPath: WORKFLOW_PATH }), { deadlineAt, policy, clock, callRemote });
-        validateRun(run, ref);
+        run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, options.profile === 'candidate' ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: WORKFLOW_PATH, event: options.profile === 'candidate' ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
+        validateRun(run, ref, options.profile);
       }
     } else {
       sha = await git.headSha();
       if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('Current HEAD did not resolve to a full commit SHA');
       const created = new Date(clock.now()).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-      ref = `verify/${options.stream}/${created}-${sha}`;
+      ref = `${options.profile === 'candidate' ? 'verify-candidate' : 'verify'}/${options.stream}/${created}-${sha}`;
       await retryOperation(() => git.pushRef(ref, sha), {
         deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
         callRemote, cadenceMs: policy.pollMs,
       });
-      run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref), { branch: ref, sha, workflowPath: WORKFLOW_PATH }), { deadlineAt, policy, clock, callRemote });
-      validateRun(run, ref);
+      if (options.profile === 'candidate') await callRemote(() => gh.dispatchRun(repo, ref, 'candidate'), deadlineAt);
+      run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, options.profile === 'candidate' ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: WORKFLOW_PATH, event: options.profile === 'candidate' ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
+      validateRun(run, ref, options.profile);
     }
 
     let artifact;
@@ -193,13 +198,15 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
       artifactError = error;
     }
     if (run.conclusion === 'timed_out') {
-      verdict = { schemaVersion: 1, sha, status: 'timeout', jobs: [], diagnostics: [`GitHub Actions run ${run.id} exceeded its workflow timeout`, ...(artifactError ? [`The completed run artifact could not be fetched once: ${artifactError.message}`] : [])] };
+      verdict = { schemaVersion: 1, sha, profile: options.profile, status: 'timeout', jobs: [], diagnostics: [`GitHub Actions run ${run.id} exceeded its workflow timeout`, ...(artifactError ? [`The completed run artifact could not be fetched once: ${artifactError.message}`] : [])] };
     } else {
       try {
         if (artifactError) throw artifactError;
         const parsed = parseVerdict(artifact, sha);
+        if (parsed.profile !== options.profile) throw new Error(`Remote verdict profile mismatch: expected ${options.profile}, received ${String(parsed.profile)}`);
         verdict = {
           ...parsed,
+          profile: options.profile,
           jobs: parsed.jobs.map((job) => ({ ...job, failures: [...job.failures] })),
           diagnostics: [...(parsed.diagnostics ?? [])],
         };
@@ -215,24 +222,24 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
               deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
               callRemote, cadenceMs: policy.pollMs,
             });
-            verdict = failureVerdict(sha, [`Workflow failed before a valid verdict artifact was available: ${error.message}`], failureDetails(jobsResponse, logTail));
+            verdict = failureVerdict(sha, [`Workflow failed before a valid verdict artifact was available: ${error.message}`], failureDetails(jobsResponse, logTail), options.profile);
           } catch (detailsError) {
             if (detailsError instanceof RemoteTimeoutError || detailsError instanceof RemoteOutageError) throw detailsError;
-            verdict = failureVerdict(sha, [`Workflow failed and diagnostics could not be retrieved: ${detailsError.message}`]);
+            verdict = failureVerdict(sha, [`Workflow failed and diagnostics could not be retrieved: ${detailsError.message}`], { jobs: [] }, options.profile);
           }
           if (error instanceof RemoteOutageError && verdict.status === 'fail') {
             verdict.diagnostics.push(`Verdict artifact retrieval failed: ${error.message}`);
           }
         } else {
-          verdict = failureVerdict(sha, [`Could not retrieve a valid verdict artifact once: ${error.message}`]);
+          verdict = failureVerdict(sha, [`Could not retrieve a valid verdict artifact once: ${error.message}`], { jobs: [] }, options.profile);
         }
       }
       if (run.conclusion !== 'success' && verdict.status === 'pass') {
-        verdict = failureVerdict(sha, [`GitHub Actions concluded ${run.conclusion}; a passing artifact cannot override that result`], { jobs: verdict.jobs });
+        verdict = failureVerdict(sha, [`GitHub Actions concluded ${run.conclusion}; a passing artifact cannot override that result`], { jobs: verdict.jobs }, options.profile);
       }
     }
   } catch (error) {
-    verdict = classifyError(error, sha);
+    verdict = classifyError(error, sha, options.profile);
   }
 
   verdict.diagnostics ??= [];

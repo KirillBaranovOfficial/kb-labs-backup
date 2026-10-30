@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -148,7 +149,11 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		pkgs = ws.Packages
 	}
 	if containsTask(opts.Tasks, "build") {
-		pkgs = expandBuildDependencyClosure(pkgs, ws.Packages)
+		expanded, err := expandBuildDependencyClosure(pkgs, ws.Packages)
+		if err != nil {
+			return RunResult{}, err
+		}
+		pkgs = expanded
 	}
 	selectedPackageNames := make(map[string]bool, len(pkgs))
 	for _, pkg := range pkgs {
@@ -198,7 +203,14 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	}
 	manifests := cache.NewManifestStore(cacheRoot)
 	states := cache.NewStateStore(cacheRoot)
+	globalInputDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(ws)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("cache inputs: %w", err)
+	}
 	executor := NewExecutor(objects, manifests, states, opts.WSRoot, cacheRoot, opts.LiveOutput)
+	executor.globalInputDigest = globalInputDigest
+	executor.ownedInputDigests = ownedInputDigests
+	executor.dependencyDigests = dependencyDigests
 	executor.onHeartbeat = opts.OnHeartbeat
 
 	// Precompute direct workspace dep directories for each package in the run.
@@ -216,7 +228,10 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 			if def == nil {
 				continue
 			}
-			depNames := WorkspaceDeps(p.Dir, allPkgByName)
+			depNames, err := WorkspaceDeps(p.Dir, allPkgByName)
+			if err != nil {
+				return RunResult{}, err
+			}
 			dirs := make([]string, 0, len(depNames))
 			for _, name := range depNames {
 				if dep, ok := allPkgByName[name]; ok {
@@ -369,7 +384,7 @@ func containsTask(tasks []string, wanted string) bool {
 // to build the selected packages on a clean runner. Affected detection starts
 // from changed packages and walks downstream; build ordering also needs the
 // reverse direction so every dependency has its dist artifacts first.
-func expandBuildDependencyClosure(selected, all []workspace.Package) []workspace.Package {
+func expandBuildDependencyClosure(selected, all []workspace.Package) ([]workspace.Package, error) {
 	byName := make(map[string]workspace.Package, len(all))
 	for _, pkg := range all {
 		byName[pkg.Name] = pkg
@@ -387,7 +402,11 @@ func expandBuildDependencyClosure(selected, all []workspace.Package) []workspace
 	for len(queue) > 0 {
 		pkg := queue[0]
 		queue = queue[1:]
-		for _, depName := range WorkspaceDeps(pkg.Dir, byName) {
+		depNames, err := WorkspaceDeps(pkg.Dir, byName)
+		if err != nil {
+			return nil, err
+		}
+		for _, depName := range depNames {
 			dep, ok := byName[depName]
 			if ok && !seen[dep.Name] {
 				seen[dep.Name] = true
@@ -403,7 +422,7 @@ func expandBuildDependencyClosure(selected, all []workspace.Package) []workspace
 			result = append(result, pkg)
 		}
 	}
-	return result
+	return result, nil
 }
 
 // ─── DAG construction ─────────────────────────────────────────────────────────
@@ -493,7 +512,10 @@ func buildDAG(
 	}
 
 	// Build dep map: package name → all direct workspace dependencies with their manifest kind.
-	pkgDeps := buildPkgDepMap(pkgs, pkgByName)
+	pkgDeps, err := buildPkgDepMap(pkgs, pkgByName)
+	if err != nil {
+		return nil, err
+	}
 
 	nodes := make(map[nodeKey]dagNode)
 	var pending []nodeKey
@@ -665,10 +687,15 @@ func validatePackageScriptTask(pkg workspace.Package, task, command string) erro
 // Returns: pkg name → list of workspace dep names.
 // Self-references (package depending on itself) are filtered out to prevent
 // cycles in the DAG — e.g. @kb-labs/devkit listing itself in devDependencies.
-func buildPkgDepMap(pkgs []workspace.Package, pkgByName map[string]workspace.Package) map[string][]WorkspaceDependency {
+func buildPkgDepMap(pkgs []workspace.Package, pkgByName map[string]workspace.Package) (map[string][]WorkspaceDependency, error) {
 	result := make(map[string][]WorkspaceDependency, len(pkgs))
 	for _, p := range pkgs {
 		raw := readWorkspaceDependencyEdges(p.Dir, pkgByName)
+		goEdges, err := readGoWorkspaceDependencyEdges(p.Dir, pkgByName)
+		if err != nil {
+			return nil, err
+		}
+		raw = append(raw, goEdges...)
 		filtered := raw[:0]
 		for _, dependency := range raw {
 			if dependency.Name != p.Name {
@@ -677,7 +704,62 @@ func buildPkgDepMap(pkgs []workspace.Package, pkgByName map[string]workspace.Pac
 		}
 		result[p.Name] = filtered
 	}
-	return result
+	return result, nil
+}
+
+type goModuleEdit struct {
+	Require []struct {
+		Path string `json:"Path"`
+	} `json:"Require"`
+	Replace []struct {
+		Old struct {
+			Path string `json:"Path"`
+		} `json:"Old"`
+		New struct {
+			Path    string `json:"Path"`
+			Version string `json:"Version"`
+		} `json:"New"`
+	} `json:"Replace"`
+}
+
+func readGoWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Package) ([]WorkspaceDependency, error) {
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	command := exec.Command("go", "mod", "edit", "-json")
+	command.Dir = dir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("read Go workspace dependencies in %s: %w: %s", dir, err, strings.TrimSpace(string(output)))
+	}
+	var module goModuleEdit
+	if err := json.Unmarshal(output, &module); err != nil {
+		return nil, fmt.Errorf("parse Go workspace dependencies in %s: %w", dir, err)
+	}
+	required := make(map[string]struct{}, len(module.Require))
+	for _, requirement := range module.Require {
+		required[requirement.Path] = struct{}{}
+	}
+	var edges []WorkspaceDependency
+	for _, replacement := range module.Replace {
+		if _, ok := required[replacement.Old.Path]; !ok || replacement.New.Version != "" {
+			continue
+		}
+		replacementDir := replacement.New.Path
+		if !filepath.IsAbs(replacementDir) {
+			replacementDir = filepath.Join(dir, replacementDir)
+		}
+		replacementDir = filepath.Clean(replacementDir)
+		for name, pkg := range pkgByName {
+			if filepath.Clean(pkg.Dir) == replacementDir {
+				edges = append(edges, WorkspaceDependency{Name: name, Kind: DependenciesKind})
+				break
+			}
+		}
+	}
+	return edges, nil
 }
 
 // readWorkspaceDeps returns workspace-internal dependency names for a package.
@@ -727,8 +809,13 @@ func readWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Pac
 // WorkspaceDeps returns direct workspace:* dependency names for a package dir.
 // Reads dependencies + devDependencies + peerDependencies.
 // pkgByName must cover all workspace packages to correctly filter internal deps.
-func WorkspaceDeps(pkgDir string, pkgByName map[string]workspace.Package) []string {
+func WorkspaceDeps(pkgDir string, pkgByName map[string]workspace.Package) ([]string, error) {
 	edges := readWorkspaceDependencyEdges(pkgDir, pkgByName)
+	goEdges, err := readGoWorkspaceDependencyEdges(pkgDir, pkgByName)
+	if err != nil {
+		return nil, err
+	}
+	edges = append(edges, goEdges...)
 	seen := make(map[string]struct{}, len(edges))
 	result := make([]string, 0, len(edges))
 	for _, edge := range edges {
@@ -738,13 +825,18 @@ func WorkspaceDeps(pkgDir string, pkgByName map[string]workspace.Package) []stri
 		seen[edge.Name] = struct{}{}
 		result = append(result, edge.Name)
 	}
-	return result
+	return result, nil
 }
 
 // WorkspaceProdDeps returns direct workspace:* dependency names for a package dir,
 // excluding devDependencies. Used by bundle --prod to build minimal Docker closures.
-func WorkspaceProdDeps(pkgDir string, pkgByName map[string]workspace.Package) []string {
+func WorkspaceProdDeps(pkgDir string, pkgByName map[string]workspace.Package) ([]string, error) {
 	edges := readWorkspaceDependencyEdges(pkgDir, pkgByName)
+	goEdges, err := readGoWorkspaceDependencyEdges(pkgDir, pkgByName)
+	if err != nil {
+		return nil, err
+	}
+	edges = append(edges, goEdges...)
 	seen := make(map[string]struct{}, len(edges))
 	result := make([]string, 0, len(edges))
 	for _, edge := range edges {
@@ -757,7 +849,7 @@ func WorkspaceProdDeps(pkgDir string, pkgByName map[string]workspace.Package) []
 		seen[edge.Name] = struct{}{}
 		result = append(result, edge.Name)
 	}
-	return result
+	return result, nil
 }
 
 // ─── Layer execution ──────────────────────────────────────────────────────────
@@ -807,9 +899,9 @@ func runLayer(
 // DirtyPackages returns packages whose requested task inputs differ from their
 // last successful run, plus their workspace dependents. Missing or failed task
 // state is dirty; Git diffs are reserved for the explicit diff-only selector.
-func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []string, cacheRoot string) []workspace.Package {
+func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []string, cacheRoot string) ([]workspace.Package, error) {
 	if len(tasks) == 0 {
-		return nil
+		return nil, nil
 	}
 	states := cache.NewStateStore(cacheRoot)
 	runtimeFingerprint := cache.RuntimeFingerprint()
@@ -819,6 +911,10 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 	}
 
 	var changed []workspace.Package
+	var globalInputDigest string
+	var ownedInputDigests, dependencyDigests map[string]string
+	var err error
+	inputDigestReady := false
 	for _, p := range ws.Packages {
 		for _, task := range tasks {
 			def := ResolvePackageTaskDef(ws, cfg, task, p)
@@ -830,14 +926,24 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 				changed = append(changed, p)
 				break
 			}
-			depNames := WorkspaceDeps(p.Dir, pkgByName)
+			if !inputDigestReady {
+				globalInputDigest, ownedInputDigests, dependencyDigests, err = workspaceInputDigests(ws)
+				if err != nil {
+					return nil, fmt.Errorf("cache inputs: %w", err)
+				}
+				inputDigestReady = true
+			}
+			depNames, err := WorkspaceDeps(p.Dir, pkgByName)
+			if err != nil {
+				return nil, err
+			}
 			depDirs := make([]string, 0, len(depNames))
 			for _, name := range depNames {
 				if dep, ok := pkgByName[name]; ok {
 					depDirs = append(depDirs, dep.Dir)
 				}
 			}
-			inputHash, err := hashTaskInputs(p, *def, depDirs, runtimeFingerprint)
+			inputHash, err := hashTaskInputs(p, *def, depDirs, runtimeFingerprint, globalInputDigest, ownedInputDigests[p.Name], dependencyDigests[p.Name])
 			if err != nil {
 				// Schedule the package so Executor reports the input read failure
 				// through the task's catalogued error and recovery hint.
@@ -853,26 +959,88 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 	return packagesAndDependents(ws, changed)
 }
 
+func workspaceInputDigests(ws *workspace.Workspace) (string, map[string]string, map[string]string, error) {
+	unownedFiles, ownedFiles, tracked, err := ws.TrackedFileOwnership()
+	if err != nil {
+		return "", nil, nil, err
+	}
+	globalDigest, err := cache.ContentDigest(ws.Root, unownedFiles, tracked)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	ownedDigests := make(map[string]string, len(ownedFiles))
+	for name, files := range ownedFiles {
+		digest, err := cache.ContentDigest(ws.Root, files, tracked)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		ownedDigests[name] = digest
+	}
+	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		pkgByName[pkg.Name] = pkg
+	}
+	dependencies := make(map[string][]string, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		deps, err := WorkspaceDeps(pkg.Dir, pkgByName)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		dependencies[pkg.Name] = deps
+	}
+	dependencyDigests := make(map[string]string, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		visited := make(map[string]bool)
+		queue := append([]string(nil), dependencies[pkg.Name]...)
+		closure := make(map[string]string)
+		for len(queue) > 0 {
+			name := queue[0]
+			queue = queue[1:]
+			if visited[name] {
+				continue
+			}
+			visited[name] = true
+			if digest, ok := ownedDigests[name]; ok {
+				closure[name] = digest
+			}
+			queue = append(queue, dependencies[name]...)
+		}
+		dependencyDigests[pkg.Name] = cache.CombineContentDigests(closure)
+	}
+	return globalDigest, ownedDigests, dependencyDigests, nil
+}
+
 // AffectedRunPackages selects by configured Git diff only when diffOnly is
 // explicit. Normal --affected runs use last-successful input hashes.
 func AffectedRunPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []string, cacheRoot string, diffOnly bool) ([]workspace.Package, error) {
 	if diffOnly {
-		return AffectedPackages(ws, cfg)
+		selection, err := AffectedPackages(ws, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return selection.Packages, nil
 	}
-	return DirtyPackages(ws, cfg, tasks, cacheRoot), nil
+	return DirtyPackages(ws, cfg, tasks, cacheRoot)
 }
 
 // ─── Affected packages ────────────────────────────────────────────────────────
 
+// AffectedSelection is the package set and reason chosen for a configured diff.
+type AffectedSelection struct {
+	Packages []workspace.Package
+	Reason   string
+}
+
 // AffectedPackages returns all packages affected by current changes:
-// directly changed packages + all their downstream dependents (BFS).
+// directly changed packages + all their downstream dependents (BFS). If any
+// changed path is not owned by a discovered package, it selects the full graph.
 //
 // Strategy is controlled by cfg.Affected.Strategy (default: "git").
 //
 //	git        — single `git diff --name-only HEAD` from ws root
 //	submodules — walks .gitmodules, runs git diff inside each submodule
 //	command    — runs cfg.Affected.Command, reads file paths from stdout
-func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) ([]workspace.Package, error) {
+func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) (AffectedSelection, error) {
 	strategy := cfg.Affected.Strategy
 	if strategy == "" {
 		strategy = "git"
@@ -880,18 +1048,32 @@ func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) ([]work
 
 	changedFiles, err := collectChangedFiles(ws.Root, strategy, cfg.Affected.Command)
 	if err != nil {
-		return nil, fmt.Errorf("affected: collect changed files: %w", err)
+		return AffectedSelection{}, fmt.Errorf("affected: collect changed files: %w", err)
 	}
+	return selectAffectedPackages(ws, changedFiles)
+}
 
+func selectAffectedPackages(ws *workspace.Workspace, changedFiles []string) (AffectedSelection, error) {
 	directlyChanged := make(map[string]bool)
+	unowned := make([]string, 0)
 	for _, absFile := range changedFiles {
 		if pkg, ok := ws.PackageByPath(absFile); ok {
 			directlyChanged[pkg.Name] = true
+		} else {
+			relative, err := filepath.Rel(ws.Root, absFile)
+			if err != nil {
+				return AffectedSelection{}, fmt.Errorf("affected: make changed path relative: %w", err)
+			}
+			unowned = append(unowned, filepath.ToSlash(relative))
 		}
+	}
+	if len(unowned) > 0 {
+		sort.Strings(unowned)
+		return AffectedSelection{Packages: append([]workspace.Package(nil), ws.Packages...), Reason: "full: unowned path " + unowned[0]}, nil
 	}
 
 	if len(directlyChanged) == 0 {
-		return nil, nil
+		return AffectedSelection{}, nil
 	}
 
 	var direct []workspace.Package
@@ -900,17 +1082,25 @@ func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) ([]work
 			direct = append(direct, p)
 		}
 	}
-	return packagesAndDependents(ws, direct), nil
+	packages, err := packagesAndDependents(ws, direct)
+	if err != nil {
+		return AffectedSelection{}, err
+	}
+	return AffectedSelection{Packages: packages}, nil
 }
 
-func packagesAndDependents(ws *workspace.Workspace, direct []workspace.Package) []workspace.Package {
+func packagesAndDependents(ws *workspace.Workspace, direct []workspace.Package) ([]workspace.Package, error) {
 	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
 	for _, p := range ws.Packages {
 		pkgByName[p.Name] = p
 	}
 	reverseDeps := make(map[string][]string, len(ws.Packages))
 	for _, p := range ws.Packages {
-		for _, dep := range WorkspaceDeps(p.Dir, pkgByName) {
+		deps, err := WorkspaceDeps(p.Dir, pkgByName)
+		if err != nil {
+			return nil, err
+		}
+		for _, dep := range deps {
 			reverseDeps[dep] = append(reverseDeps[dep], p.Name)
 		}
 	}
@@ -938,7 +1128,7 @@ func packagesAndDependents(ws *workspace.Workspace, direct []workspace.Package) 
 			result = append(result, p)
 		}
 	}
-	return result
+	return result, nil
 }
 
 // collectChangedFiles returns absolute paths of changed files using the given strategy.
