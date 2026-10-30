@@ -20,15 +20,18 @@ import (
 
 const registrySchema = 2
 
-// The released Gateway origin is 4000. Allocated roots advance by 100 within
-// the declared local-install port domain; derived service ports must remain
-// below the lower conventional ephemeral boundary shared by Linux and macOS.
 const (
-	firstAllocatedGatewayPort = 4000
-	lastAllocatedGatewayPort  = 9900
-	allocatedGatewayPortStep  = 100
-	firstEphemeralPort        = 32768
+	// AllocatedGatewayPortMin is the first automatically allocated Gateway port.
+	AllocatedGatewayPortMin = 4000
+	// AllocatedGatewayPortMax is the last automatically allocated Gateway port.
+	AllocatedGatewayPortMax = 9900
+	// AllocatedGatewayPortStep is the fixed allocation increment.
+	AllocatedGatewayPortStep = 100
 )
+
+// The lower conventional ephemeral boundary is shared by Linux and macOS;
+// derived service ports must remain below it.
+const firstEphemeralPort = 32768
 
 type Root struct {
 	PlatformRoot   string `json:"platformRoot"`
@@ -169,9 +172,9 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 		return "", fmt.Errorf("service graph has no valid Gateway port for allocation")
 	}
 	if !inAllocatedGatewayDomain(port) || !derivedServicePortsAreAllocatable(port, baseGatewayPort, graph.Services) {
-		port = firstAllocatedGatewayPort
+		port = AllocatedGatewayPortMin
 	}
-	for ; port <= lastAllocatedGatewayPort; port += allocatedGatewayPortStep {
+	for ; port <= AllocatedGatewayPortMax; port += AllocatedGatewayPortStep {
 		if !derivedServicePortsAreAllocatable(port, baseGatewayPort, graph.Services) {
 			continue
 		}
@@ -186,8 +189,8 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 }
 
 func inAllocatedGatewayDomain(port int) bool {
-	return port >= firstAllocatedGatewayPort && port <= lastAllocatedGatewayPort &&
-		(port-firstAllocatedGatewayPort)%allocatedGatewayPortStep == 0
+	return port >= AllocatedGatewayPortMin && port <= AllocatedGatewayPortMax &&
+		(port-AllocatedGatewayPortMin)%AllocatedGatewayPortStep == 0
 }
 
 func derivedServicePortsAreAllocatable(gatewayPort, baseGatewayPort int, services []contracts.Service) bool {
