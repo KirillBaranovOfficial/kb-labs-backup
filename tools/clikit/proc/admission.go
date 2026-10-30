@@ -95,8 +95,9 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 		if err := pruneStateLocked(cfg.StateDir); err != nil {
 			return err
 		}
-		for _, terminal := range []bool{false, true} {
-			path := recordPath(cfg.StateDir, runID, terminal)
+		location := recordLocation(cfg.StateDir, runID)
+		for _, status := range []RunStatus{StatusQueued, StatusCompleted} {
+			path := location.path(status)
 			if _, err := os.Lstat(path); err == nil {
 				return fmt.Errorf("proc: run ID %s already has a durable record", runID)
 			} else if !os.IsNotExist(err) {
@@ -747,35 +748,69 @@ func readRecordFiles(paths []string) ([]record, error) {
 	return records, nil
 }
 
-// recordPath is the single owner of record placement: live records live at
-// runs/<runID>.json, terminal records at runs/finished/<runID>.json.
-func recordPath(stateDir, runID string, terminal bool) string {
-	if terminal {
-		return filepath.Join(stateDir, "runs", "finished", runID+".json")
-	}
-	return filepath.Join(stateDir, "runs", runID+".json")
+// runRecordLocation owns paths and lookup for a run ID while its record moves
+// from the live registry to finished history. Finished is authoritative during
+// the atomic transition where both files can briefly exist.
+type runRecordLocation struct {
+	stateDir string
+	runID    string
 }
 
-// liveRecordsDir and finishedRecordsDir derive the record directories from
-// recordPath so record placement keeps exactly one composer.
+func recordLocation(stateDir, runID string) runRecordLocation {
+	return runRecordLocation{stateDir: stateDir, runID: runID}
+}
+
+func (location runRecordLocation) path(status RunStatus) string {
+	if status.Terminal() {
+		return filepath.Join(location.stateDir, "runs", "finished", location.runID+".json")
+	}
+	return filepath.Join(location.stateDir, "runs", location.runID+".json")
+}
+
+func (location runRecordLocation) temporaryPath(status RunStatus) string {
+	return location.path(status) + ".tmp"
+}
+
+func (location runRecordLocation) liveDirectory() string {
+	return filepath.Dir(location.path(StatusRunning))
+}
+
+func (location runRecordLocation) finishedDirectory() string {
+	return filepath.Dir(location.path(StatusCompleted))
+}
+
+func (location runRecordLocation) currentPath() (string, error) {
+	finished := location.path(StatusCompleted)
+	if _, err := os.Stat(finished); err == nil {
+		return finished, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect finished run record %s: %w", location.runID, err)
+	}
+	live := location.path(StatusRunning)
+	if _, err := os.Stat(live); err == nil {
+		return live, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect live run record %s: %w", location.runID, err)
+	}
+	return "", fmt.Errorf("run record %s: %w", location.runID, os.ErrNotExist)
+}
+
 func liveRecordsDir(stateDir string) string {
-	return filepath.Dir(recordPath(stateDir, "", false))
+	return recordLocation(stateDir, "").liveDirectory()
 }
 
 func finishedRecordsDir(stateDir string) string {
-	return filepath.Dir(recordPath(stateDir, "", true))
+	return recordLocation(stateDir, "").finishedDirectory()
 }
 
 func readRecordLocked(stateDir, runID string) (record, error) {
-	data, err := os.ReadFile(recordPath(stateDir, runID, false))
+	path, err := recordLocation(stateDir, runID).currentPath()
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return record{}, fmt.Errorf("read queued run %s: %w", runID, err)
-		}
-		data, err = os.ReadFile(recordPath(stateDir, runID, true))
-		if err != nil {
-			return record{}, fmt.Errorf("read queued run %s: %w", runID, err)
-		}
+		return record{}, fmt.Errorf("read queued run %s: %w", runID, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return record{}, fmt.Errorf("read queued run %s from %s: %w", runID, path, err)
 	}
 	var rec record
 	if err := json.Unmarshal(data, &rec); err != nil {
@@ -785,8 +820,9 @@ func readRecordLocked(stateDir, runID string) (record, error) {
 }
 
 func writeRecordAtomic(rec record) error {
+	location := recordLocation(rec.StateDir, rec.RunID)
 	terminal := rec.Status.Terminal()
-	path := recordPath(rec.StateDir, rec.RunID, terminal)
+	path := location.path(rec.Status)
 	data, err := json.Marshal(rec)
 	if err != nil {
 		return err
@@ -794,7 +830,7 @@ func writeRecordAtomic(rec record) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
+	tmp := location.temporaryPath(rec.Status)
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
@@ -802,7 +838,7 @@ func writeRecordAtomic(rec record) error {
 		return errors.Join(err, os.Remove(tmp))
 	}
 	if terminal {
-		if err := os.Remove(recordPath(rec.StateDir, rec.RunID, false)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(location.path(StatusRunning)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -873,7 +909,7 @@ func pruneStateLocked(stateDir string) error {
 		if err := json.Unmarshal(data, &rec); err != nil {
 			return fmt.Errorf("decode run record %s: %w", path, err)
 		}
-		if _, err := os.Stat(recordPath(stateDir, rec.RunID, true)); err == nil {
+		if _, err := os.Stat(recordLocation(stateDir, rec.RunID).path(StatusCompleted)); err == nil {
 			// The finished record is the registry's truth. This live file is a
 			// leftover from a crash between writeRecordAtomic's finished write
 			// and its live removal; removing it — never routing it through a
@@ -893,7 +929,7 @@ func pruneStateLocked(stateDir string) error {
 			if err := os.MkdirAll(finishedRecordsDir(stateDir), 0o700); err != nil {
 				return err
 			}
-			if err := os.Rename(path, recordPath(stateDir, rec.RunID, true)); err != nil {
+			if err := os.Rename(path, recordLocation(stateDir, rec.RunID).path(StatusCompleted)); err != nil {
 				return fmt.Errorf("retire finished record %s: %w", rec.RunID, err)
 			}
 			continue
@@ -911,7 +947,7 @@ func pruneStateLocked(stateDir string) error {
 			if alive && identity == rec.StartedAt {
 				continue
 			}
-			if err := os.Remove(recordPath(stateDir, rec.RunID, false)); err != nil && !os.IsNotExist(err) {
+			if err := os.Remove(recordLocation(stateDir, rec.RunID).path(StatusRunning)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		default:
@@ -957,6 +993,10 @@ func recordObservedKeeperLoss(stateDir, runID string, fallback record) error {
 				return err
 			}
 			rec = fallback
+			rec.StateDir = stateDir
+			if err := writeRecordAtomic(rec); err != nil {
+				return fmt.Errorf("restore ready run record %s before loss cleanup: %w", runID, err)
+			}
 		}
 		if rec.Status.Terminal() {
 			return nil

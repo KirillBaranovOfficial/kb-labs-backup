@@ -70,12 +70,13 @@ func lostRunRecoverySource(rec record, source processSource) (processSource, boo
 	if rec.StartedAtTime.IsZero() {
 		return source, false, nil
 	}
-	return linuxLostRunSource{source: source, startedAt: rec.StartedAtTime}, true, nil
+	return linuxLostRunSource{source: source, startedAt: rec.StartedAtTime, recorded: rec.Observed}, true, nil
 }
 
 type linuxLostRunSource struct {
 	source    processSource
 	startedAt time.Time
+	recorded  []Process
 }
 
 func (source linuxLostRunSource) Snapshot(runID string) ([]Process, error) {
@@ -83,7 +84,7 @@ func (source linuxLostRunSource) Snapshot(runID string) ([]Process, error) {
 	if err != nil {
 		return processes, err
 	}
-	return runMarkerRecoveryCandidates(processes, source.startedAt)
+	return runRecoveryCandidates(processes, source.startedAt, source.recorded)
 }
 func (source linuxLostRunSource) Identity(pid int) (string, bool, error) {
 	return source.source.Identity(pid)
