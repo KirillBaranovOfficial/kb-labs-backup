@@ -13,7 +13,7 @@ describe('CLI presenter color policy', () => {
   // case: S-278.1, S-278.2, S-278.3
   it.each(colorPolicy.cases)('$name', async ({ tty, noColor, forceColor, term, want }) => {
     vi.stubEnv('NO_COLOR', noColor);
-    vi.stubEnv('FORCE_COLOR', forceColor);
+    vi.stubEnv('FORCE_COLOR', forceColor ?? undefined);
     vi.stubEnv('TERM', term);
     Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: tty });
     vi.resetModules();

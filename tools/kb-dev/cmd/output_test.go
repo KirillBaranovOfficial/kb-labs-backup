@@ -33,7 +33,7 @@ func TestColorPolicyCLIBehavior(t *testing.T) {
 	for _, testCase := range generatedColorPolicyCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			command := colorPolicyHelperCommand(testCase.tty)
-			command.Env = colorPolicyEnvironment(testCase.noColor, testCase.forceColor, testCase.term)
+			command.Env = colorPolicyEnvironment(testCase.noColor, testCase.forceColorSet, testCase.forceColor, testCase.term)
 			output, err := command.CombinedOutput()
 			if err != nil {
 				t.Fatalf("CLI color probe failed: %v: %s", err, output)
@@ -70,7 +70,7 @@ func colorPolicyHelperCommand(tty bool) *exec.Cmd {
 	return exec.Command("script", "-q", "-c", strings.Join(quotedArgs, " "), "/dev/null")
 }
 
-func colorPolicyEnvironment(noColor, forceColor, term string) []string {
+func colorPolicyEnvironment(noColor string, forceColorSet bool, forceColor, term string) []string {
 	env := make([]string, 0, len(os.Environ())+4)
 	for _, item := range os.Environ() {
 		if strings.HasPrefix(item, "NO_COLOR=") || strings.HasPrefix(item, "FORCE_COLOR=") || strings.HasPrefix(item, "TERM=") || strings.HasPrefix(item, "KB_COLOR_POLICY_CLI_HELPER=") {
@@ -78,7 +78,11 @@ func colorPolicyEnvironment(noColor, forceColor, term string) []string {
 		}
 		env = append(env, item)
 	}
-	return append(env, "KB_COLOR_POLICY_CLI_HELPER=1", "NO_COLOR="+noColor, "FORCE_COLOR="+forceColor, "TERM="+term)
+	env = append(env, "KB_COLOR_POLICY_CLI_HELPER=1", "NO_COLOR="+noColor, "TERM="+term)
+	if forceColorSet {
+		env = append(env, "FORCE_COLOR="+forceColor)
+	}
+	return env
 }
 
 func shellQuoteColor(value string) string {

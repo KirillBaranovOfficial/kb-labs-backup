@@ -294,15 +294,78 @@ func TestExternalCheckDecodeFailureRetainsSuccessfulProcessExitStatus(t *testing
 	}
 }
 
+func TestExternalCheckRejectsMalformedResultEnvelopes(t *testing.T) {
+	tests := []struct {
+		name       string
+		resultJSON string
+		wantError  string
+	}{
+		{name: "top-level null", resultJSON: `null`, wantError: "JSON object"},
+		{name: "missing issues", resultJSON: `{}`, wantError: "issues array"},
+		{name: "null issues", resultJSON: `{"issues":null}`, wantError: "array"},
+		{name: "object issues", resultJSON: `{"issues":{}}`, wantError: "array"},
+		{name: "top-level array", resultJSON: `[]`, wantError: "JSON object"},
+		{name: "top-level scalar", resultJSON: `17`, wantError: "JSON object"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			script := filepath.Join(root, "check.mjs")
+			body := "import { writeFileSync } from 'node:fs';\n" +
+				"writeFileSync(process.env[" + strconv.Quote(ExternalCheckResultFileEnv) + "], " + strconv.Quote(testCase.resultJSON) + ");\n"
+			if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
+				t.Fatalf("write script: %v", err)
+			}
+			rule := &externalRule{name: "envelope-check", run: "node " + strconv.Quote(script), phase: "check", scope: "workspace", workspaceRoot: root}
+			issues := rule.CheckWorkspace(&workspace.Workspace{Root: root})
+			if len(issues) != 1 || !issues[0].CheckFailure || issues[0].Check != "envelope-check" {
+				t.Fatalf("issues = %#v, want named external-check failure", issues)
+			}
+			for _, want := range []string{"envelope-check", "result file", testCase.wantError} {
+				if !strings.Contains(issues[0].Cause, want) {
+					t.Errorf("cause = %q, want it to contain %q", issues[0].Cause, want)
+				}
+			}
+		})
+	}
+}
+
+func TestExternalCheckDecoderAcceptsEmptyIssuesArray(t *testing.T) {
+	output, err := decodeExternalCheckOutput([]byte(`{"issues":[]}`))
+	if err != nil {
+		t.Fatalf("decode valid empty result envelope: %v", err)
+	}
+	if output.Issues == nil || len(output.Issues) != 0 {
+		t.Fatalf("issues = %#v, want a non-nil empty issues array", output.Issues)
+	}
+}
+
+func TestExternalCheckRunnerAcceptsEmptyIssuesArray(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "check.mjs")
+	body := "import { writeCheckResult } from " + strconv.Quote(checkResultHelperURL(t)) + ";\n" +
+		"writeCheckResult([]);\nprocess.stdout.write('check completed');\n"
+	if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	rule := &externalRule{name: "empty-envelope", run: "node " + strconv.Quote(script), phase: "check", scope: "workspace", workspaceRoot: root}
+	output, err := rule.runCommandWithInput(rule.run, externalInput{
+		WorkspaceRoot: root,
+		Check:         rule.name,
+		Phase:         rule.phase,
+		Workspace:     &externalWorkspace{Root: root},
+	})
+	if err != nil {
+		t.Fatalf("valid empty result envelope failed in the external runner: %#v", err)
+	}
+	if output.Issues == nil || len(output.Issues) != 0 {
+		t.Fatalf("issues = %#v, want a valid empty issues array", output.Issues)
+	}
+}
+
 func TestExternalCheckReadsResultFileAfterLargeStdoutAndImmediateExit(t *testing.T) {
 	root := t.TempDir()
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate external check test source")
-	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(testFile), "../../../.."))
-	helperPath := filepath.Join(repoRoot, "scripts/checks/lib/check-result.mjs")
-	helperURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(helperPath)}).String()
+	helperURL := checkResultHelperURL(t)
 	script := filepath.Join(root, "check.mjs")
 	body := "import { writeCheckResult } from " + strconv.Quote(helperURL) + ";\n" +
 		"writeCheckResult([{check:'large-output',severity:'warning',message:'result survived'}]);\n" +
@@ -315,6 +378,17 @@ func TestExternalCheckReadsResultFileAfterLargeStdoutAndImmediateExit(t *testing
 	if len(issues) != 1 || issues[0].Message != "result survived" {
 		t.Fatalf("issues = %#v, want result from file despite 200 KiB stdout", issues)
 	}
+}
+
+func checkResultHelperURL(t *testing.T) string {
+	t.Helper()
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate external check test source")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(testFile), "../../../.."))
+	helperPath := filepath.Join(repoRoot, "scripts/checks/lib/check-result.mjs")
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(helperPath)}).String()
 }
 
 func TestExternalCheckMissingResultFileNamesCheckAndFile(t *testing.T) {
