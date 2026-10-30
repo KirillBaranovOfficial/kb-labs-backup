@@ -56,7 +56,7 @@ type recordingInstaller struct {
 func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 	_, fakehost := binaries(t)
 	inst := newEmptyInstallation(t)
-	inst.port = freeLoopbackPortWithOffset(t, 100)
+	inst.port = freeAllocatedGatewayPortWithOffsets(t, 100)
 
 	binary := []byte("built CLI fixture binary")
 	binaryDigest := sha256.Sum256(binary)

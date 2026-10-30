@@ -19,6 +19,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/internal/testprocess"
 	"github.com/kb-labs/create/v2/marketplace"
@@ -155,10 +156,51 @@ func freeLoopbackPortWithOffsetsOutsideEphemeralRange(t *testing.T, offsets ...i
 	return freeLoopbackPortWithOffsetsInRange(t, 24000, 1024, offsets...)
 }
 
+// freeAllocatedGatewayPortWithOffsets reserves an address from the same
+// stepped domain used by gateway.Registry, together with each derived port.
+func freeAllocatedGatewayPortWithOffsets(t *testing.T, offsets ...int) int {
+	t.Helper()
+	for port := gateway.AllocatedGatewayPortMin; port <= gateway.AllocatedGatewayPortMax; port += gateway.AllocatedGatewayPortStep {
+		if reserveLoopbackPortWithOffsets(t, port, offsets...) {
+			return port
+		}
+	}
+	t.Fatalf("could not reserve an allocated Gateway port in %d..%d by %d with offsets %v",
+		gateway.AllocatedGatewayPortMin, gateway.AllocatedGatewayPortMax, gateway.AllocatedGatewayPortStep, offsets)
+	return 0
+}
+
+func TestAllocatedGatewayFixturePortUsesRegistryDomain(t *testing.T) {
+	port := freeAllocatedGatewayPortWithOffsets(t, gateway.AllocatedGatewayPortStep)
+	if port < gateway.AllocatedGatewayPortMin || port > gateway.AllocatedGatewayPortMax ||
+		(port-gateway.AllocatedGatewayPortMin)%gateway.AllocatedGatewayPortStep != 0 {
+		t.Fatalf("fixture Gateway port %d is outside registry domain %d..%d by %d",
+			port, gateway.AllocatedGatewayPortMin, gateway.AllocatedGatewayPortMax, gateway.AllocatedGatewayPortStep)
+	}
+	if port+gateway.AllocatedGatewayPortStep > gateway.AllocatedGatewayPortMax {
+		t.Fatalf("fixture Gateway port %d leaves no domain slot for its required next allocation", port)
+	}
+}
+
 func freeLoopbackPortWithOffsetsInRange(t *testing.T, first, last int, offsets ...int) int {
 	t.Helper()
-	uniqueOffsets := make([]int, 0, len(offsets))
-	seenOffsets := make(map[int]struct{}, len(offsets))
+	for port := first; port >= last && portOffsetsFit(port, offsets); port-- {
+		if reserveLoopbackPortWithOffsets(t, port, offsets...) {
+			return port
+		}
+	}
+	t.Fatalf("could not reserve a free Gateway port and its service offsets %v", offsets)
+	return 0
+}
+
+func reserveLoopbackPortWithOffsets(t *testing.T, port int, offsets ...int) bool {
+	t.Helper()
+	if !portOffsetsFit(port, offsets) {
+		return false
+	}
+	uniqueOffsets := make([]int, 0, len(offsets)+1)
+	seenOffsets := map[int]struct{}{0: {}}
+	uniqueOffsets = append(uniqueOffsets, 0)
 	for _, offset := range offsets {
 		if _, exists := seenOffsets[offset]; exists {
 			continue
@@ -166,63 +208,45 @@ func freeLoopbackPortWithOffsetsInRange(t *testing.T, first, last int, offsets .
 		seenOffsets[offset] = struct{}{}
 		uniqueOffsets = append(uniqueOffsets, offset)
 	}
-	for port := first; port >= last && portOffsetsFit(port, uniqueOffsets); port-- {
-		allocatedTestPorts.Lock()
-		alreadyAllocated := false
-		for _, offset := range uniqueOffsets {
-			if _, exists := allocatedTestPorts.ports[port+offset]; exists {
-				alreadyAllocated = true
-				break
-			}
+	allocatedTestPorts.Lock()
+	alreadyAllocated := false
+	for _, offset := range uniqueOffsets {
+		if _, exists := allocatedTestPorts.ports[port+offset]; exists {
+			alreadyAllocated = true
+			break
 		}
-		if alreadyAllocated {
-			allocatedTestPorts.Unlock()
-			continue
-		}
-		listeners := make([]net.Listener, 0, len(uniqueOffsets)+1)
-		primary, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
-			allocatedTestPorts.Unlock()
-			continue
-		}
-		listeners = append(listeners, primary)
-		available := true
-		for _, offset := range uniqueOffsets {
-			if offset == 0 {
-				continue
-			}
-			listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+offset))
-			if err != nil {
-				for _, opened := range listeners {
-					_ = opened.Close()
-				}
-				available = false
-				break
-			}
-			listeners = append(listeners, listener)
-		}
-		if !available {
-			allocatedTestPorts.Unlock()
-			continue
-		}
-		var closeErr error
-		for _, listener := range listeners {
-			if err := listener.Close(); err != nil {
-				closeErr = errors.Join(closeErr, err)
-			}
-		}
-		if closeErr != nil {
-			allocatedTestPorts.Unlock()
-			t.Fatal(closeErr)
-		}
-		for _, offset := range uniqueOffsets {
-			allocatedTestPorts.ports[port+offset] = struct{}{}
-		}
-		allocatedTestPorts.Unlock()
-		return port
 	}
-	t.Fatalf("could not reserve a free Gateway port and its service offsets %v", uniqueOffsets)
-	return 0
+	if alreadyAllocated {
+		allocatedTestPorts.Unlock()
+		return false
+	}
+	listeners := make([]net.Listener, 0, len(uniqueOffsets))
+	for _, offset := range uniqueOffsets {
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+offset))
+		if err != nil {
+			for _, opened := range listeners {
+				_ = opened.Close()
+			}
+			allocatedTestPorts.Unlock()
+			return false
+		}
+		listeners = append(listeners, listener)
+	}
+	var closeErr error
+	for _, listener := range listeners {
+		if err := listener.Close(); err != nil {
+			closeErr = errors.Join(closeErr, err)
+		}
+	}
+	if closeErr != nil {
+		allocatedTestPorts.Unlock()
+		t.Fatal(closeErr)
+	}
+	for _, offset := range uniqueOffsets {
+		allocatedTestPorts.ports[port+offset] = struct{}{}
+	}
+	allocatedTestPorts.Unlock()
+	return true
 }
 
 func portOffsetsFit(port int, offsets []int) bool {
