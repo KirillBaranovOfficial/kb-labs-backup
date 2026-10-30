@@ -116,7 +116,7 @@ test('candidate Go suite excludes runner while its failed Go test remains an int
     prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'candidate',
     githubJobs: [
       { name: 'Build-dependent test 1', conclusion: 'success', steps: [], annotations: [] },
-      { name: 'Independent test kb-devkit-check', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Build-dependent test kb-devkit-check', conclusion: 'success', steps: [], annotations: [] },
       { name: 'Internal tool test 1', conclusion: 'success', steps: [], annotations: [] },
     ],
   });
