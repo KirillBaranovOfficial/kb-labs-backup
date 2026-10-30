@@ -1,5 +1,5 @@
 {
-  "name": "@kb-labs/fixture-compat",
+  "name": "fixture-compat",
   "version": "1.0.0",
   "description": "Journey package used to verify update compatibility checks",
   "type": "module",

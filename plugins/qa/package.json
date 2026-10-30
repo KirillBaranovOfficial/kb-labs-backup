@@ -41,7 +41,7 @@
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint . --fix",
     "test": "vitest run --passWithNoTests",
-    "test:cli": "vitest run --config vitest.cli.config.ts --passWithNoTests",
+    "test:cli": "vitest run --config vitest.cli.config.ts",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit",
     "build:cli": "tsup --config tsup.config.ts"
