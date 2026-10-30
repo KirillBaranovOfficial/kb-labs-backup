@@ -21,7 +21,7 @@ import (
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 	"github.com/kb-labs/kb-runner/internal/testdeadline"
 )
 

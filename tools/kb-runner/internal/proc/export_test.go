@@ -12,6 +12,12 @@ import (
 	"testing"
 )
 
+// StartWithHostResourceSource is available only to this package's tests so
+// admission can be exercised against deterministic host snapshots.
+func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostResourceSource) (*Run, error) {
+	return startWithHostResourceSource(ctx, cfg, source)
+}
+
 // TestExecutable identifies a test binary built with proc linked in.
 type TestExecutable struct {
 	path string
@@ -44,7 +50,7 @@ func BuildRetainingKeeperForTest(t testing.TB) TestExecutable {
 	}
 	moduleRoot := filepath.Dir(filepath.Dir(source))
 	executable := filepath.Join(t.TempDir(), "retainingkeeper")
-	command := exec.Command("go", "build", "-o", executable, "./proc/testdata/retainingkeeper")
+	command := exec.Command("go", "build", "-o", executable, "./internal/proc/testdata/retainingkeeper")
 	command.Dir = moduleRoot
 	for _, item := range os.Environ() {
 		if !strings.HasPrefix(item, "GOFLAGS=") {

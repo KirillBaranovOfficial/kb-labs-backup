@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/internal/testdeadline"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
 
 	"golang.org/x/sys/unix"
 )

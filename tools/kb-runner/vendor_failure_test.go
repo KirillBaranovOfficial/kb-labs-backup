@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 // writeZcodeFake writes a fake ZCode CLI whose runs are driven by a call

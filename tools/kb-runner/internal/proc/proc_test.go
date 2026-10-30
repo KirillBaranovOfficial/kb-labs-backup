@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/internal/testdeadline"
-	"github.com/kb-labs/clikit/internal/testutil"
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
+	"github.com/kb-labs/kb-runner/internal/testutil"
 )
 
 type stableHostResourceSource struct{}
@@ -1531,7 +1531,7 @@ func buildRunner(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "kb-runner")
 	cmd := exec.Command("go", "build", "-o", path, ".")
-	cmd.Dir = filepath.Join(packageDir(t), "..", "..", "kb-runner")
+	cmd.Dir = filepath.Join(packageDir(t), "..", "..")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build kb-runner: %v\n%s", err, out)
 	}

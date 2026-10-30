@@ -4,9 +4,9 @@ package proc
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 	"unsafe"
@@ -20,13 +20,6 @@ func TestInProcessKeeperRestoresCallingProcessSubreaperState(t *testing.T) {
 	state := t.TempDir()
 	runID, err := newID()
 	if err != nil {
-		t.Fatal(err)
-	}
-	temporaryRecord := recordLocation(state, runID).temporaryPath(StatusStarting)
-	if err := os.MkdirAll(filepath.Dir(temporaryRecord), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(temporaryRecord, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	identity, alive, err := ProcessIdentity(os.Getpid())
@@ -45,7 +38,8 @@ func TestInProcessKeeperRestoresCallingProcessSubreaperState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status := runKeeperWithReady(cfg, writeReady)
+	writerErr := errors.New("injected run-record write obstruction")
+	status := runKeeperWithReadyAndRecordWriter(cfg, writeReady, failingRunRecordWriter{err: writerErr})
 	var ready readyMessage
 	if err := json.NewDecoder(readReady).Decode(&ready); err != nil {
 		t.Fatalf("read keeper readiness: %v", err)
@@ -56,11 +50,15 @@ func TestInProcessKeeperRestoresCallingProcessSubreaperState(t *testing.T) {
 	if status == 0 {
 		t.Fatalf("keeper status=%d, want failure at the intentional record obstruction: %+v", status, ready)
 	}
-	if ready.Error == "" || !strings.Contains(ready.Error, runID+".json.tmp") {
-		t.Fatalf("keeper did not stop at the intentional record obstruction: %+v", ready)
+	if ready.Error != writerErr.Error() {
+		t.Fatalf("keeper did not stop at the typed record-writer obstruction: %+v", ready)
 	}
 	assertNotSubreaper(t)
 }
+
+type failingRunRecordWriter struct{ err error }
+
+func (writer failingRunRecordWriter) Write(record) error { return writer.err }
 
 func assertNotSubreaper(t *testing.T) {
 	t.Helper()

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/internal/testdeadline"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
 )
 
 // Run only with `go test -tags docker ./proc -run '^TestDockerComposeCleanupRemovesOnlyUniqueProject$'`.

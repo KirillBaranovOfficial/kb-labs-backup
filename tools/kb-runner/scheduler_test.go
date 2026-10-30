@@ -23,7 +23,8 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/command"
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/clikit/proc/child"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 const schedulerTestSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -1664,19 +1665,10 @@ type lifecycleCrashSupervisor struct {
 	store *lifecycleCrashStore
 }
 
-type lifecycleHostResourceSource struct{}
-
-func (lifecycleHostResourceSource) Snapshot() proc.HostResourceSnapshot {
-	return proc.HostResourceSnapshot{
-		PhysicalMemory: 1 << 50, AvailableMemory: 1 << 50, MemoryAvailableKnown: true,
-		PressureAvailable: true, LoadAvailable: true, LogicalCPUs: 64, Pressure: "normal",
-	}
-}
-
 type lifecycleRealSupervisor struct{ clikitSchedulerSupervisor }
 
 func (lifecycleRealSupervisor) Start(ctx context.Context, config proc.Config) (schedulerJobRun, error) {
-	return proc.StartWithHostResourceSource(ctx, config, lifecycleHostResourceSource{})
+	return proc.Start(ctx, config)
 }
 
 func (supervisor lifecycleCrashSupervisor) Start(ctx context.Context, config proc.Config) (schedulerJobRun, error) {
@@ -1686,7 +1678,7 @@ func (supervisor lifecycleCrashSupervisor) Start(ctx context.Context, config pro
 		return nil, err
 	}
 	write.RunClass = runClass
-	if err := supervisor.store.record(supervisor.store.label(write, "clikit/proc-boundary")); err != nil {
+	if err := supervisor.store.record(supervisor.store.label(write, "kb-runner/internal/proc-boundary")); err != nil {
 		return nil, err
 	}
 	run, err := supervisor.schedulerJobSupervisor.Start(ctx, config)
@@ -1705,7 +1697,7 @@ func (supervisor lifecycleCrashSupervisor) Start(ctx context.Context, config pro
 	if err != nil {
 		return nil, err
 	}
-	if err := supervisor.store.record(supervisor.store.label(write, "clikit/proc-boundary")); err != nil {
+	if err := supervisor.store.record(supervisor.store.label(write, "kb-runner/internal/proc-boundary")); err != nil {
 		return nil, err
 	}
 	return run, nil
@@ -1886,7 +1878,7 @@ func observeLifecycleRunCompletions(ctx context.Context, state string, store *li
 				return err
 			}
 			write := observedDurableWrite{Kind: "job-completion-record", Path: run.RunID, PathClass: class}
-			if err := store.record(store.label(write, "clikit/proc")); err != nil {
+			if err := store.record(store.label(write, "kb-runner/internal/proc")); err != nil {
 				return err
 			}
 		}
@@ -2196,8 +2188,9 @@ func TestLifecycleChildCancellationIncludesSIGQUITDump(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestLifecycleSIGQUITChild$")
-	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	configureLifecycleChildCancellation(child)
+	if err := configureLifecycleChildCancellation(child); err != nil {
+		t.Fatal(err)
+	}
 	child.Env = append(os.Environ(), "KB_RUNNER_LIFECYCLE_SIGQUIT_CHILD=1")
 	var stdout, stderr lifecycleOutputTail
 	child.Stdout, child.Stderr = &stdout, &stderr
@@ -2218,7 +2211,8 @@ func TestSchedulerTransitionCrashMatrix(t *testing.T) {
 	// The default tier is class-reduced; T3/T4 enumerate every observed
 	// runner-store write. Process-owner coverage is at the supervisor API
 	// boundary: absent before Start, readable after Start returns, and Start
-	// errors leave no record. clikit has no injectable record-write seam.
+	// errors leave no record. The writer failure contract is tested by the
+	// kb-runner internal supervisor at its record-owner boundary.
 	// T3 is a nightly tier with a declared 20-minute budget.
 	scenarios := []lifecycleCrashScenario{
 		{name: "reject-rework-accept-land", workerStatuses: []string{"Status: DONE", "Status: DONE"}, reviewPlan: []string{"zcode|GLM-5.3-flash|REJECT", "gem|claude-sonnet-4-6|ACCEPT"}, terminalState: SchedulerDone, advanceState: AdvanceAccepted},
@@ -2258,7 +2252,10 @@ func TestSchedulerTransitionCrashMatrix(t *testing.T) {
 					writeLog := filepath.Join(fixture.home, "crash-writes.jsonl")
 					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 					defer cancel()
-					child := lifecycleChildCommand(ctx, fixture, scenario, "crash", writeLog, ordinal)
+					child, err := lifecycleChildCommand(ctx, fixture, scenario, "crash", writeLog, ordinal)
+					if err != nil {
+						t.Fatal(err)
+					}
 					var stdout, stderr lifecycleOutputTail
 					child.Stdout = &stdout
 					child.Stderr = &stderr
@@ -2358,7 +2355,10 @@ func TestSchedulerUnknownRunRecordCrashRecoveryContinuesOtherStreams(t *testing.
 	writeLog := filepath.Join(fixture.home, "unknown-run-crash-writes.jsonl")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	child := lifecycleChildCommand(ctx, fixture, scenario, "record", writeLog, 0)
+	child, err := lifecycleChildCommand(ctx, fixture, scenario, "record", writeLog, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var stdout, stderr lifecycleOutputTail
 	child.Stdout, child.Stderr = &stdout, &stderr
 	if err := child.Start(); err != nil {
@@ -2446,7 +2446,10 @@ func runLifecycleRecoveryChild(t *testing.T, fixture schedulerFixture, scenario 
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	command := lifecycleChildCommand(ctx, fixture, scenario, "recover", writeLog, 0)
+	command, err := lifecycleChildCommand(ctx, fixture, scenario, "recover", writeLog, 0)
+	if err != nil {
+		return err
+	}
 	var stdout, stderr lifecycleOutputTail
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
@@ -2508,7 +2511,10 @@ func runSchedulerRealSupervisorLifecycleSmoke(t *testing.T, scenario lifecycleCr
 	writeLog := filepath.Join(fixture.home, "real-supervisor-writes.jsonl")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	child := lifecycleChildCommand(ctx, fixture, scenario, "record", writeLog, 0, "real")
+	child, err := lifecycleChildCommand(ctx, fixture, scenario, "record", writeLog, 0, "real")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var stdout, stderr lifecycleOutputTail
 	child.Stdout, child.Stderr = &stdout, &stderr
 	if err := child.Run(); err != nil {
@@ -2623,7 +2629,10 @@ func runLifecycleReference(t *testing.T, scenario lifecycleCrashScenario) lifecy
 	writeLog := filepath.Join(fixture.home, "reference-writes.jsonl")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	child := lifecycleChildCommand(ctx, fixture, scenario, "record", writeLog, 0)
+	child, err := lifecycleChildCommand(ctx, fixture, scenario, "record", writeLog, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var stdout, stderr lifecycleOutputTail
 	child.Stdout, child.Stderr = &stdout, &stderr
 	if err := child.Run(); err != nil {
@@ -2689,10 +2698,11 @@ func prepareLifecycleCrashFixture(t *testing.T, scenario lifecycleCrashScenario)
 	return fixture
 }
 
-func lifecycleChildCommand(ctx context.Context, fixture schedulerFixture, scenario lifecycleCrashScenario, mode, writeLog string, ordinal int, supervisorMode ...string) *exec.Cmd {
+func lifecycleChildCommand(ctx context.Context, fixture schedulerFixture, scenario lifecycleCrashScenario, mode, writeLog string, ordinal int, supervisorMode ...string) (*exec.Cmd, error) {
 	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSchedulerLifecycleCrashChild$")
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	configureLifecycleChildCancellation(command)
+	if err := configureLifecycleChildCancellation(command); err != nil {
+		return nil, err
+	}
 	modeValue := "fake"
 	if len(supervisorMode) == 1 {
 		modeValue = supervisorMode[0]
@@ -2707,10 +2717,13 @@ func lifecycleChildCommand(ctx context.Context, fixture schedulerFixture, scenar
 		"KB_RUNNER_LIFECYCLE_CRASH_WRITES="+writeLog,
 		"KB_RUNNER_LIFECYCLE_CRASH_ORDINAL="+strconv.Itoa(ordinal),
 	)
-	return command
+	return command, nil
 }
 
-func configureLifecycleChildCancellation(command *exec.Cmd) {
+func configureLifecycleChildCancellation(command *exec.Cmd) error {
+	if err := child.Configure(command, child.ProcessGroup); err != nil {
+		return fmt.Errorf("configure lifecycle test child process group: %w", err)
+	}
 	command.Cancel = func() error {
 		if command.Process == nil {
 			return nil
@@ -2718,6 +2731,7 @@ func configureLifecycleChildCancellation(command *exec.Cmd) {
 		return syscall.Kill(-command.Process.Pid, syscall.SIGQUIT)
 	}
 	command.WaitDelay = 3 * time.Second
+	return nil
 }
 
 func countCrashWriteLines(data []byte) int {

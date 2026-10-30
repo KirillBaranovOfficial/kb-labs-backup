@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package proc
+package child_test
 
 import (
 	"context"
@@ -15,13 +15,14 @@ import (
 	"testing"
 	"time"
 
+	clikitproc "github.com/kb-labs/clikit/proc"
 	"github.com/kb-labs/clikit/proc/child"
 )
 
 type setsidBoundaryObserver struct{ pidFile string }
 
 func (observer setsidBoundaryObserver) RootIdentity(pid int) (child.ProcessIdentity, error) {
-	return ChildProcessObserver().RootIdentity(pid)
+	return clikitproc.ChildProcessObserver().RootIdentity(pid)
 }
 
 func (observer setsidBoundaryObserver) LiveMembers(groupID int, root child.ProcessIdentity) ([]child.ProcessMember, error) {
@@ -37,12 +38,14 @@ func (observer setsidBoundaryObserver) LiveMembers(groupID int, root child.Proce
 	if err != nil {
 		return nil, err
 	}
-	startedAt, identity, _, err := readProcessStartIdentity(escapedPID)
+	process, err := clikitproc.ChildProcessObserver().RootIdentity(escapedPID)
 	if err != nil {
 		return nil, err
 	}
-	process := Process{PID: escapedPID, Identity: identity, StartedAt: startedAt, processGroupID: groupIDOfEscaped}
-	return liveOwnedGroupMembers([]Process{process}, groupID, root.StartedAt), nil
+	if groupIDOfEscaped != groupID || process.StartedAt.Before(root.StartedAt) {
+		return nil, nil
+	}
+	return []child.ProcessMember{{PID: escapedPID, Identity: process.Identity}}, nil
 }
 
 // case: S-261.6
@@ -95,13 +98,17 @@ func TestSetsidDescendantIsOutsideChildGroupOwnership(t *testing.T) {
 		timeout := time.NewTimer(2 * time.Second)
 		defer timeout.Stop()
 		for {
-			_, alive, err := ProcessIdentity(escapedPID)
-			if err == nil && !alive {
+			identity, identityErr := observer.RootIdentity(escapedPID)
+			if identityErr != nil {
+				return
+			}
+			members, memberErr := observer.LiveMembers(escapedPID, identity)
+			if memberErr == nil && len(members) == 0 {
 				return
 			}
 			select {
 			case <-timeout.C:
-				t.Errorf("setsid fixture process %d remained live after cleanup (observation error: %v)", escapedPID, err)
+				t.Errorf("setsid fixture process %d remained live after cleanup (observation error: %v)", escapedPID, memberErr)
 				return
 			case <-ticker.C:
 			}
@@ -121,7 +128,7 @@ func TestSetsidDescendantIsOutsideChildGroupOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse escaped descendant PID %q: %v", data, err)
 	}
-	if identity, alive, err := ProcessIdentity(escapedPID); err != nil || !alive || identity == "" {
-		t.Fatalf("setsid descendant identity=(%q, alive=%t, err=%v); want live outside owned group", identity, alive, err)
+	if identity, err := observer.RootIdentity(escapedPID); err != nil || identity.Identity == "" {
+		t.Fatalf("setsid descendant identity=(%+v, err=%v); want live outside owned group", identity, err)
 	}
 }

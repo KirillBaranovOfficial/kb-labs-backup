@@ -1,7 +1,7 @@
 package proc
 
 import (
-	"github.com/kb-labs/clikit/internal/testdeadline"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
 	"os"
 	"os/exec"
 	"testing"
@@ -39,6 +39,16 @@ func TestParseProcBootTimeAndStartTicks(t *testing.T) {
 	want := time.Unix(1700000005, 0)
 	if !got.Equal(want) {
 		t.Fatalf("start time = %s, want %s", got, want)
+	}
+}
+
+func TestProcessStartBoundUsesKernelTickUnits(t *testing.T) {
+	boot := time.Unix(1700000000, 0)
+	bound := processStartBoundFromTicks(boot, 329, 100)
+	sameTickProcess := procStartTime(boot, 329, 100)
+	laterProcess := procStartTime(boot, 330, 100)
+	if !bound.Equal(sameTickProcess) || laterProcess.Before(bound) {
+		t.Fatalf("run start bound=%s same-tick=%s next-tick=%s; bound must share /proc start-tick units and include same-tick children", bound, sameTickProcess, laterProcess)
 	}
 }
 

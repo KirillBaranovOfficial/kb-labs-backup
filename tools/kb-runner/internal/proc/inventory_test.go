@@ -15,7 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/internal/testdeadline"
+	clikitproc "github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
 )
 
 func TestInventoryKeepsUnobservableArgvVisible(t *testing.T) {
@@ -177,7 +178,7 @@ func TestInventoryOmitsRealZombieChild(t *testing.T) {
 // case: S-261.6
 func TestZombieRootIdentityRemainsAvailableForManagedChild(t *testing.T) {
 	child, reap := startZombieChild(t)
-	root, err := ChildProcessObserver().RootIdentity(child.Process.Pid)
+	root, err := clikitproc.ChildProcessObserver().RootIdentity(child.Process.Pid)
 	if err != nil {
 		t.Fatalf("capture zombie root identity: %v", err)
 	}

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 func TestAdvanceReportGateRequiresEveryDoDSection(t *testing.T) {

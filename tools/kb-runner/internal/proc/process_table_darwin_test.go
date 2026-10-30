@@ -9,7 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/kb-labs/clikit/internal/testdeadline"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
 	"io"
 	"os"
 	"os/exec"
@@ -508,7 +508,7 @@ func TestSupervisedRunObservesWholeDarwinTableWithForeignUIDs(t *testing.T) {
 	}
 	runner := filepath.Join(dir, "kb-runner")
 	buildRunner := exec.Command("go", "build", "-o", runner, ".")
-	buildRunner.Dir = filepath.Join(filepath.Dir(source), "..", "..", "kb-runner")
+	buildRunner.Dir = filepath.Join(filepath.Dir(source), "..", "..")
 	if output, err := buildRunner.CombinedOutput(); err != nil {
 		t.Fatalf("build kb-runner: %v\n%s", err, output)
 	}
@@ -607,7 +607,7 @@ func TestDetachedDarwinMembershipRequiresHistoryOrMarker(t *testing.T) {
 	}
 	runner := filepath.Join(dir, "kb-runner")
 	buildRunner := exec.Command("go", "build", "-o", runner, ".")
-	buildRunner.Dir = filepath.Join(filepath.Dir(source), "..", "..", "kb-runner")
+	buildRunner.Dir = filepath.Join(filepath.Dir(source), "..", "..")
 	if output, err := buildRunner.CombinedOutput(); err != nil {
 		t.Fatalf("build kb-runner: %v\n%s", err, output)
 	}

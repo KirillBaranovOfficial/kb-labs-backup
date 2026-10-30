@@ -15,27 +15,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/command"
-	"github.com/kb-labs/clikit/proc"
 )
-
-type leaseFixtureHostResources struct {
-	mu        sync.Mutex
-	snapshots int
-}
-
-func (source *leaseFixtureHostResources) Snapshot() proc.HostResourceSnapshot {
-	source.mu.Lock()
-	source.snapshots++
-	source.mu.Unlock()
-	return proc.HostResourceSnapshot{PhysicalMemory: 16 << 30, AvailableMemory: 8 << 30, MemoryAvailableKnown: true,
-		PressureAvailable: true, LoadAvailable: true, LogicalCPUs: 8, Pressure: "normal", FreeDiskKnown: true, FreeDiskBytes: 1 << 40}
-}
-
-func (source *leaseFixtureHostResources) count() int {
-	source.mu.Lock()
-	defer source.mu.Unlock()
-	return source.snapshots
-}
 
 // case: S-276.1
 func TestRunCommandLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
@@ -65,8 +45,7 @@ func TestRunCommandLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 		err  error
 	}
 	result := make(chan commandResult, 1)
-	hostResources := &leaseFixtureHostResources{}
-	commandRoot := runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner", hostResourceSource: hostResources}
+	commandRoot := runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}
 	go func() {
 		code, err := runCommandWithContext(ctx, commandRoot, []string{"--tag", "lease-child", "--state", state, "--stall", "1m", "--stdout", filepath.Join(state, "child.stdout"), "--stderr", filepath.Join(state, "child.stderr"), "--", "/bin/sh", "-c", "printf ready > \"$1\"; exec /bin/sleep 60", "sh", childReady}, runnerStdout, runnerStderr)
 		result <- commandResult{code: code, err: err}
@@ -98,9 +77,6 @@ func TestRunCommandLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	waited = true
 	if outcome.code != 143 {
 		t.Fatalf("run command exit = %d, err=%v; want cancellation 143", outcome.code, outcome.err)
-	}
-	if hostResources.count() == 0 {
-		t.Fatal("run command did not use its injected host resource source")
 	}
 	lease, acquired, err := tryExclusiveWorktreeLease(leasePath)
 	if err != nil || !acquired {
@@ -146,8 +122,7 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	}
 	t.Setenv("CODEX_BIN", fakeCodex)
 	runner := buildRunnerBinary(t)
-	hostResources := &leaseFixtureHostResources{}
-	commandRoot := runnerRoot{Root: command.InvocationRoot(runner), invocation: runner, executable: runner, hostResourceSource: hostResources}
+	commandRoot := runnerRoot{Root: command.InvocationRoot(runner), invocation: runner, executable: runner}
 	var runnerStdout, runnerStderr bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	type commandResult struct {
@@ -193,9 +168,6 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	waited = true
 	if outcome.code != 1 {
 		t.Fatalf("agent start cancellation exit = %d, err=%v; want 1", outcome.code, outcome.err)
-	}
-	if hostResources.count() == 0 {
-		t.Fatal("agent start did not use its injected host resource source")
 	}
 	lease, acquired, err := tryExclusiveWorktreeLease(leasePath)
 	if err != nil || !acquired {

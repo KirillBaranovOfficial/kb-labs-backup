@@ -8,7 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/kb-labs/clikit/internal/testdeadline"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
 	"math"
 	"os"
 	"os/exec"

@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kb-labs/clikit/internal/testdeadline"
+	"github.com/kb-labs/kb-runner/internal/testdeadline"
 	"io"
 	"os"
 	"os/exec"
@@ -1327,9 +1327,9 @@ func TestProcessDescendantsRespectNestedOwnerAndIgnoreZombie(t *testing.T) {
 func TestRunRecoveryCandidatesIncludeRecordedDescendantsAndExcludeZombies(t *testing.T) {
 	startedAt := time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC)
 	processes := []Process{
-		{PID: 14223, PPID: 100, Identity: "70213", StartedAt: startedAt.Add(time.Second), processState: "S"},
-		{PID: 14224, PPID: 14223, Identity: "70213", StartedAt: startedAt.Add(2 * time.Second), processState: "S"},
-		{PID: 14225, PPID: 14224, Identity: "70214", StartedAt: startedAt.Add(3 * time.Second), processState: "S"},
+		{PID: 14223, PPID: 100, Identity: "70213", StartedAt: startedAt, processState: "S"},
+		{PID: 14224, PPID: 14223, Identity: "70213", StartedAt: startedAt, processState: "S"},
+		{PID: 14225, PPID: 14224, Identity: "70214", StartedAt: startedAt, processState: "S"},
 		{PID: 14226, PPID: 1, Identity: "70215", StartedAt: startedAt.Add(4 * time.Second), runMarker: true, markerResult: "match", processState: "S"},
 		{PID: 14227, PPID: 14223, Identity: "70216", StartedAt: startedAt.Add(4 * time.Second), runMarker: true, markerResult: "match", processState: "Z"},
 		{PID: 14228, PPID: 14223, Identity: "70217", StartedAt: startedAt.Add(4 * time.Second), markerResult: "other-run", runToken: true, processState: "S"},

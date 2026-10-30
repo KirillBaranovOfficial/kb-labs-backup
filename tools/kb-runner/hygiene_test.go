@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 func TestHygieneKeepsActiveStreamTestCacheAndReapsTerminalStreamCache(t *testing.T) {
@@ -453,7 +453,15 @@ func TestUnreadableRelativeArgvStillArchivesDirtyRetiredWorktree(t *testing.T) {
 			t.Fatalf("unreadable-process path archive missing %s: %v", name, err)
 		}
 	}
-	assertTarReadable(t, filepath.Join(archive, "untracked.tgz"))
+	diff, err := os.ReadFile(filepath.Join(archive, "tracked.diff"))
+	if err != nil || !strings.Contains(string(diff), "modified") {
+		t.Fatalf("unreadable-process archive tracked diff lacks the edit: %s, %v", diff, err)
+	}
+	listing, err := os.ReadFile(filepath.Join(archive, "untracked.list"))
+	if err != nil || !strings.Contains(string(listing), "loose.txt") {
+		t.Fatalf("unreadable-process archive manifest lacks loose.txt: %s, %v", listing, err)
+	}
+	assertTarFileContent(t, filepath.Join(archive, "untracked.tgz"), "loose.txt", "untracked\n")
 }
 
 // case: S-276.2
@@ -1337,4 +1345,39 @@ func assertTarReadable(t *testing.T, archive string) {
 	if _, err := tar.NewReader(gz).Next(); err != nil {
 		t.Fatalf("archive is not readable: %v", err)
 	}
+}
+
+func assertTarFileContent(t *testing.T, archive, name, want string) {
+	t.Helper()
+	file, err := os.Open(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	reader := tar.NewReader(gz)
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read archive entry: %v", err)
+		}
+		if filepath.Base(header.Name) == name {
+			contents, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatalf("read archived %s: %v", name, err)
+			}
+			if string(contents) != want {
+				t.Fatalf("archived %s = %q, want %q", name, contents, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("archive %s does not contain %s", archive, name)
 }

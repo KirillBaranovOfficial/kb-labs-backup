@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 func TestResolveTestChannelToolchainUsesRunnerModuleCache(t *testing.T) {
@@ -305,7 +305,7 @@ func TestTestChannelExecutorDoesNotReadAmbientModuleCacheSecret(t *testing.T) {
 	}
 	t.Setenv("GOMODCACHE", secretCache)
 	t.Setenv("GOPATH", secretCache)
-	result := newTestChannelExecutor(testChannelTestResourceSource{}).Execute(context.Background(), testExecution{Request: TestRequest{Module: module, Packages: []string{"."}, Run: "^TestAmbientModuleCacheSecret$", Count: 1, Timeout: time.Minute}, JobID: "job-ambient-cache", RequestID: "request-ambient-cache", State: filepath.Join(root, "state"), Stream: "stream-ambient-cache"})
+	result := newTestChannelExecutor().Execute(context.Background(), testExecution{Request: TestRequest{Module: module, Packages: []string{"."}, Run: "^TestAmbientModuleCacheSecret$", Count: 1, Timeout: time.Minute}, JobID: "job-ambient-cache", RequestID: "request-ambient-cache", State: filepath.Join(root, "state"), Stream: "stream-ambient-cache"})
 	if result.DiagnosticCode == "KB_RUNTIME_INPUT_INVALID" {
 		return
 	}
@@ -525,7 +525,7 @@ func TestTestChannelSandboxAllowsProcessTableAndDeniesSecretAndNetwork(t *testin
 		t.Fatalf("macOS path policy should be measured as unable to deny a hard-link alias; output: %s", output)
 	}
 	t.Log("profile cannot deny a hard-link alias; executor preflight does")
-	preflightResult := newTestChannelExecutor(nil).Execute(context.Background(), testExecution{Request: TestRequest{Module: worktree}})
+	preflightResult := newTestChannelExecutor().Execute(context.Background(), testExecution{Request: TestRequest{Module: worktree}})
 	if preflightResult.DiagnosticCode != "KB_RUNTIME_INPUT_INVALID" {
 		t.Fatalf("real test-channel executor did not refuse the hard-link module: %+v", preflightResult)
 	}
@@ -550,7 +550,7 @@ func TestTestChannelExecutorRefusesHardLinkBeforeSandboxStart(t *testing.T) {
 	if err := os.Link(secret, filepath.Join(module, "linked-secret")); err != nil {
 		t.Fatal(err)
 	}
-	result := newTestChannelExecutor(nil).Execute(context.Background(), testExecution{Request: TestRequest{Module: module}})
+	result := newTestChannelExecutor().Execute(context.Background(), testExecution{Request: TestRequest{Module: module}})
 	if result.DiagnosticCode != "KB_RUNTIME_INPUT_INVALID" {
 		t.Fatalf("hard-link result = %+v, want typed refusal before sandbox", result)
 	}
@@ -569,7 +569,7 @@ func TestTestChannelExecutorStopsNoisyOutputAtHardCeiling(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(worktree, "noisy_test.go"), []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result := executeTestRequest(context.Background(), testExecution{Request: TestRequest{Module: worktree, Packages: []string{"."}, Run: "^TestNoisy$", Count: 1, Timeout: time.Minute}, JobID: "job-output-limit", State: filepath.Join(root, "state"), Stream: "stream-output-limit", HostResourceSource: testChannelTestResourceSource{}})
+	result := executeTestRequest(context.Background(), testExecution{Request: TestRequest{Module: worktree, Packages: []string{"."}, Run: "^TestNoisy$", Count: 1, Timeout: time.Minute}, JobID: "job-output-limit", State: filepath.Join(root, "state"), Stream: "stream-output-limit"})
 	if result.Passed+result.Failed == 0 && result.Outcome != testOutcomeOutputLimitExceeded {
 		t.Fatalf("noisy fixture did not run: %+v", result)
 	}
@@ -599,7 +599,7 @@ func TestTestChannelExecutorWritesPassAndFailResults(t *testing.T) {
 	if err := os.MkdirAll(spool, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	broker := testChannelBroker{state: state, jobID: jobID, stream: stream, worktree: worktree, spool: spool, executor: newTestChannelExecutor(testChannelTestResourceSource{})}
+	broker := testChannelBroker{state: state, jobID: jobID, stream: stream, worktree: worktree, spool: spool, executor: newTestChannelExecutor()}
 	for _, test := range []struct {
 		name                         string
 		wantExit, wantPass, wantFail int
@@ -650,7 +650,7 @@ func TestTestChannelExecutorReportsAdmissionReason(t *testing.T) {
 	if err := os.MkdirAll(spool, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	broker := testChannelBroker{state: state, jobID: jobID, stream: "stream-test-channel-admission", worktree: worktree, spool: spool, executor: newTestChannelExecutor(testChannelWarnResourceSource{})}
+	broker := testChannelBroker{state: state, jobID: jobID, stream: "stream-test-channel-admission", worktree: worktree, spool: spool, executor: newTestChannelExecutor()}
 	request := testRequest{ID: "admission-request", Workdir: worktree, Args: []string{"go", "-timeout", "350ms", "."}}
 	started := time.Now()
 	if err := broker.handle(context.Background(), request); err != nil {

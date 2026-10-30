@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 func psJSONRecords(t *testing.T, state string) []map[string]any {
