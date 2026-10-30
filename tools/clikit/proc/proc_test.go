@@ -461,7 +461,11 @@ func TestRunScratchAllowsUnixSocketNameUnderDeepStateDirectory(t *testing.T) {
 	)
 	output, err := command.CombinedOutput()
 	runID := outputRunID(t, state, "scratch-socket")
-	data, recordErr := os.ReadFile(proc.RunRecordFile(state, runID))
+	recordPath, recordErr := proc.RunRecordFile(state, runID)
+	if recordErr != nil {
+		t.Fatalf("resolve socket run record: %v", recordErr)
+	}
+	data, recordErr := os.ReadFile(recordPath)
 	if recordErr != nil {
 		t.Fatalf("read socket run record: %v", recordErr)
 	}
@@ -2102,7 +2106,11 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 	}
 	firstRun := listing.Runs[0]
 	if runtime.GOOS == "darwin" && !waitUntil(3*time.Second, func() bool {
-		data, err := os.ReadFile(proc.RunRecordFile(state, firstRun.RunID))
+		recordPath, err := proc.RunRecordFile(state, firstRun.RunID)
+		if err != nil {
+			return false
+		}
+		data, err := os.ReadFile(recordPath)
 		if err != nil {
 			return false
 		}
@@ -2181,7 +2189,11 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 
 func scratchForRun(t *testing.T, state, runID string) string {
 	t.Helper()
-	data, err := os.ReadFile(proc.RunRecordFile(state, runID))
+	recordPath, err := proc.RunRecordFile(state, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(recordPath)
 	if err != nil {
 		t.Fatal(err)
 	}

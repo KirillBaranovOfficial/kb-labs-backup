@@ -68,11 +68,7 @@ func (executable TestExecutable) PathForTest() string {
 	return executable.path
 }
 
-// RunRecordFile is the file the record placement owner holds for runID now:
-// the live record while the run is in flight, the finished record after it.
-func RunRecordFile(stateDir, runID string) string {
-	if _, err := os.Stat(recordPath(stateDir, runID, false)); err == nil {
-		return recordPath(stateDir, runID, false)
-	}
-	return recordPath(stateDir, runID, true)
+// RunRecordFile resolves the current durable record through proc's location owner.
+func RunRecordFile(stateDir, runID string) (string, error) {
+	return recordLocation(stateDir, runID).currentPath()
 }

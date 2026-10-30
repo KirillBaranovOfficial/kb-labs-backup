@@ -1324,6 +1324,35 @@ func TestProcessDescendantsRespectNestedOwnerAndIgnoreZombie(t *testing.T) {
 }
 
 // case: S-237.69
+func TestRunRecoveryCandidatesIncludeRecordedDescendantsAndExcludeZombies(t *testing.T) {
+	startedAt := time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC)
+	processes := []Process{
+		{PID: 14223, PPID: 100, Identity: "70213", StartedAt: startedAt.Add(time.Second), processState: "S"},
+		{PID: 14224, PPID: 14223, Identity: "70213", StartedAt: startedAt.Add(2 * time.Second), processState: "S"},
+		{PID: 14225, PPID: 14224, Identity: "70214", StartedAt: startedAt.Add(3 * time.Second), processState: "S"},
+		{PID: 14226, PPID: 1, Identity: "70215", StartedAt: startedAt.Add(4 * time.Second), runMarker: true, markerResult: "match", processState: "S"},
+		{PID: 14227, PPID: 14223, Identity: "70216", StartedAt: startedAt.Add(4 * time.Second), runMarker: true, markerResult: "match", processState: "Z"},
+		{PID: 14228, PPID: 14223, Identity: "70217", StartedAt: startedAt.Add(4 * time.Second), markerResult: "other-run", runToken: true, processState: "S"},
+		{PID: 14229, PPID: 14228, Identity: "70218", StartedAt: startedAt.Add(5 * time.Second), processState: "S"},
+		{PID: 14230, PPID: 14223, Identity: "70219", StartedAt: startedAt.Add(-time.Second), processState: "S"},
+		{PID: 14231, PPID: 1, Identity: "70220", StartedAt: startedAt.Add(2 * time.Second), processState: "S"},
+	}
+	recorded := []Process{{PID: 14223, Identity: "70213"}}
+	got, err := runRecoveryCandidates(processes, startedAt, recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{14223, 14224, 14225, 14226}
+	if len(got) != len(want) {
+		t.Fatalf("recovery targets=%+v, want PIDs %v", got, want)
+	}
+	for index, pid := range want {
+		if got[index].PID != pid {
+			t.Fatalf("recovery target[%d]=%d, want %d; all=%+v", index, got[index].PID, pid, got)
+		}
+	}
+}
+
 func TestProcessTreeDoesNotReenterNestedRunThroughInheritedToken(t *testing.T) {
 	snapshot := []Process{
 		{PID: 100, Identity: "outer-keeper"},
@@ -1346,15 +1375,15 @@ func TestRunMarkerRecoveryRequiresMarkerAndPostStartIdentity(t *testing.T) {
 		{PID: 102, runMarker: true, StartedAt: startedAt.Add(time.Second)},
 		{PID: 103, StartedAt: startedAt.Add(time.Second)},
 	}
-	got, err := runMarkerRecoveryCandidates(processes, startedAt)
+	got, err := runRecoveryCandidates(processes, startedAt, nil)
 	if err != nil || len(got) != 2 || got[0].PID != 101 || got[1].PID != 102 {
 		t.Fatalf("run-marker recovery candidates=%+v err=%v, want only marked processes started at/after run start", got, err)
 	}
-	if _, err := runMarkerRecoveryCandidates(processes, time.Time{}); err == nil {
+	if _, err := runRecoveryCandidates(processes, time.Time{}, nil); err == nil {
 		t.Fatal("run-marker recovery accepted a missing run start time")
 	}
 	processes[1].StartedAt = time.Time{}
-	if _, err := runMarkerRecoveryCandidates(processes[1:2], startedAt); err == nil {
+	if _, err := runRecoveryCandidates(processes[1:2], startedAt, nil); err == nil {
 		t.Fatal("run-marker recovery accepted a marked process without start identity time")
 	}
 }

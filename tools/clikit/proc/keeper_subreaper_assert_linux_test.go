@@ -22,7 +22,11 @@ func TestInProcessKeeperRestoresCallingProcessSubreaperState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(state, "runs", runID+".json.tmp"), 0o700); err != nil {
+	temporaryRecord := recordLocation(state, runID).temporaryPath(StatusStarting)
+	if err := os.MkdirAll(filepath.Dir(temporaryRecord), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(temporaryRecord, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	identity, alive, err := ProcessIdentity(os.Getpid())

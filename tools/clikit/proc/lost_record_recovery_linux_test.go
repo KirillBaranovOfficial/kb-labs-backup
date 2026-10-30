@@ -19,7 +19,7 @@ func TestLostKeeperRecoveryUsesStartRecordWhenRunFileWasRemoved(t *testing.T) {
 	if err := recordObservedKeeperLoss(state, rec.RunID, rec); err != nil {
 		t.Fatalf("recover lost run from Start record after run-file removal: %v", err)
 	}
-	data, err := os.ReadFile(recordPath(state, rec.RunID, true))
+	data, err := os.ReadFile(recordLocation(state, rec.RunID).path(StatusLost))
 	if err != nil {
 		t.Fatalf("read recovered lost run record: %v", err)
 	}

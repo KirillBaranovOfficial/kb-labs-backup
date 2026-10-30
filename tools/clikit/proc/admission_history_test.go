@@ -415,7 +415,7 @@ func TestFinishedRecordIsTheTruthOverStaleLiveLeftover(t *testing.T) {
 	if err := writeRecordAtomic(finished); err != nil {
 		t.Fatal(err)
 	}
-	finishedPath := recordPath(state, "crashed", true)
+	finishedPath := recordLocation(state, "crashed").path(StatusCompleted)
 	finishedBytes, err := os.ReadFile(finishedPath)
 	if err != nil {
 		t.Fatal(err)
@@ -429,7 +429,7 @@ func TestFinishedRecordIsTheTruthOverStaleLiveLeftover(t *testing.T) {
 	if err := withStateLock(state, func() error { return pruneStateLocked(state) }); err != nil {
 		t.Fatalf("prune with stale live leftover: %v", err)
 	}
-	if _, err := os.Stat(recordPath(state, "crashed", false)); !os.IsNotExist(err) {
+	if _, err := os.Stat(recordLocation(state, "crashed").path(StatusRunning)); !os.IsNotExist(err) {
 		t.Fatalf("stale live leftover survived prune: stat=%v", err)
 	}
 	afterBytes, err := os.ReadFile(finishedPath)
@@ -461,7 +461,7 @@ func TestPruneRefusesRecordWithoutStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	corruptPath := recordPath(state, "status-less", false)
+	corruptPath := recordLocation(state, "status-less").path(StatusRunning)
 	if err := os.WriteFile(corruptPath, corrupt, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -471,5 +471,50 @@ func TestPruneRefusesRecordWithoutStatus(t *testing.T) {
 	}
 	if !strings.Contains(pruneErr.Error(), "decode run record") || !strings.Contains(pruneErr.Error(), corruptPath) {
 		t.Fatalf("status-less record error = %v, want a decode error naming %s", pruneErr, corruptPath)
+	}
+}
+
+// case: S-237.69
+func TestRunRecordLocationTracksTransitionsAndFallback(t *testing.T) {
+	state := t.TempDir()
+	runID := "location-transition"
+	location := recordLocation(state, runID)
+	wantTemporary := filepath.Join(state, "runs", runID+".json.tmp")
+	if got := location.temporaryPath(StatusStarting); got != wantTemporary {
+		t.Fatalf("starting-record temp path=%q, want %q", got, wantTemporary)
+	}
+	identity, alive, err := ProcessIdentity(os.Getpid())
+	if err != nil || !alive {
+		t.Fatalf("inspect current process identity: alive=%t err=%v", alive, err)
+	}
+	rec := record{RunID: runID, Tag: runID, StateDir: state, PID: os.Getpid(), StartedAt: identity, Status: StatusRunning}
+	if err := writeRecordAtomic(rec); err != nil {
+		t.Fatal(err)
+	}
+	path, err := location.currentPath()
+	if err != nil || path != location.path(StatusRunning) {
+		t.Fatalf("live record location=%q err=%v, want %q", path, err, location.path(StatusRunning))
+	}
+	rec.Status = StatusCompleted
+	if err := writeRecordAtomic(rec); err != nil {
+		t.Fatal(err)
+	}
+	path, err = location.currentPath()
+	if err != nil || path != location.path(StatusCompleted) {
+		t.Fatalf("finished record location=%q err=%v, want %q", path, err, location.path(StatusCompleted))
+	}
+	stored, err := readRecordLocked(state, runID)
+	if err != nil || stored.Status != StatusCompleted {
+		t.Fatalf("read transitioned record status=%q err=%v, want completed", stored.Status, err)
+	}
+
+	fallbackID := "location-fallback"
+	fallback := record{RunID: fallbackID, Tag: fallbackID, StateDir: state, PID: os.Getpid(), StartedAt: identity, Status: StatusRunning}
+	if err := recordObservedKeeperLoss(state, fallbackID, fallback); err != nil {
+		t.Fatalf("restore missing fallback record through location owner: %v", err)
+	}
+	fallbackPath, err := recordLocation(state, fallbackID).currentPath()
+	if err != nil || fallbackPath != recordLocation(state, fallbackID).path(StatusRunning) {
+		t.Fatalf("restored fallback location=%q err=%v", fallbackPath, err)
 	}
 }

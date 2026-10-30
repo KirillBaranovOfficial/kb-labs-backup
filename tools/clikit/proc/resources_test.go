@@ -626,7 +626,7 @@ func TestLedgerPersistenceFailureLeavesDirtyPendingEntryForGC(t *testing.T) {
 	}
 	t.Cleanup(func() { dockerCommand = originalDocker })
 
-	tmpPath := recordPath(state, "ledger-write-run", false) + ".tmp"
+	tmpPath := recordLocation(state, "ledger-write-run").temporaryPath(StatusRunning)
 	if err := os.MkdirAll(tmpPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
