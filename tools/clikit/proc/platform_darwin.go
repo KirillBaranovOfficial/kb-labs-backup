@@ -38,6 +38,23 @@ func readProcessCWD(pid int) (string, error) {
 
 func prepareKeeperPlatform() error { return nil }
 
+func finishKeeperPlatform() error { return nil }
+
+func monitorLauncher(parentPID int, parentIdentity string, lifetime *os.File) (<-chan error, error) {
+	if lifetime == nil {
+		return nil, errors.New("launcher lifetime pipe is required")
+	}
+	if err := lifetime.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		return nil, fmt.Errorf("close unused launcher lifetime pipe: %w", err)
+	}
+	return monitorParent(parentPID, parentIdentity)
+}
+
+// Darwin keeps ancestry and recorded-identity recovery: process environments may be hidden for platform binaries, so the Linux run-marker scan is not an authoritative source here.
+func lostRunRecoverySource(_ record, source processSource) (processSource, bool, error) {
+	return source, false, nil
+}
+
 func monitorParent(parentPID int, parentIdentity string) (<-chan error, error) {
 	dead := make(chan error, 1)
 	current, ok, identityErr := ProcessIdentity(parentPID)

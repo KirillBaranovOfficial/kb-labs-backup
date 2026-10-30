@@ -164,6 +164,8 @@ type Run struct {
 	stateDir  string
 	cmd       *exec.Cmd
 	wait      *processWait
+	lifetime  *os.File
+	record    record
 	once      sync.Once
 	err       error
 	done      chan struct{}
@@ -480,9 +482,11 @@ func killTreeWithProtectedAncestors(root int, runID string, observed []Process, 
 }
 
 func cleanupLostRun(rec record, source processSource) treeCleanup {
-	cleanup := cleanupTreeWithProtectedSource(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors, source)
+	recoverySource, authoritative, sourceErr := lostRunRecoverySource(rec, source)
+	cleanup := cleanupTreeWithProtectedSource(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors, recoverySource)
+	cleanup.err = errors.Join(cleanup.err, sourceErr)
 	cleanup.err = errors.Join(cleanup.err, removeRunToken(rec.RunID))
-	if len(rec.Observed) == 0 && len(cleanup.Reaped) == 0 && len(cleanup.Unverified) == 0 && len(cleanup.Remaining) == 0 {
+	if !authoritative && len(rec.Observed) == 0 && len(cleanup.Reaped) == 0 && len(cleanup.Unverified) == 0 && len(cleanup.Remaining) == 0 {
 		cleanup.err = errors.Join(cleanup.err, errors.New("unverified/failed observation: lost run has no persisted owned process identity"))
 	}
 	return cleanup
@@ -741,13 +745,29 @@ func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSou
 	if err != nil {
 		return nil, fmt.Errorf("proc: create keeper handshake: %w", err)
 	}
+	lifetimeRead, lifetimeWrite, err := os.Pipe()
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("proc: create launcher lifetime pipe: %w", err), readReady.Close(), writeReady.Close())
+	}
+	// The keeper gets only the read end; this launcher retains the sole writer
+	// until Wait or process exit, so EOF is independent of the launcher's thread.
+	lifetimeReaderClosed := false
+	lifetimeTransferred := false
+	defer func() {
+		if !lifetimeReaderClosed {
+			returnErr = errors.Join(returnErr, lifetimeRead.Close())
+		}
+		if !lifetimeTransferred {
+			returnErr = errors.Join(returnErr, lifetimeWrite.Close())
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(fmt.Errorf("proc: start canceled: %w", err), readReady.Close(), writeReady.Close())
 	}
 	cmd := exec.Command(executable)
 	keeperEnv := environmentFor(cfg, os.Environ())
 	cmd.Env = append(keeperEnv, stateEnv+"="+base64.RawStdEncoding.EncodeToString(encoded), readyEnv+"=3", keeperDispatchEnv+"="+keeperDispatchValue, runEnv+"="+runID)
-	cmd.ExtraFiles = []*os.File{writeReady}
+	cmd.ExtraFiles = []*os.File{writeReady, lifetimeRead}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	configureKeeper(cmd)
@@ -755,6 +775,11 @@ func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSou
 		return nil, errors.Join(fmt.Errorf("proc: start keeper: %w", err), readReady.Close(), writeReady.Close())
 	}
 	keeperWait := startProcessWait(cmd)
+	if err := lifetimeRead.Close(); err != nil {
+		lifetimeReaderClosed = true
+		return nil, errors.Join(fmt.Errorf("proc: close launcher lifetime reader: %w", err), cleanupStartedKeeper(cmd, keeperWait, runID), readReady.Close())
+	}
+	lifetimeReaderClosed = true
 	if err := writeReady.Close(); err != nil {
 		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake: %w", err), cleanupStartedKeeper(cmd, keeperWait, runID), readReady.Close())
 	}
@@ -849,7 +874,8 @@ keeperReady:
 		}
 	}
 	admissionPending = false
-	run := &Run{PID: RecordedKeeperPID(cmd.Process.Pid), RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, wait: keeperWait, done: make(chan struct{}), leases: leases}
+	run := &Run{PID: RecordedKeeperPID(cmd.Process.Pid), RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, wait: keeperWait, lifetime: lifetimeWrite, record: ready, done: make(chan struct{}), leases: leases}
+	lifetimeTransferred = true
 	leaseOwnershipTransferred = true
 	go func() {
 		select {
@@ -941,9 +967,13 @@ func (r *Run) Wait() error {
 	r.once.Do(func() {
 		r.err = r.wait.outcome().err
 		if r.err != nil {
-			if lostErr := recordObservedKeeperLoss(r.stateDir, r.RunID); lostErr != nil {
+			if lostErr := recordObservedKeeperLoss(r.stateDir, r.RunID, r.record); lostErr != nil {
 				r.err = errors.Join(r.err, fmt.Errorf("proc: record keeper loss for run %s: %w", r.RunID, lostErr))
 			}
+		}
+		if r.lifetime != nil {
+			r.err = errors.Join(r.err, r.lifetime.Close())
+			r.lifetime = nil
 		}
 		r.err = errors.Join(r.err, closeFileLeases(r.leases))
 		close(r.done)
@@ -1173,12 +1203,12 @@ func processTreeFromSnapshotWithMembership(all []Process, root int) ([]Process, 
 		switch {
 		case process.PID == root:
 			membership[key] = "root:keeper-run-owner"
+		case processBelongsToAnotherRun(process):
+			membership[key] = "rejected:other-run-marker"
 		case process.runToken:
 			membership[key] = "accepted:run-token-fd"
 		case process.runMarker:
 			membership[key] = "accepted:run-marker"
-		case processBelongsToAnotherRun(process):
-			membership[key] = "rejected:other-run-marker"
 		case process.PID != root && ancestry[process.PID]:
 			membership[key] = "accepted:parent-ancestry"
 		case process.markerResult == "unreadable":
@@ -1188,7 +1218,7 @@ func processTreeFromSnapshotWithMembership(all []Process, root int) ([]Process, 
 		}
 	}
 	for _, process := range all {
-		if process.runMarker || process.runToken {
+		if !processBelongsToAnotherRun(process) && (process.runMarker || process.runToken) {
 			ancestry[process.PID] = true
 		}
 	}

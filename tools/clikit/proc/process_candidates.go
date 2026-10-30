@@ -3,9 +3,11 @@
 package proc
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 func applyRunTokenDescriptors(processes []Process, runID string, inspect func(int, fileIdentity) (bool, error)) ([]Process, error) {
@@ -99,6 +101,26 @@ func processInspectionCandidates(processes []Process, rootPID int) map[int]bool 
 		}
 	}
 	return candidates
+}
+
+func runMarkerRecoveryCandidates(processes []Process, runStartedAt time.Time) ([]Process, error) {
+	if runStartedAt.IsZero() {
+		return nil, fmt.Errorf("lost-run recovery requires the durable run start time")
+	}
+	var candidates []Process
+	for _, process := range processes {
+		if !process.runMarker {
+			continue
+		}
+		if process.StartedAt.IsZero() {
+			return nil, fmt.Errorf("run-marked process %d has no process start time", process.PID)
+		}
+		if process.StartedAt.Before(runStartedAt) {
+			continue
+		}
+		candidates = append(candidates, process)
+	}
+	return candidates, nil
 }
 
 func applyCachedProcessMarkers(processes []Process, candidates map[int]bool, runID string, cache *processMarkerCache, inspect func(int) (string, bool, error)) []Process {

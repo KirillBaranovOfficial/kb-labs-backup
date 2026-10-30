@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -22,7 +23,7 @@ import (
 const ancestrySampleInterval = time.Duration(0)
 
 func configureKeeper(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
 func readProcessCWD(pid int) (string, error) {
@@ -31,6 +32,64 @@ func readProcessCWD(pid int) (string, error) {
 
 func prepareKeeperPlatform() error {
 	return unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
+}
+
+func finishKeeperPlatform() error {
+	return unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0)
+}
+
+func monitorLauncher(_ int, _ string, lifetime *os.File) (<-chan error, error) {
+	if lifetime == nil {
+		return nil, errors.New("launcher lifetime pipe is required")
+	}
+	dead := make(chan error, 1)
+	pipeResult := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, lifetime)
+		pipeResult <- err
+	}()
+	go func() {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+		defer signal.Stop(signals)
+		select {
+		case err := <-pipeResult:
+			dead <- err
+		case <-signals:
+			if err := lifetime.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+				dead <- fmt.Errorf("close launcher lifetime pipe after keeper signal: %w", err)
+				return
+			}
+			dead <- nil
+		}
+	}()
+	return dead, nil
+}
+
+func lostRunRecoverySource(rec record, source processSource) (processSource, bool, error) {
+	if rec.StartedAtTime.IsZero() {
+		return source, false, nil
+	}
+	return linuxLostRunSource{source: source, startedAt: rec.StartedAtTime}, true, nil
+}
+
+type linuxLostRunSource struct {
+	source    processSource
+	startedAt time.Time
+}
+
+func (source linuxLostRunSource) Snapshot(runID string) ([]Process, error) {
+	processes, err := source.source.Snapshot(runID)
+	if err != nil {
+		return processes, err
+	}
+	return runMarkerRecoveryCandidates(processes, source.startedAt)
+}
+func (source linuxLostRunSource) Identity(pid int) (string, bool, error) {
+	return source.source.Identity(pid)
+}
+func (source linuxLostRunSource) Signal(pid int, identity string, signal syscall.Signal) error {
+	return source.source.Signal(pid, identity, signal)
 }
 
 func (osProcessSource) ContainedDescendants(root int, snapshot []Process) ([]Process, bool, error) {

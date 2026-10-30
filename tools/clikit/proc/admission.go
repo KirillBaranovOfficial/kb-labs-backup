@@ -949,11 +949,17 @@ func pruneStateLocked(stateDir string) error {
 // recordObservedKeeperLoss finalizes a keeper that this run's own Wait observed
 // exit. Registry readers use the same locked transition when they discover a
 // stale identity first.
-func recordObservedKeeperLoss(stateDir, runID string) error {
+func recordObservedKeeperLoss(stateDir, runID string, fallback record) error {
 	return withStateLock(stateDir, func() error {
 		rec, err := readRecordLocked(stateDir, runID)
 		if err != nil {
-			return err
+			if !errors.Is(err, os.ErrNotExist) || fallback.RunID != runID {
+				return err
+			}
+			rec = fallback
+		}
+		if rec.Status.Terminal() {
+			return nil
 		}
 		return markLostLocked(stateDir, rec)
 	})

@@ -48,10 +48,28 @@ func runKeeper(cfg keeperConfig) int {
 	if ready == nil {
 		return 2
 	}
-	return runKeeperWithReady(cfg, ready)
+	launcher := os.NewFile(4, "proc-launcher-lifetime")
+	if launcher == nil {
+		if err := ready.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "proc: close readiness pipe without launcher lifetime descriptor:", err)
+		}
+		return 2
+	}
+	defer func() {
+		if err := launcher.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			fmt.Fprintln(os.Stderr, "proc: close launcher lifetime pipe:", err)
+		}
+	}()
+	parentGone, monitorErr := monitorLauncher(cfg.ParentPID, cfg.ParentIdentity, launcher)
+	return runKeeperWithMonitor(cfg, ready, parentGone, monitorErr)
 }
 
 func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
+	parentGone, monitorErr := monitorParent(cfg.ParentPID, cfg.ParentIdentity)
+	return runKeeperWithMonitor(cfg, ready, parentGone, monitorErr)
+}
+
+func runKeeperWithMonitor(cfg keeperConfig, ready *os.File, parentGone <-chan error, monitorErr error) int {
 	// The readiness descriptor belongs only to the keeper. Prevent commands
 	// started below this boundary from inheriting it across exec.
 	syscall.CloseOnExec(int(ready.Fd()))
@@ -62,7 +80,6 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 			}
 		}
 	}()
-	parentGone, monitorErr := monitorParent(cfg.ParentPID, cfg.ParentIdentity)
 	if monitorErr != nil {
 		writeReadyError(ready, monitorErr)
 		return 1
@@ -71,6 +88,11 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 		writeReadyError(ready, err)
 		return 1
 	}
+	defer func() {
+		if err := finishKeeperPlatform(); err != nil {
+			fmt.Fprintln(os.Stderr, "proc: restore keeper platform state:", err)
+		}
+	}()
 	if err := os.MkdirAll(liveRecordsDir(cfg.StateDir), 0o700); err != nil {
 		writeReadyError(ready, err)
 		return 1
