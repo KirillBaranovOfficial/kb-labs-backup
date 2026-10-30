@@ -194,7 +194,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	indexPath := filepath.Join(home, "release-index.json")
-	port := freeLoopbackPort(t)
+	port := freeAllocatedGatewayPortWithOffsets(t, 0)
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Host = &contracts.HostSpec{Command: hostBinary, Args: []string{"-test.run=^TestHostExecLauncher$"},
 		Env:       map[string]string{"KB_TEST_FAKEHOST": fakehost, "KB_TEST_FAKEHOST_PORT": fmt.Sprint(port)},
@@ -824,7 +824,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 
 	runInstall := func(t *testing.T, root string) (int, string) {
 		t.Helper()
-		gatewayPort := freeLoopbackPortWithOffsets(t, serviceOffsets...)
+		gatewayPort := freeAllocatedGatewayPortWithOffsets(t, serviceOffsets...)
 		if gatewayPort == baseGatewayPort {
 			t.Fatalf("test Gateway allocation reused default port %d", baseGatewayPort)
 		}

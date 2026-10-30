@@ -161,7 +161,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 			t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
 			t.Setenv(environment, password)
 			root := filepath.Join(home, "platform")
-			port := freeLoopbackPort(t)
+			port := freeAllocatedGatewayPortWithOffsets(t, 0)
 			source := testReleaseCatalog(t, "2.0.0")
 			source.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5}
 			source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}}
@@ -1146,7 +1146,7 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 	if err := os.Mkdir(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	port := freeLoopbackPort(t)
+	port := freeAllocatedGatewayPortWithOffsets(t, 0)
 	indexPath := filepath.Join(home, "release-index.json")
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5}

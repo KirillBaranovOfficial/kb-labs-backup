@@ -126,7 +126,10 @@ func TestExecChainIdentityChecks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	startupSpec, err := host.NewSpec(directory, contracts.HostSpec{Command: scripts[0]})
+	startupSpec, err := host.NewSpec(directory, contracts.HostSpec{
+		Command:   scripts[0],
+		HealthURL: "http://127.0.0.1:1/health",
+	})
 	if err != nil {
 		t.Fatalf("construct default host startup budget: %v", err)
 	}
