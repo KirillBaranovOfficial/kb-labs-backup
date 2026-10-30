@@ -111,8 +111,8 @@ func TestBuildDAGAndAffectedPackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AffectedPackages error: %v", err)
 	}
-	if len(affected) != 3 {
-		t.Fatalf("affected count = %d, want 3", len(affected))
+	if len(affected.Packages) != 3 {
+		t.Fatalf("affected count = %d, want 3", len(affected.Packages))
 	}
 
 	_ = libA

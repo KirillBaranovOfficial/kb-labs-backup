@@ -2,12 +2,54 @@ package workspace
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/config"
 )
+
+func TestTrackedUnownedFilesUsesPackageOwnershipAndIgnoresUntracked(t *testing.T) {
+	root := t.TempDir()
+	mustWritePackage(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "alpha", "package.json"), `{"name":"@kb/alpha"}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "alpha", "src", "index.ts"), "export {}\n")
+	mustWritePackage(t, filepath.Join(root, "packages", "beta", "package.json"), `{"name":"@kb/beta"}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "beta", "src", "index.ts"), "export {}\n")
+	mustWritePackage(t, filepath.Join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")
+	if output, err := exec.Command("git", "-C", root, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", root, "add", "--all").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{
+		{Name: "libs", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+	}}}
+	ws, err := New(root, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWritePackage(t, filepath.Join(root, "untracked.txt"), "ignored\n")
+
+	got, owned, modes, err := ws.TrackedFileOwnership()
+	if err != nil {
+		t.Fatalf("TrackedFiles: %v", err)
+	}
+	if len(got) != 2 || filepath.Base(got[0]) != "package.json" || filepath.Base(got[1]) != "pnpm-lock.yaml" {
+		t.Fatalf("tracked unowned files = %v; want root package.json and pnpm-lock.yaml", got)
+	}
+	if len(owned["@kb/alpha"]) != 2 || len(owned["@kb/beta"]) != 2 {
+		t.Fatalf("tracked package ownership = %v; want package.json and src file for alpha and beta", owned)
+	}
+	for _, path := range append(append([]string(nil), got...), owned["@kb/alpha"]...) {
+		if modes[filepath.Clean(path)].Mode != 0100644 {
+			t.Errorf("tracked mode for %s = %o; want 100644", path, modes[filepath.Clean(path)].Mode)
+		}
+	}
+}
 
 func TestDiscoverPackagesFallsBackToPackageJSONWorkspaces(t *testing.T) {
 	root := t.TempDir()

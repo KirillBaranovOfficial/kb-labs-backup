@@ -36,7 +36,10 @@ func TestWorkspaceDepsReadsAllThreeSections(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := WorkspaceDeps(dir, pkgByName)
+	got, err := WorkspaceDeps(dir, pkgByName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	sort.Strings(got)
 
 	want := []string{"@kb/core", "@kb/devkit", "@kb/testing", "@kb/types"}
@@ -72,7 +75,10 @@ func TestWorkspaceDepsDeduplicatesAcrossSections(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := WorkspaceDeps(dir, pkgByName)
+	got, err := WorkspaceDeps(dir, pkgByName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 1 || got[0] != "@kb/shared" {
 		t.Fatalf("WorkspaceDeps dedup = %v, want [@kb/shared]", got)
 	}
@@ -100,7 +106,10 @@ func TestWorkspaceDepsFiltersExternalPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := WorkspaceDeps(dir, pkgByName)
+	got, err := WorkspaceDeps(dir, pkgByName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 1 || got[0] != "@kb/internal" {
 		t.Fatalf("WorkspaceDeps external filter = %v, want [@kb/internal]", got)
 	}
@@ -110,8 +119,38 @@ func TestWorkspaceDepsEmptyOnMissingPackageJSON(t *testing.T) {
 	root := t.TempDir()
 	pkgByName := map[string]workspace.Package{}
 
-	got := WorkspaceDeps(filepath.Join(root, "nonexistent"), pkgByName)
+	got, err := WorkspaceDeps(filepath.Join(root, "nonexistent"), pkgByName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 0 {
 		t.Fatalf("WorkspaceDeps missing dir = %v, want empty", got)
+	}
+}
+
+func TestWorkspaceDepsIncludesLocalGoModuleReplacement(t *testing.T) {
+	root := t.TempDir()
+	consumer := filepath.Join(root, "tools", "kb-runner")
+	dependency := filepath.Join(root, "tools", "clikit")
+	if err := os.MkdirAll(consumer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dependency, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(consumer, "go.mod"), []byte("module fixture/kb-runner\n\ngo 1.22\n\nrequire github.com/kb-labs/clikit v0.0.0\n\nreplace github.com/kb-labs/clikit => ../clikit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkgByName := map[string]workspace.Package{
+		"@fixture/kb-runner": {Name: "@fixture/kb-runner", Dir: consumer},
+		"@fixture/clikit":    {Name: "@fixture/clikit", Dir: dependency},
+	}
+
+	got, err := WorkspaceDeps(consumer, pkgByName)
+	if err != nil {
+		t.Fatalf("WorkspaceDeps: %v", err)
+	}
+	if len(got) != 1 || got[0] != "@fixture/clikit" {
+		t.Fatalf("WorkspaceDeps = %v; want local Go module replacement @fixture/clikit", got)
 	}
 }

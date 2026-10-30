@@ -609,6 +609,8 @@ tasks:
         - "kb-deploy"
         - "kb-monitor"
         - "kb-runner"
+      deps:
+        - "^build"
 
     - categories: [site-pkg]
       command: pnpm run build
@@ -626,6 +628,7 @@ tasks:
       command: eslint src/
       inputs:
         - "src/**"
+        - "tsconfig*.json"
         - "eslint.config.*"
         - ".eslintrc*"
       outputs: []
@@ -698,6 +701,7 @@ tasks:
         - "src/**"
         - "test/**"
         - "__tests__/**"
+        - "tsconfig*.json"
         - "vitest.config.*"
         - "^dist/**"   # dep outputs affect test results at runtime
       outputs:
@@ -722,6 +726,7 @@ tasks:
         - "src/**"
         - "test/**"
         - "__tests__/**"
+        - "tsconfig*.json"
         - "vitest.config.*"
       outputs:
         - "coverage/**"
