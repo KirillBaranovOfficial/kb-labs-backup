@@ -1,14 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { resolveColorSupport } from '../color-policy.js';
 
-describe('CLI color policy', () => {
-  it('keeps piped non-TTY output plain unless FORCE_COLOR is explicit', () => {
-    expect(resolveColorSupport(false, undefined, undefined)).toBe(false);
-    expect(resolveColorSupport(false, undefined, '1')).toBe(true);
-  });
+const cases = JSON.parse(readFileSync(new URL('../../../../tools/clikit/ui/color-cases.json', import.meta.url), 'utf8')) as Array<{
+  name: string; tty: boolean; noColor: string; forceColor: string; term?: string; want: boolean;
+}>;
 
-  it('lets NO_COLOR disable colors and enables a TTY by default', () => {
-    expect(resolveColorSupport(true, undefined, undefined)).toBe(true);
-    expect(resolveColorSupport(true, '1', '1')).toBe(false);
+describe('CLI color policy', () => {
+  it.each(cases)('$name', ({ tty, noColor, forceColor, term, want }) => {
+    expect(resolveColorSupport(tty, noColor, forceColor, term)).toBe(want);
   });
 });

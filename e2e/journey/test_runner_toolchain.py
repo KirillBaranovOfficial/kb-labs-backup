@@ -72,12 +72,24 @@ class RunnerToolchainTagTests(unittest.TestCase):
         self.assertEqual(reference, runner_toolchain_image(playwright_version_input=self.version_input),
                          "identical toolchain inputs must derive the same tag")
 
+    def test_package_manager_change_invalidates_the_toolchain_image_tag(self):
+        from journey_resources import runner_toolchain_image as derive
+        original = json.loads((REPOSITORY_ROOT / "package.json").read_text(encoding="utf-8"))
+        package_manifest = self.version_input.with_name("workspace-package.json")
+        package_manifest.write_text(json.dumps(original), encoding="utf-8")
+        baseline = derive(playwright_version_input=self.version_input,
+                          package_manifest_input=package_manifest)
+        original["packageManager"] = original["packageManager"].rsplit("@", 1)[0] + "@11.5.0"
+        package_manifest.write_text(json.dumps(original), encoding="utf-8")
+        changed = derive(playwright_version_input=self.version_input,
+                         package_manifest_input=package_manifest)
+        self.assertNotEqual(changed, baseline)
+
     def test_toolchain_stage_text_is_extracted_from_the_real_dockerfile(self):
         from journey_resources import runner_toolchain_stage_text
         stage = runner_toolchain_stage_text()
         self.assertIn("AS toolchain", stage)
         self.assertIn("apt-get install", stage)
-        self.assertIn("pnpm@12.8.1", stage)
         self.assertIn("playwright install --with-deps chromium", stage)
         self.assertNotIn("COPY docs/qa/scenarios", stage,
                          "per-run runner COPYs must stay outside the toolchain stage")
@@ -98,7 +110,6 @@ class RunnerToolchainTagTests(unittest.TestCase):
                                              "FROM node:25-bookworm AS toolchain"),
             "apt package list": mutated_dockerfile("procps iproute2 lsof",
                                                    "procps iproute2"),
-            "pnpm version": mutated_dockerfile("pnpm@12.8.1", "pnpm@12.9.0"),
             "playwright install command": mutated_dockerfile(
                 "playwright install --with-deps chromium",
                 "playwright install --with-deps chromium-headless-shell"),

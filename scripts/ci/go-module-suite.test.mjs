@@ -37,7 +37,7 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
   writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n`);
   const invocations = path.join(fixture, 'go-invocations.jsonl');
   const fakeGo = path.join(fixture, 'go');
-  writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "{\\"args\\":\\"$*\\",\\"cwd\\":\\"$PWD\\",\\"home\\":\\"$HOME\\",\\"tmpdir\\":\\"$TMPDIR\\",\\"platform_root\\":\\"$KB_PLATFORM_ROOT\\",\\"kb_home\\":\\"$KB_HOME\\",\\"net_offset\\":\\"$KB_NET_OFFSET\\",\\"goflags\\":\\"$GOFLAGS\\",\\"deadline_scale\\":\\"$KB_TEST_DEADLINE_SCALE\\"}" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first' 'fixture/first/e2e' 'fixture/second'; fi\n`);
+  writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "{\\"args\\":\\"$*\\",\\"cwd\\":\\"$PWD\\",\\"goos\\":\\"$GOOS\\",\\"home\\":\\"$HOME\\",\\"tmpdir\\":\\"$TMPDIR\\",\\"platform_root\\":\\"$KB_PLATFORM_ROOT\\",\\"kb_home\\":\\"$KB_HOME\\",\\"net_offset\\":\\"$KB_NET_OFFSET\\",\\"goflags\\":\\"$GOFLAGS\\",\\"deadline_scale\\":\\"$KB_TEST_DEADLINE_SCALE\\"}" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first' 'fixture/first/e2e' 'fixture/second'; fi\n`);
   const chmod = spawnSync('chmod', ['+x', fakeGo]);
   assert.equal(chmod.status, 0);
 
@@ -58,6 +58,10 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const calls = readFileSync(invocations, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   const tests = calls.filter((call) => call.args.startsWith('test '));
+  const linuxVets = calls.filter((call) => call.args.startsWith('vet '));
+  assert.equal(linuxVets.length, 2, 'each discovered module gets one Linux test-file vet pass');
+  assert.ok(linuxVets.every((call) => call.goos === 'linux'));
+  assert.ok(linuxVets.every((call) => !call.args.includes('/e2e')));
   assert.equal(tests.length, 4, 'two discovered modules run in each of two TMPDIR variants');
   assert.ok(calls.some((call) => call.args.includes('fixture/first/e2e')) === false, 'e2e packages are excluded');
   assert.equal(new Set(tests.map((call) => call.tmpdir)).size, 4, 'every module run has a fresh TMPDIR root');

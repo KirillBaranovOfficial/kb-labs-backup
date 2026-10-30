@@ -58,6 +58,16 @@ test('candidate kb-create Go suite is planned after workspace build', () => {
 });
 
 // case: S-262.7
+test('candidate selection includes all package-stage manifest identities while stream stays affected-only', () => {
+  const affected = JSON.stringify({ ok: true, data: { packages: ['@kb-labs/core'], changedPathCount: 1 } });
+  const candidate = parseAffectedSelection(affected, 'candidate');
+  const stream = parseAffectedSelection(affected, 'stream');
+
+  assert.ok(candidate.packages.includes('kb-create'));
+  assert.deepEqual(stream.packages, ['@kb-labs/core']);
+});
+
+// case: S-262.7
 test('package shards partition the kb-devkit package set once with even package counts', () => {
   const packages = Array.from({ length: 41 }, (_, index) => `@kb-labs/package-${index}`);
   const matrix = createTestMatrix(packages, [], [], profile.packageTestStage, profile.maxParallel);
@@ -84,10 +94,7 @@ test('rejects zero packages for a non-empty stream diff and for every candidate 
     () => parseAffectedSelection(JSON.stringify({ ok: true, data: { packages: [], changedPathCount: 3 } }), 'stream'),
     /KB_REMOTE_EMPTY_SELECTION/,
   );
-  assert.throws(
-    () => parseAffectedSelection(emptyChangedStream, 'candidate'),
-    /KB_REMOTE_EMPTY_SELECTION/,
-  );
+  assert.ok(parseAffectedSelection(emptyChangedStream, 'candidate').packages.includes('kb-create'));
 });
 
 // case: S-262.7

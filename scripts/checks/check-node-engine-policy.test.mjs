@@ -121,8 +121,10 @@ test('pre-build import rail reports dependencies resolved outside the workspace'
 test('the shipped Node policy passes the workspace check', () => {
   const result = runDevkitCheck();
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).ok, true, result.stdout);
+  const diagnostics = [result.stdout, result.stderr].filter(Boolean).join('\n');
+  assert.equal(result.status, 0, diagnostics || 'kb-devkit check exited without diagnostics');
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, true, JSON.stringify(report.issues ?? report, null, 2));
 });
 
 test('node-engine-policy check diagnoses missing external-check input', () => {
@@ -154,6 +156,7 @@ test('workspace engine policy names every package whose declaration differs', as
     assert.match(issues[0].message, /@fixture\/mismatch/);
     assert.match(issues[0].message, /26\.x/);
     assert.equal(issues[0].file, path.join(workspaceRoot, 'packages/mismatch/package.json'));
+    assert.match(result.stderr, /node-engine-policy: .*@fixture\/mismatch.*26\.x/);
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }

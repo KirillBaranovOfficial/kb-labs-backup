@@ -51,6 +51,7 @@ test('kb-create Go suite invokes its manifest-backed test task through kb-devkit
   assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', kbCreatePackageName, '--concurrency', '1', '--json']]);
   assert.equal(result.status, 'pass');
   assert.equal(result.name, 'kb-create-go-suite');
+  assert.deepEqual(result.packages, ['kb-create']);
 });
 
 // case: S-262.7

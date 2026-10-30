@@ -45,8 +45,7 @@ func TestPostStartIdentityRegression(t *testing.T) {
 		command := exec.Command(executable, "-test.run=^TestPostStartIdentityRegression$")
 		command.Env = host.ProcessEnvironmentWithIdentity(append(os.Environ(), helperEnv+"=child"), identity)
 		command.Stdout, command.Stderr = io.Discard, io.Discard
-		stdin, err := command.StdinPipe()
-		if err != nil {
+		if _, err := command.StdinPipe(); err != nil {
 			t.Fatal(err)
 		}
 		if err := command.Start(); err != nil {
@@ -64,9 +63,6 @@ func TestPostStartIdentityRegression(t *testing.T) {
 		}
 		if err := command.Process.Kill(); err != nil {
 			t.Fatalf("kill child %d after identity observation: %v", index, err)
-		}
-		if err := stdin.Close(); err != nil {
-			t.Fatalf("close child %d stdin: %v", index, err)
 		}
 		if err := <-waitErr; err != nil {
 			var exitError *exec.ExitError
