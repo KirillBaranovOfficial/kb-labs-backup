@@ -291,12 +291,13 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 }
 
 type externalCheckFailure struct {
-	Check        string     `json:"check"`
-	Cause        string     `json:"cause"`
-	ExitCode     int        `json:"exitCode"`
-	StderrTail   string     `json:"stderrTail"`
-	RerunCommand string     `json:"rerunCommand,omitempty"`
-	Diagnostic   *diag.Diag `json:"-"`
+	Check         string     `json:"check"`
+	Cause         string     `json:"cause"`
+	ExitCode      int        `json:"exitCode"`
+	ExitCodeKnown bool       `json:"exitCodeKnown"`
+	StderrTail    string     `json:"stderrTail"`
+	RerunCommand  string     `json:"rerunCommand,omitempty"`
+	Diagnostic    *diag.Diag `json:"-"`
 }
 
 func externalCheckFailureError(cmd *cobra.Command, failures []externalCheckFailure, results map[string]checks.PackageResult) error {
@@ -317,11 +318,13 @@ func externalCheckFailureError(cmd *cobra.Command, failures []externalCheckFailu
 		reportedFailures[index].RerunCommand = nextCommand
 		exitCode := fmt.Sprint(failure.ExitCode)
 		stderrTail := failure.StderrTail
-		if failure.ExitCode == 0 && stderrTail == "" {
+		if !failure.ExitCodeKnown {
 			exitCode = "unavailable (check ended before an exit status was reported)"
+		} else {
+			exitCode = fmt.Sprint(failure.ExitCode)
+		}
+		if stderrTail == "" {
 			stderrTail = "(no stderr output captured)"
-		} else if stderrTail == "" {
-			stderrTail = "(no stderr output)"
 		}
 		diagnostic, err := diag.FromCatalog("KB_DEVKIT_CHECK_EXECUTION_FAILED", map[string]string{
 			"check":       failure.Check,
@@ -386,16 +389,18 @@ func checkExecutionFailures(results map[string]checks.PackageResult) []externalC
 		sort.Strings(causes)
 		for _, cause := range causes {
 			var exitCode int
+			var exitCodeKnown bool
 			var stderrTail string
 			for _, packageResult := range results {
 				for _, issue := range packageResult.Issues {
 					if issue.Check == checkName && issue.Cause == cause {
 						exitCode = issue.FailureExitCode
+						exitCodeKnown = issue.FailureExitCodeKnown
 						stderrTail = issue.FailureStderrTail
 					}
 				}
 			}
-			result = append(result, externalCheckFailure{Check: checkName, Cause: cause, ExitCode: exitCode, StderrTail: stderrTail, Diagnostic: failures[checkName][cause]})
+			result = append(result, externalCheckFailure{Check: checkName, Cause: cause, ExitCode: exitCode, ExitCodeKnown: exitCodeKnown, StderrTail: stderrTail, Diagnostic: failures[checkName][cause]})
 		}
 	}
 	return result

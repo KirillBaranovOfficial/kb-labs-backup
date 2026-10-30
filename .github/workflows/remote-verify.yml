@@ -271,7 +271,7 @@ jobs:
         run: tar xf workspace-dist.tar
       - name: Run build-dependent test
         env:
-          REMOTE_STAGE_RESULT: stage-result-dependent-${{ strategy.job-index }}.json
+          REMOTE_STAGE_RESULT: stage-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}.json
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
@@ -280,8 +280,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: remote-result-dependent-${{ strategy.job-index }}
-          path: stage-result-dependent-${{ strategy.job-index }}.json
+          name: remote-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}
+          path: stage-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}.json
           if-no-files-found: warn
           retention-days: 1
 

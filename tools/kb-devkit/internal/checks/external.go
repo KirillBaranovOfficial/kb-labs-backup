@@ -71,6 +71,15 @@ type externalFixOutput struct {
 	Actions []string `json:"actions"`
 }
 
+type externalOutputError struct {
+	exitCode   int
+	stderrTail string
+	err        error
+}
+
+func (e *externalOutputError) Error() string { return e.err.Error() }
+func (e *externalOutputError) Unwrap() error { return e.err }
+
 func (r *externalRule) Name() string  { return r.name }
 func (r *externalRule) Scope() string { return r.scope }
 
@@ -109,15 +118,16 @@ func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issu
 		return out.Issues
 	}
 	return []Issue{{
-		Check:             r.name,
-		Severity:          SeverityError,
-		Message:           "External check could not complete.",
-		CheckFailure:      true,
-		Cause:             safeExternalCause(err),
-		File:              pkg.Dir,
-		FailureDiagnostic: externalDiagnostic(err),
-		FailureExitCode:   externalExitCode(err),
-		FailureStderrTail: externalStderrTail(err),
+		Check:                r.name,
+		Severity:             SeverityError,
+		Message:              "External check could not complete.",
+		CheckFailure:         true,
+		Cause:                safeExternalCause(err),
+		File:                 pkg.Dir,
+		FailureDiagnostic:    externalDiagnostic(err),
+		FailureExitCode:      externalExitCode(err),
+		FailureExitCodeKnown: externalExitCodeKnown(err),
+		FailureStderrTail:    externalStderrTail(err),
 	}}
 }
 
@@ -142,7 +152,7 @@ func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 	if len(out.Issues) > 0 {
 		return out.Issues
 	}
-	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root, FailureDiagnostic: externalDiagnostic(err), FailureExitCode: externalExitCode(err), FailureStderrTail: externalStderrTail(err)}}
+	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root, FailureDiagnostic: externalDiagnostic(err), FailureExitCode: externalExitCode(err), FailureExitCodeKnown: externalExitCodeKnown(err), FailureStderrTail: externalStderrTail(err)}}
 }
 
 func (r *externalRule) Apply(pkg workspace.Package, issues []Issue, dryRun bool) error {
@@ -200,7 +210,7 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 	var parsed externalCheckOutput
 	if strings.TrimSpace(result.Stdout) != "" {
 		if err := json.Unmarshal([]byte(result.Stdout), &parsed); err != nil && runErr == nil {
-			return externalCheckOutput{}, fmt.Errorf("decode external check %s output: %w", r.name, err)
+			return externalCheckOutput{}, &externalOutputError{exitCode: result.ExitCode, stderrTail: result.Stderr, err: fmt.Errorf("decode external check %s output: %w", r.name, err)}
 		}
 	}
 
@@ -232,6 +242,10 @@ func externalDiagnostic(err error) *diag.Diag {
 }
 
 func externalExitCode(err error) int {
+	var outputErr *externalOutputError
+	if errors.As(err, &outputErr) {
+		return outputErr.exitCode
+	}
 	var commandErr *toolchain.CommandError
 	if errors.As(err, &commandErr) {
 		return commandErr.ExitCode
@@ -239,7 +253,20 @@ func externalExitCode(err error) int {
 	return 0
 }
 
+func externalExitCodeKnown(err error) bool {
+	var outputErr *externalOutputError
+	if errors.As(err, &outputErr) {
+		return true
+	}
+	var commandErr *toolchain.CommandError
+	return errors.As(err, &commandErr)
+}
+
 func externalStderrTail(err error) string {
+	var outputErr *externalOutputError
+	if errors.As(err, &outputErr) {
+		return outputErr.stderrTail
+	}
 	var commandErr *toolchain.CommandError
 	if errors.As(err, &commandErr) {
 		return commandErr.StderrTail

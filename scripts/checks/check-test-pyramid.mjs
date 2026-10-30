@@ -7,8 +7,8 @@
  *   - each src/commands/<name>.ts has a matching src/__tests__/cli/<name>.cli.test.ts
  *   - package.json has a "test:cli" script
  *
- * Output format (TypedCheckOutput):
- *   { ok: boolean, items: [{ target, message, fix? }] }
+ * Output format consumed by kb-devkit's external-check contract:
+ *   { issues: [{ check, severity, message, file, fix? }] }
  *
  * Runs with cwd = package directory.
  * Receives package JSON on stdin.
@@ -31,12 +31,8 @@ function readStdin() {
 
 async function main() {
   const raw = await readStdin();
-  let pkg = {};
-  try {
-    pkg = JSON.parse(raw);
-  } catch {
-    // stdin may be empty in some devkit versions; proceed with cwd-based check
-  }
+  const input = JSON.parse(raw);
+  const pkg = input.package;
 
   const items = [];
   const commandsDir = join(cwd, 'src/commands');
@@ -95,11 +91,15 @@ async function main() {
     });
   }
 
-  const hasErrors = items.some((i) => i.severity === 'error');
-  const result = { ok: !hasErrors, items };
-
-  process.stdout.write(JSON.stringify(result, null, 2));
-  process.exit(0);
+  const check = process.env.KB_DEVKIT_CHECK_NAME;
+  const issues = items.map(({ target, severity, message, fix }) => ({
+    check,
+    severity,
+    message,
+    file: target,
+    ...(fix ? { fix } : {}),
+  }));
+  process.stdout.write(JSON.stringify({ issues }));
 }
 
 main().catch((err) => {
