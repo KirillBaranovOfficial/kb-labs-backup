@@ -746,7 +746,7 @@ func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSou
 	}
 	cmd := exec.Command(executable)
 	keeperEnv := environmentFor(cfg, os.Environ())
-	cmd.Env = append(keeperEnv, stateEnv+"="+base64.RawStdEncoding.EncodeToString(encoded), readyEnv+"=3", keeperDispatchEnv+"="+keeperDispatchValue)
+	cmd.Env = append(keeperEnv, stateEnv+"="+base64.RawStdEncoding.EncodeToString(encoded), readyEnv+"=3", keeperDispatchEnv+"="+keeperDispatchValue, runEnv+"="+runID)
 	cmd.ExtraFiles = []*os.File{writeReady}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1220,6 +1220,10 @@ func processDescendantsFromSnapshot(snapshot []Process, root int) []Process {
 		queue = queue[1:]
 		for _, child := range children[parent] {
 			if !seen[child] {
+				process := byPID[child]
+				if process.processState == "Z" || process.processState == "X" || processBelongsToAnotherRun(process) {
+					continue
+				}
 				seen[child] = true
 				queue = append(queue, child)
 			}
@@ -1236,7 +1240,7 @@ func processDescendantsFromSnapshot(snapshot []Process, root int) []Process {
 }
 
 func processBelongsToAnotherRun(process Process) bool {
-	return process.markerResult == "other-run" && !process.runMarker && !process.runToken
+	return process.markerResult == "other-run" && !process.runMarker
 }
 
 func ProcessTreeWithHistory(root int, runID string, observed []Process) ([]Process, error) {

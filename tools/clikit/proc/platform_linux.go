@@ -37,13 +37,12 @@ func (osProcessSource) ContainedDescendants(root int, snapshot []Process) ([]Pro
 	if root != os.Getpid() {
 		return nil, false, nil
 	}
-	childSubreaper, err := unix.PrctlRetInt(unix.PR_GET_CHILD_SUBREAPER, 0, 0, 0, 0)
-	if err != nil {
-		return nil, false, fmt.Errorf("inspect Linux child-subreaper state: %w", err)
-	}
-	if childSubreaper != 1 {
-		return nil, false, errors.New("Linux keeper is not a child subreaper")
-	}
+	// A live run marker is the ownership boundary: descendants below another
+	// keeper belong to that keeper even when they inherited this run's token FD.
+	// runKeeper calls prepareKeeperPlatform before writing its durable record or
+	// accepting work. The current process is that keeper, so querying
+	// PR_GET_CHILD_SUBREAPER here is redundant and requires a kernel output
+	// pointer; PR_GET does not return the state as prctl's syscall result.
 	identity, alive, err := readProcessIdentity(root)
 	if err != nil || !alive {
 		return nil, false, errors.Join(err, fmt.Errorf("Linux subreaper owner PID %d is not live", root))
