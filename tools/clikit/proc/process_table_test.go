@@ -1269,37 +1269,57 @@ func TestSubreaperContainmentTargetsDescendantsAcrossRunMarkerBoundaries(t *test
 		live: map[int]Process{
 			100: {PID: 100, Identity: "keeper-start"},
 			101: {PID: 101, PPID: 100, processGroupID: 901, sessionID: 901, Identity: "outer-command", markerResult: "match", runMarker: true, processState: "S"},
-			102: {PID: 102, PPID: 101, processGroupID: 902, sessionID: 902, Identity: "nested-keeper", markerResult: "other-run", processState: "S"},
-			103: {PID: 103, PPID: 102, processGroupID: 903, sessionID: 903, Identity: "setsid-descendant", markerResult: "other-run", processState: "S"},
+			102: {PID: 102, PPID: 101, processGroupID: 902, sessionID: 902, Identity: "inner-keeper", markerResult: "other-run", runToken: true, processState: "S"},
+			103: {PID: 103, PPID: 101, processGroupID: 903, sessionID: 903, Identity: "setsid-descendant", markerResult: "match", processState: "S"},
+			104: {PID: 104, PPID: 102, processGroupID: 904, sessionID: 904, Identity: "inner-descendant", markerResult: "other-run", processState: "S"},
 		},
 	}
 	cleanup := cleanupTreeWithSource(100, "outer-run", nil, source)
 	if cleanup.err != nil || len(cleanup.Remaining) != 0 {
 		t.Fatalf("subreaper cleanup = %+v; want empty tree without errors", cleanup)
 	}
-	if len(source.signals) != 3 {
-		t.Fatalf("subreaper signals = %+v; want every descendant signalled independent of markers or process groups", source.signals)
+	if len(source.signals) != 2 {
+		t.Fatalf("subreaper signals = %+v; want the outer command and its setsid descendant, excluding the inner keeper's subtree", source.signals)
 	}
 	if source.snapshots < 3 {
 		t.Fatalf("subreaper snapshots = %d, want repeated empty-tree confirmation", source.snapshots)
 	}
+	gotSignals := map[int]bool{}
 	for _, signal := range source.signals {
 		if signal.signal != syscall.SIGTERM {
 			t.Fatalf("subreaper signal = %+v; want initial SIGTERM", signal)
 		}
+		gotSignals[signal.pid] = true
+	}
+	if !gotSignals[101] || !gotSignals[103] || gotSignals[102] || gotSignals[104] {
+		t.Fatalf("subreaper ownership signals = %v; want outer PIDs 101 and 103 only", gotSignals)
 	}
 }
 
-func TestProcessDescendantsFromSnapshotIncludesDetachedMarkerBoundary(t *testing.T) {
+func TestProcessDescendantsFromSnapshotIncludesDetachedSameRunMarker(t *testing.T) {
 	snapshot := []Process{
 		{PID: 100, Identity: "keeper"},
 		{PID: 101, PPID: 100, Identity: "command", markerResult: "match"},
-		{PID: 102, PPID: 101, processGroupID: 700, sessionID: 700, Identity: "setsid", markerResult: "other-run"},
+		{PID: 102, PPID: 101, processGroupID: 700, sessionID: 700, Identity: "setsid", markerResult: "match"},
 		{PID: 103, PPID: 1, Identity: "unrelated"},
 	}
 	got := processDescendantsFromSnapshot(snapshot, 100)
 	if len(got) != 2 || got[0].PID != 101 || got[1].PID != 102 {
 		t.Fatalf("keeper descendants = %+v, want command and detached descendant only", got)
+	}
+}
+
+func TestProcessDescendantsRespectNestedOwnerAndIgnoreZombie(t *testing.T) {
+	snapshot := []Process{
+		{PID: 100, Identity: "outer-keeper"},
+		{PID: 101, PPID: 100, Identity: "outer-command", markerResult: "match"},
+		{PID: 102, PPID: 101, Identity: "inner-keeper", markerResult: "other-run", runToken: true},
+		{PID: 103, PPID: 102, Identity: "inner-command", markerResult: "other-run"},
+		{PID: 104, PPID: 101, Identity: "exited-child", markerResult: "match", processState: "Z"},
+	}
+	got := processDescendantsFromSnapshot(snapshot, 100)
+	if len(got) != 1 || got[0].PID != 101 {
+		t.Fatalf("outer keeper descendants = %+v, want only its live command; nested owner and zombie must be excluded", got)
 	}
 }
 
@@ -1365,13 +1385,7 @@ func (source *subreaperContainmentFixture) ContainedDescendants(root int, snapsh
 	if _, exists := source.live[root]; !exists {
 		return nil, false, nil
 	}
-	descendants := make([]Process, 0, len(snapshot)-1)
-	for _, process := range snapshot {
-		if process.PID != root {
-			descendants = append(descendants, process)
-		}
-	}
-	return descendants, true, nil
+	return processDescendantsFromSnapshot(snapshot, root), true, nil
 }
 
 func TestDetachedDescendantClosingTokenAndClearingMarkerBeforeFirstSnapshotIsUnowned(t *testing.T) {
