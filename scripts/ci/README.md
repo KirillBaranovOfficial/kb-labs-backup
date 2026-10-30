@@ -4,6 +4,8 @@ The Go suite command is the same entry point used by the `go-module-suite` kb-de
 
 Remote verification reads internal-tool membership from the optional `releaseLane: internal-tool` category field in `devkit.yaml`; categories without it keep their existing gating membership. Candidate package shards and the shared workspace build use all selected packages except internal tools. Internal tools run in separate shards that build, test, and check those packages; their stage result, diagnostics, and GitHub `jobConclusion` appear under `internalToolResults` without changing candidate status. Stream verification keeps every affected package in its gating test shards, including internal tools. The workspace `release-boundary` check fails when a gating package declares a workspace dependency on an internal tool. `shardTimeoutMinutes` remains owned by `verification-profile.json` for both test lanes.
 
+The remote resolver writes the changed paths produced by `remote-changed-files.mjs` as a JSON manifest and passes that manifest to `kb-devkit affected --changed-files-file`. kb-devkit still resolves package ownership and dependency closure from the real workspace configuration; the manifest avoids running the path producer as a nested workspace task.
+
 The clikit, kb-runner, and kb-devkit test deadline helpers use `KB_TEST_DEADLINE_SCALE`. The registered suite sets it to `2` unless the caller supplies another positive multiplier. To run one module with a larger scale while retaining the suite's isolated HOME and cache setup, use `KB_TEST_DEADLINE_SCALE=3 node scripts/ci/go-module-suite.mjs --module tools/clikit`.
 
 Run the full registered suite from the repository root:

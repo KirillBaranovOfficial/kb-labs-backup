@@ -26,12 +26,16 @@ func (r *ReleaseBoundaryRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 			internalTools[pkg.Name] = struct{}{}
 		}
 	}
+	dependencyReader, err := engine.NewWorkspaceDependencyReader(packagesByName)
+	if err != nil {
+		return []Issue{{Check: r.Name(), Severity: SeverityError, Message: fmt.Sprintf("could not resolve workspace Go module paths: %v", err)}}
+	}
 	var issues []Issue
 	for _, pkg := range ws.Packages {
 		if pkg.ReleaseLane == "internal-tool" {
 			continue
 		}
-		dependencies, err := engine.WorkspaceDeps(pkg.Dir, packagesByName)
+		dependencies, err := dependencyReader.WorkspaceDeps(pkg.Dir)
 		if err != nil {
 			issues = append(issues, Issue{Check: r.Name(), Severity: SeverityError, Message: fmt.Sprintf("could not resolve workspace dependencies for %q: %v", pkg.Name, err)})
 			continue

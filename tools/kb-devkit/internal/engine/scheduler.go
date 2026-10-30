@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -688,10 +689,14 @@ func validatePackageScriptTask(pkg workspace.Package, task, command string) erro
 // Self-references (package depending on itself) are filtered out to prevent
 // cycles in the DAG — e.g. @kb-labs/devkit listing itself in devDependencies.
 func buildPkgDepMap(pkgs []workspace.Package, pkgByName map[string]workspace.Package) (map[string][]WorkspaceDependency, error) {
+	goModulePackages, err := readWorkspaceGoModulePackages(pkgByName)
+	if err != nil {
+		return nil, err
+	}
 	result := make(map[string][]WorkspaceDependency, len(pkgs))
 	for _, p := range pkgs {
 		raw := readWorkspaceDependencyEdges(p.Dir, pkgByName)
-		goEdges, err := readGoWorkspaceDependencyEdges(p.Dir, pkgByName)
+		goEdges, err := readGoWorkspaceDependencyEdges(p.Dir, pkgByName, goModulePackages)
 		if err != nil {
 			return nil, err
 		}
@@ -708,6 +713,9 @@ func buildPkgDepMap(pkgs []workspace.Package, pkgByName map[string]workspace.Pac
 }
 
 type goModuleEdit struct {
+	Module struct {
+		Path string `json:"Path"`
+	} `json:"Module"`
 	Require []struct {
 		Path string `json:"Path"`
 	} `json:"Require"`
@@ -722,27 +730,63 @@ type goModuleEdit struct {
 	} `json:"Replace"`
 }
 
-func readGoWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Package) ([]WorkspaceDependency, error) {
+func readGoModuleEdit(dir string) (goModuleEdit, error) {
+	var module goModuleEdit
+	command := exec.Command("go", "mod", "edit", "-json")
+	command.Dir = dir
+	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "GOTOOLCHAIN=local", "GOWORK=off", "GOFLAGS=", "GOENV=off"}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err != nil {
+		return module, fmt.Errorf("read Go workspace dependencies in %s: %w: %s", dir, err, strings.TrimSpace(stderr.String()))
+	}
+	if err := json.Unmarshal(output, &module); err != nil {
+		return module, fmt.Errorf("parse Go workspace dependencies in %s: %w", dir, err)
+	}
+	return module, nil
+}
+
+func readWorkspaceGoModulePackages(pkgByName map[string]workspace.Package) (map[string]workspace.Package, error) {
+	modules := make(map[string]workspace.Package)
+	for _, pkg := range pkgByName {
+		if _, err := os.Stat(filepath.Join(pkg.Dir, "go.mod")); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		module, err := readGoModuleEdit(pkg.Dir)
+		if err != nil {
+			return nil, err
+		}
+		if module.Module.Path == "" {
+			return nil, fmt.Errorf("Go module in %s has no declared module path", pkg.Dir)
+		}
+		modules[module.Module.Path] = pkg
+	}
+	return modules, nil
+}
+
+func readGoWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Package, goModulePackages map[string]workspace.Package) ([]WorkspaceDependency, error) {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); os.IsNotExist(err) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	command := exec.Command("go", "mod", "edit", "-json")
-	command.Dir = dir
-	output, err := command.CombinedOutput()
+	module, err := readGoModuleEdit(dir)
 	if err != nil {
-		return nil, fmt.Errorf("read Go workspace dependencies in %s: %w: %s", dir, err, strings.TrimSpace(string(output)))
-	}
-	var module goModuleEdit
-	if err := json.Unmarshal(output, &module); err != nil {
-		return nil, fmt.Errorf("parse Go workspace dependencies in %s: %w", dir, err)
+		return nil, err
 	}
 	required := make(map[string]struct{}, len(module.Require))
 	for _, requirement := range module.Require {
 		required[requirement.Path] = struct{}{}
 	}
-	var edges []WorkspaceDependency
+	edgesByName := make(map[string]WorkspaceDependency)
+	for modulePath := range required {
+		if pkg, ok := goModulePackages[modulePath]; ok {
+			edgesByName[pkg.Name] = WorkspaceDependency{Name: pkg.Name, Kind: DependenciesKind}
+		}
+	}
 	for _, replacement := range module.Replace {
 		if _, ok := required[replacement.Old.Path]; !ok || replacement.New.Version != "" {
 			continue
@@ -754,10 +798,14 @@ func readGoWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.P
 		replacementDir = filepath.Clean(replacementDir)
 		for name, pkg := range pkgByName {
 			if filepath.Clean(pkg.Dir) == replacementDir {
-				edges = append(edges, WorkspaceDependency{Name: name, Kind: DependenciesKind})
+				edgesByName[name] = WorkspaceDependency{Name: name, Kind: DependenciesKind}
 				break
 			}
 		}
+	}
+	edges := make([]WorkspaceDependency, 0, len(edgesByName))
+	for _, edge := range edgesByName {
+		edges = append(edges, edge)
 	}
 	return edges, nil
 }
@@ -811,8 +859,32 @@ func readWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Pac
 // Reads dependencies, optionalDependencies, devDependencies, and peerDependencies.
 // pkgByName must cover all workspace packages to correctly filter internal deps.
 func WorkspaceDeps(pkgDir string, pkgByName map[string]workspace.Package) ([]string, error) {
-	edges := readWorkspaceDependencyEdges(pkgDir, pkgByName)
-	goEdges, err := readGoWorkspaceDependencyEdges(pkgDir, pkgByName)
+	reader, err := NewWorkspaceDependencyReader(pkgByName)
+	if err != nil {
+		return nil, err
+	}
+	return reader.WorkspaceDeps(pkgDir)
+}
+
+// WorkspaceDependencyReader resolves pnpm and Go workspace edges against one package set.
+type WorkspaceDependencyReader struct {
+	pkgByName        map[string]workspace.Package
+	goModulePackages map[string]workspace.Package
+}
+
+// NewWorkspaceDependencyReader resolves Go module paths once for repeated package lookups.
+func NewWorkspaceDependencyReader(pkgByName map[string]workspace.Package) (*WorkspaceDependencyReader, error) {
+	goModulePackages, err := readWorkspaceGoModulePackages(pkgByName)
+	if err != nil {
+		return nil, err
+	}
+	return &WorkspaceDependencyReader{pkgByName: pkgByName, goModulePackages: goModulePackages}, nil
+}
+
+// WorkspaceDeps returns all direct workspace dependencies for pkgDir.
+func (reader *WorkspaceDependencyReader) WorkspaceDeps(pkgDir string) ([]string, error) {
+	edges := readWorkspaceDependencyEdges(pkgDir, reader.pkgByName)
+	goEdges, err := readGoWorkspaceDependencyEdges(pkgDir, reader.pkgByName, reader.goModulePackages)
 	if err != nil {
 		return nil, err
 	}
@@ -832,8 +904,17 @@ func WorkspaceDeps(pkgDir string, pkgByName map[string]workspace.Package) ([]str
 // WorkspaceProdDeps returns direct workspace:* dependency names for a package dir,
 // excluding devDependencies. Used by bundle --prod to build minimal Docker closures.
 func WorkspaceProdDeps(pkgDir string, pkgByName map[string]workspace.Package) ([]string, error) {
-	edges := readWorkspaceDependencyEdges(pkgDir, pkgByName)
-	goEdges, err := readGoWorkspaceDependencyEdges(pkgDir, pkgByName)
+	reader, err := NewWorkspaceDependencyReader(pkgByName)
+	if err != nil {
+		return nil, err
+	}
+	return reader.WorkspaceProdDeps(pkgDir)
+}
+
+// WorkspaceProdDeps returns direct production workspace dependencies for pkgDir.
+func (reader *WorkspaceDependencyReader) WorkspaceProdDeps(pkgDir string) ([]string, error) {
+	edges := readWorkspaceDependencyEdges(pkgDir, reader.pkgByName)
+	goEdges, err := readGoWorkspaceDependencyEdges(pkgDir, reader.pkgByName, reader.goModulePackages)
 	if err != nil {
 		return nil, err
 	}
@@ -1050,6 +1131,21 @@ func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) (Affect
 	changedFiles, err := collectChangedFiles(ws.Root, strategy, cfg.Affected.Command)
 	if err != nil {
 		return AffectedSelection{}, fmt.Errorf("affected: collect changed files: %w", err)
+	}
+	return selectAffectedPackages(ws, changedFiles)
+}
+
+// AffectedPackagesFromFiles selects workspace packages from a produced changed-file manifest.
+func AffectedPackagesFromFiles(ws *workspace.Workspace, files []string) (AffectedSelection, error) {
+	changedFiles := make([]string, 0, len(files))
+	for _, file := range files {
+		if file == "" {
+			return AffectedSelection{}, fmt.Errorf("changed-file manifest contains an empty path")
+		}
+		if !filepath.IsAbs(file) {
+			file = filepath.Join(ws.Root, file)
+		}
+		changedFiles = append(changedFiles, filepath.Clean(file))
 	}
 	return selectAffectedPackages(ws, changedFiles)
 }

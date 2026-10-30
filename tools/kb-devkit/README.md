@@ -110,6 +110,8 @@ Controlled by `affected.strategy` in `devkit.yaml`:
 | `submodules` | Walks `.gitmodules`, runs `git diff` inside each submodule |
 | `command` | Runs `affected.command`, reads one file path per line from stdout |
 
+CI may pass a generated JSON path manifest with `affected --changed-files-file <path>`; kb-devkit resolves the paths against its discovered workspace and uses the same dependency graph as the configured strategies.
+
 After finding directly changed packages, BFS expands through the reverse dependency graph to include all downstream dependents.
 
 ---
@@ -117,12 +119,12 @@ After finding directly changed packages, BFS expands through the reverse depende
 ### `check` — quality checks
 
 ```bash
-kb-devkit check                           # check all packages
+kb-devkit check                           # check gating packages and workspace rules
 kb-devkit check --package @acme/core     # check single package
 kb-devkit check --json
 ```
 
-Validates each package against the rules declared in its matched preset: naming, tsconfig, eslint, required scripts, deps, files.
+Package checks follow the declared release lane: the default check runs package rules for gating packages and workspace rules against the full workspace. Use `--package <name>` to run checks for one internal tool in its own verification lane. Rules validate the matched preset: naming, tsconfig, eslint, required scripts, deps, and files.
 
 `check --json` returns:
 - `summary`

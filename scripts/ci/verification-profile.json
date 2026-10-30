@@ -10,7 +10,7 @@
     "internal-tool-tests": { "runner": "kb-devkit-internal-tool-suite" },
     "ci-script-suite": { "runner": "node-test-directory", "directory": "scripts/ci" },
     "kb-create-go-suite": { "runner": "node-script", "script": "scripts/ci/go-module-suite.mjs", "args": ["--module", "tools/kb-create"] },
-    "kb-devkit-check": { "runner": "executable", "command": "./tools/kb-devkit/kb-devkit", "args": ["check", "--only", "release-boundary"] },
+    "kb-devkit-check": { "runner": "executable", "command": "./tools/kb-devkit/kb-devkit", "args": ["check"] },
     "journey-unit-suite": { "runner": "process", "command": "python3", "args": ["-m", "unittest", "discover", "-s", "e2e/journey", "-p", "test_*.py"] }
   },
   "independentTestStages": {

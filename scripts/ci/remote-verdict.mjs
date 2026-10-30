@@ -3,6 +3,9 @@ export function parseVerdict(value, expectedSha) {
   if (value.sha !== expectedSha) throw new Error(`Remote verdict SHA mismatch: expected ${expectedSha}, received ${String(value.sha)}`);
   if (!['pass', 'fail', 'timeout', 'outage'].includes(value.status)) throw new Error(`Invalid remote verdict status: ${String(value.status)}`);
   if (!Array.isArray(value.jobs)) throw new Error('Remote verdict jobs must be an array');
+  if (value.profile === 'candidate' && value.internalToolResults === undefined) {
+    throw new Error('Remote verdict internal-tool results are required for candidate verification');
+  }
   if (value.internalToolResults !== undefined) {
     if (!value.internalToolResults || !['pass', 'fail'].includes(value.internalToolResults.status) || !Array.isArray(value.internalToolResults.jobs)) {
       throw new Error('Remote verdict internal-tool results are invalid');

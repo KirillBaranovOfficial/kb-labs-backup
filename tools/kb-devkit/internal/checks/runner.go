@@ -27,6 +27,12 @@ type PackageResult struct {
 // RunAll runs all rules from the registry against all packages in parallel.
 // Circular detection runs once on the full graph and is merged in.
 func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registry, only []string, progress func(ProgressEvent)) map[string]PackageResult {
+	return RunAllForPackages(ws, ws.Packages, cfg, registry, only, progress)
+}
+
+// RunAllForPackages evaluates workspace rules against the full workspace and
+// package rules only for the supplied package lane.
+func RunAllForPackages(ws *workspace.Workspace, packages []workspace.Package, cfg *config.DevkitConfig, registry *Registry, only []string, progress func(ProgressEvent)) map[string]PackageResult {
 	for _, rule := range registry.All() {
 		if aware, ok := rule.(interface{ SetWorkspace(*workspace.Workspace) }); ok {
 			aware.SetWorkspace(ws)
@@ -45,7 +51,7 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 	}
 	circularOnly := len(onlySet) == 1 && onlySet["circular"]
 
-	results := make(map[string]PackageResult, len(ws.Packages))
+	results := make(map[string]PackageResult, len(packages))
 	workspaceIssues := make([]Issue, 0)
 	workspaceRules := registry.WorkspaceRules(only)
 	for _, rule := range workspaceRules {
@@ -67,7 +73,7 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8) // max 8 goroutines
 
-	for _, pkg := range ws.Packages {
+	for _, pkg := range packages {
 		pkg := pkg
 		wg.Add(1)
 		go func() {

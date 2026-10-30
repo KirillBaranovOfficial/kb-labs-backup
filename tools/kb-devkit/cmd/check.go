@@ -42,12 +42,10 @@ Use --package to check a single package.`,
 			return err
 		}
 		checksByCategory := selectedCheckCounts(ws, cfg, registry, checkOnly, checkPackage)
-		if checkPackage != "" {
-			ws.Packages = ws.FilterByName([]string{checkPackage})
-		}
+		packageTargets := selectedCheckPackages(ws, checkPackage)
 		progressWriter := clikitcommand.FromCommand(cmd).ErrorWriter()
 		var progressMu sync.Mutex
-		results := checks.RunAll(ws, cfg, registry, checkOnly, func(event checks.ProgressEvent) {
+		results := checks.RunAllForPackages(ws, packageTargets, cfg, registry, checkOnly, func(event checks.ProgressEvent) {
 			progressMu.Lock()
 			defer progressMu.Unlock()
 			state := "DONE"
@@ -393,9 +391,8 @@ func validateCheckSelection(ws *workspace.Workspace, cfg *config.DevkitConfig, r
 				diag.WithHint("Rerun without --package: kb-devkit check --only circular"))
 		}
 	}
-	pkgs := ws.Packages
+	pkgs := selectedCheckPackages(ws, packageName)
 	if packageName != "" {
-		pkgs = ws.FilterByName([]string{packageName})
 		if len(pkgs) == 0 {
 			return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("Package %q was not found in the workspace.", packageName),
 				diag.WithHint("Run `kb-devkit deps` to list discovered packages, then rerun with one of those package names."))
@@ -432,10 +429,7 @@ func validateCheckSelection(ws *workspace.Workspace, cfg *config.DevkitConfig, r
 
 func selectedCheckCounts(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *checks.Registry, only []string, packageName string) map[string]int {
 	counts := make(map[string]int)
-	pkgs := ws.Packages
-	if packageName != "" {
-		pkgs = ws.FilterByName([]string{packageName})
-	}
+	pkgs := selectedCheckPackages(ws, packageName)
 	for _, pkg := range pkgs {
 		preset, err := config.ResolvePreset(pkg.Preset, cfg)
 		if err != nil {
@@ -453,6 +447,19 @@ func selectedCheckCounts(ws *workspace.Workspace, cfg *config.DevkitConfig, regi
 		counts["circular"] = 1
 	}
 	return counts
+}
+
+func selectedCheckPackages(ws *workspace.Workspace, packageName string) []workspace.Package {
+	if packageName != "" {
+		return ws.FilterByName([]string{packageName})
+	}
+	packages := make([]workspace.Package, 0, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		if pkg.ReleaseLane != "internal-tool" {
+			packages = append(packages, pkg)
+		}
+	}
+	return packages
 }
 
 func checkedPackageCount(results map[string]checks.PackageResult) int {

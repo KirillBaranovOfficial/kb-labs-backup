@@ -25,18 +25,16 @@ if (profile === 'stream') {
 }
 
 const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'kb-remote-selection-'));
-const configPath = path.join(root, `.devkit-remote-selection-${process.pid}.yaml`);
 const changedFilesPath = path.join(temporaryRoot, 'changed-files.json');
 try {
-  writeFileSync(configPath, [
-    'extends:',
-    '  - ./devkit.yaml',
-    'affected:',
-    '  strategy: command',
-    '  command: node scripts/ci/remote-changed-files.mjs',
-    '',
-  ].join('\n'));
-  const result = spawnSync(executable, ['--config', configPath, 'affected', '--json'], {
+  const changed = spawnSync(process.execPath, ['scripts/ci/remote-changed-files.mjs'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, VERIFICATION_PROFILE: profile, KB_DEVKIT_BASE_REF: baseRef, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
+  });
+  if (changed.error) throw changed.error;
+  if (changed.status !== 0) throw new Error(`Remote changed-path selection failed (exit ${changed.status}): ${changed.stderr || changed.stdout}`);
+  const result = spawnSync(executable, ['--config', path.join(root, 'devkit.yaml'), 'affected', '--changed-files-file', changedFilesPath, '--json'], {
     cwd: root,
     encoding: 'utf8',
     env: { ...process.env, VERIFICATION_PROFILE: profile, KB_DEVKIT_BASE_REF: baseRef, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
@@ -59,6 +57,5 @@ try {
   process.stderr.write(`${error.message}\n`);
   process.exitCode = 1;
 } finally {
-  rmSync(configPath, { force: true });
   rmSync(temporaryRoot, { recursive: true, force: true });
 }
