@@ -4,10 +4,12 @@ package cache
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -43,9 +45,16 @@ func HashInputsWithOwnership(pkgDir string, depDirs []string, patterns []string,
 	return hashInputs(pkgDir, depDirs, patterns, fingerprint, globalDigest, ownedDigest, dependencyDigest)
 }
 
-// ContentDigest hashes supplied tracked paths and their current working-tree
-// contents. A deleted tracked path contributes a deletion marker.
-func ContentDigest(workspaceRoot string, files []string) (string, error) {
+// TrackedFile records Git's index mode and object ID for one tracked path.
+// Mode comes from ls-files, never from checkout filesystem permissions.
+type TrackedFile struct {
+	Mode     uint32
+	ObjectID string
+}
+
+// ContentDigest hashes supplied tracked paths, Git modes, and current
+// working-tree contents. A deleted tracked path contributes a deletion marker.
+func ContentDigest(workspaceRoot string, files []string, tracked map[string]TrackedFile) (string, error) {
 	files = uniqueSorted(files)
 	h := sha256.New()
 	for _, file := range files {
@@ -54,7 +63,21 @@ func ContentDigest(workspaceRoot string, files []string) (string, error) {
 			return "", err
 		}
 		_, _ = io.WriteString(h, filepath.ToSlash(rel)+"\x00")
-		info, err := os.Lstat(file)
+		entry, ok := tracked[filepath.Clean(file)]
+		if !ok {
+			return "", fmt.Errorf("tracked metadata missing for %s", file)
+		}
+		switch entry.Mode {
+		case 0100644, 0100755, 0120000, 0160000:
+		default:
+			return "", fmt.Errorf("unsupported Git mode %o for %s", entry.Mode, file)
+		}
+		_, _ = io.WriteString(h, strconv.FormatUint(uint64(entry.Mode), 8)+"\x00")
+		if entry.Mode == 0160000 {
+			_, _ = io.WriteString(h, entry.ObjectID+"\x00")
+			continue
+		}
+		_, err = os.Lstat(file)
 		if os.IsNotExist(err) {
 			_, _ = io.WriteString(h, "deleted\x00")
 			continue
@@ -63,13 +86,14 @@ func ContentDigest(workspaceRoot string, files []string) (string, error) {
 			return "", err
 		}
 		var content []byte
-		if info.Mode()&os.ModeSymlink != 0 {
+		switch entry.Mode {
+		case 0120000:
 			link, err := os.Readlink(file)
 			if err != nil {
 				return "", err
 			}
 			content = []byte(link)
-		} else {
+		case 0100644, 0100755:
 			content, err = os.ReadFile(file)
 			if err != nil {
 				return "", err

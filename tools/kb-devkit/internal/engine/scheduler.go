@@ -960,17 +960,17 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 }
 
 func workspaceInputDigests(ws *workspace.Workspace) (string, map[string]string, map[string]string, error) {
-	unownedFiles, ownedFiles, err := ws.TrackedFileOwnership()
+	unownedFiles, ownedFiles, tracked, err := ws.TrackedFileOwnership()
 	if err != nil {
 		return "", nil, nil, err
 	}
-	globalDigest, err := cache.ContentDigest(ws.Root, unownedFiles)
+	globalDigest, err := cache.ContentDigest(ws.Root, unownedFiles, tracked)
 	if err != nil {
 		return "", nil, nil, err
 	}
 	ownedDigests := make(map[string]string, len(ownedFiles))
 	for name, files := range ownedFiles {
-		digest, err := cache.ContentDigest(ws.Root, files)
+		digest, err := cache.ContentDigest(ws.Root, files, tracked)
 		if err != nil {
 			return "", nil, nil, err
 		}

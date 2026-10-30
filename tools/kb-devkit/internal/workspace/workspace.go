@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kb-labs/devkit/internal/cache"
 	"github.com/kb-labs/devkit/internal/config"
 )
 
@@ -144,19 +145,33 @@ func (ws *Workspace) PackageByPath(absPath string) (*Package, bool) {
 // TrackedFileOwnership partitions Git-tracked paths with PackageByPath, the
 // ownership rule also used by affected selection. Paths deleted from the
 // working tree remain in the result.
-func (ws *Workspace) TrackedFileOwnership() (unowned []string, owned map[string][]string, err error) {
-	command := exec.Command("git", "-C", ws.Root, "ls-files", "--cached", "-z")
+func (ws *Workspace) TrackedFileOwnership() (unowned []string, owned map[string][]string, tracked map[string]cache.TrackedFile, err error) {
+	command := exec.Command("git", "-C", ws.Root, "ls-files", "--stage", "-z")
 	output, err := command.Output()
 	if err != nil {
-		return nil, nil, fmt.Errorf("list tracked workspace files: %w", err)
+		return nil, nil, nil, fmt.Errorf("list tracked workspace files: %w", err)
 	}
 
 	owned = make(map[string][]string, len(ws.Packages))
-	for _, rel := range strings.Split(string(output), "\x00") {
-		if rel == "" {
+	tracked = make(map[string]cache.TrackedFile)
+	for _, record := range strings.Split(string(output), "\x00") {
+		if record == "" {
 			continue
 		}
+		metadata, rel, found := strings.Cut(record, "\t")
+		if !found {
+			return nil, nil, nil, fmt.Errorf("parse tracked workspace entry %q: missing path separator", record)
+		}
+		var mode uint32
+		var objectID, stage string
+		if _, err := fmt.Sscanf(metadata, "%o %s %s", &mode, &objectID, &stage); err != nil {
+			return nil, nil, nil, fmt.Errorf("parse tracked workspace metadata %q: %w", metadata, err)
+		}
+		if stage != "0" {
+			return nil, nil, nil, fmt.Errorf("tracked workspace path %q has unresolved index stage %s", rel, stage)
+		}
 		absPath := filepath.Join(ws.Root, filepath.FromSlash(rel))
+		tracked[filepath.Clean(absPath)] = cache.TrackedFile{Mode: mode, ObjectID: objectID}
 		if pkg, ok := ws.PackageByPath(absPath); ok {
 			owned[pkg.Name] = append(owned[pkg.Name], absPath)
 		} else {
@@ -167,5 +182,5 @@ func (ws *Workspace) TrackedFileOwnership() (unowned []string, owned map[string]
 	for name := range owned {
 		sort.Strings(owned[name])
 	}
-	return unowned, owned, nil
+	return unowned, owned, tracked, nil
 }
