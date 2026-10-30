@@ -1,6 +1,7 @@
 package checks
 
 import (
+	"sort"
 	"time"
 
 	"github.com/kb-labs/devkit/internal/config"
@@ -40,6 +41,11 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 	if cfg == nil {
 		return r
 	}
+	graphTasks := make([]string, 0, len(cfg.Tasks))
+	for name := range cfg.Tasks {
+		graphTasks = append(graphTasks, name)
+	}
+	sort.Strings(graphTasks)
 	r.Register(&aggregateTaskOwnerRule{cfg: cfg})
 	for _, c := range cfg.Custom {
 		if !matchesPhase(c, phase) {
@@ -61,6 +67,7 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 			scope:          c.Scope,
 			workspaceRoot:  workspaceRoot,
 			checkConfig:    packCfg,
+			graphTasks:     graphTasks,
 			timeout:        time.Duration(cfg.Checks.TimeoutMS) * time.Millisecond,
 		})
 	}

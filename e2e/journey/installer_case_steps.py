@@ -1288,6 +1288,17 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
     """Verify the automatically assigned root address and explicit override."""
     journey = Journey(mode, f"gateway-allocation-{mode}")
 
+    def assert_allocation_domain(plan: dict, gateway_port: int, label: str) -> None:
+        if gateway_port < 4000 or gateway_port > 9900 or (gateway_port - 4000) % 100:
+            raise RuntimeError(f"{label} Gateway allocation left the 4000–9900 product domain: {gateway_port}")
+        services = plan.get("serviceGraph", {}).get("services", [])
+        service_ports = [service["port"] for service in services
+                         if isinstance(service.get("port"), int) and service.get("port", 0)]
+        transport_ports = service_transport_ports(plan).values()
+        unsafe_ports = [port for port in [*service_ports, *transport_ports] if port >= 32768]
+        if unsafe_ports:
+            raise RuntimeError(f"{label} produced service ports in the conventional ephemeral range: {unsafe_ports}")
+
     def verify_gateway_addresses() -> None:
         primary_receipt = json.loads((active_platform_root(primary_root) / ".kb/v2/receipt.json").read_text())
         automatic_receipt = json.loads((active_platform_root(automatic_root) / ".kb/v2/receipt.json").read_text())
@@ -1298,6 +1309,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
             raise RuntimeError(f"no-flag apply did not allocate the next Gateway offset: {automatic_url}")
         automatic_plan = automatic_receipt.get("plan", {})
         automatic_services = automatic_plan.get("serviceGraph", {}).get("services", [])
+        assert_allocation_domain(automatic_plan, automatic_port, "secondary receipt")
         primary_plan = primary_receipt.get("plan", {})
         primary_ports = service_ports(primary_plan)
         primary_transport_ports = service_transport_ports(primary_plan)
@@ -1330,6 +1342,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
             next_url = next_plan.get("request", {}).get("gatewayUrl", "")
             if urlsplit(next_url).port != automatic_port + 200:
                 raise RuntimeError(f"stopped root did not retain its allocation: new root planned {next_url}")
+            assert_allocation_domain(next_plan, urlsplit(next_url).port, "next planned root")
             assert_root_offset(next_plan, primary_ports, primary_transport_ports, 300,
                                "next planned root")
 
@@ -1340,6 +1353,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
                     or planned.get("host", {}).get("healthUrl") != automatic_url
                     or planned.get("serviceGraph", {}).get("services") != automatic_services):
                 raise RuntimeError(f"replanning changed the stopped root's Gateway or service ports: {planned}")
+            assert_allocation_domain(planned, automatic_port, "re-planned secondary root")
         finally:
             if explicit_installed:
                 stop_installer_fixture_host(explicit_root, launcher, run_command)

@@ -30,12 +30,15 @@ type externalRule struct {
 	scope          string
 	workspaceRoot  string
 	checkConfig    config.CheckPackConfig
+	workspace      *workspace.Workspace
+	graphTasks     []string
 	timeout        time.Duration
 }
 
 type externalInput struct {
 	Package       workspace.Package  `json:"package"`
 	Workspace     *externalWorkspace `json:"workspace,omitempty"`
+	GraphTasks    []string           `json:"graphTasks,omitempty"`
 	Preset        config.Preset      `json:"preset"`
 	WorkspaceRoot string             `json:"workspaceRoot"`
 	Check         string             `json:"check"`
@@ -99,6 +102,10 @@ func (e *externalOutputError) Unwrap() error { return e.err }
 func (r *externalRule) Name() string  { return r.name }
 func (r *externalRule) Scope() string { return r.scope }
 
+func (r *externalRule) SetWorkspace(ws *workspace.Workspace) {
+	r.workspace = ws
+}
+
 func (r *externalRule) appliesToCategory(category string) bool {
 	if len(r.categories) == 0 {
 		return true
@@ -159,18 +166,12 @@ func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issu
 }
 
 func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
-	packages := make([]externalWorkspacePackage, 0, len(ws.Packages))
-	for _, pkg := range ws.Packages {
-		packages = append(packages, externalWorkspacePackage{
-			Name: pkg.Name, Dir: pkg.Dir, RelPath: pkg.RelPath,
-			Category: pkg.Category, Preset: pkg.Preset, Language: pkg.Language, BuildTarget: pkg.BuildTarget,
-		})
-	}
 	out, err := r.runCommandWithInput(r.run, externalInput{
 		WorkspaceRoot: r.workspaceRoot,
 		Check:         r.name,
 		Phase:         r.phase,
-		Workspace:     &externalWorkspace{Root: ws.Root, Packages: packages},
+		Workspace:     externalWorkspaceFor(ws),
+		GraphTasks:    append([]string(nil), r.graphTasks...),
 		Config:        r.checkConfig.Config,
 	})
 	if err == nil {
@@ -193,6 +194,8 @@ func (r *externalRule) Apply(pkg workspace.Package, issues []Issue, dryRun bool)
 func (r *externalRule) runCommand(command string, pkg workspace.Package, preset config.Preset, issues []Issue, dryRun bool) (externalCheckOutput, error) {
 	input := externalInput{
 		Package:       pkg,
+		Workspace:     externalWorkspaceFor(r.workspace),
+		GraphTasks:    append([]string(nil), r.graphTasks...),
 		Preset:        preset,
 		WorkspaceRoot: r.workspaceRoot,
 		Check:         r.name,
@@ -202,6 +205,20 @@ func (r *externalRule) runCommand(command string, pkg workspace.Package, preset 
 		Issues:        issues,
 	}
 	return r.runCommandWithInput(command, input)
+}
+
+func externalWorkspaceFor(ws *workspace.Workspace) *externalWorkspace {
+	if ws == nil {
+		return nil
+	}
+	packages := make([]externalWorkspacePackage, 0, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		packages = append(packages, externalWorkspacePackage{
+			Name: pkg.Name, Dir: pkg.Dir, RelPath: pkg.RelPath,
+			Category: pkg.Category, Preset: pkg.Preset, Language: pkg.Language, BuildTarget: pkg.BuildTarget,
+		})
+	}
+	return &externalWorkspace{Root: ws.Root, Packages: packages}
 }
 
 func (r *externalRule) runCommandWithInput(command string, input externalInput) (externalCheckOutput, error) {

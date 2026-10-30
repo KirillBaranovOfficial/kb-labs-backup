@@ -875,6 +875,17 @@ planning with `KB_INSTALL_PORT_IN_USE` and a `--gateway-url` hint. An explicit
 `--gateway-url` remains the operator override. Cases:
 PC-001.10, PC-001.12, PC-001.16.
 
+### 2026-10-30: automatic Gateway allocations stay within the local port domain
+
+When kb-create selects a Gateway address automatically, it uses 100-port
+boundaries from 4000 through 9900 and accounts for the selected service graph.
+Every nonzero derived service port must remain below the conventional
+ephemeral-port boundary shared by supported Linux and macOS environments. If
+the remaining registered addresses cannot satisfy that constraint, planning
+fails with no allocation instead of choosing an ephemeral service port.
+Explicit `--gateway-url` remains the operator override. Cases: PC-001.10,
+PC-001.16.
+
 ### Destructive confirmation without a TTY is invalid usage
 
 Destructive `kb-create` operations require explicit `--yes` when no terminal is

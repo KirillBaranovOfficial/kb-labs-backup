@@ -322,7 +322,7 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		if originErr != nil {
 			return resolvedPlan{}, contracts.HostSpecDiagnostic("the release Gateway address is invalid", "select a release with a valid loopback Gateway health URL", originErr.Error(), originErr)
 		}
-		selectedURL, allocErr := registry.AllocateWithKnown(root, defaultURL, requestedURL, known)
+		selectedURL, allocErr := registry.AllocateWithKnown(root, defaultURL, requestedURL, known, response.Plan.ServiceGraph)
 		if allocErr != nil {
 			return resolvedPlan{}, asDiag(allocErr)
 		}

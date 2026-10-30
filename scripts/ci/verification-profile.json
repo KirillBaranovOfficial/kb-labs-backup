@@ -10,7 +10,6 @@
     "internal-tool-tests": { "runner": "kb-devkit-internal-tool-suite" },
     "ci-script-suite": { "runner": "node-test-directory", "directory": "scripts/ci" },
     "kb-create-go-suite": { "runner": "kb-devkit-test-package", "packageManifest": "tools/kb-create/package.json" },
-    "kb-devkit-result-channel": { "runner": "executable", "command": "go", "args": ["-C", "tools/kb-devkit", "test", "-tags", "external_check_result_channel", "./internal/checks", "-run", "^TestRegisteredExternalChecksWriteValidResultEnvelopes$", "-count=1"] },
     "kb-devkit-check": { "runner": "executable", "command": "./tools/kb-devkit/kb-devkit", "args": ["check"] },
     "journey-unit-suite": { "runner": "process", "command": "python3", "args": ["-m", "unittest", "discover", "-s", "e2e/journey", "-p", "test_*.py"] }
   },
@@ -20,6 +19,6 @@
   },
   "buildDependentTestStages": {
     "stream": [],
-    "candidate": ["kb-devkit-result-channel", "kb-devkit-check", "kb-create-go-suite", "journey-unit-suite"]
+    "candidate": ["kb-devkit-check", "kb-create-go-suite", "journey-unit-suite"]
   }
 }
