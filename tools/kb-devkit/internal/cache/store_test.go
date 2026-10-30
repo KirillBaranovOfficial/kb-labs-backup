@@ -258,6 +258,31 @@ func TestContentDigestTracksProvidedContentOnly(t *testing.T) {
 	}
 }
 
+func TestContentDigestFramesRecordsWithoutNULCollisions(t *testing.T) {
+	root := t.TempDir()
+	singlePath := filepath.Join(root, "a")
+	if err := os.WriteFile(singlePath, []byte{'x', 0, 'b', 0, '1', '0', '0', '6', '4', '4', 0, 'y'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	single, err := ContentDigest(root, []string{singlePath}, testTrackedFiles(singlePath))
+	if err != nil {
+		t.Fatalf("digest single-file collision fixture: %v", err)
+	}
+
+	pairRoot := t.TempDir()
+	pathA := filepath.Join(pairRoot, "a")
+	pathB := filepath.Join(pairRoot, "b")
+	mustWriteFile(t, pathA, "x")
+	mustWriteFile(t, pathB, "y")
+	pair, err := ContentDigest(pairRoot, []string{pathA, pathB}, testTrackedFiles(pathA, pathB))
+	if err != nil {
+		t.Fatalf("digest two-file collision fixture: %v", err)
+	}
+	if single == pair {
+		t.Fatalf("different tracked-file sets produced the same digest %s", single)
+	}
+}
+
 func testTrackedFiles(paths ...string) map[string]TrackedFile {
 	tracked := make(map[string]TrackedFile, len(paths))
 	for _, path := range paths {
