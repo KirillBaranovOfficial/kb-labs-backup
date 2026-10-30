@@ -788,7 +788,7 @@ func readGoWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.P
 		}
 	}
 	for _, replacement := range module.Replace {
-		if _, ok := required[replacement.Old.Path]; !ok || replacement.New.Version != "" {
+		if replacement.New.Version != "" {
 			continue
 		}
 		replacementDir := replacement.New.Path

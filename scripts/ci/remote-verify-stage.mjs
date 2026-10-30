@@ -14,6 +14,19 @@ function failingNames(log) {
 export function boundedTail(log) {
   return log.split(/\r?\n/).slice(-80).join('\n').slice(-12_000);
 }
+
+function internalToolCommandOutput(outcome) {
+  let envelope;
+  try {
+    envelope = JSON.parse(outcome.stdout ?? '');
+  } catch {
+    return [outcome.stderr, outcome.stdout, outcome.error?.message].filter(Boolean).join('\n');
+  }
+  const failedTasks = envelope?.data?.results?.filter((task) => task?.OK === false) ?? [];
+  const taskOutput = failedTasks.flatMap((task) => [task.Stderr, task.Stdout]).filter((text) => typeof text === 'string' && text.trim());
+  return [outcome.stderr, ...taskOutput, ...(taskOutput.length ? [] : [outcome.stdout]), outcome.error?.message].filter(Boolean).join('\n');
+}
+
 function cacheStatus(value) {
   if (value === 'true') return 'exact-hit';
   if (value === 'false') return 'miss-or-restore-prefix';
@@ -134,7 +147,7 @@ export async function runStage({
         status: outcomes.every((outcome) => outcome.status === 0) ? 0 : 1,
         stdout: outcomes.map((outcome) => `${outcome.label} (exit ${outcome.status})\n${outcome.stdout ?? ''}`).join('\n'),
         stderr: outcomes.map((outcome) => `${outcome.label} (exit ${outcome.status})\n${outcome.stderr ?? outcome.error?.message ?? ''}`).filter((output) => output.trim()).join('\n'),
-        internalToolFailures: outcomes.filter((outcome) => outcome.status !== 0).map((outcome) => `${outcome.label} exited ${outcome.status}: ${boundedTail([outcome.stderr, outcome.stdout, outcome.error?.message].filter(Boolean).join('\n'))}`),
+        internalToolFailures: outcomes.filter((outcome) => outcome.status !== 0).map((outcome) => `${outcome.label} exited ${outcome.status}: ${boundedTail(internalToolCommandOutput(outcome))}`),
       };
     } else {
       result = await runCommand(command, args, { cwd: root, env: {} });
