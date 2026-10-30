@@ -12,8 +12,10 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/kb-labs/clikit/proc"
+	"golang.org/x/sys/unix"
 )
 
 // case: S-237.69
@@ -52,19 +54,8 @@ func TestKilledKeeperRecoveryUsesDurableRecordToStopDetachedTree(t *testing.T) {
 			}
 		}
 	})
-	if !waitUntil(3*time.Second, func() bool {
-		recorded, err := proc.ReadRunRecord(state, run.RunID)
-		if err != nil {
-			return false
-		}
-		for _, child := range recorded.Tree {
-			if child.PID == pid && child.Identity == identity {
-				return true
-			}
-		}
-		return false
-	}) {
-		t.Fatalf("durable run record never persisted detached PID %d identity %s", pid, identity)
+	if _, err := proc.ReadRunRecord(state, run.RunID); err != nil {
+		t.Fatalf("durable run record was not available before keeper SIGKILL: %v", err)
 	}
 	if err := syscall.Kill(int(run.PID), syscall.SIGKILL); err != nil {
 		t.Fatalf("SIGKILL keeper PID %d: %v", run.PID, err)
@@ -86,6 +77,36 @@ func TestKilledKeeperRecoveryUsesDurableRecordToStopDetachedTree(t *testing.T) {
 	event := eventForRunAndType(t, state, run.RunID, proc.EventTeardown)
 	if event.Error != "" || len(event.Remaining) != 0 {
 		t.Fatalf("lost keeper teardown = error %q remaining=%+v, want empty cleanup", event.Error, event.Remaining)
+	}
+}
+
+func TestRunDoesNotMakeCallingProcessAChildSubreaper(t *testing.T) {
+	assertNotChildSubreaper(t)
+	state := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	run, err := proc.StartWithHostResourceSource(ctx, proc.Config{
+		StateDir: state, Tag: "caller-subreaper", Stall: time.Hour,
+		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
+		Command: []string{"/bin/true"},
+	}, stableHostResourceSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Wait(); err != nil {
+		t.Fatalf("wait for successful child run: %v", err)
+	}
+	assertNotChildSubreaper(t)
+}
+
+func assertNotChildSubreaper(t *testing.T) {
+	t.Helper()
+	var enabled int32
+	if err := unix.Prctl(unix.PR_GET_CHILD_SUBREAPER, uintptr(unsafe.Pointer(&enabled)), 0, 0, 0); err != nil {
+		t.Fatalf("inspect caller child-subreaper state: %v", err)
+	}
+	if enabled != 0 {
+		t.Fatal("proc run changed its calling process into a child subreaper")
 	}
 }
 

@@ -1323,6 +1323,42 @@ func TestProcessDescendantsRespectNestedOwnerAndIgnoreZombie(t *testing.T) {
 	}
 }
 
+// case: S-237.69
+func TestProcessTreeDoesNotReenterNestedRunThroughInheritedToken(t *testing.T) {
+	snapshot := []Process{
+		{PID: 100, Identity: "outer-keeper"},
+		{PID: 101, PPID: 100, Identity: "outer-command", markerResult: "match", runMarker: true},
+		{PID: 102, PPID: 101, Identity: "inner-keeper", markerResult: "other-run", runToken: true},
+		{PID: 103, PPID: 102, Identity: "inner-detached", markerResult: "other-run", runToken: true},
+	}
+	got := processTreeFromSnapshot(snapshot, 100)
+	if len(got) != 1 || got[0].PID != 101 {
+		t.Fatalf("outer process tree=%+v, want only PID 101; inherited token must not cross the inner marker", got)
+	}
+}
+
+// case: S-237.69
+func TestRunMarkerRecoveryRequiresMarkerAndPostStartIdentity(t *testing.T) {
+	startedAt := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	processes := []Process{
+		{PID: 100, runMarker: true, StartedAt: startedAt.Add(-time.Second)},
+		{PID: 101, runMarker: true, StartedAt: startedAt},
+		{PID: 102, runMarker: true, StartedAt: startedAt.Add(time.Second)},
+		{PID: 103, StartedAt: startedAt.Add(time.Second)},
+	}
+	got, err := runMarkerRecoveryCandidates(processes, startedAt)
+	if err != nil || len(got) != 2 || got[0].PID != 101 || got[1].PID != 102 {
+		t.Fatalf("run-marker recovery candidates=%+v err=%v, want only marked processes started at/after run start", got, err)
+	}
+	if _, err := runMarkerRecoveryCandidates(processes, time.Time{}); err == nil {
+		t.Fatal("run-marker recovery accepted a missing run start time")
+	}
+	processes[1].StartedAt = time.Time{}
+	if _, err := runMarkerRecoveryCandidates(processes[1:2], startedAt); err == nil {
+		t.Fatal("run-marker recovery accepted a marked process without start identity time")
+	}
+}
+
 func TestSubreaperCleanupReportsNamedSurvivorsAtDeadline(t *testing.T) {
 	clock := &advancingCleanupClock{start: time.Unix(400, 0), now: time.Unix(400, 0)}
 	source := &subreaperContainmentFixture{

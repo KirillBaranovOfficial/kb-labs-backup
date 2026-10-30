@@ -3135,11 +3135,12 @@ func TestNestedRunTokenOwnershipIsIsolated(t *testing.T) {
 	outerState := filepath.Join(root, "outer-state")
 	innerState := filepath.Join(root, "inner-state")
 	pidFile := filepath.Join(root, "inner-detached.pid")
+	releaseInner := filepath.Join(root, "release-inner-command")
 	runner := buildRunner(t)
-	detachedCommand := `(/bin/sh -c 'echo $$ > "$1"; exec /bin/sleep 60' sh "$1" >/dev/null 2>&1 </dev/null) >/dev/null 2>&1 & exit 0`
+	detachedCommand := `(/bin/sh -c 'echo $$ > "$1"; exec /bin/sleep 60' sh "$1" >/dev/null 2>&1 </dev/null) >/dev/null 2>&1 & while [ ! -e "$2" ]; do /bin/sleep 0.02; done; exit 0`
 	innerArgs := []string{"run", "--tag", "inner-token-run", "--state", innerState, "--stall", "1h",
 		"--stdout", filepath.Join(root, "inner.out"), "--stderr", filepath.Join(root, "inner.err"),
-		"--", "/bin/sh", "-c", detachedCommand, "sh", pidFile}
+		"--", "/bin/sh", "-c", detachedCommand, "sh", pidFile, releaseInner}
 	outerArgs := []string{"run", "--tag", "outer-token-run", "--state", outerState, "--stall", "1h",
 		"--stdout", filepath.Join(root, "outer.out"), "--stderr", filepath.Join(root, "outer.err"), "--", runner}
 	outerArgs = append(outerArgs, innerArgs...)
@@ -3151,6 +3152,9 @@ func TestNestedRunTokenOwnershipIsIsolated(t *testing.T) {
 		t.Fatalf("start outer run: %v", err)
 	}
 	t.Cleanup(func() {
+		if err := os.WriteFile(releaseInner, []byte("release\n"), 0o600); err != nil && !os.IsNotExist(err) {
+			t.Errorf("release inner run command during cleanup: %v", err)
+		}
 		if command.ProcessState == nil {
 			if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 				t.Errorf("stop nested-run fixture: %v", err)
@@ -3171,6 +3175,9 @@ func TestNestedRunTokenOwnershipIsIsolated(t *testing.T) {
 	innerIdentity, alive, err := proc.ProcessIdentity(innerPID)
 	if err != nil || !alive {
 		t.Fatalf("inspect inner detached process: alive=%t identity=%s err=%v", alive, innerIdentity, err)
+	}
+	if err := os.WriteFile(releaseInner, []byte("release\n"), 0o600); err != nil {
+		t.Fatalf("release inner run command: %v", err)
 	}
 	if err := command.Wait(); err != nil {
 		t.Fatalf("outer nested run returned %v: %s", err, output.String())

@@ -126,6 +126,19 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	if err := syscall.Mkfifo(releaseFIFO, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	releaseWriter, err := os.OpenFile(releaseFIFO, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open test-owned provider release FIFO: %v", err)
+	}
+	var releaseOnce sync.Once
+	var releaseErr error
+	releaseProvider := func() error {
+		releaseOnce.Do(func() {
+			_, writeErr := releaseWriter.WriteString("release\n")
+			releaseErr = errors.Join(writeErr, releaseWriter.Close())
+		})
+		return releaseErr
+	}
 	fakeCodex := filepath.Join(root, "codex")
 	script := "#!/bin/sh\nprintf 'started\\n' > " + shellQuote(startedPath) + "\nIFS= read -r _ < " + shellQuote(releaseFIFO) + "\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"lease-session\"}' '{\"type\":\"turn.completed\",\"message\":\"done\"}'\n"
 	if err := os.WriteFile(fakeCodex, []byte(script), 0o700); err != nil {
@@ -147,24 +160,12 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 		result <- commandResult{code: code, err: err}
 	}()
 	waited := false
-	var releaseOnce sync.Once
-	var releaseWriter *os.File
-	var releaseErr error
-	releaseProvider := func() error {
-		releaseOnce.Do(func() {
-			if releaseWriter != nil {
-				_, writeErr := releaseWriter.WriteString("release\n")
-				releaseErr = errors.Join(writeErr, releaseWriter.Close())
-			}
-		})
-		return releaseErr
-	}
 	t.Cleanup(func() {
 		if !waited {
-			cancel()
 			if err := releaseProvider(); err != nil {
 				t.Errorf("release fake provider during cleanup: %v", err)
 			}
+			cancel()
 			<-result
 		}
 	})
@@ -176,11 +177,6 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 		outcome := <-result
 		waited = true
 		t.Fatalf("agent start did not reach the provider child: %v; runner-code=%d runner-error=%v stdout=%q stderr=%q", err, outcome.code, outcome.err, runnerStdout.String(), runnerStderr.String())
-	}
-	var err error
-	releaseWriter, err = os.OpenFile(releaseFIFO, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
 	}
 	leasePath := derivedWorktreeLeasePath(t, worktree)
 	if !waitForWorktreeLeaseBusy(t, leasePath) {

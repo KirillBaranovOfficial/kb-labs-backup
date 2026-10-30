@@ -551,7 +551,7 @@ func TestWaitReturnsForLostRunWithFailedResourceCleanup(t *testing.T) {
 	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordObservedKeeperLoss(state, run.RunID); err != nil {
+	if err := recordObservedKeeperLoss(state, run.RunID, run); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
@@ -591,7 +591,7 @@ func TestWaitReturnsForLostRunWithFailedScratchCleanup(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), scratch); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordObservedKeeperLoss(state, run.RunID); err != nil {
+	if err := recordObservedKeeperLoss(state, run.RunID, run); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), testdeadline.Budget(t))
