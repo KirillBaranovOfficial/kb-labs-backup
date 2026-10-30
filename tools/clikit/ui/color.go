@@ -14,7 +14,8 @@ import (
 // https://no-color.org/; FORCE_COLOR conventions follow
 // https://github.com/chalk/supports-color.
 func ColorEnabled(w io.Writer) bool {
-	return resolveColorSupport(isTerminalWriter(w), os.Getenv("NO_COLOR"), os.Getenv("FORCE_COLOR"), os.Getenv("TERM"))
+	forceColor, forceColorSet := os.LookupEnv("FORCE_COLOR")
+	return resolveColorSupport(isTerminalWriter(w), os.Getenv("NO_COLOR"), forceColor, forceColorSet, os.Getenv("TERM"))
 }
 
 // StdoutColorEnabled reports the color policy for the CLI's standard output.

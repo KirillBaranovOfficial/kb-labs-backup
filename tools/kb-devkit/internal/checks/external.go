@@ -234,14 +234,14 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 		}
 		return externalCheckOutput{}, &externalOutputError{
 			exitCode: result.ExitCode, stderrTail: result.Stderr,
-			err:      problem,
+			err: problem,
 		}
 	}
-	var parsed externalCheckOutput
-	if err := json.Unmarshal(resultJSON, &parsed); err != nil {
+	parsed, err := decodeExternalCheckOutput(resultJSON)
+	if err != nil {
 		return externalCheckOutput{}, &externalOutputError{
 			exitCode: result.ExitCode, stderrTail: result.Stderr,
-			err:      fmt.Errorf("decode result file for external check %s at %s: %w", r.name, resultPath, err),
+			err: fmt.Errorf("invalid result envelope in result file for external check %s at %s: %w", r.name, resultPath, err),
 		}
 	}
 
@@ -250,6 +250,28 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 	}
 
 	return parsed, nil
+}
+
+func decodeExternalCheckOutput(data []byte) (externalCheckOutput, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return externalCheckOutput{}, fmt.Errorf("envelope must be a JSON object with an issues array: %w", err)
+	}
+	if envelope == nil {
+		return externalCheckOutput{}, fmt.Errorf("envelope must be a JSON object with an issues array")
+	}
+	issuesJSON, found := envelope["issues"]
+	if !found {
+		return externalCheckOutput{}, fmt.Errorf("envelope is missing the issues array")
+	}
+	if len(issuesJSON) == 0 || issuesJSON[0] != '[' {
+		return externalCheckOutput{}, fmt.Errorf("envelope field issues must be an array")
+	}
+	var issues []Issue
+	if err := json.Unmarshal(issuesJSON, &issues); err != nil {
+		return externalCheckOutput{}, fmt.Errorf("envelope issues array is invalid: %w", err)
+	}
+	return externalCheckOutput{Issues: issues}, nil
 }
 
 func safeExternalCause(err error) string {

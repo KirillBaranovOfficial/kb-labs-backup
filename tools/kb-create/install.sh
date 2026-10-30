@@ -16,8 +16,13 @@ START_TS="$(date +%s)"
 # BEGIN GENERATED COLOR POLICY
 kb_color_enabled() {
   if [ -n "${NO_COLOR:-}" ]; then return 1; fi
-  if [ "${FORCE_COLOR:-}" = "0" ]; then return 1; fi
-  if [ -n "${FORCE_COLOR:-}" ]; then return 0; fi
+  if [ "${FORCE_COLOR+x}" = x ] && { [ "$FORCE_COLOR" = false ] || [ "$FORCE_COLOR" = 0 ]; }; then return 1; fi
+  if [ "${FORCE_COLOR+x}" = x ]; then
+    case "$FORCE_COLOR" in
+      ''|true) return 0 ;;
+      *) if awk -v value="$FORCE_COLOR" 'BEGIN { if (value ~ /^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][-+]?[0-9]+)?$/ && value + 0 >= 1) exit 0; exit 1 }'; then return 0; fi ;;
+    esac
+  fi
   case "${TERM:-}" in [Dd][Uu][Mm][Bb]) return 1 ;; esac
   if [ -t 1 ]; then return 0; fi
   return 1

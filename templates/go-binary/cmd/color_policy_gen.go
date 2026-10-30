@@ -3,19 +3,25 @@
 package cmd
 
 import (
+	"math"
+	"regexp"
+	"strconv"
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-	"strings"
 )
 
-func resolveColorSupport(isTTY bool, noColor, forceColor, term string) bool {
+var forceColorNumber = regexp.MustCompile("^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?$")
+
+func resolveColorSupport(isTTY bool, noColor, forceColor string, forceColorSet bool, term string) bool {
 	if noColor != "" {
 		return false
 	}
-	if forceColor == "0" {
+	if forceColorSet && (forceColor == "false" || forceColor == "0") {
 		return false
 	}
-	if forceColor != "" {
+	if forceColorSet && forceColorEnables(forceColor) {
 		return true
 	}
 	if strings.EqualFold(term, "dumb") {
@@ -25,6 +31,17 @@ func resolveColorSupport(isTTY bool, noColor, forceColor, term string) bool {
 		return true
 	}
 	return false
+}
+
+func forceColorEnables(value string) bool {
+	if value == "" || value == "true" {
+		return true
+	}
+	if !forceColorNumber.MatchString(value) {
+		return false
+	}
+	level, err := strconv.ParseFloat(value, 64)
+	return err == nil && !math.IsNaN(level) && !math.IsInf(level, 0) && level >= 1
 }
 
 func configureColor(enabled bool) {

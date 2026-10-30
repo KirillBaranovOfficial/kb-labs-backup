@@ -95,5 +95,6 @@ func colorEnabled() bool {
 	if err != nil {
 		return false
 	}
-	return resolveColorSupport((fi.Mode()&os.ModeCharDevice) != 0, os.Getenv("NO_COLOR"), os.Getenv("FORCE_COLOR"), os.Getenv("TERM"))
+	forceColor, forceColorSet := os.LookupEnv("FORCE_COLOR")
+	return resolveColorSupport((fi.Mode()&os.ModeCharDevice) != 0, os.Getenv("NO_COLOR"), forceColor, forceColorSet, os.Getenv("TERM"))
 }

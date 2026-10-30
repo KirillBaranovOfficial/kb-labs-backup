@@ -15,7 +15,7 @@ export namespace colorPolicy {
         name: string;
         tty: boolean;
         noColor: string;
-        forceColor: string;
+        forceColor: string | undefined;
         term: string;
         want: boolean;
     }[];
