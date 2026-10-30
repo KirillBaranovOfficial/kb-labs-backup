@@ -44,6 +44,17 @@ test('candidate profile separates output-dependent suites from independent suite
 });
 
 // case: S-262.7
+test('candidate kb-create Go suite is planned after workspace build', () => {
+  const independent = profile.independentTestStages.candidate;
+  const dependent = profile.buildDependentTestStages.candidate;
+  const matrix = createTestMatrix(['github.com/kb-labs/create'], independent, dependent, profile.packageTestStage, profile.maxParallel);
+
+  assert.ok(!independent.includes('kb-create-go-suite'));
+  assert.ok(dependent.includes('kb-create-go-suite'));
+  assert.ok(matrix.dependent.include.some(({ stage }) => stage === 'kb-create-go-suite'));
+});
+
+// case: S-262.7
 test('package shards partition the kb-devkit package set once with even package counts', () => {
   const packages = Array.from({ length: 41 }, (_, index) => `@kb-labs/package-${index}`);
   const matrix = createTestMatrix(packages, [], [], profile.packageTestStage, profile.maxParallel);

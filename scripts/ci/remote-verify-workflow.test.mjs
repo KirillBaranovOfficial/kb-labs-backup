@@ -97,6 +97,9 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore.outputs.cache-hit }}');
   assert.ok(profile.buildDependentTestStages.candidate.includes('journey-unit-suite'));
   assert.ok(!profile.buildDependentTestStages.stream.includes('journey-unit-suite'));
+  assert.equal(profile.shardTimeoutMinutes, 30);
+  assert.ok(!profile.independentTestStages.candidate.includes('kb-create-go-suite'));
+  assert.ok(profile.buildDependentTestStages.candidate.includes('kb-create-go-suite'));
 });
 
 // case: S-262.7

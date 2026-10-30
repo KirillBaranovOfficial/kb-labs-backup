@@ -33,10 +33,27 @@ test('workspace package shard uses kb-devkit and records a stage result with ela
   assert.equal(result.durationMs, 250);
   assert.equal(result.selectedPackageCount, 2);
 });
+
+// case: S-262.7
+test('kb-create Go suite invokes its manifest-backed test task through kb-devkit', async () => {
+  let invocation;
+  const result = await runStage({
+    stage: 'kb-create-go-suite',
+    selectedPackageCount: 41,
+    runCommand: async (command, args) => {
+      invocation = [command, args];
+      return { status: 0, stdout: '{"ok":true,"data":{"results":[]}}', stderr: '' };
+    },
+  });
+
+  assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', 'github.com/kb-labs/create', '--concurrency', '1', '--json']]);
+  assert.equal(result.status, 'pass');
+  assert.equal(result.name, 'kb-create-go-suite');
+});
 // case: S-262.7
 test('journey unit shard records its failure instead of losing it before artifact upload', async () => {
   const result = await runStage({
-    stage: profile.buildDependentTestStages.candidate[0],
+    stage: 'journey-unit-suite',
     selectedPackageCount: 41,
     runCommand: async () => ({ status: 1, stdout: '', stderr: 'test failure' }),
     now: (() => { let value = 0; return () => value += 10; })(),
