@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import './test-utils.js';
-import getCommand from '../../commands/mail-get.js';
+import getCommand from '../../src/commands/mail-get.js';
 import { context } from './test-utils.js';
 
 it('returns the requested message as JSON', async () => {

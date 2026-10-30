@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 
-vi.mock('../../core/index.js', () => ({
+vi.mock('../../src/core/index.js', () => ({
   resolveAccount: vi.fn(() => ({ name: 'work' })),
   listAccounts: vi.fn(async () => []),
   listMessages: vi.fn(async () => []),

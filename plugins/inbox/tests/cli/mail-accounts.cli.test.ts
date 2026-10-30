@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import './test-utils.js';
-import accountsCommand from '../../commands/mail-accounts.js';
+import accountsCommand from '../../src/commands/mail-accounts.js';
 import { context } from './test-utils.js';
 
 it('returns configured accounts as JSON', async () => {

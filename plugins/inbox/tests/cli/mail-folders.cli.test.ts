@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import './test-utils.js';
-import foldersCommand from '../../commands/mail-folders.js';
+import foldersCommand from '../../src/commands/mail-folders.js';
 import { context } from './test-utils.js';
 
 it('returns folders as JSON', async () => {

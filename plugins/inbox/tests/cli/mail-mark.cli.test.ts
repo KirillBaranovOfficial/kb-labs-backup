@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import './test-utils.js';
-import markCommand from '../../commands/mail-mark.js';
+import markCommand from '../../src/commands/mail-mark.js';
 import { context } from './test-utils.js';
 
 it('marks a message and returns the selected action as JSON', async () => {
