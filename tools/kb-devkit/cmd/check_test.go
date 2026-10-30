@@ -389,10 +389,11 @@ custom_checks:
 	var response struct {
 		Data struct {
 			Checks []struct {
-				Check        string `json:"check"`
-				ExitCode     int    `json:"exitCode"`
-				StderrTail   string `json:"stderrTail"`
-				RerunCommand string `json:"rerunCommand"`
+				Check         string `json:"check"`
+				ExitCode      int    `json:"exitCode"`
+				ExitCodeKnown bool   `json:"exitCodeKnown"`
+				StderrTail    string `json:"stderrTail"`
+				RerunCommand  string `json:"rerunCommand"`
 			} `json:"checks"`
 		} `json:"data"`
 		Error struct {
@@ -421,7 +422,7 @@ custom_checks:
 	}
 	for _, check := range response.Data.Checks {
 		want, exists := expectedFailures[check.Check]
-		if !exists || check.ExitCode != want.exitCode || check.StderrTail != want.stderrTail {
+		if !exists || !check.ExitCodeKnown || check.ExitCode != want.exitCode || check.StderrTail != want.stderrTail {
 			t.Fatalf("failure record = %#v, want check, process status, and stderr from the fixture", check)
 		}
 		if check.RerunCommand == "" {
@@ -602,7 +603,7 @@ func TestCheckFailureEnvelopeUsesStandardsViolationCodeAndData(t *testing.T) {
 
 // case: S-179.30
 func TestCheckExecutionFailureIsTypedAndActionable(t *testing.T) {
-	failures := []externalCheckFailure{{Check: "adapter-manifest", Cause: "external command exited with status 1", ExitCode: 1, StderrTail: "fixture detail"}}
+	failures := []externalCheckFailure{{Check: "adapter-manifest", Cause: "external command exited with status 1", ExitCode: 1, ExitCodeKnown: true, StderrTail: "fixture detail"}}
 	err := externalCheckFailureError(checkCmd, failures, nil)
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != "KB_DEVKIT_CHECK_EXECUTION_FAILED" {
@@ -637,6 +638,18 @@ func TestCheckExecutionFailureIsTypedAndActionable(t *testing.T) {
 		"b": {Issues: []checks.Issue{{Check: "adapter-manifest", CheckFailure: true, Cause: "exit 2"}}},
 	})) != 2 {
 		t.Fatal("checkExecutionFailures dropped a crashed check")
+	}
+}
+
+func TestKnownZeroExitStatusIsNotReportedAsUnavailable(t *testing.T) {
+	failures := []externalCheckFailure{{Check: "test-pyramid", Cause: "decode external check output", ExitCode: 0, ExitCodeKnown: true}}
+	err := externalCheckFailureError(checkCmd, failures, nil)
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) || !strings.Contains(diagnostic.Message, "status 0") {
+		t.Fatalf("diagnostic = %#v, want the completed process status 0", err)
+	}
+	if strings.Contains(diagnostic.Message, "unavailable") {
+		t.Fatalf("diagnostic = %#v, must not call known exit status unavailable", diagnostic)
 	}
 }
 

@@ -265,6 +265,22 @@ func TestExternalCheckCrashIsNotReportedAsAStandardsFinding(t *testing.T) {
 	}
 }
 
+func TestExternalCheckDecodeFailureRetainsSuccessfulProcessExitStatus(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{truncated result'\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	rule := &externalRule{name: "test-pyramid", run: script, phase: "check", scope: "workspace", workspaceRoot: root}
+	issues := rule.CheckWorkspace(&workspace.Workspace{Root: root})
+	if len(issues) != 1 || !issues[0].CheckFailure {
+		t.Fatalf("issues = %#v, want a typed output-decode failure", issues)
+	}
+	if !issues[0].FailureExitCodeKnown || issues[0].FailureExitCode != 0 {
+		t.Fatalf("exit status = %d (known %t), want the completed process status 0", issues[0].FailureExitCode, issues[0].FailureExitCodeKnown)
+	}
+}
+
 func TestExternalCheckRetainsIssuesWhenCommandFails(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "check.sh")
