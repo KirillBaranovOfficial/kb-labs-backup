@@ -1,8 +1,10 @@
 import { expect, it } from 'vitest';
+import { createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import './test-utils.js';
 import accountsCommand from '../../src/commands/mail-accounts.js';
-import { context } from './test-utils.js';
 
 it('returns configured accounts as JSON', async () => {
-  await expect(accountsCommand.execute(context as never, { argv: [], flags: { json: true } } as never)).resolves.toEqual([]);
+  type Input = Parameters<typeof accountsCommand.execute>[1];
+  const input = mockCLIInput<Input['flags']>({ argv: [], flags: { json: true } });
+  await expect(accountsCommand.execute(createMockContext(), input)).resolves.toEqual([]);
 });

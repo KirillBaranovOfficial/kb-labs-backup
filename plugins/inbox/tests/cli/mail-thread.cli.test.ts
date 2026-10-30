@@ -1,8 +1,10 @@
 import { expect, it } from 'vitest';
+import { createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import './test-utils.js';
 import threadCommand from '../../src/commands/mail-thread.js';
-import { context } from './test-utils.js';
 
 it('returns a thread as JSON', async () => {
-  await expect(threadCommand.execute(context as never, { argv: ['1'], flags: { json: true } } as never)).resolves.toEqual([]);
+  type Input = Parameters<typeof threadCommand.execute>[1];
+  const input = mockCLIInput<Input['flags']>({ argv: ['1'], flags: { json: true } });
+  await expect(threadCommand.execute(createMockContext(), input)).resolves.toEqual([]);
 });

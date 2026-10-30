@@ -1,8 +1,10 @@
 import { expect, it } from 'vitest';
+import { createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import './test-utils.js';
 import foldersCommand from '../../src/commands/mail-folders.js';
-import { context } from './test-utils.js';
 
 it('returns folders as JSON', async () => {
-  await expect(foldersCommand.execute(context as never, { argv: [], flags: { json: true } } as never)).resolves.toEqual([]);
+  type Input = Parameters<typeof foldersCommand.execute>[1];
+  const input = mockCLIInput<Input['flags']>({ argv: [], flags: { json: true } });
+  await expect(foldersCommand.execute(createMockContext(), input)).resolves.toEqual([]);
 });
