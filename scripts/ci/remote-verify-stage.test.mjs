@@ -77,6 +77,31 @@ test('internal-tool stage retains stdout-only JSON failure evidence', async () =
 });
 
 // case: S-277.1
+test('internal-tool failure evidence decodes task output and stores plain quotes once', async () => {
+  const taskOutput = 'FAIL: TestRunner ("agent", "scheduler")';
+  const result = await runStage({
+    stage: 'internal-tool-tests',
+    packageNames: ['kb-runner'],
+    selectedPackageCount: 1,
+    shard: 1,
+    runCommand: async (_command, args) => args[0] === 'run' && args[1] === 'test'
+      ? {
+        status: 1,
+        stdout: JSON.stringify({
+          ok: false,
+          data: { results: [{ OK: false, Package: 'kb-runner', Task: 'test', Stdout: taskOutput, Stderr: '' }] },
+        }),
+        stderr: '',
+      }
+      : { status: 0, stdout: '{"ok":true}', stderr: '' },
+  });
+
+  assert.equal(result.status, 'fail');
+  assert.ok(result.failures.some((failure) => failure.includes(taskOutput)));
+  assert.ok(result.failures.every((failure) => !failure.includes('\\"')));
+});
+
+// case: S-277.1
 test('internal-tool package-check failure remains fail with its stdout evidence', async () => {
   const invocations = [];
   const result = await runStage({
