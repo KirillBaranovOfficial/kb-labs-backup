@@ -2,15 +2,19 @@ package checks
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/proc/child"
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/testdeadline"
 	"github.com/kb-labs/devkit/internal/workspace"
@@ -273,6 +277,9 @@ func TestExternalCheckCrashIsNotReportedAsAStandardsFinding(t *testing.T) {
 	if !strings.Contains(issues[0].Cause, "result file") || !strings.Contains(issues[0].Cause, "adapter-manifest") || issues[0].Message == "node:fs:441 raw stack details" {
 		t.Fatalf("failure exposed raw process output: %#v", issues[0])
 	}
+	if !strings.Contains(issues[0].Cause, "status 1") {
+		t.Fatalf("cause = %q, want the non-zero process exit", issues[0].Cause)
+	}
 }
 
 func TestExternalCheckDecodeFailureRetainsSuccessfulProcessExitStatus(t *testing.T) {
@@ -289,7 +296,7 @@ func TestExternalCheckDecodeFailureRetainsSuccessfulProcessExitStatus(t *testing
 	if !issues[0].FailureExitCodeKnown || issues[0].FailureExitCode != 0 {
 		t.Fatalf("exit status = %d (known %t), want the completed process status 0", issues[0].FailureExitCode, issues[0].FailureExitCodeKnown)
 	}
-	if !strings.Contains(issues[0].Cause, "test-pyramid") || !strings.Contains(issues[0].Cause, "result file") {
+	if !strings.Contains(issues[0].Cause, "test-pyramid") || !strings.Contains(issues[0].Cause, "invalid result envelope") || !strings.Contains(issues[0].Cause, "result file") {
 		t.Fatalf("cause = %q, want check name and invalid result-file problem", issues[0].Cause)
 	}
 }
@@ -402,8 +409,24 @@ func TestExternalCheckMissingResultFileNamesCheckAndFile(t *testing.T) {
 	if len(issues) != 1 || !issues[0].CheckFailure || issues[0].Check != "missing-result" {
 		t.Fatalf("issues = %#v, want named external check failure", issues)
 	}
-	if !strings.Contains(issues[0].Cause, "missing-result") || !strings.Contains(issues[0].Cause, "result") {
+	if !strings.Contains(issues[0].Cause, "missing-result") || !strings.Contains(issues[0].Cause, "read result file") || !strings.Contains(issues[0].Cause, "result.json") {
 		t.Fatalf("cause = %q, want check and result-file problem", issues[0].Cause)
+	}
+}
+
+func TestExternalCheckReportsObserverErrorAfterSuccessfulExit(t *testing.T) {
+	observerErr := &child.ProcessObservationError{
+		PID:         42,
+		Observation: "live members",
+		Cause:       fmt.Errorf("enumerate Darwin process table: %w", syscall.EPERM),
+	}
+	err := &toolchain.CommandError{ExitCode: 0, Err: observerErr}
+	cause := safeExternalCause(err)
+	if !strings.Contains(cause, "process observer error") || !strings.Contains(cause, "enumerate Darwin process table: operation not permitted") {
+		t.Fatalf("cause = %q, want exact process-observer failure chain", cause)
+	}
+	if strings.Contains(cause, "exited with status 0") {
+		t.Fatalf("cause = %q, must not describe successful exit as the failure", cause)
 	}
 }
 

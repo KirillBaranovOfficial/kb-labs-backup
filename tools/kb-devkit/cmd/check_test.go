@@ -647,15 +647,15 @@ func TestCheckExecutionFailureIsTypedAndActionable(t *testing.T) {
 	}
 }
 
-func TestKnownZeroExitStatusIsNotReportedAsUnavailable(t *testing.T) {
-	failures := []externalCheckFailure{{Check: "test-pyramid", Cause: "decode external check output", ExitCode: 0, ExitCodeKnown: true}}
+func TestKnownZeroExitStatusReportsActualFailureCause(t *testing.T) {
+	failures := []externalCheckFailure{{Check: "test-pyramid", Cause: "result file missing: /tmp/result.json", ExitCode: 0, ExitCodeKnown: true}}
 	err := externalCheckFailureError(checkCmd, failures, nil)
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || !strings.Contains(diagnostic.Message, "status 0") {
-		t.Fatalf("diagnostic = %#v, want the completed process status 0", err)
+	if !errors.As(err, &diagnostic) || !strings.Contains(diagnostic.Message, "result file missing: /tmp/result.json") {
+		t.Fatalf("diagnostic = %#v, want the actual result-file failure", err)
 	}
-	if strings.Contains(diagnostic.Message, "unavailable") {
-		t.Fatalf("diagnostic = %#v, must not call known exit status unavailable", diagnostic)
+	if strings.Contains(diagnostic.Message, "exited with status 0") {
+		t.Fatalf("diagnostic = %#v, must not report successful exit as the failure", diagnostic)
 	}
 }
 
