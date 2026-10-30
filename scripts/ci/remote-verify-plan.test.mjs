@@ -47,10 +47,13 @@ test('candidate profile separates output-dependent suites from independent suite
 test('candidate kb-create Go suite is planned after workspace build', () => {
   const independent = profile.independentTestStages.candidate;
   const dependent = profile.buildDependentTestStages.candidate;
-  const matrix = createTestMatrix(['github.com/kb-labs/create'], independent, dependent, profile.packageTestStage, profile.maxParallel);
+  const kbCreatePackage = JSON.parse(readFileSync(new URL('../../tools/kb-create/package.json', import.meta.url), 'utf8')).name;
+  const matrix = createTestMatrix([kbCreatePackage], independent, dependent, profile.packageTestStage, profile.maxParallel);
 
   assert.ok(!independent.includes('kb-create-go-suite'));
   assert.ok(dependent.includes('kb-create-go-suite'));
+  assert.ok(!independent.includes('kb-devkit-check'));
+  assert.ok(dependent.includes('kb-devkit-check'));
   assert.ok(matrix.dependent.include.some(({ stage }) => stage === 'kb-create-go-suite'));
 });
 

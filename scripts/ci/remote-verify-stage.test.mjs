@@ -9,6 +9,7 @@ import { runStage } from './remote-verify-stage.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const kbCreatePackageName = JSON.parse(readFileSync(path.join(repoRoot, 'tools/kb-create/package.json'), 'utf8')).name;
 // case: S-262.7
 test('workspace package shard uses kb-devkit and records a stage result with elapsed time', async () => {
   let now = 1_000;
@@ -39,16 +40,43 @@ test('kb-create Go suite invokes its manifest-backed test task through kb-devkit
   let invocation;
   const result = await runStage({
     stage: 'kb-create-go-suite',
+    packages: [kbCreatePackageName],
     selectedPackageCount: 41,
     runCommand: async (command, args) => {
       invocation = [command, args];
-      return { status: 0, stdout: '{"ok":true,"data":{"results":[]}}', stderr: '' };
+      return { status: 0, stdout: JSON.stringify({ ok: true, data: { results: [{ OK: true, Package: kbCreatePackageName, Task: 'test' }] } }), stderr: '' };
     },
   });
 
-  assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', 'github.com/kb-labs/create', '--concurrency', '1', '--json']]);
+  assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', kbCreatePackageName, '--concurrency', '1', '--json']]);
   assert.equal(result.status, 'pass');
   assert.equal(result.name, 'kb-create-go-suite');
+});
+
+// case: S-262.7
+test('kb-devkit package selection failures retain the configuration diagnostic', async () => {
+  const result = await runStage({
+    stage: 'kb-create-go-suite',
+    packages: [kbCreatePackageName],
+    selectedPackageCount: 41,
+    runCommand: async () => ({ status: 1, stdout: JSON.stringify({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No workspace packages match --packages "wrong".' } }), stderr: '' }),
+  });
+  assert.equal(result.status, 'fail');
+  assert.match(result.failures.join('\n'), /KB_RUNTIME_INPUT_INVALID/);
+  assert.doesNotMatch(result.failures.join('\n'), /no structured task results/);
+});
+
+// case: S-262.7
+test('kb-devkit package task returning zero results is a configuration error', async () => {
+  const result = await runStage({
+    stage: 'kb-create-go-suite',
+    packages: [kbCreatePackageName],
+    selectedPackageCount: 41,
+    runCommand: async () => ({ status: 0, stdout: '{"ok":true,"data":{"results":[]}}', stderr: '' }),
+  });
+  assert.equal(result.status, 'fail');
+  assert.match(result.failures.join('\n'), /selected no task results/);
+  assert.match(result.failures.join('\n'), /kb-devkit run test --packages kb-create --concurrency 1 --json/);
 });
 // case: S-262.7
 test('journey unit shard records its failure instead of losing it before artifact upload', async () => {

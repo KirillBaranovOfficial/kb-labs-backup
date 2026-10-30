@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,12 @@ import (
 
 // case: S-050.3
 func TestInteractionPromptIsVisibleBeforePTYAnswer(t *testing.T) {
-	command := exec.Command("script", "-q", "/dev/null", os.Args[0], "-test.run=^TestInteractionPTYChild$")
+	var command *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		command = exec.Command("script", "-q", "/dev/null", os.Args[0], "-test.run=^TestInteractionPTYChild$")
+	} else {
+		command = exec.Command("script", "-q", "-c", shellQuote(os.Args[0])+" "+shellQuote("-test.run=^TestInteractionPTYChild$"), "/dev/null")
+	}
 	command.Env = append(os.Environ(), "CLIKIT_INTERACTION_PTY_CHILD=1")
 	input, err := command.StdinPipe()
 	if err != nil {
@@ -96,4 +102,8 @@ func TestInteractionPTYChild(t *testing.T) {
 	if code := Execute(root, []string{"run"}, os.Stdout, os.Stderr); code.Code() != 0 {
 		t.Fatalf("Execute() = %d", code.Code())
 	}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

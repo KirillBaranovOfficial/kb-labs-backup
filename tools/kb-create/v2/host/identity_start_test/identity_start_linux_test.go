@@ -3,6 +3,7 @@
 package identity_start
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -61,9 +62,17 @@ func TestPostStartIdentityRegression(t *testing.T) {
 		if (index+1)%100 == 0 {
 			t.Logf("progress child_index=%d children=%d/%d elapsed=%s last_identity_status=%d", index, index+1, starts, time.Since(testStarted).Round(time.Millisecond), identityStatus)
 		}
-		_ = stdin.Close()
+		if err := command.Process.Kill(); err != nil {
+			t.Fatalf("kill child %d after identity observation: %v", index, err)
+		}
+		if err := stdin.Close(); err != nil {
+			t.Fatalf("close child %d stdin: %v", index, err)
+		}
 		if err := <-waitErr; err != nil {
-			t.Fatalf("child %d exit: %v", index, err)
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) || exitError.ProcessState == nil || exitError.ProcessState.ExitCode() != -1 {
+				t.Fatalf("child %d reap after termination: %v", index, err)
+			}
 		}
 		if identityStatus != host.ProcessIdentityMatch && len(failures) < cap(failures) {
 			failures = append(failures, index)
