@@ -45,3 +45,32 @@ func TestReleaseBoundaryRejectsShippedWorkspaceDependencyOnInternalTool(t *testi
 		}
 	}
 }
+
+func TestReleaseBoundaryRejectsGoRequireWithoutLocalReplace(t *testing.T) {
+	root := t.TempDir()
+	gatingDir := filepath.Join(root, "services", "host")
+	internalDir := filepath.Join(root, "tools", "runner")
+	for _, dir := range []string{gatingDir, internalDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(gatingDir, "go.mod"), []byte("module example.internal/host\n\ngo 1.22.0\n\nrequire github.com/kb-labs/kb-runner v1.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(internalDir, "go.mod"), []byte("module github.com/kb-labs/kb-runner\n\ngo 1.22.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws := &workspace.Workspace{
+		Root: root,
+		Packages: []workspace.Package{
+			{Name: "example.internal/host", Dir: gatingDir, RelPath: "services/host"},
+			{Name: "github.com/kb-labs/kb-runner", Dir: internalDir, RelPath: "tools/runner", ReleaseLane: "internal-tool"},
+		},
+	}
+	results := RunAll(ws, &config.DevkitConfig{}, Default(), []string{"release-boundary"}, nil)
+	workspaceResult := results["workspace"]
+	if len(workspaceResult.Issues) != 1 || !strings.Contains(workspaceResult.Issues[0].Message, `workspace dependency on internal tool "github.com/kb-labs/kb-runner"`) {
+		t.Fatalf("workspace check result = %#v, want Go require boundary finding", workspaceResult)
+	}
+}

@@ -45,6 +45,38 @@ func TestRunAllReportsPerCheckProgress(t *testing.T) {
 	}
 }
 
+type workspaceCountRule struct{ packageCount int }
+
+func (r *workspaceCountRule) Name() string                                   { return "workspace-count" }
+func (r *workspaceCountRule) Scope() string                                  { return "workspace" }
+func (r *workspaceCountRule) Check(workspace.Package, config.Preset) []Issue { return nil }
+func (r *workspaceCountRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
+	r.packageCount = len(ws.Packages)
+	return nil
+}
+
+func TestRunAllForPackagesKeepsWorkspaceRulesFullAndScopesPackageRules(t *testing.T) {
+	root := t.TempDir()
+	gate := workspace.Package{Name: "@acme/host", Preset: "node-lib", Dir: filepath.Join(root, "host")}
+	internal := workspace.Package{Name: "@acme/runner", Preset: "node-lib", Dir: filepath.Join(root, "runner"), ReleaseLane: "internal-tool"}
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{gate, internal}}
+	cfg := &config.DevkitConfig{Presets: map[string]config.Preset{"node-lib": {Language: "typescript"}}}
+	registry := &Registry{}
+	registry.Register(fakeRule{name: "package-rule"})
+	workspaceRule := &workspaceCountRule{}
+	registry.Register(workspaceRule)
+	results := RunAllForPackages(ws, []workspace.Package{gate}, cfg, registry, nil, nil)
+	if workspaceRule.packageCount != 2 {
+		t.Fatalf("workspace rule saw %d packages, want full workspace of 2", workspaceRule.packageCount)
+	}
+	if results[gate.Name].ChecksRun != 1 {
+		t.Fatalf("gating package checks = %#v, want one package check", results[gate.Name])
+	}
+	if _, exists := results[internal.Name]; exists {
+		t.Fatalf("candidate package checks included internal tool: %#v", results[internal.Name])
+	}
+}
+
 type fakeRule struct {
 	name   string
 	issues []Issue

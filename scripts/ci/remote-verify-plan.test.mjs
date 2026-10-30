@@ -38,26 +38,26 @@ test('candidate plan keeps all previous gating packages except internal tools', 
     ok: true,
     data: {
       packages: [
-        '@kb-labs/core',
+        '@kb-labs/core-platform',
         '@kb-labs/commit',
         '@kb-labs/e2e-plugins',
         '@kb-labs/e2e-shared',
         '@kb-labs/e2e-platform',
         '@kb-labs/e2e-llm-deterministic',
         'kb-labs-web',
-        'kb-runner',
+        'github.com/kb-labs/kb-runner',
       ],
-      internalToolPackages: ['kb-runner'],
+      internalToolPackages: ['github.com/kb-labs/kb-runner'],
       changedPathCount: 2,
       selectionReason: 'full: candidate selection',
     },
   }), 'candidate');
 
-  assert.deepEqual(selection.packages, ['@kb-labs/core', '@kb-labs/commit', '@kb-labs/e2e-plugins', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-labs-web']);
-  assert.deepEqual(selection.internalToolPackages, ['kb-runner']);
+  assert.deepEqual(selection.packages, ['@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-plugins', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-labs-web']);
+  assert.deepEqual(selection.internalToolPackages, ['github.com/kb-labs/kb-runner']);
   const matrix = createTestMatrix(selection, profile.independentTestStages.candidate, profile.buildDependentTestStages.candidate, profile.packageTestStage, profile.maxParallel);
   assert.deepEqual(matrix.dependent.include.flatMap(({ packages = [] }) => packages), selection.packages);
-  assert.deepEqual(matrix.internalTool.include, [{ stage: 'internal-tool-tests', shard: 1, packages: ['kb-runner'] }]);
+  assert.deepEqual(matrix.internalTool.include, [{ stage: 'internal-tool-tests', shard: 1, packages: ['github.com/kb-labs/kb-runner'] }]);
 });
 
 // case: S-277.2
@@ -65,16 +65,16 @@ test('stream plan gates an internal-tool change in its ordinary package test sha
   const selection = parseAffectedSelection(JSON.stringify({
     ok: true,
     data: {
-      packages: ['kb-runner'],
-      internalToolPackages: ['kb-runner'],
+      packages: ['github.com/kb-labs/kb-runner'],
+      internalToolPackages: ['github.com/kb-labs/kb-runner'],
       changedPathCount: 1,
       selectionReason: 'changed internal tool',
     },
   }), 'stream');
   const matrix = createTestMatrix(selection, profile.independentTestStages.stream, profile.buildDependentTestStages.stream, profile.packageTestStage, profile.maxParallel);
 
-  assert.deepEqual(selection.packages, ['kb-runner']);
-  assert.deepEqual(matrix.dependent.include, [{ stage: profile.packageTestStage, shard: 1, packages: ['kb-runner'] }]);
+  assert.deepEqual(selection.packages, ['github.com/kb-labs/kb-runner']);
+  assert.deepEqual(matrix.dependent.include, [{ stage: profile.packageTestStage, shard: 1, packages: ['github.com/kb-labs/kb-runner'] }]);
   assert.deepEqual(matrix.internalTool.include, []);
 });
 
@@ -87,6 +87,12 @@ test('candidate profile separates output-dependent suites from independent suite
     ...profile.buildDependentTestStages.candidate,
     profile.packageTestStage,
   ]);
+});
+
+test('candidate retains the complete kb-devkit check stage', () => {
+  const stage = profile.stages['kb-devkit-check'];
+  assert.deepEqual(stage.args, ['check']);
+  assert.ok(profile.independentTestStages.candidate.includes('kb-devkit-check'));
 });
 
 // case: S-262.7

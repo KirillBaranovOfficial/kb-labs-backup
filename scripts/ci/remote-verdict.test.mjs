@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseVerdict, repositoryFromRemote, selectVerificationRun, terminalVerdict } from './remote-verdict.mjs';
 
-const good = { schemaVersion: 1, sha: 'abc123', status: 'pass', jobs: [{ name: 'build', status: 'pass', failures: [], logTail: '' }] };
+const good = { schemaVersion: 1, sha: 'abc123', profile: 'candidate', status: 'pass', jobs: [{ name: 'build', status: 'pass', failures: [], logTail: '' }], internalToolResults: { status: 'pass', jobs: [] } };
 
 test('accepts a verdict only for the requested SHA', () => {
   assert.equal(parseVerdict(good, 'abc123'), good);
@@ -11,6 +11,11 @@ test('accepts a verdict only for the requested SHA', () => {
 
 test('rejects pass when any job failed', () => {
   assert.throws(() => parseVerdict({ ...good, jobs: [{ name: 'build', status: 'fail', failures: ['TS failed'], logTail: 'TS failed' }] }, 'abc123'), /non-passing job/);
+});
+
+test('candidate verdict requires internal-tool results', () => {
+  const { internalToolResults, ...omitted } = good;
+  assert.throws(() => parseVerdict(omitted, 'abc123'), /internal-tool results are required/);
 });
 
 test('classifies bounded wait expiry and API outages distinctly', () => {

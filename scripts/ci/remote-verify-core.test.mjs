@@ -4,6 +4,7 @@ import { RemoteOperationError, runRemoteVerification } from './remote-verify-cor
 
 const sha = 'a'.repeat(40);
 const pass = { schemaVersion: 1, sha, profile: 'stream', status: 'pass', jobs: [{ name: 'build', status: 'pass', failures: [], logTail: '' }] };
+const candidatePass = { ...pass, profile: 'candidate', internalToolResults: { status: 'pass', jobs: [] } };
 const run = (overrides = {}) => { const head_branch = overrides.head_branch ?? 'verify/stream/20261025T120000Z-' + sha; return { id: 17, event: 'push', head_branch, head_sha: sha, path: '.github/workflows/remote-verify.yml', display_title: `Remote agent verification (stream) for ${head_branch}`, status: 'completed', conclusion: 'success', ...overrides }; };
 
 function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteRef = async () => {}, resolveRef = async () => sha, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '' } = {}) {
@@ -51,7 +52,7 @@ test('candidate requests one dispatch run on its isolated ref and records the pr
   const candidateRun = (branch) => run({ event: 'workflow_dispatch', head_branch: branch, display_title: `Remote agent verification (candidate) for ${branch}` });
   let dispatched = 0;
   const h = harness({
-    downloadVerdict: async () => ({ ...pass, profile: 'candidate' }),
+    downloadVerdict: async () => candidatePass,
     listRuns: async (_repo, branch, event) => { assert.equal(event, 'workflow_dispatch'); return [candidateRun(branch)]; },
   });
   h.executors.gh.dispatchRun = async (_repo, ref, profile) => { dispatched += 1; assert.match(ref, /^verify-candidate\//); assert.equal(profile, 'candidate'); };

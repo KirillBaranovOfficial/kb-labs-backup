@@ -513,6 +513,28 @@ func TestSelectedCheckCountsOnlyApplicablePackagePairs(t *testing.T) {
 	}
 }
 
+func TestSelectedCheckPackagesUsesDeclaredReleaseLaneAndAllowsExplicitInternalPackage(t *testing.T) {
+	ws := &workspace.Workspace{Packages: []workspace.Package{
+		{Name: "@acme/host"},
+		{Name: "@acme/runner", ReleaseLane: "internal-tool"},
+	}}
+	if got := selectedCheckPackages(ws, ""); len(got) != 1 || got[0].Name != "@acme/host" {
+		t.Fatalf("default package checks = %#v, want only gating package", got)
+	}
+	if got := selectedCheckPackages(ws, "@acme/runner"); len(got) != 1 || got[0].Name != "@acme/runner" {
+		t.Fatalf("explicit internal-tool checks = %#v, want runner", got)
+	}
+}
+
+func TestCandidateCheckSelectionRetainsNonBoundaryPackageRules(t *testing.T) {
+	cfg := &config.DevkitConfig{Presets: map[string]config.Preset{"node-lib": {Language: "typescript"}}}
+	ws := &workspace.Workspace{Packages: []workspace.Package{{Name: "@acme/host", Category: "ts-lib", Preset: "node-lib"}}}
+	counts := selectedCheckCounts(ws, cfg, checks.Default(), nil, "")
+	if counts["ts-lib"] == 0 || counts["workspace"] == 0 {
+		t.Fatalf("candidate check counts = %#v, want package_json and workspace checks", counts)
+	}
+}
+
 // case: S-179.27
 func TestWorkspaceScopedCheckCountIsAnchoredOnce(t *testing.T) {
 	cfg := &config.DevkitConfig{
