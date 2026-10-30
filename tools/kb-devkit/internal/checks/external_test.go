@@ -2,8 +2,11 @@ package checks
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +15,10 @@ import (
 	"github.com/kb-labs/devkit/internal/testdeadline"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
+
+func resultFileEnvExpansion() string {
+	return `"$` + ExternalCheckResultFileEnv + `"`
+}
 
 // case: S-179.27
 func TestWorkspaceExternalCheckFailsAtDeclaredExecutionBudget(t *testing.T) {
@@ -46,20 +53,23 @@ func TestExternalCommandCheckAndFix(t *testing.T) {
 	}
 
 	script := filepath.Join(root, "external-check.sh")
-	if err := os.WriteFile(script, []byte(`#!/bin/sh
+	body := `#!/bin/sh
 if [ "$KB_DEVKIT_MODE" = "fix" ]; then
   if [ "$KB_DEVKIT_DRY_RUN" != "true" ]; then
     echo "# demo" > "$KB_DEVKIT_PACKAGE_DIR/README.md"
   fi
-  printf '{"actions":["created README.md"]}\n'
+  printf '{"issues":[]}\n' > __RESULT_FILE_REDIRECT__
   exit 0
 fi
 if [ ! -f "$KB_DEVKIT_PACKAGE_DIR/README.md" ]; then
-  printf '{"issues":[{"check":"external-readme","severity":"error","message":"README missing","file":"%s/README.md","fix":"create README.md","capability":"scaffoldable"}]}\n' "$KB_DEVKIT_PACKAGE_DIR"
+  printf '{"issues":[{"check":"external-readme","severity":"error","message":"README missing","file":"%s/README.md","fix":"create README.md","capability":"scaffoldable"}]}' "$KB_DEVKIT_PACKAGE_DIR" > __RESULT_FILE_REDIRECT__
 else
-  printf '{"issues":[]}\n'
+  printf '{"issues":[]}' > __RESULT_FILE_REDIRECT__
 fi
-`), 0o755); err != nil {
+`
+
+	body = strings.ReplaceAll(body, "__RESULT_FILE_REDIRECT__", resultFileEnvExpansion())
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
 
@@ -129,7 +139,7 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 	payloadPath := filepath.Join(root, "payload.json")
 	callsPath := filepath.Join(root, "calls.txt")
 	scriptPath := filepath.Join(root, "check.sh")
-	script := "#!/bin/sh\ncat > '" + payloadPath + "'\nprintf x >> '" + callsPath + "'\nprintf '{\"issues\":[]}\\n'\n"
+	script := "#!/bin/sh\ncat > '" + payloadPath + "'\nprintf x >> '" + callsPath + "'\nprintf '{\"issues\":[]}' > " + resultFileEnvExpansion() + "\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
@@ -211,7 +221,7 @@ func TestBuildSkipsDisabledOrMismatchedExternalChecks(t *testing.T) {
 func TestExternalCheckHonorsCategoryFilter(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"adapter-manifest\",\"severity\":\"error\",\"message\":\"reported\"}]}\\n'\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"adapter-manifest\",\"severity\":\"error\",\"message\":\"reported\"}]}' > "+resultFileEnvExpansion()+"\n"), 0o755); err != nil {
 		t.Fatalf("write check script: %v", err)
 	}
 	cfg := &config.DevkitConfig{
@@ -238,7 +248,7 @@ func TestExternalCheckUsesCallerToolPath(t *testing.T) {
 		t.Fatalf("mkdir bin: %v", err)
 	}
 	node := filepath.Join(binDir, "node")
-	if err := os.WriteFile(node, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"tool-path\",\"severity\":\"error\",\"message\":\"caller node selected\"}]}\\n'\n"), 0o755); err != nil {
+	if err := os.WriteFile(node, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"tool-path\",\"severity\":\"error\",\"message\":\"caller node selected\"}]}' > "+resultFileEnvExpansion()+"\n"), 0o755); err != nil {
 		t.Fatalf("write fake node: %v", err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+"/bin:/usr/bin")
@@ -260,7 +270,7 @@ func TestExternalCheckCrashIsNotReportedAsAStandardsFinding(t *testing.T) {
 	if len(issues) != 1 || !issues[0].CheckFailure || issues[0].Check != "adapter-manifest" {
 		t.Fatalf("issues = %#v, want a typed external-check failure", issues)
 	}
-	if issues[0].Cause != "external command exited with status 1" || issues[0].Message == "node:fs:441 raw stack details" {
+	if !strings.Contains(issues[0].Cause, "result file") || !strings.Contains(issues[0].Cause, "adapter-manifest") || issues[0].Message == "node:fs:441 raw stack details" {
 		t.Fatalf("failure exposed raw process output: %#v", issues[0])
 	}
 }
@@ -268,7 +278,7 @@ func TestExternalCheckCrashIsNotReportedAsAStandardsFinding(t *testing.T) {
 func TestExternalCheckDecodeFailureRetainsSuccessfulProcessExitStatus(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{truncated result'\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{truncated result' > "+resultFileEnvExpansion()+"\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
 	rule := &externalRule{name: "test-pyramid", run: script, phase: "check", scope: "workspace", workspaceRoot: root}
@@ -279,12 +289,54 @@ func TestExternalCheckDecodeFailureRetainsSuccessfulProcessExitStatus(t *testing
 	if !issues[0].FailureExitCodeKnown || issues[0].FailureExitCode != 0 {
 		t.Fatalf("exit status = %d (known %t), want the completed process status 0", issues[0].FailureExitCode, issues[0].FailureExitCodeKnown)
 	}
+	if !strings.Contains(issues[0].Cause, "test-pyramid") || !strings.Contains(issues[0].Cause, "result file") {
+		t.Fatalf("cause = %q, want check name and invalid result-file problem", issues[0].Cause)
+	}
+}
+
+func TestExternalCheckReadsResultFileAfterLargeStdoutAndImmediateExit(t *testing.T) {
+	root := t.TempDir()
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate external check test source")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(testFile), "../../../.."))
+	helperPath := filepath.Join(repoRoot, "scripts/checks/lib/check-result.mjs")
+	helperURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(helperPath)}).String()
+	script := filepath.Join(root, "check.mjs")
+	body := "import { writeCheckResult } from " + strconv.Quote(helperURL) + ";\n" +
+		"writeCheckResult([{check:'large-output',severity:'warning',message:'result survived'}]);\n" +
+		"process.stdout.write('x'.repeat(204800));\nprocess.exit(0);\n"
+	if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
+		t.Fatalf("write check script: %v", err)
+	}
+	rule := &externalRule{name: "large-output", run: "node " + strconv.Quote(script), phase: "check", scope: "workspace", workspaceRoot: root}
+	issues := rule.CheckWorkspace(&workspace.Workspace{Root: root})
+	if len(issues) != 1 || issues[0].Message != "result survived" {
+		t.Fatalf("issues = %#v, want result from file despite 200 KiB stdout", issues)
+	}
+}
+
+func TestExternalCheckMissingResultFileNamesCheckAndFile(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'human diagnostic only\\n'\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write check script: %v", err)
+	}
+	rule := &externalRule{name: "missing-result", run: script, phase: "check", scope: "workspace", workspaceRoot: root}
+	issues := rule.CheckWorkspace(&workspace.Workspace{Root: root})
+	if len(issues) != 1 || !issues[0].CheckFailure || issues[0].Check != "missing-result" {
+		t.Fatalf("issues = %#v, want named external check failure", issues)
+	}
+	if !strings.Contains(issues[0].Cause, "missing-result") || !strings.Contains(issues[0].Cause, "result") {
+		t.Fatalf("cause = %q, want check and result-file problem", issues[0].Cause)
+	}
 }
 
 func TestExternalCheckRetainsIssuesWhenCommandFails(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "check.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"ci-clean-machine-lanes\",\"severity\":\"error\",\"message\":\"journey claim failed\",\"fix\":\"Rerun with: kb-devkit check --only ci-clean-machine-lanes\"}]}\\n'\nexit 1\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"ci-clean-machine-lanes\",\"severity\":\"error\",\"message\":\"journey claim failed\",\"fix\":\"Rerun with: kb-devkit check --only ci-clean-machine-lanes\"}]}' > "+resultFileEnvExpansion()+"\nexit 1\n"), 0o755); err != nil {
 		t.Fatalf("write check script: %v", err)
 	}
 	rule := &externalRule{name: "ci-clean-machine-lanes", run: script, phase: "check", scope: "workspace", workspaceRoot: root}
