@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestStartProcessGroupAndKillTreeKillsGrandchild(t *testing.T) {
@@ -74,7 +76,7 @@ func TestDetachedChildSurvivesLauncherExit(t *testing.T) {
 	if !processExists(pid) {
 		t.Fatalf("detached child %d did not survive launcher exit", pid)
 	}
-	if session, err := syscall.Getsid(pid); err != nil || session != pid {
+	if session, err := unix.Getsid(pid); err != nil || session != pid {
 		t.Fatalf("detached child session = %d, err=%v; want its own session", session, err)
 	}
 }

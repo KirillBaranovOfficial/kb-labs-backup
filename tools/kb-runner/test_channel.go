@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
 )
 
 const (
@@ -206,12 +205,11 @@ func boundedTail(source []string, markTruncation bool) []string {
 }
 
 type testExecution struct {
-	Request            TestRequest
-	JobID              string
-	RequestID          string
-	Stream             string
-	State              string
-	HostResourceSource proc.HostResourceSource
+	Request   TestRequest
+	JobID     string
+	RequestID string
+	Stream    string
+	State     string
 }
 
 type testExecutor interface {
@@ -224,11 +222,8 @@ func (execute testExecutorFunc) Execute(ctx context.Context, execution testExecu
 	return execute(ctx, execution)
 }
 
-func newTestChannelExecutor(source proc.HostResourceSource) testExecutor {
-	return testExecutorFunc(func(ctx context.Context, execution testExecution) testResult {
-		execution.HostResourceSource = source
-		return executeTestRequest(ctx, execution)
-	})
+func newTestChannelExecutor() testExecutor {
+	return testExecutorFunc(executeTestRequest)
 }
 
 type testChannelRefusal struct {
@@ -300,7 +295,7 @@ func parseTestRequest(worktree, requestDir string, args []string) (TestRequest, 
 	if len(args) < 1 || args[0] != "go" {
 		return refuse("kb-test accepts only the go test tool")
 	}
-	root, err := filepath.EvalSymlinks(worktree)
+	root, err := canonicalSandboxPath(worktree)
 	if err != nil {
 		return refuse("job worktree is not an existing canonical directory")
 	}
@@ -359,7 +354,7 @@ func parseTestRequest(worktree, requestDir string, args []string) (TestRequest, 
 	if len(packages) == 0 {
 		packages = []string{"."}
 	}
-	cwd, err := filepath.EvalSymlinks(requestDir)
+	cwd, err := canonicalSandboxPath(requestDir)
 	if err != nil || !pathWithin(root, cwd) {
 		return refuse("requesting directory is outside the job worktree")
 	}
@@ -396,7 +391,7 @@ func parseTestRequest(worktree, requestDir string, args []string) (TestRequest, 
 			return refuse("package path resolves outside the selected Go module")
 		}
 		probe := strings.TrimSuffix(resolved, string(filepath.Separator)+"...")
-		canonical, resolveErr := filepath.EvalSymlinks(probe)
+		canonical, resolveErr := canonicalSandboxPath(probe)
 		if resolveErr != nil {
 			return refuse("package path cannot be resolved inside the selected Go module")
 		}
@@ -405,7 +400,7 @@ func parseTestRequest(worktree, requestDir string, args []string) (TestRequest, 
 		}
 		resolvedPackages = append(resolvedPackages, item)
 	}
-	request.Module, err = filepath.EvalSymlinks(module)
+	request.Module, err = canonicalSandboxPath(module)
 	if err != nil {
 		return refuse("Go module path cannot be canonicalized")
 	}
@@ -439,7 +434,7 @@ func (broker *testChannelBroker) handle(ctx context.Context, request testRequest
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read outside test channel state switch: %w", err)
 	}
-	worktree, err := filepath.EvalSymlinks(broker.worktree)
+	worktree, err := canonicalSandboxPath(broker.worktree)
 	if err != nil {
 		return testChannelRefusal{Code: "KB_RUNTIME_INPUT_INVALID", Cause: "job worktree is unavailable"}
 	}

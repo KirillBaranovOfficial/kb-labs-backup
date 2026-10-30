@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 func TestHygieneKeepsActiveStreamTestCacheAndReapsTerminalStreamCache(t *testing.T) {
@@ -80,6 +80,25 @@ func TestHygieneLivenessUsesSchedulerStateAndObservedWorktreePath(t *testing.T) 
 	}
 }
 
+func TestHygieneUnreadableProcessBlocksOnlyWithVerifiedCandidatePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worker")
+	for _, test := range []struct {
+		name, argv string
+		wantLive   bool
+	}{
+		{name: "unrelated unreadable cwd", argv: strings.Join([]string{"systemd", "--user"}, "\x00")},
+		{name: "absolute candidate argument", argv: strings.Join([]string{"runner", "--workdir", path}, "\x00"), wantLive: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			process := processInfo{pid: 19, identity: "start-19", command: "process", argv: test.argv, cwdError: "permission denied"}
+			live, err := streamIsLive("worker", path, nil, nil, []processInfo{process})
+			if err != nil || live != test.wantLive {
+				t.Fatalf("candidate liveness = %t, %v; want %t", live, err, test.wantLive)
+			}
+		})
+	}
+}
+
 func TestHygieneKeepsQueuedZeroCommitStreamLive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queued-stream")
 	states := map[string]SchedulerStream{
@@ -124,7 +143,7 @@ func TestWorktreeSweepSkipsSharedLeaseHolder(t *testing.T) {
 	}()
 	report := hygieneReport{Actions: []hygieneAction{}, eventRoot: root}
 	candidate := ownedWorktree{gitWorktree: gitWorktree{Path: worktree, Branch: "agent/worker"}, ResolvedPath: worktree}
-	if err := sweepWorktreeCandidate(hygieneOptions{Root: root, Integration: integration}, root, integration, candidate, nil, nil, &report); err != nil {
+	if err := sweepWorktreeCandidate(hygieneOptions{Root: root, Integration: integration}, root, integration, candidate, nil, nil, livenessSnapshot{}, &report); err != nil {
 		t.Fatal(err)
 	}
 	if !hasHygieneActionWithCause(report, "worktree", "skipped", "owned worktree has an active runner lease") {
@@ -397,6 +416,52 @@ func TestHygieneDirtyRetiredWorktreeArchivesBeforeRemoval(t *testing.T) {
 		}
 	}
 	assertTarReadable(t, filepath.Join(archive, "untracked.tgz"))
+}
+
+// case: S-276.6
+func TestUnreadableRelativeArgvStillArchivesDirtyRetiredWorktree(t *testing.T) {
+	root, integration := hygieneGitFixture(t)
+	worktree := filepath.Join(root, "x-unreadable-cwd")
+	gitTest(t, integration, "worktree", "add", "-b", "agent/x-unreadable-cwd", worktree, "HEAD")
+	if err := os.WriteFile(filepath.Join(worktree, "tracked.txt"), []byte("modified\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "loose.txt"), []byte("untracked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(root, "logs", "runner")
+	store := newSchedulerStore(state)
+	stream := SchedulerStream{Stream: "x-unreadable-cwd", State: SchedulerDone, ChangedAt: time.Now().Add(-72 * time.Hour)}
+	if err := store.writeJSON(store.streamPath(stream.Stream), stream); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := processSnapshotFromEntries([]proc.ProcessInventoryEntry{{
+		PID: 45, UID: uint32(os.Getuid()), Identity: "process-start", Command: "go test",
+		Argv: []string{"go", "test", "./..."}, CwdError: "permission denied",
+	}}, uint32(os.Getuid()))
+	report := hygieneReport{Actions: []hygieneAction{}, eventRoot: root}
+	candidate := ownedWorktree{gitWorktree: gitWorktree{Path: worktree, Branch: "agent/x-unreadable-cwd"}, ResolvedPath: worktree}
+	if err := sweepWorktreeCandidate(hygieneOptions{Root: root, State: state, Integration: integration, Now: time.Now()}, root, integration, candidate, map[string]SchedulerStream{stream.Stream: stream}, nil, snapshot, &report); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(worktree); !os.IsNotExist(err) {
+		t.Fatalf("dirty retired worktree with unreadable relative-argv process still exists: %v; actions=%+v", err, report.Actions)
+	}
+	archive := filepath.Join(root, "reports", "abandoned", stream.Stream)
+	for _, name := range []string{"tracked.diff", "untracked.list", "untracked.tgz", "head"} {
+		if _, err := os.Stat(filepath.Join(archive, name)); err != nil {
+			t.Fatalf("unreadable-process path archive missing %s: %v", name, err)
+		}
+	}
+	diff, err := os.ReadFile(filepath.Join(archive, "tracked.diff"))
+	if err != nil || !strings.Contains(string(diff), "modified") {
+		t.Fatalf("unreadable-process archive tracked diff lacks the edit: %s, %v", diff, err)
+	}
+	listing, err := os.ReadFile(filepath.Join(archive, "untracked.list"))
+	if err != nil || !strings.Contains(string(listing), "loose.txt") {
+		t.Fatalf("unreadable-process archive manifest lacks loose.txt: %s, %v", listing, err)
+	}
+	assertTarFileContent(t, filepath.Join(archive, "untracked.tgz"), "loose.txt", "untracked\n")
 }
 
 // case: S-276.2
@@ -1280,4 +1345,39 @@ func assertTarReadable(t *testing.T, archive string) {
 	if _, err := tar.NewReader(gz).Next(); err != nil {
 		t.Fatalf("archive is not readable: %v", err)
 	}
+}
+
+func assertTarFileContent(t *testing.T, archive, name, want string) {
+	t.Helper()
+	file, err := os.Open(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	reader := tar.NewReader(gz)
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read archive entry: %v", err)
+		}
+		if filepath.Base(header.Name) == name {
+			contents, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatalf("read archived %s: %v", name, err)
+			}
+			if string(contents) != want {
+				t.Fatalf("archived %s = %q, want %q", name, contents, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("archive %s does not contain %s", archive, name)
 }

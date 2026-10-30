@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 // case: S-237.129

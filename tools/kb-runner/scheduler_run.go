@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 type schedulerPolicy struct {
@@ -652,10 +652,7 @@ func (options schedulerRunOptions) jobSupervisor() schedulerJobSupervisor {
 	if options.supervisor != nil {
 		return options.supervisor
 	}
-	if options.root.supervisor != nil {
-		return options.root.supervisor
-	}
-	return clikitSchedulerSupervisor{}
+	return options.root.jobSupervisor()
 }
 
 func (root runnerRoot) jobSupervisor() schedulerJobSupervisor {

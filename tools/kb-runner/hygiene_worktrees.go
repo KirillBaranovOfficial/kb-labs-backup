@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 type gitWorktree struct{ Path, Branch string }
@@ -79,26 +79,17 @@ func sweepWorktrees(options hygieneOptions, report *hygieneReport) error {
 		}
 		candidates = append(candidates, ownedWorktree{gitWorktree: worktree, ResolvedPath: path})
 	}
-	var snapshot livenessSnapshot
-	if len(candidates) > 0 {
-		snapshot, err = readProcessSnapshot()
-		if err != nil {
-			return err
-		}
-		if err := reportSnapshotObservations(root, snapshot, report); err != nil {
-			return err
-		}
-		if len(snapshot.UnreadableOwned) > 0 {
-			return nil
-		}
-	}
 	for _, candidate := range candidates {
 		if options.Context != nil {
 			if err := options.Context.Err(); err != nil {
 				return err
 			}
 		}
-		if err := sweepWorktreeCandidate(options, root, integration, candidate, streamState, activeWorktrees, report); errors.Is(err, errWorktreeRuleUnsafe) {
+		snapshot, err := readProcessSnapshot()
+		if err != nil {
+			return err
+		}
+		if err := sweepWorktreeCandidate(options, root, integration, candidate, streamState, activeWorktrees, snapshot, report); errors.Is(err, errWorktreeRuleUnsafe) {
 			return nil
 		} else if err != nil {
 			reportHygieneAlert(report, "worktree", candidate.Path, err)
@@ -125,14 +116,14 @@ func reportSnapshotObservations(root string, snapshot livenessSnapshot, report *
 		if cause == "" {
 			cause = "argv was not verified"
 		}
-		if err := appendHygieneAction(report, hygieneAction{Rule: "worktree", Path: root, Action: "alert", Cause: fmt.Sprintf("same-uid process pid=%d command=%q cwd=%q is unreadable (%s); worktree removals skipped this round", process.pid, process.command, process.cwd, cause)}); err != nil {
+		if err := appendHygieneAction(report, hygieneAction{Rule: "worktree", Path: root, Action: "alert", Cause: fmt.Sprintf("same-uid process pid=%d command=%q cwd=%q is unreadable (%s); candidate checks require a verified path or runner lease", process.pid, process.command, process.cwd, cause)}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func sweepWorktreeCandidate(options hygieneOptions, root, integration string, candidate ownedWorktree, states map[string]SchedulerStream, active []string, report *hygieneReport) (returnErr error) {
+func sweepWorktreeCandidate(options hygieneOptions, root, integration string, candidate ownedWorktree, states map[string]SchedulerStream, active []string, snapshot livenessSnapshot, report *hygieneReport) (returnErr error) {
 	path, branch := candidate.ResolvedPath, candidate.Branch
 	streamName := strings.TrimPrefix(branch, "agent/")
 	leasePath := worktreeLeasePath(root, path)
@@ -144,17 +135,11 @@ func sweepWorktreeCandidate(options hygieneOptions, root, integration string, ca
 		return appendHygieneAction(report, hygieneAction{Rule: "worktree", Path: path, Action: "skipped", Cause: "owned worktree has an active runner lease"})
 	}
 	defer func() { returnErr = errors.Join(returnErr, lease.Close()) }()
-	snapshot, err := readProcessSnapshot()
-	if err != nil {
-		return err
-	}
 	if err := reportSnapshotObservations(root, snapshot, report); err != nil {
 		return err
 	}
-	if len(snapshot.UnreadableOwned) > 0 {
-		return errWorktreeRuleUnsafe
-	}
-	live, err := streamIsLive(streamName, path, states, active, snapshot.Processes)
+	processes := append(snapshot.Processes, snapshot.UnreadableOwned...)
+	live, err := streamIsLive(streamName, path, states, active, processes)
 	if err != nil {
 		return err
 	}
@@ -364,11 +349,18 @@ func streamIsLive(stream, path string, states map[string]SchedulerStream, active
 		}
 	}
 	for _, process := range processes {
+		if process.unverified || process.observationError != "" {
+			continue
+		}
 		if process.cwd == path || withinRoot(path, process.cwd) {
 			return true, nil
 		}
 		for _, arg := range strings.Split(process.argv, "\x00") {
 			candidate := arg
+			// On Linux, unreadable same-UID cwd indicates a non-dumpable process; ordinary human shells remain observable. Dirty candidates are archived before removal, and clean candidates have already been merged into Git.
+			if process.cwdError != "" && !filepath.IsAbs(candidate) {
+				continue
+			}
 			if !filepath.IsAbs(candidate) {
 				candidate = filepath.Join(process.cwd, candidate)
 			}

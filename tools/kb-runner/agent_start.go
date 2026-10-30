@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 const defaultAgentStall = 30 * time.Minute
@@ -50,6 +50,12 @@ func agentCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, e
 }
 
 func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	return agentStartCommandWithContext(ctx, root, args, out, errOut)
+}
+
+func agentStartCommandWithContext(ctx context.Context, root runnerRoot, args []string, out, errOut io.Writer) (int, error) {
 	fs := flag.NewFlagSet("agent start", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	state := fs.String("state", defaultRunnerState(), "durable runner state directory")
@@ -131,7 +137,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 				return failAgentJob(store, id, PhaseAdmission, ReasonSetup, root, finalPath, fmt.Errorf("invalid --min-free bytes: %w", err))
 			}
 		}
-		helper, err := os.Executable()
+		helper, err := root.executablePath()
 		if err != nil {
 			return failAgentJob(store, id, PhaseWorktree, ReasonSetup, root, finalPath, fmt.Errorf("locate agent process owner: %w", err))
 		}
@@ -150,8 +156,6 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 		if err != nil {
 			return failAgentJob(store, id, PhaseAdmission, ReasonSetup, root, finalPath, fmt.Errorf("resolve agent worktree lease: %w", err))
 		}
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
 		run, err := root.jobSupervisor().Start(ctx, proc.Config{StateDir: *state, Tag: "agent:" + id, LatestTag: "agent:" + *stream, Stall: *stall, StdoutPath: stdoutPath, StderrPath: stderrPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, CleanEnv: true, Env: workerEnv, Keep: []string{stdoutPath, stderrPath}, SharedLeasePaths: leasePaths, Command: append([]string{helper}, argsForWorker...)})
 		if err != nil {
 			return failAgentJob(store, id, PhaseAdmission, ReasonSetup, root, finalPath, fmt.Errorf("agent process admission failed: %w", err))
@@ -275,7 +279,7 @@ func agentStartCommand(root runnerRoot, args []string, out, errOut io.Writer) (i
 	channelContext, stopTestChannel := context.WithCancel(context.Background())
 	channelErrors := make(chan error, 1)
 	if spool != "" {
-		broker := &testChannelBroker{state: *state, jobID: id, stream: *stream, worktree: *workdir, spool: spool, executor: newTestChannelExecutor(nil)}
+		broker := &testChannelBroker{state: *state, jobID: id, stream: *stream, worktree: *workdir, spool: spool, executor: newTestChannelExecutor()}
 		go func() { channelErrors <- broker.serve(channelContext) }()
 	}
 	defer stopTestChannel()
