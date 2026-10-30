@@ -10,7 +10,7 @@ import { writeCheckResult } from '../../../../../scripts/checks/lib/check-result
  *     Human-readable terminal output, exit 0/1.
  *
  *   DEVKIT  (via kb-devkit custom_check, language: typescript):
- *     Triggered when KB_DEVKIT_MODE is set. Self-filters to @kb-labs/web-site only.
+ *     Triggered when KB_DEVKIT_MODE is set. Its anchor package is declared in devkit.yaml.
  *     Output: {"issues":[...]} to stdout.
  *
  * Checks (per static page.tsx under app/[locale]/):
@@ -44,15 +44,6 @@ const NO_COLOR    = process.env.CI === 'true' || process.argv.includes('--no-col
 function exitWithJson(obj) {
   writeCheckResult(obj.issues);
   process.exit(0);
-}
-
-// ─── Self-filter (devkit only) ────────────────────────────────────────────────
-
-if (DEVKIT_MODE) {
-  const pkgName = process.env.KB_DEVKIT_PACKAGE_NAME ?? '';
-  if (pkgName !== '@kb-labs/web-site') {
-    exitWithJson({ issues: [] });
-  }
 }
 
 // ─── Paths ────────────────────────────────────────────────────────────────────

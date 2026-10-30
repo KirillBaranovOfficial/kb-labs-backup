@@ -19,16 +19,18 @@ import (
 )
 
 type externalRule struct {
-	name          string
-	run           string
-	fix           string
-	phase         string
-	language      string
-	categories    []string
-	scope         string
-	workspaceRoot string
-	checkConfig   config.CheckPackConfig
-	timeout       time.Duration
+	name           string
+	run            string
+	fix            string
+	phase          string
+	language       string
+	categories     []string
+	anchorPackages []string
+	requiresBuild  []string
+	scope          string
+	workspaceRoot  string
+	checkConfig    config.CheckPackConfig
+	timeout        time.Duration
 }
 
 type externalInput struct {
@@ -86,7 +88,12 @@ type externalOutputError struct {
 	err        error
 }
 
-func (e *externalOutputError) Error() string { return e.err.Error() }
+func (e *externalOutputError) Error() string {
+	if e.stderrTail == "" {
+		return e.err.Error()
+	}
+	return fmt.Sprintf("%s; stderr tail: %s", e.err, e.stderrTail)
+}
 func (e *externalOutputError) Unwrap() error { return e.err }
 
 func (r *externalRule) Name() string  { return r.name }
@@ -107,7 +114,18 @@ func (r *externalRule) appliesToCategory(category string) bool {
 // AppliesToPackage is the package-level category predicate used by execution,
 // selection validation, and reporting through Registry.ApplicableRulesFor.
 func (r *externalRule) AppliesToPackage(pkg workspace.Package) bool {
-	return r.scope == "workspace" || r.appliesToCategory(pkg.Category)
+	if r.scope == "workspace" {
+		return false
+	}
+	if len(r.anchorPackages) > 0 {
+		for _, anchor := range r.anchorPackages {
+			if pkg.Name == anchor {
+				return r.appliesToCategory(pkg.Category)
+			}
+		}
+		return false
+	}
+	return r.appliesToCategory(pkg.Category)
 }
 
 // ApplicableCategories describes a package-scoped external check's category filter.

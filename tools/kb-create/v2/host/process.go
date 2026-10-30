@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -995,22 +996,90 @@ func RootConflict(platformRoot string, pid int) *diag.Diag {
 
 func listenerOwner(port string) portOwner {
 	output, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-Fp", "-Fc").Output()
+	var owner portOwner
+	if err == nil {
+		for _, line := range strings.Split(string(output), "\n") {
+			if len(line) < 2 {
+				continue
+			}
+			switch line[0] {
+			case 'p':
+				owner.PID = line[1:]
+			case 'c':
+				owner.Command = line[1:]
+			}
+		}
+	}
+	if owner.PID != "" && owner.Command != "" {
+		return owner
+	}
+	return linuxListenerOwner(port)
+}
+
+func linuxListenerOwner(port string) portOwner {
+	if runtime.GOOS != "linux" {
+		return portOwner{}
+	}
+	portNumber, err := strconv.ParseUint(port, 10, 16)
 	if err != nil {
 		return portOwner{}
 	}
-	var owner portOwner
-	for _, line := range strings.Split(string(output), "\n") {
-		if len(line) < 2 {
+	wantedPort := fmt.Sprintf("%04X", portNumber)
+	inodes := make(map[string]struct{})
+	for _, table := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		data, err := os.ReadFile(table)
+		if err != nil {
 			continue
 		}
-		switch line[0] {
-		case 'p':
-			owner.PID = line[1:]
-		case 'c':
-			owner.Command = line[1:]
+		for _, line := range strings.Split(string(data), "\n")[1:] {
+			fields := strings.Fields(line)
+			if len(fields) < 10 || fields[3] != "0A" {
+				continue
+			}
+			localAddress := fields[1]
+			separator := strings.LastIndexByte(localAddress, ':')
+			if separator < 0 || strings.ToUpper(localAddress[separator+1:]) != wantedPort {
+				continue
+			}
+			inodes[fields[9]] = struct{}{}
 		}
 	}
-	return owner
+	if len(inodes) == 0 {
+		return portOwner{}
+	}
+	processes, err := os.ReadDir("/proc")
+	if err != nil {
+		return portOwner{}
+	}
+	for _, process := range processes {
+		if !process.IsDir() {
+			continue
+		}
+		if _, err := strconv.Atoi(process.Name()); err != nil {
+			continue
+		}
+		fdEntries, err := os.ReadDir(filepath.Join("/proc", process.Name(), "fd"))
+		if err != nil {
+			continue
+		}
+		for _, fd := range fdEntries {
+			target, err := os.Readlink(filepath.Join("/proc", process.Name(), "fd", fd.Name()))
+			if err != nil || !strings.HasPrefix(target, "socket:[") || !strings.HasSuffix(target, "]") {
+				continue
+			}
+			if _, listening := inodes[strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")]; !listening {
+				continue
+			}
+			commandBytes, _ := os.ReadFile(filepath.Join("/proc", process.Name(), "cmdline"))
+			command := strings.TrimSpace(strings.ReplaceAll(strings.TrimRight(string(commandBytes), "\x00"), "\x00", " "))
+			if command == "" {
+				commandBytes, _ = os.ReadFile(filepath.Join("/proc", process.Name(), "comm"))
+				command = strings.TrimSpace(string(commandBytes))
+			}
+			return portOwner{PID: process.Name(), Command: command}
+		}
+	}
+	return portOwner{}
 }
 
 // CheckPorts reports conflicts in the resolved service graph before package

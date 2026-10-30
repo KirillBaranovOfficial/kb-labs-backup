@@ -228,13 +228,15 @@ type yamlRun struct {
 }
 
 type yamlCustomCheck struct {
-	Name       string   `yaml:"name"`
-	Run        string   `yaml:"run"`
-	Fix        string   `yaml:"fix"`
-	On         []string `yaml:"on"`
-	Language   string   `yaml:"language"`
-	Categories []string `yaml:"categories"`
-	Scope      string   `yaml:"scope"`
+	Name           string   `yaml:"name"`
+	Run            string   `yaml:"run"`
+	Fix            string   `yaml:"fix"`
+	On             []string `yaml:"on"`
+	Language       string   `yaml:"language"`
+	Categories     []string `yaml:"categories"`
+	AnchorPackages []string `yaml:"anchor_packages"`
+	RequiresBuild  []string `yaml:"requires_build"`
+	Scope          string   `yaml:"scope"`
 }
 
 type yamlChecks struct {
@@ -460,13 +462,15 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 	// Custom checks
 	for _, c := range raw.Custom {
 		cfg.Custom = append(cfg.Custom, CustomCheck{
-			Name:       c.Name,
-			Run:        c.Run,
-			Fix:        c.Fix,
-			On:         c.On,
-			Language:   c.Language,
-			Categories: c.Categories,
-			Scope:      c.Scope,
+			Name:           c.Name,
+			Run:            c.Run,
+			Fix:            c.Fix,
+			On:             c.On,
+			Language:       c.Language,
+			Categories:     c.Categories,
+			AnchorPackages: c.AnchorPackages,
+			RequiresBuild:  c.RequiresBuild,
+			Scope:          c.Scope,
 		})
 	}
 

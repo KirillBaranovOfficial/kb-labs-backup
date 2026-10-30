@@ -50,16 +50,18 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 			continue
 		}
 		r.Register(&externalRule{
-			name:          c.Name,
-			run:           c.Run,
-			fix:           c.Fix,
-			phase:         phase,
-			language:      c.Language,
-			categories:    c.Categories,
-			scope:         c.Scope,
-			workspaceRoot: workspaceRoot,
-			checkConfig:   packCfg,
-			timeout:       time.Duration(cfg.Checks.TimeoutMS) * time.Millisecond,
+			name:           c.Name,
+			run:            c.Run,
+			fix:            c.Fix,
+			phase:          phase,
+			language:       c.Language,
+			categories:     c.Categories,
+			anchorPackages: c.AnchorPackages,
+			requiresBuild:  c.RequiresBuild,
+			scope:          c.Scope,
+			workspaceRoot:  workspaceRoot,
+			checkConfig:    packCfg,
+			timeout:        time.Duration(cfg.Checks.TimeoutMS) * time.Millisecond,
 		})
 	}
 	return r

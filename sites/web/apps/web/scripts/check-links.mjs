@@ -8,7 +8,7 @@ import { writeCheckResult } from '../../../../../scripts/checks/lib/check-result
  *   Human-readable output, exit 0/1.
  *
  * DEVKIT  (language: typescript, KB_DEVKIT_MODE set):
- *   Self-filters: runs only for @kb-labs/web-site; skips all other packages.
+ *   Its anchor package is declared on the custom check in devkit.yaml.
  *   Output: {"issues":[...]} to stdout.
  *
  * Checks:
@@ -73,14 +73,6 @@ function exitWithJson(obj) {
 
 function toIssue(file, line, severity, message) {
   return { check: CHECK_NAME, severity, message, file, line };
-}
-
-// ─── Devkit self-filter ───────────────────────────────────────────────────────
-
-if (DEVKIT_MODE) {
-  if ((process.env.KB_DEVKIT_PACKAGE_NAME ?? '') !== '@kb-labs/web-site') {
-    exitWithJson({ issues: [] });
-  }
 }
 
 // ─── Colors (standalone output) ───────────────────────────────────────────────

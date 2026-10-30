@@ -13,7 +13,7 @@ import { writeCheckResult } from '../../../../../scripts/checks/lib/check-result
  *   7. Owners      — every non-auto page has at least one owner defined
  *
  * Runs in two modes:
- *   Devkit (KB_DEVKIT_MODE=true) → JSON to stdout (self-filters to @kb-labs/docs-site)
+ *   Devkit (KB_DEVKIT_MODE=true) → JSON result for the declared docs-site anchor
  *   Standalone                   → human-readable output (run from docs app root)
  */
 
@@ -21,15 +21,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, basename } from 'node:path';
 
 const DEVKIT_MODE = Boolean(process.env.KB_DEVKIT_MODE);
-const PKG_NAME = process.env.KB_DEVKIT_PACKAGE_NAME ?? '';
-const DOCS_PKG = '@kb-labs/docs-site';
 
-if (DEVKIT_MODE && PKG_NAME !== DOCS_PKG) {
-  writeCheckResult([]);
-  process.exit(0);
-}
-
-const cwd = process.cwd();
+const cwd = DEVKIT_MODE ? (process.env.KB_DEVKIT_PACKAGE_DIR ?? process.cwd()) : process.cwd();
 const contentDir = join(cwd, 'content', 'en');
 const sitemapPath = join(cwd, 'sitemap.config.json');
 
