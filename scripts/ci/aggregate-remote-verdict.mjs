@@ -64,6 +64,8 @@ function devkitFailureEvidence(result) {
       const summary = `${identity} (exit code ${String(exitCode)}${logPath ? `; log ${logPath}` : ''})`;
       return outputTail ? `${summary}\n${outputTail}` : summary;
     });
+  } else if (result.name.startsWith('internal-tool-tests:shard-') && Array.isArray(result.failures) && result.failures.length) {
+    failures = result.failures;
   } else {
     const tail = result.logTail?.trim();
     failures = [tail ? `log-tail fallback: ${tail}` : 'log-tail fallback: no task output was recorded'];

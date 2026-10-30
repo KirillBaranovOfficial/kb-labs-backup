@@ -121,10 +121,11 @@ After finding directly changed packages, BFS expands through the reverse depende
 ```bash
 kb-devkit check                           # check gating packages and workspace rules
 kb-devkit check --package @acme/core     # check single package
+kb-devkit check --internal-tool-package github.com/kb-labs/kb-runner # package-scoped internal-tool checks
 kb-devkit check --json
 ```
 
-Package checks follow the declared release lane: the default check runs package rules for gating packages and workspace rules against the full workspace. Use `--package <name>` to run checks for one internal tool in its own verification lane. Rules validate the matched preset: naming, tsconfig, eslint, required scripts, deps, and files.
+Package checks follow the declared release lane: the default check runs package rules for gating packages and workspace rules against the full workspace. `--package <name>` selects one package while retaining workspace rules. `--internal-tool-package <name>` requires the selected package's category to declare `releaseLane: internal-tool` and runs package rules only; workspace checks remain in the candidate full check. Rules validate the matched preset: naming, tsconfig, eslint, required scripts, deps, and files.
 
 `check --json` returns:
 - `summary`

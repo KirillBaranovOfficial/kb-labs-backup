@@ -123,7 +123,7 @@ export async function runStage({
       const commands = [
         ['internal-tool build', './tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', packageNames.join(','), '--concurrency', '1', '--json']],
         ['internal-tool test', './tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', packageNames.join(','), '--concurrency', '1', '--json']],
-        ...packageNames.map((packageName) => [`internal-tool check ${packageName}`, './tools/kb-devkit/kb-devkit', ['check', '--package', packageName, '--json']]),
+        ...packageNames.map((packageName) => [`internal-tool check ${packageName}`, './tools/kb-devkit/kb-devkit', ['check', '--internal-tool-package', packageName, '--json']]),
       ];
       const outcomes = [];
       for (const [label, executable, commandArgs] of commands) {
