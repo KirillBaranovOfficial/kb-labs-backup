@@ -11,12 +11,19 @@ export namespace colorPolicy {
         when: string;
         result: boolean;
     }[];
-    let cases: {
+    let cases: ({
         name: string;
         tty: boolean;
         noColor: string;
-        forceColor: string | undefined;
+        forceColor: undefined;
         term: string;
         want: boolean;
-    }[];
+    } | {
+        name: string;
+        tty: boolean;
+        noColor: string;
+        forceColor: string;
+        term: string;
+        want: boolean;
+    })[];
 }

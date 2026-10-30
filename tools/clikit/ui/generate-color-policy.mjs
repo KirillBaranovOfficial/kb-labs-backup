@@ -125,7 +125,18 @@ function renderShell() {
       return `  if [ "${'${FORCE_COLOR+x}'}" = x ] && { [ "${'$'}FORCE_COLOR" = false ] || [ "${'$'}FORCE_COLOR" = 0 ]; }; then return ${result}; fi`;
     }
     if (rule.when === 'forceColorEnabled') {
-      return `  if [ "${'${FORCE_COLOR+x}'}" = x ]; then\n    case "${'$'}FORCE_COLOR" in\n      ''|true) return ${result} ;;\n      *) if awk -v value="${'$'}FORCE_COLOR" 'BEGIN { if (value ~ /^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][-+]?[0-9]+)?${'$'}/ && value + 0 >= 1) exit 0; exit 1 }'; then return ${result}; fi ;;\n    esac\n  fi`;
+      return `  if [ "${'${FORCE_COLOR+x}'}" = x ]; then
+    case "${'$'}FORCE_COLOR" in
+      ''|true) return ${result} ;;
+      false|0) ;;
+      *[!0-9.]* ) ;;
+      *.*.*|.*) ;;
+      *)
+        force_color_integer=${'$'}{FORCE_COLOR%%.*}
+        case "${'$'}force_color_integer" in *[1-9]*) return ${result} ;; esac
+        ;;
+    esac
+  fi`;
     }
     const condition = {
       noColorNonEmpty: '[ -n "${NO_COLOR:-}" ]',

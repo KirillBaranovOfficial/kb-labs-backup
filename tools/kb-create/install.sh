@@ -20,7 +20,13 @@ kb_color_enabled() {
   if [ "${FORCE_COLOR+x}" = x ]; then
     case "$FORCE_COLOR" in
       ''|true) return 0 ;;
-      *) if awk -v value="$FORCE_COLOR" 'BEGIN { if (value ~ /^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][-+]?[0-9]+)?$/ && value + 0 >= 1) exit 0; exit 1 }'; then return 0; fi ;;
+      false|0) ;;
+      *[!0-9.]* ) ;;
+      *.*.*|.*) ;;
+      *)
+        force_color_integer=${FORCE_COLOR%%.*}
+        case "$force_color_integer" in *[1-9]*) return 0 ;; esac
+        ;;
     esac
   fi
   case "${TERM:-}" in [Dd][Uu][Mm][Bb]) return 1 ;; esac

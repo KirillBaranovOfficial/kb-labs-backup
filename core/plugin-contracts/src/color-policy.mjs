@@ -54,6 +54,7 @@ export function resolveColorSupport(isTTY, noColor, forceColor, term) {
   return false;
 }
 
+/** @param {string} value */
 function forceColorEnables(value) {
   if (value === '' || value === 'true') return true;
   if (!/^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/.test(value)) return false;
