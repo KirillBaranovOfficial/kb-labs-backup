@@ -1034,10 +1034,17 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 			gatewayPort = service.Port
 		}
 	}
-	shift, foundPortRange := freePortRangeShift(t, services, minPort, maxPort-minPort+300)
-	if !foundPortRange {
-		t.Fatal("could not find a free contiguous service-port range for shim ownership regression")
+	serviceOffsets := make([]int, 0, len(services)*3)
+	for _, service := range services {
+		if service.Port == 0 {
+			continue
+		}
+		for _, installOffset := range []int{0, 100, 200} {
+			serviceOffsets = append(serviceOffsets, service.Port-gatewayPort+installOffset)
+		}
 	}
+	allocatedGatewayPort := freeLoopbackPortWithOffsets(t, serviceOffsets...)
+	shift := allocatedGatewayPort - gatewayPort
 	for i := range services {
 		oldPort := services[i].Port
 		services[i].Port += shift
@@ -1217,34 +1224,6 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 	if result := run(rootA, ownerUninstall...); !strings.Contains(result, `"shimAction": "removed"`) {
 		t.Fatalf("owner uninstall did not report shim removal: %s", result)
 	}
-}
-
-func freePortRangeShift(t *testing.T, services []contracts.Service, minPort, offsets int) (int, bool) {
-	t.Helper()
-	for base := 12000; base+offsets < 64000; base += 317 {
-		listeners := make([]net.Listener, 0, len(services)*3)
-		available := true
-		for _, offset := range []int{0, 100, 200} {
-			for _, service := range services {
-				listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", base+service.Port-minPort+offset))
-				if err != nil {
-					available = false
-					break
-				}
-				listeners = append(listeners, listener)
-			}
-			if !available {
-				break
-			}
-		}
-		for _, listener := range listeners {
-			_ = listener.Close()
-		}
-		if available {
-			return base - minPort, true
-		}
-	}
-	return 0, false
 }
 
 func TestOwnershipPublicationErrorsHaveActionableEnvelopes(t *testing.T) {

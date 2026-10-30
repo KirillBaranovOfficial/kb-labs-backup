@@ -98,6 +98,16 @@ test('candidate retains the complete kb-devkit check stage', () => {
   assert.ok(profile.buildDependentTestStages.candidate.includes('kb-devkit-check'));
 });
 
+test('result-channel rail runs as a build-dependent test stage', () => {
+  const stage = profile.stages['kb-devkit-result-channel'];
+  const matrix = createTestMatrix(['@kb-labs/core'], profile.independentTestStages.candidate, profile.buildDependentTestStages.candidate, profile.packageTestStage, profile.maxParallel);
+
+  assert.equal(stage.runner, 'executable');
+  assert.equal(stage.command, 'go');
+  assert.ok(stage.args.includes('external_check_result_channel'));
+  assert.ok(matrix.dependent.include.some(({ stage: id }) => id === 'kb-devkit-result-channel'));
+});
+
 // case: S-262.7
 test('package shards partition the kb-devkit package set once with even package counts', () => {
   const packages = Array.from({ length: 41 }, (_, index) => `@kb-labs/package-${index}`);

@@ -345,15 +345,21 @@ checks:
   timeout_ms: 5000
 custom_checks:
   - name: stderr-check
-    run: "printf 'fixture stderr detail\\n' >&2; printf 'stderr-check\\n' >> rerun.log; exit 1"
+    run: >-
+      printf 'fixture stderr detail\n' >&2; printf 'stderr-check\n' >> rerun.log;
+      printf '{"issues":[]}' > "$KB_DEVKIT_CHECK_RESULT_FILE"; exit 1
     on: [check]
     scope: workspace
   - name: stderr-check-two
-    run: "printf 'second stderr detail\\n' >&2; printf 'stderr-check-two\\n' >> rerun.log; exit 2"
+    run: >-
+      printf 'second stderr detail\n' >&2; printf 'stderr-check-two\n' >> rerun.log;
+      printf '{"issues":[]}' > "$KB_DEVKIT_CHECK_RESULT_FILE"; exit 2
     on: [check]
     scope: workspace
   - name: 'audit check; touch injected #'
-    run: "printf 'audit check; touch injected #\\n' >> rerun.log; exit 3"
+    run: >-
+      printf 'audit check; touch injected #\n' >> rerun.log;
+      printf '{"issues":[]}' > "$KB_DEVKIT_CHECK_RESULT_FILE"; exit 3
     on: [check]
     scope: workspace
 `
