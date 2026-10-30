@@ -245,6 +245,31 @@ func TestExternalCheckHonorsCategoryFilter(t *testing.T) {
 	}
 }
 
+func TestExternalCheckHonorsDeclaredAnchorPackages(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{\"issues\":[]}' > "+resultFileEnvExpansion()+"\n"), 0o755); err != nil {
+		t.Fatalf("write check script: %v", err)
+	}
+	cfg := &config.DevkitConfig{
+		Presets: map[string]config.Preset{"typescript": {Language: "typescript"}},
+		Custom:  []config.CustomCheck{{Name: "anchored", Run: script, On: []string{"check"}, Language: "typescript", AnchorPackages: []string{"@acme/site"}}},
+	}
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{
+		{Name: "@acme/site", Dir: root, Category: "site", Preset: "typescript", Language: "typescript"},
+		{Name: "@acme/library", Dir: root, Category: "ts-lib", Preset: "typescript", Language: "typescript"},
+	}}
+	registry := Build(cfg, root, "check")
+	if applicable := registry.ApplicableRulesFor(ws.Packages[0], cfg.Presets["typescript"], nil); len(applicable) == 0 || applicable[len(applicable)-1].Name() != "anchored" {
+		t.Fatalf("site rules = %#v, want anchored external check", applicable)
+	}
+	for _, rule := range registry.ApplicableRulesFor(ws.Packages[1], cfg.Presets["typescript"], nil) {
+		if rule.Name() == "anchored" {
+			t.Fatal("anchored external check applied to a non-anchor package")
+		}
+	}
+}
+
 func TestExternalCheckUsesCallerToolPath(t *testing.T) {
 	root := t.TempDir()
 	binDir := filepath.Join(root, "bin")
@@ -279,6 +304,9 @@ func TestExternalCheckCrashIsNotReportedAsAStandardsFinding(t *testing.T) {
 	}
 	if !strings.Contains(issues[0].Cause, "status 1") {
 		t.Fatalf("cause = %q, want the non-zero process exit", issues[0].Cause)
+	}
+	if !strings.Contains(issues[0].Cause, "node:fs:441 raw stack details") {
+		t.Fatalf("cause = %q, want stderr tail from the crashing check", issues[0].Cause)
 	}
 }
 
@@ -427,6 +455,19 @@ func TestExternalCheckReportsObserverErrorAfterSuccessfulExit(t *testing.T) {
 	}
 	if strings.Contains(cause, "exited with status 0") {
 		t.Fatalf("cause = %q, must not describe successful exit as the failure", cause)
+	}
+}
+
+func TestExternalOutputErrorIncludesCapturedStderrTail(t *testing.T) {
+	err := &externalOutputError{
+		stderrTail: "adapter check failed before result write",
+		err:        fmt.Errorf("read result file for external check adapter-manifest: no such file or directory"),
+	}
+	message := err.Error()
+	for _, expected := range []string{"adapter-manifest", "result file", "stderr tail", "adapter check failed before result write"} {
+		if !strings.Contains(message, expected) {
+			t.Errorf("error = %q, want %q", message, expected)
+		}
 	}
 }
 

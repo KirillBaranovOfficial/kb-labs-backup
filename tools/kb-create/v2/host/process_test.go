@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -409,6 +410,9 @@ func TestPortInUse(t *testing.T) {
 		var typed *diag.Diag
 		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Meta["port"] != fmt.Sprint(f.port) || typed.Meta["pid"] == "" || typed.Meta["command"] == "" {
 			t.Fatalf("port diagnostic lacks owner details: %#v", err)
+		}
+		if runtime.GOOS == "linux" && typed.Meta["pid"] != strconv.Itoa(os.Getpid()) {
+			t.Fatalf("port owner pid = %v, want current test process %d", typed.Meta["pid"], os.Getpid())
 		}
 		wire, marshalErr := diag.ToEnvelope(typed)
 		if marshalErr != nil {

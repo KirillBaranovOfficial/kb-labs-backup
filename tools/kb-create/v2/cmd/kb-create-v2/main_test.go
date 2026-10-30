@@ -1043,7 +1043,12 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 			serviceOffsets = append(serviceOffsets, service.Port-gatewayPort+installOffset)
 		}
 	}
-	allocatedGatewayPort := freeLoopbackPortWithOffsets(t, serviceOffsets...)
+	allocatedGatewayPort := freeLoopbackPortWithOffsetsOutsideEphemeralRange(t, serviceOffsets...)
+	for _, offset := range serviceOffsets {
+		if allocatedGatewayPort+offset >= 32768 {
+			t.Fatalf("test service port %d is inside the conventional Linux ephemeral range", allocatedGatewayPort+offset)
+		}
+	}
 	shift := allocatedGatewayPort - gatewayPort
 	for i := range services {
 		oldPort := services[i].Port
@@ -1148,6 +1153,29 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	install(rootB, false)
+	rootAReceipt, err := receipt.Read(platformRootForTest(t, rootA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootBReceipt, err := receipt.Read(platformRootForTest(t, rootB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootAPorts := make(map[string]int, len(rootAReceipt.Plan.ServiceGraph.Services))
+	for _, service := range rootAReceipt.Plan.ServiceGraph.Services {
+		rootAPorts[service.ID] = service.Port
+	}
+	for _, service := range rootBReceipt.Plan.ServiceGraph.Services {
+		if service.Port == 0 {
+			continue
+		}
+		if rootAPorts[service.ID] == 0 || service.Port != rootAPorts[service.ID]+100 {
+			t.Fatalf("root-b service %s port = %d, root-a port = %d; registry allocation must shift the graph by 100", service.ID, service.Port, rootAPorts[service.ID])
+		}
+		if service.Port >= 32768 {
+			t.Fatalf("root-b service %s port %d is inside the conventional Linux ephemeral range", service.ID, service.Port)
+		}
+	}
 	var secondaryStatus struct {
 		Data struct {
 			Shim map[string]any `json:"shim"`

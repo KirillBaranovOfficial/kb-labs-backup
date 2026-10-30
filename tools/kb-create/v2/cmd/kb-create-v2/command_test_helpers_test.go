@@ -145,6 +145,17 @@ func freeLoopbackPortWithOffset(t *testing.T, offset int) int {
 }
 
 func freeLoopbackPortWithOffsets(t *testing.T, offsets ...int) int {
+	return freeLoopbackPortWithOffsetsInRange(t, 50000, 10001, offsets...)
+}
+
+// freeLoopbackPortWithOffsetsOutsideEphemeralRange reserves fixture allocations
+// below the conventional Linux and macOS ephemeral-port ranges. Service ports
+// derived from these Gateway URLs must not overlap transient outbound sockets.
+func freeLoopbackPortWithOffsetsOutsideEphemeralRange(t *testing.T, offsets ...int) int {
+	return freeLoopbackPortWithOffsetsInRange(t, 24000, 1024, offsets...)
+}
+
+func freeLoopbackPortWithOffsetsInRange(t *testing.T, first, last int, offsets ...int) int {
 	t.Helper()
 	uniqueOffsets := make([]int, 0, len(offsets))
 	seenOffsets := make(map[int]struct{}, len(offsets))
@@ -155,7 +166,7 @@ func freeLoopbackPortWithOffsets(t *testing.T, offsets ...int) int {
 		seenOffsets[offset] = struct{}{}
 		uniqueOffsets = append(uniqueOffsets, offset)
 	}
-	for port := 50000; port > 10000 && portOffsetsFit(port, uniqueOffsets); port-- {
+	for port := first; port >= last && portOffsetsFit(port, uniqueOffsets); port-- {
 		allocatedTestPorts.Lock()
 		alreadyAllocated := false
 		for _, offset := range uniqueOffsets {

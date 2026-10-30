@@ -185,7 +185,7 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 			},
 		},
 		Custom: []yamlCustomCheck{
-			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}, Scope: "workspace"},
+			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}, AnchorPackages: []string{"@kb-labs/web-site"}, RequiresBuild: []string{"@kb-labs/core-platform"}, Scope: "workspace"},
 		},
 	}
 
@@ -210,6 +210,9 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 	}
 	if cfg.Custom[0].Scope != "workspace" {
 		t.Fatalf("mapped custom check scope = %q, want workspace", cfg.Custom[0].Scope)
+	}
+	if len(cfg.Custom[0].AnchorPackages) != 1 || cfg.Custom[0].AnchorPackages[0] != "@kb-labs/web-site" || len(cfg.Custom[0].RequiresBuild) != 1 || cfg.Custom[0].RequiresBuild[0] != "@kb-labs/core-platform" {
+		t.Fatalf("mapped package contexts = %#v, want anchor and required build package", cfg.Custom[0])
 	}
 
 	preset := mapPreset(raw.Presets["custom"])
