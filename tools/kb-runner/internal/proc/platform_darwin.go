@@ -133,6 +133,16 @@ func (osProcessSource) ParentPID(pid int) (int, error) {
 func (osProcessSource) Signal(pid int, identity string, signal syscall.Signal) error {
 	return child.SignalIdentity(clikitproc.ChildProcessObserver(), child.ProcessIdentity{PID: pid, Identity: identity}, signal)
 }
+func (osProcessSource) SignalDirectChild(process *os.Process, identity string, signal syscall.Signal) error {
+	if process == nil || process.Pid <= 0 || identity == "" {
+		return errors.New("cannot signal direct child safely: process handle and start identity are required")
+	}
+	if err := process.Signal(signal); errors.Is(err, os.ErrProcessDone) {
+		return syscall.ESRCH
+	} else {
+		return err
+	}
+}
 
 func readProcessIdentity(pid int) (string, bool, error) {
 	info, alive, err := readProcessInfo(pid)

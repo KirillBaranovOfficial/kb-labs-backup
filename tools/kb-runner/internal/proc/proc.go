@@ -397,6 +397,21 @@ type processSource interface {
 	Signal(pid int, identity string, signal syscall.Signal) error
 }
 
+type directChildSignalOwner interface {
+	SignalDirectChild(process *os.Process, identity string, signal syscall.Signal) error
+}
+
+func signalCleanupTarget(source processSource, directChild *os.Process, process Process, signal syscall.Signal) error {
+	if directChild != nil && directChild.Pid == process.PID {
+		if owner, ok := source.(directChildSignalOwner); ok {
+			// Only the keeper's unreaped direct child uses its process handle. On Darwin, non-child descendants retain the accepted identity-check/kill PID-reuse window.
+			return owner.SignalDirectChild(directChild, process.Identity, signal)
+		}
+		return fmt.Errorf("process source cannot safely signal direct child %d through its handle", directChild.Pid)
+	}
+	return source.Signal(process.PID, process.Identity, signal)
+}
+
 type containedProcessSource interface {
 	ContainedDescendants(root int, snapshot []Process) ([]Process, bool, error)
 }
@@ -479,6 +494,10 @@ func ProcessExists(pid int) (bool, error) {
 
 func killTreeWithProtectedAncestors(root int, runID string, observed []Process, protected []ProcessIdentityEvidence) treeCleanup {
 	return cleanupTreeWithProtectedSource(root, runID, observed, protected, osProcessSource{})
+}
+
+func killTreeWithProtectedAncestorsAndDirectChild(root int, runID string, observed []Process, protected []ProcessIdentityEvidence, directChild *os.Process) treeCleanup {
+	return cleanupTreeWithProtectedSourceAndDirectChild(root, runID, observed, protected, osProcessSource{}, directChild)
 }
 
 func cleanupLostRun(rec record, source processSource) treeCleanup {
@@ -1591,6 +1610,10 @@ func cleanupTreeWithProtectedSource(root int, runID string, observed []Process, 
 	return cleanupTreeWithProtectedClock(root, runID, observed, protected, source, wallCleanupClock{})
 }
 
+func cleanupTreeWithProtectedSourceAndDirectChild(root int, runID string, observed []Process, protected []ProcessIdentityEvidence, source processSource, directChild *os.Process) treeCleanup {
+	return cleanupTreeWithProtectedClockAndDirectChild(root, runID, observed, protected, source, wallCleanupClock{}, directChild)
+}
+
 const (
 	cleanupBound = 3 * time.Second
 	cleanupPoll  = 20 * time.Millisecond
@@ -1602,6 +1625,10 @@ func cleanupTreeWithClock(root int, runID string, observed []Process, source pro
 }
 
 func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, protectedAncestors []ProcessIdentityEvidence, source processSource, clock cleanupClock) treeCleanup {
+	return cleanupTreeWithProtectedClockAndDirectChild(root, runID, observed, protectedAncestors, source, clock, nil)
+}
+
+func cleanupTreeWithProtectedClockAndDirectChild(root int, runID string, observed []Process, protectedAncestors []ProcessIdentityEvidence, source processSource, clock cleanupClock, directChild *os.Process) treeCleanup {
 	result := treeCleanup{Reaped: make([]Process, 0), Unverified: make([]Process, 0), Remaining: make([]Process, 0), History: make([]ProcessIdentityEvidence, 0, len(observed)), Inventory: make([]ProcessTreeInventorySample, 0)}
 	for _, process := range observed {
 		result.History = append(result.History, processIdentityEvidence(process))
@@ -1741,7 +1768,7 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 					reason = "accepted:recorded-pid-start-identity"
 				}
 				fmt.Fprintf(os.Stderr, "proc: teardown signal pid=%d identity=%q signal=SIGTERM attribution=%s\n", process.PID, process.Identity, reason)
-				if signalErr := source.Signal(process.PID, process.Identity, syscall.SIGTERM); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+				if signalErr := signalCleanupTarget(source, directChild, process, syscall.SIGTERM); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
 					recordFailure(fmt.Errorf("send SIGTERM to process %d: %w", process.PID, signalErr))
 				}
 				termSent[key] = clock.Now()
@@ -1751,7 +1778,7 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 					reason = "accepted:recorded-pid-start-identity"
 				}
 				fmt.Fprintf(os.Stderr, "proc: teardown signal pid=%d identity=%q signal=SIGKILL attribution=%s\n", process.PID, process.Identity, reason)
-				if signalErr := source.Signal(process.PID, process.Identity, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+				if signalErr := signalCleanupTarget(source, directChild, process, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
 					recordFailure(fmt.Errorf("send SIGKILL to process %d: %w", process.PID, signalErr))
 				}
 				killSent[key] = true
@@ -1787,7 +1814,7 @@ func cleanupTreeWithProtectedClock(root int, runID string, observed []Process, p
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "proc: teardown signal pid=%d identity=%q signal=SIGKILL attribution=accepted:recorded-pid-start-identity\n", process.PID, process.Identity)
-		if signalErr := source.Signal(process.PID, process.Identity, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+		if signalErr := signalCleanupTarget(source, directChild, process, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
 			recordFailure(fmt.Errorf("send final SIGKILL to process %d: %w", process.PID, signalErr))
 		}
 		killSent[key] = true

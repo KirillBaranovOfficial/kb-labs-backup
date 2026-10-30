@@ -272,7 +272,7 @@ func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, paren
 			fmt.Fprintln(os.Stderr, "proc: wait after run token close failure:", waitErr)
 		}
 		writeReadyError(ready, fmt.Errorf("close keeper copy of run ownership token: %w", err))
-		return keeperError(rec, "close keeper run token after command start", err)
+		return keeperErrorWithDirectChild(rec, "close keeper run token after command start", err, cmd.Process)
 	}
 	commandIdentity, commandAlive, commandIdentityErr := ProcessIdentity(cmd.Process.Pid)
 	if commandIdentityErr != nil {
@@ -283,7 +283,7 @@ func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, paren
 			fmt.Fprintln(os.Stderr, "proc: wait after identity observation failure:", waitErr)
 		}
 		writeReadyError(ready, fmt.Errorf("observe started command PID %d: %w", cmd.Process.Pid, commandIdentityErr))
-		return keeperError(rec, "observe started command", commandIdentityErr)
+		return keeperErrorWithDirectChild(rec, "observe started command", commandIdentityErr, cmd.Process)
 	}
 	if commandAlive {
 		rec.Observed = append(rec.Observed, Process{
@@ -299,7 +299,7 @@ func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, paren
 			fmt.Fprintln(os.Stderr, "proc: wait after output pipe close failure:", waitErr)
 		}
 		writeReadyError(ready, err)
-		return keeperError(rec, "close command output pipes", err)
+		return keeperErrorWithDirectChild(rec, "close command output pipes", err, cmd.Process)
 	}
 	rec.Status = StatusRunning
 	rec.LimitsAdvisory = limitsAdvisory
@@ -314,11 +314,11 @@ func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, paren
 		return nil
 	}); err != nil {
 		writeReadyError(ready, err)
-		return keeperError(rec, "record command start", err)
+		return keeperErrorWithDirectChild(rec, "record command start", err, cmd.Process)
 	}
 	if err := appendEvent(cfg.StateDir, eventFor(rec, EventStart)); err != nil {
 		writeReadyError(ready, err)
-		return keeperError(rec, "record command start", err)
+		return keeperErrorWithDirectChild(rec, "record command start", err, cmd.Process)
 	}
 	if err := json.NewEncoder(ready).Encode(readyMessage{Record: rec}); err != nil {
 		if killErr := child.KillStartedProcess(cmd.Process); killErr != nil {
@@ -327,7 +327,7 @@ func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, paren
 		if waitErr := cmd.Wait(); waitErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: wait for command after readiness failure:", waitErr)
 		}
-		return keeperError(rec, "signal readiness", err)
+		return keeperErrorWithDirectChild(rec, "signal readiness", err, cmd.Process)
 	}
 	if err := ready.Close(); err != nil {
 		if killErr := child.KillStartedProcess(cmd.Process); killErr != nil {
@@ -337,7 +337,7 @@ func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, paren
 			fmt.Fprintln(os.Stderr, "proc: wait for command after readiness close failure:", waitErr)
 		}
 		ready = nil
-		return keeperError(rec, "close readiness", err)
+		return keeperErrorWithDirectChild(rec, "close readiness", err, cmd.Process)
 	}
 	ready = nil
 	var initialSampleError error
@@ -396,7 +396,7 @@ func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, paren
 			readersRemaining--
 			if copyErr != nil {
 				outputError = errors.Join(outputError, copyErr)
-				result := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
+				result := killTreeWithProtectedAncestorsAndDirectChild(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors, cmd.Process)
 				cleanup = mergeCleanup(cleanup, result)
 				cleanupError = errors.Join(cleanupError, result.err)
 				var stopErr error
@@ -409,7 +409,7 @@ func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, paren
 			if parentErr != nil {
 				parentMonitorError = parentErr.Error()
 			}
-			result := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
+			result := killTreeWithProtectedAncestorsAndDirectChild(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors, cmd.Process)
 			cleanup = mergeCleanup(cleanup, result)
 			cleanupError = errors.Join(cleanupError, result.err)
 			var stopErr error
@@ -503,14 +503,14 @@ func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, paren
 	if metricSamples == 0 {
 		rec.MeasurementPartial = true
 	}
-	result := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
+	result := killTreeWithProtectedAncestorsAndDirectChild(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors, cmd.Process)
 	cleanup = mergeCleanup(cleanup, result)
 	cleanupError = errors.Join(cleanupError, result.err)
 	if result.err == nil && len(result.Remaining) == 0 {
 		if reapErr := reapAdopted(); reapErr != nil {
 			cleanupError = errors.Join(cleanupError, reapErr)
 		} else {
-			verified := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors)
+			verified := killTreeWithProtectedAncestorsAndDirectChild(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors, cmd.Process)
 			cleanup = mergeCleanup(cleanup, verified)
 			cleanupError = errors.Join(cleanupError, verified.err)
 		}
@@ -756,10 +756,18 @@ func openOutput(path string) (*os.File, error) {
 }
 
 func keeperError(rec record, action string, err error) int {
+	return keeperErrorWithSignalOwner(rec, action, err, osProcessSource{}, nil)
+}
+
+func keeperErrorWithDirectChild(rec record, action string, err error, directChild *os.Process) int {
+	return keeperErrorWithSignalOwner(rec, action, err, osProcessSource{}, directChild)
+}
+
+func keeperErrorWithSignalOwner(rec record, action string, err error, source processSource, directChild *os.Process) int {
 	fmt.Fprintf(os.Stderr, "proc: %s: %v\n", action, err)
 	e := eventFor(rec, EventExit)
 	e.Error = err.Error()
-	if cleanupErr := killTreeWithProtectedAncestors(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors).err; cleanupErr != nil {
+	if cleanupErr := cleanupTreeWithProtectedSourceAndDirectChild(rec.PID, rec.RunID, rec.Observed, rec.ProtectedAncestors, source, directChild).err; cleanupErr != nil {
 		e.Error = errors.Join(err, cleanupErr).Error()
 		fmt.Fprintln(os.Stderr, "proc: reap command tree:", cleanupErr)
 	}
