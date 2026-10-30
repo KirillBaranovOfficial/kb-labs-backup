@@ -32,6 +32,7 @@ export async function runStage({
   const startedAt = now();
   let command;
   let args;
+  let packageName;
   let name = stage;
   if (stage === profile.buildStage) {
     name = stage;
@@ -52,7 +53,14 @@ export async function runStage({
     args = ['run', 'test', '--packages', packageNames.join(','), '--concurrency', '1', '--json'];
     name = `${stage}:shard-${shard}`;
   } else {
-    [command, args] = commandFor(definition);
+    if (definition.runner === 'kb-devkit-test-package') {
+      packageName = packageNameFromManifest(stage, definition);
+      if (!Array.isArray(packages) || !packages.includes(packageName)) {
+        throw new Error(`Verification stage ${stage} package ${packageName} is absent from the package set selected by kb-devkit affected --json.`);
+      }
+      command = './tools/kb-devkit/kb-devkit';
+      args = ['run', 'test', '--packages', packageName, '--concurrency', '1', '--json'];
+    } else [command, args] = commandFor(definition);
   }
   const buildSamples = [];
   const sampleFailures = [];
@@ -119,7 +127,7 @@ export async function runStage({
   if (isBuild) captureResourceSample();
   const finishedAt = now();
   const log = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join('\n');
-  const taskFailures = devkitTaskFailures(stage, result);
+  const taskFailures = devkitTaskFailures(stage, result, packageName);
   const taskLogOutput = taskFailures.map((failure) => {
     const label = [failure.package, failure.task].filter(Boolean).join(':');
     return [label, failure.logPath, failure.logTail || failure.error].filter(Boolean).join('\n');
@@ -131,7 +139,7 @@ export async function runStage({
     : [...failingNames(log), ...taskFailures.flatMap((failure) => (failure.logTail || failure.error || '').split(/\r?\n/).filter(Boolean)), ...sampleFailures];
   const stageResult = {
     name,
-    status: result.status === 0 && sampleFailures.length === 0 ? 'pass' : 'fail',
+    status: result.status === 0 && taskFailures.length === 0 && sampleFailures.length === 0 ? 'pass' : 'fail',
     selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : definition.runner === 'kb-devkit-test-package' ? 1 : selectedPackageCount,
     failures: [...failures, ...sampleFailures],
     taskFailures,
@@ -158,9 +166,17 @@ function writeAtomicJSON(file, value) {
   renameSync(temporary, file);
 }
 
-function devkitTaskFailures(stage, result) {
+function packageNameFromManifest(stage, definition) {
+  if (typeof definition.packageManifest !== 'string' || definition.packageManifest.length === 0) throw new Error(`Verification stage ${stage} requires a package manifest registered by its stage definition.`);
+  const manifest = JSON.parse(readFileSync(path.resolve(root, definition.packageManifest), 'utf8'));
+  if (typeof manifest.name !== 'string' || manifest.name.length === 0) throw new Error(`Verification stage ${stage} package manifest ${definition.packageManifest} has no package name.`);
+  return manifest.name;
+}
+
+function devkitTaskFailures(stage, result, packageName) {
   const definition = stageDefinitions.find((entry) => entry.id === stage);
-  if ((stage !== profile.buildStage && stage !== profile.packageTestStage && definition?.runner !== 'kb-devkit-test-package') || result.status === 0) return [];
+  const packageTask = definition?.runner === 'kb-devkit-test-package';
+  if ((stage !== profile.buildStage && stage !== profile.packageTestStage && !packageTask) || (result.status === 0 && !packageTask)) return [];
   let envelope;
   try {
     envelope = JSON.parse(result.stdout);
@@ -168,9 +184,14 @@ function devkitTaskFailures(stage, result) {
     return [{ error: `kb-devkit run --json returned invalid JSON: ${error.message}` }];
   }
   const results = envelope?.data?.results;
-  if (envelope?.ok !== false || !Array.isArray(results)) {
+  if (!Array.isArray(results) && envelope?.ok === false && envelope?.error) {
+    const error = envelope.error;
+    return [{ error: [error.code, error.message, error.hint].filter(Boolean).join(': ') }];
+  }
+  if (!Array.isArray(results)) {
     return [{ error: 'kb-devkit run --json returned no structured task results for a failed stage.' }];
   }
+  if (results.length === 0 && packageTask) return [{ error: `kb-devkit selected no task results for ${packageName}; rerun command: kb-devkit run test --packages ${packageName} --concurrency 1 --json after correcting its task assignment.` }];
   return results.filter((task) => task?.OK === false).map((task) => {
     const failure = {
       package: task.Package,
@@ -215,10 +236,6 @@ function commandFor(definition) {
     return [process.execPath, ['--test', ...files]];
   }
   if (definition.runner === 'node-script') return [process.execPath, [definition.script, ...definition.args]];
-  if (definition.runner === 'kb-devkit-test-package') {
-    if (typeof definition.package !== 'string' || definition.package.length === 0) throw new Error(`Verification stage ${definition.id} requires a package registered by its stage definition.`);
-    return ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', definition.package, '--concurrency', '1', '--json']];
-  }
   if (definition.runner === 'process' || definition.runner === 'executable') return [definition.command, definition.args];
   throw new Error(`Unsupported verification runner ${definition.runner}; declare a supported runner in scripts/ci/verification-profile.json.`);
 }

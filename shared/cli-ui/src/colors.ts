@@ -1,3 +1,5 @@
+import { resolveColorSupport } from './color-policy.js';
+
 /**
  * Minimalist color utilities for CLI output
  * Uses strategic color application - only for status, not decoration
@@ -77,30 +79,9 @@ export const symbols = {
 };
 
 // Check if colors are supported
-const isTruthyEnv = (value: string | undefined): boolean => {
-  if (!value) {return false;}
-  const normalized = value.trim().toLowerCase();
-  return normalized !== '' && normalized !== '0' && normalized !== 'false' && normalized !== 'off';
-};
-
 export const supportsColor = (() => {
   if (typeof process === 'undefined') {return false;}
-
-  const forceColor = process.env.FORCE_COLOR;
-  if (isTruthyEnv(process.env.NO_COLOR)) {
-    return false;
-  }
-  if (isTruthyEnv(forceColor)) {
-    return true;
-  }
-
-  if (!process.stdout) {return false;}
-
-  if (process.stdout.isTTY === false) {
-    return false;
-  }
-
-  return true;
+  return resolveColorSupport(process.stdout?.isTTY, process.env.NO_COLOR, process.env.FORCE_COLOR);
 })();
 
 // Color functions that respect NO_COLOR

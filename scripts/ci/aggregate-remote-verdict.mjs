@@ -12,7 +12,7 @@ function readJSON(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
-function githubJobName(job) {
+export function githubJobName(job) {
   if (job.job === 'prepare' || job.job === 'build') return job.job;
   const independent = Object.values(profile.independentTestStages).some((stages) => stages.includes(job.stage));
   return `${independent ? 'Independent' : 'Build-dependent'} test ${job.shard ?? job.stage}`;
