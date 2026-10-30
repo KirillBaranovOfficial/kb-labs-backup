@@ -49,6 +49,24 @@ tasks:
 	}
 }
 
+func TestYAMLReleaseLaneIsPreservedOnCategory(t *testing.T) {
+	cfg, err := parseYAMLBytes([]byte(`schemaVersion: 2
+workspace:
+  categories:
+    internal-tool:
+      match: ["tools/kb-runner"]
+      preset: go-binary
+      releaseLane: internal-tool
+`))
+	if err != nil {
+		t.Fatalf("parse internal-tool category: %v", err)
+	}
+	category, ok := cfg.Workspace.FindCategory("internal-tool")
+	if !ok || category.ReleaseLane != "internal-tool" {
+		t.Fatalf("internal-tool release lane = %q, found=%t", category.ReleaseLane, ok)
+	}
+}
+
 // case: S-179.27
 func TestChecksTimeoutConfiguration(t *testing.T) {
 	cfg, err := parseYAMLBytes([]byte("checks:\n  timeout_ms: 250\n"))

@@ -40,7 +40,7 @@ test('kb-create Go suite invokes its manifest-backed test task through kb-devkit
   let invocation;
   const result = await runStage({
     stage: 'kb-create-go-suite',
-    packages: [kbCreatePackageName],
+    packageNames: [kbCreatePackageName],
     selectedPackageCount: 41,
     runCommand: async (command, args) => {
       invocation = [command, args];
@@ -58,7 +58,7 @@ test('kb-create Go suite invokes its manifest-backed test task through kb-devkit
 test('kb-devkit package selection failures retain the configuration diagnostic', async () => {
   const result = await runStage({
     stage: 'kb-create-go-suite',
-    packages: [kbCreatePackageName],
+    packageNames: [kbCreatePackageName],
     selectedPackageCount: 41,
     runCommand: async () => ({ status: 1, stdout: JSON.stringify({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No workspace packages match --packages "wrong".' } }), stderr: '' }),
   });
@@ -71,7 +71,7 @@ test('kb-devkit package selection failures retain the configuration diagnostic',
 test('kb-devkit package task returning zero results is a configuration error', async () => {
   const result = await runStage({
     stage: 'kb-create-go-suite',
-    packages: [kbCreatePackageName],
+    packageNames: [kbCreatePackageName],
     selectedPackageCount: 41,
     runCommand: async () => ({ status: 0, stdout: '{"ok":true,"data":{"results":[]}}', stderr: '' }),
   });

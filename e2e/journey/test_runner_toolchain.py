@@ -19,7 +19,7 @@ REPOSITORY_ROOT = JOURNEY_DIR.parents[1]
 RUNNER_DOCKERFILE = JOURNEY_DIR / "Dockerfile.runner"
 TOOLCHAIN_SCRIPT = JOURNEY_DIR / "runner-toolchain.sh"
 TOOLCHAIN_IMAGE_REPOSITORY = "kb-journey-runner-toolchain"
-STAGED_PLAYWRIGHT_VERSION = "13.2.1-journey-test\n"
+STUDIO_PLAYWRIGHT_DECLARATION = "^1.52.0"
 
 
 def scratch_dir() -> Path:
@@ -35,17 +35,19 @@ def temporary_directory(prefix: str):
 
 
 def runner_toolchain_image(*, dockerfile: Path | None = None,
-                           playwright_version_input: Path | None = None) -> str:
+                           studio_manifest_input: Path | None = None,
+                           package_manifest_input: Path | None = None) -> str:
     sys.path.insert(0, str(JOURNEY_DIR))
     from journey_resources import runner_toolchain_image as derive
-    return derive(dockerfile=dockerfile, playwright_version_input=playwright_version_input)
+    return derive(dockerfile=dockerfile, studio_manifest_input=studio_manifest_input,
+                  package_manifest_input=package_manifest_input)
 
 
 def runner_toolchain_contract(*, dockerfile: Path | None = None,
-                              playwright_version_input: Path | None = None):
+                              studio_manifest_input: Path | None = None):
     sys.path.insert(0, str(JOURNEY_DIR))
     from journey_resources import runner_toolchain_contract as derive
-    return derive(dockerfile=dockerfile, playwright_version_input=playwright_version_input)
+    return derive(dockerfile=dockerfile, studio_manifest_input=studio_manifest_input)
 
 
 
@@ -62,26 +64,34 @@ def mutated_dockerfile(old: str, new: str) -> Path:
 
 class RunnerToolchainTagTests(unittest.TestCase):
     def setUp(self):
-        self.version_input = Path(self.enterContext(
-            temporary_directory(prefix="journey-toolchain-tag-"))) / "studio-playwright-version"
-        self.version_input.write_text(STAGED_PLAYWRIGHT_VERSION, encoding="utf-8")
+        temporary = temporary_directory(prefix="journey-toolchain-tag-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.studio_manifest = root / "studio-package.json"
+        self.package_manifest = root / "workspace-package.json"
+        self.package_manifest.write_text(json.dumps({"packageManager": "pnpm@11.4.0"}), encoding="utf-8")
+        self.studio_manifest.write_text(json.dumps({"devDependencies": {
+            "@playwright/test": STUDIO_PLAYWRIGHT_DECLARATION,
+        }}), encoding="utf-8")
 
-    def test_tag_is_derived_from_the_declared_stage_and_staged_version(self):
-        reference = runner_toolchain_image(playwright_version_input=self.version_input)
+    def test_tag_is_derived_from_the_declared_stage_and_source_manifests(self):
+        reference = runner_toolchain_image(studio_manifest_input=self.studio_manifest,
+                                           package_manifest_input=self.package_manifest)
         self.assertRegex(reference, rf"^{TOOLCHAIN_IMAGE_REPOSITORY}:[0-9a-f]{{16}}$")
-        self.assertEqual(reference, runner_toolchain_image(playwright_version_input=self.version_input),
+        self.assertEqual(reference, runner_toolchain_image(studio_manifest_input=self.studio_manifest,
+                                                           package_manifest_input=self.package_manifest),
                          "identical toolchain inputs must derive the same tag")
 
     def test_package_manager_change_invalidates_the_toolchain_image_tag(self):
         from journey_resources import runner_toolchain_image as derive
         original = json.loads((REPOSITORY_ROOT / "package.json").read_text(encoding="utf-8"))
-        package_manifest = self.version_input.with_name("workspace-package.json")
+        package_manifest = self.package_manifest
         package_manifest.write_text(json.dumps(original), encoding="utf-8")
-        baseline = derive(playwright_version_input=self.version_input,
+        baseline = derive(studio_manifest_input=self.studio_manifest,
                           package_manifest_input=package_manifest)
         original["packageManager"] = original["packageManager"].rsplit("@", 1)[0] + "@11.5.0"
         package_manifest.write_text(json.dumps(original), encoding="utf-8")
-        changed = derive(playwright_version_input=self.version_input,
+        changed = derive(studio_manifest_input=self.studio_manifest,
                          package_manifest_input=package_manifest)
         self.assertNotEqual(changed, baseline)
 
@@ -95,16 +105,17 @@ class RunnerToolchainTagTests(unittest.TestCase):
                          "per-run runner COPYs must stay outside the toolchain stage")
 
     def test_runner_from_consumes_the_derived_toolchain_contract(self):
-        contract = runner_toolchain_contract(playwright_version_input=self.version_input)
+        contract = runner_toolchain_contract(studio_manifest_input=self.studio_manifest)
         instructions = [line.split() for line in RUNNER_DOCKERFILE.read_text(encoding="utf-8").splitlines()
                         if line.startswith("FROM ")]
         runner_base = instructions[-1][1]
         self.assertIn(runner_base, (f"${{{contract['imageArgument']}}}", f"${contract['imageArgument']}"))
         self.assertEqual(contract["imageReference"],
-                         runner_toolchain_image(playwright_version_input=self.version_input))
+                         runner_toolchain_image(studio_manifest_input=self.studio_manifest))
 
     def test_each_toolchain_input_changes_the_tag(self):
-        baseline = runner_toolchain_image(playwright_version_input=self.version_input)
+        baseline = runner_toolchain_image(studio_manifest_input=self.studio_manifest,
+                                          package_manifest_input=self.package_manifest)
         mutations = {
             "base image": mutated_dockerfile("FROM node:24-bookworm AS toolchain",
                                              "FROM node:25-bookworm AS toolchain"),
@@ -119,19 +130,23 @@ class RunnerToolchainTagTests(unittest.TestCase):
                 with self.subTest(input=label):
                     self.assertNotEqual(
                         runner_toolchain_image(dockerfile=dockerfile,
-                                               playwright_version_input=self.version_input),
+                                               studio_manifest_input=self.studio_manifest,
+                                               package_manifest_input=self.package_manifest),
                         baseline)
-            with self.subTest(input="playwright version"):
-                changed = self.version_input.with_name("changed-playwright-version")
-                changed.write_text("0.0.0-test\n", encoding="utf-8")
+            with self.subTest(input="Playwright source declaration"):
+                changed = self.studio_manifest.with_name("changed-studio-package.json")
+                changed.write_text(json.dumps({"devDependencies": {
+                    "@playwright/test": "^1.53.0",
+                }}), encoding="utf-8")
                 self.assertNotEqual(
-                    runner_toolchain_image(playwright_version_input=changed), baseline)
+                    runner_toolchain_image(studio_manifest_input=changed,
+                                           package_manifest_input=self.package_manifest), baseline)
         finally:
             for dockerfile in mutations.values():
                 dockerfile.unlink()
 
     def test_per_run_stage_changes_do_not_change_the_toolchain_tag(self):
-        baseline = runner_toolchain_image(playwright_version_input=self.version_input)
+        baseline = runner_toolchain_image(studio_manifest_input=self.studio_manifest)
         for old, new in (
                 ("COPY docs/qa/scenarios /opt/kb-journey/docs/qa/scenarios",
                  "COPY docs/qa /opt/kb-journey/docs/qa/scenarios"),
@@ -142,15 +157,15 @@ class RunnerToolchainTagTests(unittest.TestCase):
                 self.addCleanup(dockerfile.unlink)
                 self.assertEqual(
                     runner_toolchain_image(dockerfile=dockerfile,
-                                           playwright_version_input=self.version_input),
+                                           studio_manifest_input=self.studio_manifest),
                     baseline)
 
-    def test_missing_playwright_version_input_names_the_staging_step(self):
+    def test_missing_studio_source_manifest_is_reported(self):
         with temporary_directory(prefix="journey-toolchain-missing-") as temporary:
-            missing = Path(temporary) / "studio-playwright-version"
+            missing = Path(temporary) / "studio-package.json"
             with self.assertRaises(FileNotFoundError) as context:
-                runner_toolchain_image(playwright_version_input=missing)
-        self.assertIn("stage-runner-inputs.sh", str(context.exception))
+                runner_toolchain_image(studio_manifest_input=missing)
+        self.assertIn("Studio's source package.json", str(context.exception))
 
     def test_dockerfile_without_a_toolchain_stage_is_refused(self):
         source = RUNNER_DOCKERFILE.read_text(encoding="utf-8").replace(
@@ -201,9 +216,11 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
         command = require_compose_command(self)
         with temporary_directory(prefix="journey-toolchain-compose-") as temporary:
             root = Path(temporary)
-            version_input = root / "studio-playwright-version"
-            version_input.write_text(STAGED_PLAYWRIGHT_VERSION, encoding="utf-8")
-            contract = runner_toolchain_contract(playwright_version_input=version_input)
+            manifest = root / "studio-package.json"
+            manifest.write_text(json.dumps({"devDependencies": {
+                "@playwright/test": STUDIO_PLAYWRIGHT_DECLARATION,
+            }}), encoding="utf-8")
+            contract = runner_toolchain_contract(studio_manifest_input=manifest)
             expected = contract["imageReference"]
             env = self._compose_environment(root, command, {contract["imageArgument"]: expected})
             compose = subprocess.run(
@@ -249,8 +266,8 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
     """Exercise the ensure/reclaim lifecycle against a stateful fake Docker CLI.
 
     The fixture root is built from the real journey files (Dockerfile.runner,
-    journey_resources.py, journey_values.py) with a staged Playwright version
-    written into it, so the derivation and the shell script run unmodified.
+    journey_resources.py, journey_values.py) with source package manifests,
+    so the derivation and the shell script run unmodified.
     """
 
     def _fixture_root(self, root: Path) -> Path:
@@ -259,9 +276,12 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
         shutil.copy2(RUNNER_DOCKERFILE, fixture / "e2e" / "journey" / "Dockerfile.runner")
         for name in ("journey_resources.py", "journey_values.py"):
             shutil.copy2(JOURNEY_DIR / name, fixture / "e2e" / "journey" / name)
-        staged = fixture / ".journey" / "runner-inputs"
-        staged.mkdir(parents=True)
-        (staged / "studio-playwright-version").write_text(STAGED_PLAYWRIGHT_VERSION, encoding="utf-8")
+        (fixture / "package.json").write_text(json.dumps({"packageManager": "pnpm@11.4.0"}), encoding="utf-8")
+        studio = fixture / "e2e" / "studio"
+        studio.mkdir(parents=True)
+        (studio / "package.json").write_text(json.dumps({"devDependencies": {
+            "@playwright/test": STUDIO_PLAYWRIGHT_DECLARATION,
+        }}), encoding="utf-8")
         return fixture
 
     def _fake_docker(self, bin_dir: Path, state_path: Path) -> Path:
@@ -303,8 +323,9 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
         from journey_resources import TOOLCHAIN_IMAGE_LABEL
         with temporary_directory(prefix="journey-toolchain-ensure-") as temporary:
             fixture = self._fixture_root(Path(temporary))
-            staged = fixture / ".journey" / "runner-inputs" / "studio-playwright-version"
-            expected = runner_toolchain_image(playwright_version_input=staged)
+            expected = runner_toolchain_image(
+                studio_manifest_input=fixture / "e2e" / "studio" / "package.json",
+                package_manifest_input=fixture / "package.json")
             bin_dir = Path(temporary) / "bin"
             state_path = Path(temporary) / "docker-state.json"
             state_path.write_text(json.dumps({"images": [

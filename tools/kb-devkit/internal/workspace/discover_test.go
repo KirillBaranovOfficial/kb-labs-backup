@@ -10,6 +10,18 @@ import (
 	"github.com/kb-labs/devkit/internal/config"
 )
 
+func TestClassifyCarriesInternalToolReleaseLane(t *testing.T) {
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{
+		{Name: "internal-tool", Category: config.CategoryConfig{
+			Match: []string{"tools/kb-runner"}, Preset: "go-binary", ReleaseLane: "internal-tool",
+		}},
+	}}}
+	category, preset, language, releaseLane := classify("tools/kb-runner", cfg)
+	if category != "internal-tool" || preset != "go-binary" || language != "go" || releaseLane != "internal-tool" {
+		t.Fatalf("classify = (%q, %q, %q, %q)", category, preset, language, releaseLane)
+	}
+}
+
 func TestTrackedUnownedFilesUsesPackageOwnershipAndIgnoresUntracked(t *testing.T) {
 	root := t.TempDir()
 	mustWritePackage(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)

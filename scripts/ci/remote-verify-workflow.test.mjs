@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,9 +7,53 @@ import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import test from 'node:test';
 import { parseAffectedSelection } from './remote-verify-plan.mjs';
+import { runStage } from './remote-verify-stage.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const readYaml = (file) => load(readFileSync(path.join(root, file), 'utf8'));
+
+test('candidate selection producer carries the manifest-backed package through the plan into its stage', async () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-producer-stage-'));
+  const executable = path.join(temporaryRoot, 'kb-devkit');
+  const selectionPath = path.join(temporaryRoot, 'affected-packages.json');
+  const planPath = path.join(temporaryRoot, 'test-matrix.json');
+  const githubOutputPath = path.join(temporaryRoot, 'github-output');
+  try {
+    writeFileSync(executable, `#!/bin/sh\nprintf '[]\\n' > "$KB_REMOTE_CHANGED_FILES_PATH"\nprintf '%s\\n' '${JSON.stringify({ ok: true, data: { packages: ['@fixture/product', 'kb-create', '@fixture/internal-tool'], internalToolPackages: ['kb-create', '@fixture/internal-tool'], selectionReason: 'candidate fixture' } })}'\n`);
+    chmodSync(executable, 0o755);
+    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, executable], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env },
+    });
+    assert.equal(producer.status, 0, producer.stderr);
+    const plan = spawnSync(process.execPath, ['scripts/ci/remote-verify-plan.mjs', 'candidate', selectionPath, planPath, githubOutputPath], {
+      cwd: root,
+      encoding: 'utf8',
+    });
+    assert.equal(plan.status, 0, plan.stderr);
+    const selection = JSON.parse(readFileSync(selectionPath, 'utf8'));
+    const matrix = JSON.parse(readFileSync(planPath, 'utf8'));
+    assert.deepEqual(selection.data.packages, ['@fixture/product']);
+    const stage = matrix.dependent.include.find(({ stage: id }) => id === 'kb-create-go-suite');
+    assert.deepEqual(stage.packages, ['kb-create']);
+
+    let invocation;
+    const result = await runStage({
+      stage: stage.stage,
+      packageNames: stage.packages,
+      selectedPackageCount: selection.selectedPackageCount,
+      runCommand: async (command, args) => {
+        invocation = [command, args];
+        return { status: 0, stdout: JSON.stringify({ ok: true, data: { results: [{ OK: true, Package: 'kb-create', Task: 'test' }] } }), stderr: '' };
+      },
+    });
+    assert.deepEqual(invocation[1].slice(3, 4), ['kb-create']);
+    assert.equal(result.status, 'pass');
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
 
 // case: S-262.7
 test('remote verification builds once and fans out independent and artifact-dependent test matrices', () => {
@@ -129,6 +173,17 @@ test('workflow base-ref wiring selects real workspace packages without origin/HE
 
     cpSync(path.join(root, 'scripts/ci/resolve-remote-selection.mjs'), path.join(checkoutRoot, 'scripts/ci/resolve-remote-selection.mjs'));
     cpSync(path.join(root, 'scripts/ci/remote-changed-files.mjs'), path.join(checkoutRoot, 'scripts/ci/remote-changed-files.mjs'));
+    cpSync(path.join(root, 'devkit.yaml'), path.join(checkoutRoot, 'devkit.yaml'));
+    for (const relative of [
+      'cmd/affected.go',
+      'internal/config/config.go',
+      'internal/config/yaml.go',
+      'internal/engine/scheduler.go',
+      'internal/workspace/discover.go',
+      'internal/workspace/workspace.go',
+    ]) {
+      cpSync(path.join(root, 'tools/kb-devkit', relative), path.join(checkoutRoot, 'tools/kb-devkit', relative));
+    }
     execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(checkoutRoot, 'tools/kb-devkit'), stdio: 'pipe' });
 
     for (const profile of ['stream', 'candidate']) {
@@ -143,12 +198,17 @@ test('workflow base-ref wiring selects real workspace packages without origin/HE
       assert.ok(selection.data.packages.length > 0, `${profile} selected no packages`);
       assert.deepEqual(parseAffectedSelection(JSON.stringify(selection), profile), {
         packages: selection.data.packages,
+        stagePackages: selection.data.stagePackages,
         changedPathCount: selection.data.changedPathCount,
         selectionReason: selection.data.selectionReason,
       });
       assert.equal(selection.selectedPackageCount, selection.data.packages.length);
       assert.ok(selection.data.changedPathCount > 0, `${profile} workflow inputs produced an empty diff: ${result.stdout}`);
       if (profile === 'candidate') assert.ok(selection.data.changedPathCount >= selection.selectedPackageCount);
+      if (profile === 'candidate') {
+        assert.ok(selection.data.stagePackages['kb-create-go-suite']?.includes('kb-create'));
+        assert.ok(selection.data.internalToolPackages.every((name) => !selection.data.packages.includes(name)));
+      }
     }
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
