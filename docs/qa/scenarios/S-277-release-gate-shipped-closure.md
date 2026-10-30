@@ -1,0 +1,32 @@
+---
+id: S-277
+title: Release verification gates every package except internal tools
+persona: release engineer
+area: quality
+priority: P1
+status: planned
+release: false
+modes: [local]
+surfaces: [cli]
+---
+
+## User value
+
+A release engineer can distinguish release blockers from internal-tool health while still receiving a real signal for a change to an internal tool.
+
+## Preconditions
+
+- The workspace may declare internal tools through devkit categories; undeclared packages retain their existing gating membership.
+- Remote verification can produce a candidate or stream plan and collect its stage results.
+
+## Steps
+
+| # | Action | Expected |
+|---|---|---|
+| S-277.1 | Plan candidate verification for selected plugin, E2E, site, platform, and internal-tool packages | Candidate build and test package lists equal the selected packages with internal tools removed. Plugin, E2E, site, and platform packages remain in the gating lists. A failed internal-tool test leaves candidate status `pass`; `internalToolResults` reports the stage as `fail`, retains its failure evidence, and records the GitHub job conclusion. |
+| S-277.2 | Plan stream verification for a change to an internal tool and collect a failing test result for that package | The stream plan includes the changed internal tool in its gating package tests, and the stream verdict is `fail` when the tool test fails. |
+| S-277.3 | Run `kb-devkit check` after a gating package declares a workspace dependency on an internal tool | The check exits non-zero and reports the gating package, internal package, and dependency edge. |
+
+## Evidence scope
+
+This infrastructure case is `release: false`. Unit tests prove the plan, verdict aggregation, and dependency-boundary check; no installed journey claims these rows.
