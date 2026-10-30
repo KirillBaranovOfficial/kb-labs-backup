@@ -48,10 +48,10 @@ func BuildRetainingKeeperForTest(t testing.TB) TestExecutable {
 	if !ok {
 		t.Fatal("locate proc test package")
 	}
-	moduleRoot := filepath.Dir(filepath.Dir(source))
+	packageDir := filepath.Dir(source)
 	executable := filepath.Join(t.TempDir(), "retainingkeeper")
-	command := exec.Command("go", "build", "-o", executable, "./internal/proc/testdata/retainingkeeper")
-	command.Dir = moduleRoot
+	command := exec.Command("go", "build", "-o", executable, "./testdata/retainingkeeper")
+	command.Dir = packageDir
 	for _, item := range os.Environ() {
 		if !strings.HasPrefix(item, "GOFLAGS=") {
 			command.Env = append(command.Env, item)

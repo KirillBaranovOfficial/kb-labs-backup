@@ -24,6 +24,39 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type directChildSignalFixture struct {
+	pidSignals    []int
+	handleSignals []*os.Process
+}
+
+func (directChildSignalFixture) Snapshot(string) ([]Process, error) { return nil, nil }
+func (directChildSignalFixture) Identity(int) (string, bool, error) {
+	return "direct-child-start", true, nil
+}
+func (source *directChildSignalFixture) Signal(pid int, _ string, _ syscall.Signal) error {
+	source.pidSignals = append(source.pidSignals, pid)
+	return nil
+}
+func (source *directChildSignalFixture) SignalDirectChild(process *os.Process, _ string, _ syscall.Signal) error {
+	source.handleSignals = append(source.handleSignals, process)
+	return nil
+}
+
+func TestCleanupRoutesDirectChildThroughUnreapedProcessHandle(t *testing.T) {
+	directChild := &os.Process{Pid: 41001}
+	source := &directChildSignalFixture{}
+	process := Process{PID: directChild.Pid, Identity: "direct-child-start"}
+	if err := signalCleanupTarget(source, directChild, process, syscall.SIGTERM); err != nil {
+		t.Fatalf("signal direct child: %v", err)
+	}
+	if len(source.pidSignals) != 0 {
+		t.Fatalf("direct child PID signals = %v, want none", source.pidSignals)
+	}
+	if len(source.handleSignals) != 1 || source.handleSignals[0] != directChild {
+		t.Fatalf("direct child handle signals = %v, want the retained process handle", source.handleSignals)
+	}
+}
+
 func contextForTestLifetime(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
