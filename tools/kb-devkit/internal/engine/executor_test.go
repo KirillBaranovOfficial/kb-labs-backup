@@ -107,7 +107,8 @@ func TestConsumerBuildIsNotCachedAfterInheritedTsConfigChanges(t *testing.T) {
 		t.Fatalf("second gateway app build = %+v, want cache hit", second)
 	}
 	writeFile(t, filepath.Join(gatewayDir, "tsconfig.base.json"), `{"compilerOptions":{"strict":false}}`)
-	exec.globalInputDigest, err = cache.ContentDigest(root, []string{filepath.Join(gatewayDir, "tsconfig.base.json")})
+	tsconfigBase := filepath.Join(gatewayDir, "tsconfig.base.json")
+	exec.globalInputDigest, err = cache.ContentDigest(root, []string{tsconfigBase}, map[string]cache.TrackedFile{filepath.Clean(tsconfigBase): {Mode: 0100644}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,8 @@ func TestConsumerTestIsNotCachedAfterImportedVitestConfigChanges(t *testing.T) {
 		t.Fatalf("second gateway app test = %+v, want cache hit", second)
 	}
 	writeFile(t, filepath.Join(servicesDir, "vitest.config.mjs"), "export default { test: { testTimeout: 2000 } }\n")
-	exec.globalInputDigest, err = cache.ContentDigest(root, []string{filepath.Join(servicesDir, "vitest.config.mjs")})
+	vitestConfig := filepath.Join(servicesDir, "vitest.config.mjs")
+	exec.globalInputDigest, err = cache.ContentDigest(root, []string{vitestConfig}, map[string]cache.TrackedFile{filepath.Clean(vitestConfig): {Mode: 0100644}})
 	if err != nil {
 		t.Fatal(err)
 	}

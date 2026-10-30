@@ -191,11 +191,11 @@ func TestHashInputsWithOwnershipTracksPackageAndDependencyDigests(t *testing.T) 
 	dependencyInput := filepath.Join(root, "packages", "base", "tsconfig.base.json")
 	mustWriteFile(t, packageInput, "expect(true).toBe(true)\n")
 	mustWriteFile(t, dependencyInput, `{"compilerOptions":{"strict":true}}`)
-	own, err := ContentDigest(root, []string{packageInput})
+	own, err := ContentDigest(root, []string{packageInput}, testTrackedFiles(packageInput))
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := ContentDigest(root, []string{dependencyInput})
+	dep, err := ContentDigest(root, []string{dependencyInput}, testTrackedFiles(dependencyInput))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestHashInputsWithOwnershipTracksPackageAndDependencyDigests(t *testing.T) 
 		t.Fatal(err)
 	}
 	mustWriteFile(t, packageInput, "expect(false).toBe(true)\n")
-	own, err = ContentDigest(root, []string{packageInput})
+	own, err = ContentDigest(root, []string{packageInput}, testTrackedFiles(packageInput))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestHashInputsWithOwnershipTracksPackageAndDependencyDigests(t *testing.T) 
 		t.Fatal("task hash unchanged after package-owned test file changed")
 	}
 	mustWriteFile(t, dependencyInput, `{"compilerOptions":{"strict":false}}`)
-	dep, err = ContentDigest(root, []string{dependencyInput})
+	dep, err = ContentDigest(root, []string{dependencyInput}, testTrackedFiles(dependencyInput))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,12 +236,12 @@ func TestContentDigestTracksProvidedContentOnly(t *testing.T) {
 	mustWriteFile(t, lockfile, "lockfileVersion: 9\n")
 	mustWriteFile(t, untracked, "first\n")
 
-	first, err := ContentDigest(root, []string{lockfile})
+	first, err := ContentDigest(root, []string{lockfile}, testTrackedFiles(lockfile))
 	if err != nil {
 		t.Fatalf("global input digest: %v", err)
 	}
 	mustWriteFile(t, untracked, "second\n")
-	second, err := ContentDigest(root, []string{lockfile})
+	second, err := ContentDigest(root, []string{lockfile}, testTrackedFiles(lockfile))
 	if err != nil {
 		t.Fatalf("global input digest after untracked change: %v", err)
 	}
@@ -249,13 +249,21 @@ func TestContentDigestTracksProvidedContentOnly(t *testing.T) {
 		t.Fatal("global digest changed when only an untracked path changed")
 	}
 	mustWriteFile(t, lockfile, "lockfileVersion: 9\n# tracked edit\n")
-	third, err := ContentDigest(root, []string{lockfile})
+	third, err := ContentDigest(root, []string{lockfile}, testTrackedFiles(lockfile))
 	if err != nil {
 		t.Fatalf("global input digest after tracked content change: %v", err)
 	}
 	if second == third {
 		t.Fatal("global digest unchanged after tracked lockfile content changed")
 	}
+}
+
+func testTrackedFiles(paths ...string) map[string]TrackedFile {
+	tracked := make(map[string]TrackedFile, len(paths))
+	for _, path := range paths {
+		tracked[filepath.Clean(path)] = TrackedFile{Mode: 0100644, ObjectID: "fixture-object"}
+	}
+	return tracked
 }
 
 func mustWriteFile(t *testing.T, path, content string) {

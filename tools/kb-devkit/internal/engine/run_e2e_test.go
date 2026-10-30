@@ -130,7 +130,7 @@ func TestAffectedSelectionAndTaskKeysShareTrackedFileOwnership(t *testing.T) {
 		{Name: "test", Command: "test", Inputs: []string{"src/**", "test/**", "__tests__/**", "package.json", "^dist/**"}, Cache: true},
 	}
 	baseline := propertyTaskKeys(t, ws, tasks)
-	unownedFiles, ownedFiles, err := ws.TrackedFileOwnership()
+	unownedFiles, ownedFiles, _, err := ws.TrackedFileOwnership()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,6 +194,40 @@ func TestAffectedSelectionAndTaskKeysShareTrackedFileOwnership(t *testing.T) {
 				if restored[name][task] != before {
 					t.Errorf("tracked file %s has unchanged content but changed metadata; %s:%s key changed", file, name, task)
 				}
+			}
+		}
+	}
+
+	modeOnlyPath := filepath.Join(root, "packages", "app", "tests", "outside-glob.test.ts")
+	modeOnlyContents, err := os.ReadFile(modeOnlyPath)
+	if err != nil {
+		t.Fatalf("read mode-only fixture %s: %v", modeOnlyPath, err)
+	}
+	runGitCommand(t, root, "update-index", "--chmod=+x", "packages/app/tests/outside-glob.test.ts")
+	modeChanged := propertyTaskKeys(t, ws, tasks)
+	if after, err := os.ReadFile(modeOnlyPath); err != nil || string(after) != string(modeOnlyContents) {
+		t.Fatalf("mode-only fixture content changed: got %q, err %v", after, err)
+	}
+	selection, err := selectAffectedPackages(ws, []string{modeOnlyPath})
+	if err != nil {
+		t.Fatalf("select mode-only change: %v", err)
+	}
+	for _, selected := range selection.Packages {
+		for _, task := range tasks {
+			if baseline[selected.Name][task.Name] == modeChanged[selected.Name][task.Name] {
+				t.Errorf("tracked mode change for %s selected %s but left its %s task key unchanged", modeOnlyPath, selected.Name, task.Name)
+			}
+		}
+	}
+	if baseline["@fixture/island"]["build"] != modeChanged["@fixture/island"]["build"] || baseline["@fixture/island"]["test"] != modeChanged["@fixture/island"]["test"] {
+		t.Errorf("tracked mode change for %s changed unrelated package keys", modeOnlyPath)
+	}
+	runGitCommand(t, root, "update-index", "--chmod=-x", "packages/app/tests/outside-glob.test.ts")
+	modeRestored := propertyTaskKeys(t, ws, tasks)
+	for name, taskKeys := range baseline {
+		for task, before := range taskKeys {
+			if modeRestored[name][task] != before {
+				t.Errorf("tracked mode for %s was restored but %s:%s key did not return to baseline", modeOnlyPath, name, task)
 			}
 		}
 	}
