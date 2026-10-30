@@ -17,6 +17,7 @@ func init() {
 		&ESLintRule{},
 		&StructureRule{},
 		&DepsRule{},
+		&ReleaseBoundaryRule{},
 	}
 }
 
@@ -75,7 +76,6 @@ func (r *Registry) RulesFor(preset config.Preset) []Rule {
 	for _, rule := range r.rules {
 		if scoped, ok := rule.(interface{ Scope() string }); ok {
 			if scoped.Scope() == "workspace" {
-				result = append(result, rule)
 				continue
 			}
 			if external, ok := rule.(*externalRule); ok && matchesLanguage(config.CustomCheck{Language: external.language}, preset.Language) {

@@ -31,7 +31,11 @@ func TestParseTestRequestAcceptsOnlyTypedGoTestShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse valid request: %v", err)
 	}
-	if request.Module != module || request.Run != "^TestX$" || len(request.Packages) != 1 || request.Packages[0] != "./proc" || request.Tool != "go" {
+	canonicalModule, err := canonicalSandboxPath(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Module != canonicalModule || request.Run != "^TestX$" || len(request.Packages) != 1 || request.Packages[0] != "./proc" || request.Tool != "go" {
 		t.Fatalf("parsed request = %+v", request)
 	}
 	for _, args := range [][]string{

@@ -9,7 +9,6 @@ import { runStage } from './remote-verify-stage.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const kbCreatePackageName = JSON.parse(readFileSync(path.join(repoRoot, 'tools/kb-create/package.json'), 'utf8')).name;
 // case: S-262.7
 test('workspace package shard uses kb-devkit and records a stage result with elapsed time', async () => {
   let now = 1_000;
@@ -35,54 +34,117 @@ test('workspace package shard uses kb-devkit and records a stage result with ela
   assert.equal(result.selectedPackageCount, 2);
 });
 
-// case: S-262.7
-test('kb-create Go suite invokes its manifest-backed test task through kb-devkit', async () => {
+test('manifest-backed Go suite preserves the planner shard identity in its result', async () => {
   let invocation;
   const result = await runStage({
     stage: 'kb-create-go-suite',
-    packageNames: [kbCreatePackageName],
-    selectedPackageCount: 41,
+    packageNames: ['kb-create'],
+    selectedPackageCount: 165,
+    shard: 1,
     runCommand: async (command, args) => {
       invocation = [command, args];
-      return { status: 0, stdout: JSON.stringify({ ok: true, data: { results: [{ OK: true, Package: kbCreatePackageName, Task: 'test' }] } }), stderr: '' };
+      return { status: 0, stdout: '{"ok":true,"data":{"results":[]}}', stderr: '' };
     },
   });
 
-  assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', kbCreatePackageName, '--concurrency', '1', '--json']]);
-  assert.equal(result.status, 'pass');
-  assert.equal(result.name, 'kb-create-go-suite');
+  assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', 'kb-create', '--concurrency', '1', '--json']]);
+  assert.equal(result.name, 'kb-create-go-suite:shard-1');
   assert.deepEqual(result.packages, ['kb-create']);
+  assert.equal(result.selectedPackageCount, 1);
+  assert.equal(result.status, 'pass');
 });
 
-// case: S-262.7
-test('kb-devkit package selection failures retain the configuration diagnostic', async () => {
+// case: S-277.2
+test('candidate internal-tool lane builds, tests, and checks each selected package', async () => {
+  const invocations = [];
   const result = await runStage({
-    stage: 'kb-create-go-suite',
-    packageNames: [kbCreatePackageName],
-    selectedPackageCount: 41,
-    runCommand: async () => ({ status: 1, stdout: JSON.stringify({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No workspace packages match --packages "wrong".' } }), stderr: '' }),
+    stage: 'internal-tool-tests',
+    packageNames: ['kb-runner'],
+    selectedPackageCount: 4,
+    shard: 1,
+    runCommand: async (command, args) => {
+      invocations.push([command, args]);
+      return { status: 0, stdout: '{"ok":true}', stderr: '' };
+    },
+    now: (() => { let value = 0; return () => value += 10; })(),
   });
-  assert.equal(result.status, 'fail');
-  assert.match(result.failures.join('\n'), /KB_RUNTIME_INPUT_INVALID/);
-  assert.doesNotMatch(result.failures.join('\n'), /no structured task results/);
+
+  assert.deepEqual(invocations, [
+    ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', 'kb-runner', '--concurrency', '1', '--json']],
+    ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', 'kb-runner', '--concurrency', '1', '--json']],
+    ['./tools/kb-devkit/kb-devkit', ['check', '--internal-tool-package', 'kb-runner', '--json']],
+  ]);
+  assert.equal(result.name, 'internal-tool-tests:shard-1');
+  assert.equal(result.selectedPackageCount, 1);
+  assert.equal(result.status, 'pass');
 });
 
-// case: S-262.7
-test('kb-devkit package task returning zero results is a configuration error', async () => {
+// case: S-277.1
+test('internal-tool stage retains stdout-only JSON failure evidence', async () => {
   const result = await runStage({
-    stage: 'kb-create-go-suite',
-    packageNames: [kbCreatePackageName],
-    selectedPackageCount: 41,
-    runCommand: async () => ({ status: 0, stdout: '{"ok":true,"data":{"results":[]}}', stderr: '' }),
+    stage: 'internal-tool-tests',
+    packageNames: ['kb-runner'],
+    selectedPackageCount: 1,
+    shard: 1,
+    runCommand: async (_command, args) => args[0] === 'run' && args[1] === 'test'
+      ? { status: 1, stdout: '{"ok":false,"failures":["runner_test.go: failed"]}', stderr: '' }
+      : { status: 0, stdout: '{"ok":true}', stderr: '' },
   });
+
   assert.equal(result.status, 'fail');
-  assert.match(result.failures.join('\n'), /selected no task results/);
-  assert.match(result.failures.join('\n'), /kb-devkit run test --packages kb-create --concurrency 1 --json/);
+  assert.equal(result.failures.length, 1);
+  assert.match(result.failures[0], /runner_test\.go: failed/);
+});
+
+// case: S-277.1
+test('internal-tool failure evidence decodes task output and stores plain quotes once', async () => {
+  const taskOutput = 'FAIL: TestRunner ("agent", "scheduler")';
+  const result = await runStage({
+    stage: 'internal-tool-tests',
+    packageNames: ['kb-runner'],
+    selectedPackageCount: 1,
+    shard: 1,
+    runCommand: async (_command, args) => args[0] === 'run' && args[1] === 'test'
+      ? {
+        status: 1,
+        stdout: JSON.stringify({
+          ok: false,
+          data: { results: [{ OK: false, Package: 'kb-runner', Task: 'test', Stdout: taskOutput, Stderr: '' }] },
+        }),
+        stderr: '',
+      }
+      : { status: 0, stdout: '{"ok":true}', stderr: '' },
+  });
+
+  assert.equal(result.status, 'fail');
+  assert.ok(result.failures.some((failure) => failure.includes(taskOutput)));
+  assert.ok(result.failures.every((failure) => !failure.includes('\\"')));
+});
+
+// case: S-277.1
+test('internal-tool package-check failure remains fail with its stdout evidence', async () => {
+  const invocations = [];
+  const result = await runStage({
+    stage: 'internal-tool-tests',
+    packageNames: ['kb-runner'],
+    selectedPackageCount: 1,
+    shard: 1,
+    runCommand: async (_command, args) => {
+      invocations.push(args);
+      return args[0] === 'check'
+        ? { status: 1, stdout: '{"ok":false,"issues":[{"check":"runner-package-rule","message":"package check failed"}]}', stderr: '' }
+        : { status: 0, stdout: '{"ok":true}', stderr: '' };
+    },
+  });
+
+  assert.equal(result.status, 'fail');
+  assert.match(result.failures.join('\n'), /runner-package-rule.*package check failed/);
+  assert.ok(invocations.some((args) => args[0] === 'check' && args.includes('--internal-tool-package')));
 });
 // case: S-262.7
 test('journey unit shard records its failure instead of losing it before artifact upload', async () => {
   const result = await runStage({
-    stage: 'journey-unit-suite',
+    stage: profile.buildDependentTestStages.candidate[0],
     selectedPackageCount: 41,
     runCommand: async () => ({ status: 1, stdout: '', stderr: 'test failure' }),
     now: (() => { let value = 0; return () => value += 10; })(),

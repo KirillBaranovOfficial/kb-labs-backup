@@ -21,7 +21,7 @@ import (
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 	"github.com/kb-labs/kb-runner/internal/testdeadline"
 )
 
@@ -595,6 +595,7 @@ func assertSingleRunnableHintCommand(t *testing.T, commandName, command string) 
 	}
 }
 
+// case: S-237.69
 func TestHintCommandCancellationKillsProcessGroup(t *testing.T) {
 	budget := testdeadline.Budget(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -607,7 +608,11 @@ func TestHintCommandCancellationKillsProcessGroup(t *testing.T) {
 			_ = syscall.Kill(childPID, syscall.SIGKILL)
 		}
 	})
-	command := shellQuote("/bin/sh") + " -c " + shellQuote(`(/bin/sleep 300) & echo $! > "$HINT_DESCENDANT_PID"; wait`)
+	childCommand := "/bin/sleep 300"
+	if runtime.GOOS == "linux" {
+		childCommand = "setsid /bin/sleep 300"
+	}
+	command := shellQuote("/bin/sh") + " -c " + shellQuote(`(`+childCommand+`) & echo $! > "$HINT_DESCENDANT_PID"; wait`)
 	result := make(chan error, 1)
 	go func() {
 		_, err := runHintCommand(ctx, command, []string{"PATH=" + os.Getenv("PATH"), "HINT_DESCENDANT_PID=" + pidPath}, budget)
@@ -633,19 +638,27 @@ func TestHintCommandCancellationKillsProcessGroup(t *testing.T) {
 			t.Fatalf("hint descendant did not start before %s", budget)
 		}
 	}
+	childIdentity, childAlive, identityErr := proc.ProcessIdentity(childPID)
+	if identityErr != nil || !childAlive || childIdentity == "" {
+		t.Fatalf("inspect hint descendant before cancellation: pid=%d identity=%q alive=%t err=%v", childPID, childIdentity, childAlive, identityErr)
+	}
 	cancel()
+	var cancellationErr error
 	select {
 	case err := <-result:
+		cancellationErr = err
 		if err == nil || !strings.Contains(err.Error(), "HINT_COMMAND_CANCELED") {
 			t.Fatalf("hint cancellation error = %v, want HINT_COMMAND_CANCELED", err)
 		}
 	case <-time.After(budget):
 		t.Fatalf("hint command did not stop its process group within %s", budget)
 	}
-	if err := syscall.Kill(childPID, 0); err == nil {
-		t.Fatalf("hint descendant %d survived process-group cancellation", childPID)
-	} else if !errors.Is(err, syscall.ESRCH) {
-		t.Fatalf("inspect hint descendant %d after cancellation: %v", childPID, err)
+	currentIdentity, childAlive, identityErr := proc.ProcessIdentity(childPID)
+	if identityErr != nil {
+		t.Fatalf("inspect hint descendant after supervised cancellation: pid=%d expected=%q err=%v", childPID, childIdentity, identityErr)
+	}
+	if childAlive && currentIdentity == childIdentity {
+		t.Fatalf("hint descendant %d survived supervised cancellation: identity=%q teardown=%v", childPID, childIdentity, cancellationErr)
 	}
 }
 
@@ -665,42 +678,71 @@ func TestHintCommandDeadlineReturnsNamedTimeout(t *testing.T) {
 
 func runHintCommand(ctx context.Context, command string, env []string, budget time.Duration) ([]byte, error) {
 	started := time.Now()
-	outputFile, err := os.CreateTemp("", "kb-runner-hint-output-")
+	state, err := os.MkdirTemp("", "kb-runner-hint-run-")
 	if err != nil {
-		return nil, fmt.Errorf("create hint output capture: %w", err)
+		return nil, fmt.Errorf("create hint run state: %w", err)
 	}
-	path := outputFile.Name()
-	defer os.Remove(path)
-	cmd := exec.Command("/bin/sh", "-c", command)
-	cmd.Env = env
-	cmd.Stdout = outputFile
-	cmd.Stderr = outputFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		_ = outputFile.Close()
-		return nil, fmt.Errorf("start hint shell: %w", err)
+	defer os.RemoveAll(state)
+	stdoutPath := filepath.Join(state, "stdout")
+	stderrPath := filepath.Join(state, "stderr")
+	run, err := proc.Start(ctx, proc.Config{
+		StateDir: state, Tag: "hint-command", Stall: budget,
+		StdoutPath: stdoutPath, StderrPath: stderrPath,
+		Command: []string{"/bin/sh", "-c", command}, Env: env, CleanEnv: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start supervised hint command: %w", err)
 	}
 	wait := make(chan error, 1)
-	go func() { wait <- cmd.Wait() }()
-	var waitErr error
+	go func() { wait <- run.Wait() }()
+	readOutput := func() ([]byte, error) {
+		stdout, stdoutErr := os.ReadFile(stdoutPath)
+		stderr, stderrErr := os.ReadFile(stderrPath)
+		return append(stdout, stderr...), errors.Join(stdoutErr, stderrErr)
+	}
+	readTeardown := func() error {
+		file, err := os.Open(filepath.Join(state, "events.jsonl"))
+		if err != nil {
+			return fmt.Errorf("open hint teardown events: %w", err)
+		}
+		defer file.Close()
+		found := false
+		var teardownError string
+		var teardownRemaining []proc.Process
+		err = proc.ReadEvents(file, func(event proc.Event) error {
+			if event.RunID != run.RunID || event.Type != proc.EventTeardown {
+				return nil
+			}
+			found = true
+			teardownError = event.Error
+			teardownRemaining = event.Remaining
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("read hint teardown event: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("hint run %s has no teardown event", run.RunID)
+		}
+		if teardownError != "" || len(teardownRemaining) != 0 {
+			return fmt.Errorf("hint run teardown did not prove an empty process tree: error=%q remaining=%+v", teardownError, teardownRemaining)
+		}
+		return nil
+	}
 	select {
-	case waitErr = <-wait:
+	case waitErr := <-wait:
+		output, readErr := readOutput()
+		return output, errors.Join(waitErr, readErr, readTeardown())
 	case <-ctx.Done():
-		killErr := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		waitErr = <-wait
-		_ = outputFile.Close()
-		output, readErr := os.ReadFile(path)
+		killErr := run.Kill()
+		waitErr := <-wait
+		output, readErr := readOutput()
 		kind := "HINT_COMMAND_CANCELED"
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			kind = "HINT_COMMAND_TIMEOUT"
 		}
-		return output, fmt.Errorf("%s command=%q %s: %w", kind, command, testdeadline.FailureDetails(budget, time.Since(started)), errors.Join(ctx.Err(), waitErr, nonProcessDone(killErr), readErr))
+		return output, fmt.Errorf("%s command=%q %s: %w", kind, command, testdeadline.FailureDetails(budget, time.Since(started)), errors.Join(ctx.Err(), waitErr, nonProcessDone(killErr), readErr, readTeardown()))
 	}
-	if err := outputFile.Close(); err != nil {
-		return nil, fmt.Errorf("close hint output capture: %w", err)
-	}
-	output, readErr := os.ReadFile(path)
-	return output, errors.Join(waitErr, readErr)
 }
 
 func nonProcessDone(err error) error {

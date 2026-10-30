@@ -10,7 +10,12 @@ import (
 	"strings"
 )
 
-const OwnerDirectory = "tools/clikit/proc"
+var ownerDirectories = [...]string{
+	"tools/clikit/proc/child",
+	"tools/kb-runner/internal/proc",
+}
+
+func Owners() []string { return append([]string(nil), ownerDirectories[:]...) }
 
 type Finding struct {
 	File string `json:"file"`
@@ -40,7 +45,7 @@ func Check(root string) ([]Finding, error) {
 		if err != nil {
 			return err
 		}
-		if rel == OwnerDirectory || strings.HasPrefix(rel, OwnerDirectory+string(filepath.Separator)) {
+		if isLaunchOwner(rel) {
 			return nil
 		}
 		file, err := parser.ParseFile(fset, path, nil, parser.AllErrors)
@@ -92,4 +97,13 @@ func Check(root string) ([]Finding, error) {
 		return nil
 	})
 	return findings, err
+}
+
+func isLaunchOwner(rel string) bool {
+	for _, owner := range ownerDirectories {
+		if rel == owner || strings.HasPrefix(rel, owner+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

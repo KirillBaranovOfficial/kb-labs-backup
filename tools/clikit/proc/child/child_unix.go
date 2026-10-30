@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/kb-labs/clikit/proc/internal/processsignal"
 )
 
 func startManaged(command *exec.Cmd, mode Mode, observer ProcessObserver) (*Started, error) {
@@ -77,6 +79,19 @@ func waitCommand(ctx context.Context, command *exec.Cmd, waitDelay time.Duration
 	select {
 	case waitErr := <-waitDone:
 		triggered := time.Now()
+		members, observationErr := observeBounded(ctx, command.Process.Pid, "live members", teardownDeadline(ctx, triggered), nil, func() ([]ProcessMember, error) {
+			return observer.LiveMembers(command.Process.Pid, root)
+		})
+		if observationErr != nil {
+			var processObservationErr *ProcessObservationError
+			if errors.As(observationErr, &processObservationErr) {
+				processObservationErr.PIDs = memberPIDs(members)
+			}
+			return errors.Join(waitErr, observationErr)
+		}
+		if groupLeaderWasReused(command.Process.Pid, root, members) || len(members) == 0 {
+			return waitErr
+		}
 		signalErr := terminate(command)
 		return errors.Join(waitErr, signalErr, waitGroupGone(ctx, command.Process.Pid, observer, root, triggered, signalErr))
 	case <-ctx.Done():
@@ -259,22 +274,14 @@ func terminateTree(pid int) error {
 	if pid <= 0 {
 		return fmt.Errorf("terminate child tree: invalid pid %d", pid)
 	}
-	err := syscall.Kill(-pid, syscall.SIGTERM)
-	if errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	return err
+	return processsignal.SignalProcessGroup(pid, syscall.SIGTERM)
 }
 
 func killTree(pid int) error {
 	if pid <= 0 {
 		return fmt.Errorf("kill child tree: invalid pid %d", pid)
 	}
-	err := syscall.Kill(-pid, syscall.SIGKILL)
-	if errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	return err
+	return processsignal.SignalProcessGroup(pid, syscall.SIGKILL)
 }
 
 func terminateGroup(command *exec.Cmd) error {

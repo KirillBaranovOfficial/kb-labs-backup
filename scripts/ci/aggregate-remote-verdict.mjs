@@ -14,6 +14,7 @@ function readJSON(file) {
 
 export function githubJobName(job) {
   if (job.job === 'prepare' || job.job === 'build') return job.job;
+  if (job.stage === 'internal-tool-tests') return `Internal tool test ${job.shard ?? job.stage}`;
   const independent = Object.values(profile.independentTestStages).some((stages) => stages.includes(job.stage));
   return `${independent ? 'Independent' : 'Build-dependent'} test ${job.shard ?? job.stage}`;
 }
@@ -46,7 +47,7 @@ function failFastReason(shard, matrix, resultsByName, evidenceByName, verificati
 }
 
 function isDevkitStage(result) {
-  return result.name === profile.buildStage || result.name.startsWith(`${profile.packageTestStage}:shard-`);
+  return result.name === profile.buildStage || result.name.startsWith(`${profile.packageTestStage}:shard-`) || result.name.startsWith('internal-tool-tests:shard-');
 }
 
 function devkitFailureEvidence(result) {
@@ -63,6 +64,8 @@ function devkitFailureEvidence(result) {
       const summary = `${identity} (exit code ${String(exitCode)}${logPath ? `; log ${logPath}` : ''})`;
       return outputTail ? `${summary}\n${outputTail}` : summary;
     });
+  } else if (result.name.startsWith('internal-tool-tests:shard-') && Array.isArray(result.failures) && result.failures.length) {
+    failures = result.failures;
   } else {
     const tail = result.logTail?.trim();
     failures = [tail ? `log-tail fallback: ${tail}` : 'log-tail fallback: no task output was recorded'];
@@ -233,6 +236,19 @@ export function aggregateVerdict({
       ? reconcileJobResult(devkitFailureEvidence(result), jobName, undefined, evidenceByName.get(jobName), githubJobsError)
       : missingShard(shard, selectedPackageCount, githubJobs, githubJobsError, jobs.slice(2), verificationProfile));
   }
+  const internalToolJobs = [];
+  for (const shard of matrix.internalTool?.include ?? []) {
+    const name = `${shard.stage}:shard-${shard.shard}`;
+    const result = byName.get(name);
+    const jobName = githubJobName(shard);
+    const reconciled = result
+      ? reconcileJobResult(devkitFailureEvidence(result), jobName, undefined, evidenceByName.get(jobName), githubJobsError)
+      : missingShard(shard, shard.packages.length, githubJobs, githubJobsError, internalToolJobs, verificationProfile);
+    internalToolJobs.push({
+      ...reconciled,
+      jobConclusion: evidenceByName.get(jobName)?.conclusion ?? 'unknown',
+    });
+  }
   for (const job of jobs) {
     if (!Number.isSafeInteger(job.selectedPackageCount) || job.selectedPackageCount < 0) throw new Error(`Remote verdict stage ${job.name} is missing its selected package count.`);
   }
@@ -242,6 +258,10 @@ export function aggregateVerdict({
     profile: verificationProfile,
     status: jobs.every((job) => job.status === 'pass') ? 'pass' : 'fail',
     jobs,
+    internalToolResults: {
+      status: internalToolJobs.every((job) => job.status === 'pass') ? 'pass' : 'fail',
+      jobs: internalToolJobs,
+    },
     diagnostics: [],
   };
   return parseVerdict(verdict, sha);
@@ -271,6 +291,7 @@ function main() {
   const rawMatrix = process.env.REMOTE_TEST_MATRIX;
   if (!resultsDir || !out || !/^[0-9a-f]{40}$/.test(sha ?? '') || !Number.isSafeInteger(selectedPackageCount) || selectedPackageCount < 0) throw new Error('Usage: set GITHUB_SHA and REMOTE_SELECTED_PACKAGE_COUNT, then run node scripts/ci/aggregate-remote-verdict.mjs <results-dir> <output>.');
   const matrix = rawMatrix ? JSON.parse(rawMatrix) : { include: [] };
+  matrix.internalTool = process.env.REMOTE_INTERNAL_TOOL_MATRIX ? JSON.parse(process.env.REMOTE_INTERNAL_TOOL_MATRIX) : { include: [] };
   const files = existsSync(resultsDir) ? readdirSync(resultsDir).filter((name) => name.endsWith('.json')).map((name) => path.join(resultsDir, name)) : [];
   const results = files.map(readJSON);
   const prepare = results.find((result) => result.name === 'prepare');
@@ -281,7 +302,7 @@ function main() {
     : [];
   let githubJobs = [];
   let githubJobsError;
-  const plannedJobs = [{ job: 'prepare' }, { job: 'build' }, ...matrix.include];
+  const plannedJobs = [{ job: 'prepare' }, { job: 'build' }, ...matrix.include, ...(matrix.internalTool?.include ?? [])];
   try {
     githubJobs = fetchGitHubJobEvidence({
       repository: process.env.GITHUB_REPOSITORY,

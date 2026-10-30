@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 type commandPolicy struct {

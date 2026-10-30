@@ -3,15 +3,18 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kb-labs/clikit/command"
 )
 
 // case: S-276.1
@@ -23,21 +26,43 @@ func TestRunCommandLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	t.Setenv("KBLABS_WORKTREES_ROOT", root)
 	t.Setenv("GOCACHE", filepath.Join(root, "go-cache"))
 	childReady := filepath.Join(root, "run-child-ready")
-	runner := buildRunnerBinary(t)
-	command := exec.Command(runner, "run", "--tag", "lease-child", "--state", state, "--stall", "1m", "--stdout", filepath.Join(state, "child.stdout"), "--stderr", filepath.Join(state, "child.stderr"), "--", "/bin/sh", "-c", "printf ready > \"$1\"; exec /bin/sleep 60", "sh", childReady)
-	command.Dir = worktree
-	command.Env = os.Environ()
-	if err := command.Start(); err != nil {
+	previousWD, err := os.Getwd()
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chdir(worktree); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousWD); err != nil {
+			t.Errorf("restore current directory: %v", err)
+		}
+	})
+	runnerStdout, runnerStderr := &bytes.Buffer{}, &bytes.Buffer{}
+	ctx, cancel := context.WithCancel(context.Background())
+	type commandResult struct {
+		code int
+		err  error
+	}
+	result := make(chan commandResult, 1)
+	commandRoot := runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}
+	go func() {
+		code, err := runCommandWithContext(ctx, commandRoot, []string{"--tag", "lease-child", "--state", state, "--stall", "1m", "--stdout", filepath.Join(state, "child.stdout"), "--stderr", filepath.Join(state, "child.stderr"), "--", "/bin/sh", "-c", "printf ready > \"$1\"; exec /bin/sleep 60", "sh", childReady}, runnerStdout, runnerStderr)
+		result <- commandResult{code: code, err: err}
+	}()
 	waited := false
 	t.Cleanup(func() {
 		if !waited {
-			stopLeaseFixtureRunner(t, command, 143)
+			cancel()
+			<-result
 		}
 	})
 	if err := waitForFile(childReady); err != nil {
-		t.Fatalf("runner child did not reach its readiness marker: %v", err)
+		cancel()
+		outcome := <-result
+		waited = true
+		childStderr, _ := os.ReadFile(filepath.Join(state, "child.stderr"))
+		t.Fatalf("runner child did not reach its readiness marker: %v; runner-code=%d runner-error=%v stdout=%q stderr=%q child-stderr=%q", err, outcome.code, outcome.err, runnerStdout.String(), runnerStderr.String(), childStderr)
 	}
 
 	leasePath := derivedWorktreeLeasePath(t, worktree)
@@ -47,8 +72,12 @@ func TestRunCommandLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	if _, err := os.Stat(worktree); err != nil {
 		t.Fatalf("runner child worktree was removed while its lease was held: %v", err)
 	}
-	stopLeaseFixtureRunner(t, command, 143)
+	cancel()
+	outcome := <-result
 	waited = true
+	if outcome.code != 143 {
+		t.Fatalf("run command exit = %d, err=%v; want cancellation 143", outcome.code, outcome.err)
+	}
 	lease, acquired, err := tryExclusiveWorktreeLease(leasePath)
 	if err != nil || !acquired {
 		t.Fatalf("runner lease remained after child exit: acquired=%t err=%v", acquired, err)
@@ -73,6 +102,19 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	if err := syscall.Mkfifo(releaseFIFO, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	releaseWriter, err := os.OpenFile(releaseFIFO, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open test-owned provider release FIFO: %v", err)
+	}
+	var releaseOnce sync.Once
+	var releaseErr error
+	releaseProvider := func() error {
+		releaseOnce.Do(func() {
+			_, writeErr := releaseWriter.WriteString("release\n")
+			releaseErr = errors.Join(writeErr, releaseWriter.Close())
+		})
+		return releaseErr
+	}
 	fakeCodex := filepath.Join(root, "codex")
 	script := "#!/bin/sh\nprintf 'started\\n' > " + shellQuote(startedPath) + "\nIFS= read -r _ < " + shellQuote(releaseFIFO) + "\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"lease-session\"}' '{\"type\":\"turn.completed\",\"message\":\"done\"}'\n"
 	if err := os.WriteFile(fakeCodex, []byte(script), 0o700); err != nil {
@@ -80,50 +122,36 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	}
 	t.Setenv("CODEX_BIN", fakeCodex)
 	runner := buildRunnerBinary(t)
-	command := exec.Command(runner, "agent", "start", "--state", state, "--stream", "worker", "--vendor", "codex", "--workdir", worktree, "--prompt-file", prompt, "--stall", "1m")
-	command.Env = os.Environ()
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
+	commandRoot := runnerRoot{Root: command.InvocationRoot(runner), invocation: runner, executable: runner}
+	var runnerStdout, runnerStderr bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	type commandResult struct {
+		code int
+		err  error
 	}
+	result := make(chan commandResult, 1)
+	go func() {
+		code, err := agentStartCommandWithContext(ctx, commandRoot, []string{"--state", state, "--stream", "worker", "--vendor", "codex", "--workdir", worktree, "--prompt-file", prompt, "--stall", "1m"}, &runnerStdout, &runnerStderr)
+		result <- commandResult{code: code, err: err}
+	}()
 	waited := false
-	var releaseOnce sync.Once
-	var releaseWriter *os.File
-	var releaseErr error
-	releaseProvider := func() error {
-		releaseOnce.Do(func() {
-			if releaseWriter != nil {
-				_, writeErr := releaseWriter.WriteString("release\n")
-				releaseErr = errors.Join(writeErr, releaseWriter.Close())
-			}
-		})
-		return releaseErr
-	}
 	t.Cleanup(func() {
 		if !waited {
-			if err := command.Process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				t.Errorf("interrupt agent start fixture: %v", err)
-			}
 			if err := releaseProvider(); err != nil {
 				t.Errorf("release fake provider during cleanup: %v", err)
 			}
-			waitForFixtureExit(t, command, 1)
+			cancel()
+			<-result
 		}
 	})
 	if err := waitForFile(startedPath); err != nil {
-		if err := command.Process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			t.Errorf("interrupt agent start that missed provider readiness: %v", err)
-		}
+		cancel()
 		if err := releaseProvider(); err != nil {
 			t.Errorf("release fake provider after startup timeout: %v", err)
 		}
-		waitForFixtureExit(t, command, 1)
+		outcome := <-result
 		waited = true
-		t.Fatalf("agent start did not reach the provider child: %v", err)
-	}
-	var err error
-	releaseWriter, err = os.OpenFile(releaseFIFO, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("agent start did not reach the provider child: %v; runner-code=%d runner-error=%v stdout=%q stderr=%q", err, outcome.code, outcome.err, runnerStdout.String(), runnerStderr.String())
 	}
 	leasePath := derivedWorktreeLeasePath(t, worktree)
 	if !waitForWorktreeLeaseBusy(t, leasePath) {
@@ -132,14 +160,15 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	if _, err := os.Stat(worktree); err != nil {
 		t.Fatalf("worktree removed while agent child was live: %v", err)
 	}
-	if err := command.Process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		t.Fatalf("interrupt agent start fixture: %v", err)
-	}
+	cancel()
 	if err := releaseProvider(); err != nil {
 		t.Fatalf("release fake provider after lease assertion: %v", err)
 	}
-	waitForFixtureExit(t, command, 1)
+	outcome := <-result
 	waited = true
+	if outcome.code != 1 {
+		t.Fatalf("agent start cancellation exit = %d, err=%v; want 1", outcome.code, outcome.err)
+	}
 	lease, acquired, err := tryExclusiveWorktreeLease(leasePath)
 	if err != nil || !acquired {
 		t.Fatalf("agent start lease remained after child exit: acquired=%t err=%v", acquired, err)
@@ -159,29 +188,6 @@ func derivedWorktreeLeasePath(t *testing.T, worktree string) string {
 		t.Fatalf("production worktree lease paths = %q, want one path", paths)
 	}
 	return paths[0]
-}
-
-func stopLeaseFixtureRunner(t *testing.T, command *exec.Cmd, expectedExitCode int) {
-	t.Helper()
-	if err := command.Process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		t.Errorf("interrupt lease fixture runner: %v", err)
-	}
-	waitForFixtureExit(t, command, expectedExitCode)
-}
-
-func waitForFixtureExit(t *testing.T, command *exec.Cmd, expectedExitCode int) {
-	t.Helper()
-	err := command.Wait()
-	if expectedExitCode == 0 {
-		if err != nil {
-			t.Errorf("lease fixture runner exit = %v, want success", err)
-		}
-		return
-	}
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || exitErr.ExitCode() != expectedExitCode {
-		t.Errorf("lease fixture runner exit = %v, want classified cancellation exit %d", err, expectedExitCode)
-	}
 }
 
 func waitForWorktreeLeaseBusy(t *testing.T, path string) bool {

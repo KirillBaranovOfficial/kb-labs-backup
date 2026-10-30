@@ -3,14 +3,33 @@ package launchrail
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
+func TestWorkspaceUsesOnlyDeclaredProcessLaunchOwners(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve launchrail test source path")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", "..", ".."))
+	findings, err := Check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("workspace process setup outside declared launch owners: %+v", findings)
+	}
+}
+
 func TestCheckFindsReintroducedProcessGroupSetupOutsideOwner(t *testing.T) {
 	root := t.TempDir()
-	writeGoFile(t, root, filepath.Join(OwnerDirectory, "child", "child_unix.go"), `package child
+	owners := Owners()
+	for _, owner := range owners {
+		writeGoFile(t, root, filepath.Join(owner, "launch.go"), `package launch
 var attrs = SysProcAttr{Setpgid: true}
 `)
+	}
 	writeGoFile(t, root, "tools/kb-dev/internal/process/spawn.go", `package process
 func start() { cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} }
 `)

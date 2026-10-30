@@ -14,7 +14,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 const testChannelSandboxExec = "/usr/bin/sandbox-exec"
@@ -115,11 +115,7 @@ func resolveTestChannelToolchain() (testChannelToolchain, error) {
 	if err != nil {
 		return testChannelToolchain{}, fmt.Errorf("Go toolchain is unavailable: %w", err)
 	}
-	goPath, err = filepath.Abs(goPath)
-	if err != nil {
-		return testChannelToolchain{}, fmt.Errorf("resolve Go toolchain path: %w", err)
-	}
-	goPath, err = filepath.EvalSymlinks(goPath)
+	goPath, err = canonicalSandboxPath(goPath)
 	if err != nil {
 		return testChannelToolchain{}, fmt.Errorf("cannot canonicalize Go toolchain path: %w", err)
 	}
@@ -270,12 +266,7 @@ func executeTestRequestOS(ctx context.Context, execution testExecution) (result 
 		Env:     []string{"HOME=" + tempHome, "PATH=" + filepath.Dir(toolchain.GoBinary), "GOPROXY=off", "GOMODCACHE=" + toolchain.GOMODCACHE, "GOCACHE=" + cache, "GOFLAGS=-mod=readonly", "GOENV=off", "GOTOOLCHAIN=local"},
 		Command: append([]string{command, "-f", profilePath, toolchain.GoBinary}, goArgs...),
 	}
-	var run *proc.Run
-	if execution.HostResourceSource != nil {
-		run, err = proc.StartWithHostResourceSource(commandContext, config, execution.HostResourceSource)
-	} else {
-		run, err = proc.Start(commandContext, config)
-	}
+	run, err := proc.Start(commandContext, config)
 	if err != nil {
 		result := testResult{ExitCode: 1, Diagnostic: "heavy test admission failed: " + err.Error()}
 		var admissionErr *proc.AdmissionCanceledError

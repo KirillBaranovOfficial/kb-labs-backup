@@ -329,7 +329,6 @@ func classifyPackages(root string, dirs []string, cfg *config.DevkitConfig) []Pa
 
 // classify returns category/preset/language for a relative package path.
 // Categories are evaluated in declaration order — first match wins.
-
 func classify(relPath string, cfg *config.DevkitConfig) (category, preset, language, releaseLane string) {
 	if cfg == nil || len(cfg.Workspace.Categories) == 0 {
 		return "", "", "", ""

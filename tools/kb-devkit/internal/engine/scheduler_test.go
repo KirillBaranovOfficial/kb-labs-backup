@@ -204,6 +204,33 @@ func TestAffectedPackagesSelectsFullGraphForUnownedPaths(t *testing.T) {
 	_ = app
 }
 
+func TestAffectedPackagesFromFilesUsesWorkspaceOwnership(t *testing.T) {
+	root := t.TempDir()
+	writeRootWorkspace(t, root)
+	core := newPkg(t, root, "packages/core", "@fixture/core", `{"name":"@fixture/core"}`)
+	app := newPkg(t, root, "apps/app", "@fixture/app", `{"name":"@fixture/app","dependencies":{"@fixture/core":"workspace:*"}}`)
+	cfg := &config.DevkitConfig{
+		Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{Name: "packages", Category: config.CategoryConfig{Match: []string{"packages/*", "apps/*"}, Preset: "node-lib"}}}},
+		Tasks:     map[string]config.TaskConfig{"build": {{Command: "echo build"}}},
+	}
+	ws, err := workspace.New(root, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := AffectedPackagesFromFiles(ws, []string{"packages/core/src/index.ts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selection.Packages) != 2 || selection.Reason != "" {
+		t.Fatalf("selection = (%v, %q), want core and dependent app", packageNames(selection.Packages), selection.Reason)
+	}
+	if _, err := AffectedPackagesFromFiles(ws, []string{""}); err == nil {
+		t.Fatal("empty changed-file path was accepted")
+	}
+	_ = core
+	_ = app
+}
+
 // case: S-179.37
 func TestBuildDAGRejectsWorkspaceBuildDependencyWithoutTaskNode(t *testing.T) {
 	root := t.TempDir()

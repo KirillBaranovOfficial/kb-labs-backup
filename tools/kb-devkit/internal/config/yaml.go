@@ -349,8 +349,10 @@ func parseYAMLBytes(data []byte) (*DevkitConfig, error) {
 		}
 	}
 	for _, category := range cfg.Workspace.Categories {
-		if category.Category.ReleaseLane != "" && category.Category.ReleaseLane != "internal-tool" {
-			return nil, fmt.Errorf("workspace category %q has unsupported releaseLane %q", category.Name, category.Category.ReleaseLane)
+		if category.Category.ReleaseLane != "" {
+			if category.Category.ReleaseLane != "internal-tool" {
+				return nil, fmt.Errorf("workspace category %q has unsupported releaseLane %q", category.Name, category.Category.ReleaseLane)
+			}
 		}
 	}
 	return cfg, nil

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -33,6 +34,19 @@ type ProcessMember struct {
 type ProcessObserver interface {
 	RootIdentity(pid int) (ProcessIdentity, error)
 	LiveMembers(groupID int, root ProcessIdentity) ([]ProcessMember, error)
+}
+
+// SignalIdentity signals the process currently carrying identity through the
+// observer's identity source. Linux binds the signal to a pidfd; Darwin checks
+// the identity immediately before signaling because it has no pidfd.
+func SignalIdentity(observer ProcessObserver, identity ProcessIdentity, signal syscall.Signal) error {
+	if observer == nil {
+		return errors.New("signal process identity: process observer is nil")
+	}
+	if identity.PID <= 0 || identity.Identity == "" {
+		return errors.New("signal process identity: PID and start identity are required")
+	}
+	return signalIdentity(observer, identity, signal)
 }
 
 // OwnedProcessesRemainError reports live group members that survived teardown.

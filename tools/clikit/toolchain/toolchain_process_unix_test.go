@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/internal/testdeadline"
-	"github.com/kb-labs/clikit/proc"
 )
 
 // case: S-179.27
@@ -108,12 +107,12 @@ wait`
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, alive, err := proc.ProcessIdentity(pid)
-	if err != nil {
-		t.Fatalf("inspect grandchild %d: %v", pid, err)
-	}
-	if alive {
+	err = syscall.Kill(pid, 0)
+	if err == nil {
 		t.Fatalf("grandchild %d remains alive after Run returned with error %v", pid, runErr)
+	}
+	if !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("check grandchild %d after Run with signal 0: %v", pid, err)
 	}
 }
 

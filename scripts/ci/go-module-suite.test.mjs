@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { load } from 'js-yaml';
 import { nativeInstallCommands } from '../../e2e/journey/native-macos-install.mjs';
+import { discoverModules } from './go-module-suite.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const temporaryDirectories = [];
@@ -34,7 +35,7 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
   writeFileSync(path.join(moduleOne, 'go.mod'), 'module fixture/first\n\ngo 1.22\n');
   writeFileSync(path.join(moduleTwo, 'go.mod'), 'module fixture/second\n\ngo 1.22\n');
   const registry = path.join(fixture, 'devkit.yaml');
-  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n`);
+  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      language: go\n      match:\n        - "modules/first"\n    internal-tool:\n      language: go\n      match:\n        - "modules/second"\n`);
   const invocations = path.join(fixture, 'go-invocations.jsonl');
   const fakeGo = path.join(fixture, 'go');
   writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "{\\"args\\":\\"$*\\",\\"cwd\\":\\"$PWD\\",\\"goos\\":\\"$GOOS\\",\\"home\\":\\"$HOME\\",\\"tmpdir\\":\\"$TMPDIR\\",\\"platform_root\\":\\"$KB_PLATFORM_ROOT\\",\\"kb_home\\":\\"$KB_HOME\\",\\"net_offset\\":\\"$KB_NET_OFFSET\\",\\"goflags\\":\\"$GOFLAGS\\",\\"deadline_scale\\":\\"$KB_TEST_DEADLINE_SCALE\\"}" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first' 'fixture/first/e2e' 'fixture/second'; fi\n`);
@@ -94,7 +95,7 @@ test('suite refuses a TMPDIR root without Unix socket path capacity before runni
   mkdirSync(moduleDir, { recursive: true });
   writeFileSync(path.join(moduleDir, 'go.mod'), 'module fixture/first\n\ngo 1.22\n');
   const registry = path.join(fixture, 'devkit.yaml');
-  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n`);
+  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      language: go\n      match:\n        - "modules/*"\n`);
   const invocations = path.join(fixture, 'go-invocations.jsonl');
   const fakeGo = path.join(fixture, 'go');
   writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first'; fi\n`);
@@ -134,15 +135,78 @@ test('registry discovery fails when it is empty or a registered pattern has no m
   const modules = path.join(fixture, 'modules');
   mkdirSync(modules, { recursive: true });
   const registry = path.join(fixture, 'devkit.yaml');
-  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      match: []\n');
+  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      language: go\n      match: []\n');
   const empty = spawnSync(process.execPath, [suite, '--registry', registry, '--root', fixture], { cwd: root, encoding: 'utf8' });
   assert.notEqual(empty.status, 0);
   assert.match(empty.stderr, /match array|empty set/);
 
-  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n');
+  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      language: go\n      match:\n        - "modules/*"\n');
   const unmatched = spawnSync(process.execPath, [suite, '--registry', registry, '--root', fixture], { cwd: root, encoding: 'utf8' });
   assert.notEqual(unmatched.status, 0);
   assert.match(unmatched.stderr, /matched no modules/);
+});
+
+// case: S-277.1
+test('candidate Go module suite excludes internal-tool modules from the devkit category declaration', () => {
+  const devkit = load(readFileSync(path.join(root, 'devkit.yaml'), 'utf8'));
+  assert.equal(devkit.workspace.categories['internal-tool'].releaseLane, 'internal-tool');
+  const modules = discoverModules(root, path.join(root, 'devkit.yaml'));
+  assert.ok(!modules.includes('tools/kb-runner'));
+  assert.ok(modules.includes('tools/kb-create'));
+  assert.ok(modules.includes('tools/clikit'));
+});
+
+// case: S-277.1
+test('candidate Go suite never invokes a failing internal-tool Go test', () => {
+  const fixture = temporaryDirectory('go-suite-release-lane-');
+  const gatingModule = path.join(fixture, 'modules/gating');
+  const internalModule = path.join(fixture, 'modules/internal');
+  mkdirSync(gatingModule, { recursive: true });
+  mkdirSync(internalModule, { recursive: true });
+  writeFileSync(path.join(gatingModule, 'go.mod'), 'module fixture/gating\n\ngo 1.22\n');
+  writeFileSync(path.join(internalModule, 'go.mod'), 'module fixture/internal\n\ngo 1.22\n');
+  const registry = path.join(fixture, 'devkit.yaml');
+  writeFileSync(registry, [
+    'workspace:',
+    '  categories:',
+    '    shipped-go:',
+    '      language: go',
+    '      match: [modules/gating]',
+    '    private-go:',
+    '      language: go',
+    '      match: [modules/internal]',
+    '      releaseLane: internal-tool',
+    '',
+  ].join('\n'));
+  const calls = path.join(fixture, 'go-calls.log');
+  const fakeGo = path.join(fixture, 'go');
+  writeFileSync(fakeGo, [
+    '#!/bin/sh',
+    'printf "%s %s\\n" "$PWD" "$*" >> "$GO_SUITE_LOG"',
+    'if [ "$1" = list ]; then printf "%s\\n" fixture/gating; exit 0; fi',
+    'if [ "$PWD" = "$GO_SUITE_INTERNAL_DIR" ] && [ "$1" = test ]; then echo runner test failed; exit 1; fi',
+    'exit 0',
+    '',
+  ].join('\n'));
+  const chmod = spawnSync('chmod', ['+x', fakeGo]);
+  assert.equal(chmod.status, 0);
+
+  const result = spawnSync(process.execPath, [suite, '--registry', registry, '--root', fixture, '--go', fakeGo], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GO_SUITE_LOG: calls,
+      GO_SUITE_INTERNAL_DIR: internalModule,
+      GOMODCACHE: path.join(fixture, 'module-cache'),
+      GOCACHE: path.join(fixture, 'build-cache'),
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const invocations = readFileSync(calls, 'utf8');
+  assert.match(invocations, /modules\/gating/);
+  assert.doesNotMatch(invocations, /modules\/internal/);
 });
 
 // case: S-261.1

@@ -13,6 +13,8 @@ import (
 
 const defaultBudget = 30 * time.Second
 
+const FormerFixedReadinessDeadlinePlusMarginStimulus = 2500 * time.Millisecond
+
 // Budget returns the module's generous, load-scaled test deadline.
 func Budget(t testing.TB) time.Duration {
 	t.Helper()
@@ -29,6 +31,21 @@ func Scale(t testing.TB, duration time.Duration) time.Duration {
 func SignalDeliveryBound(t testing.TB) time.Duration {
 	t.Helper()
 	return scaled(t, 10*time.Second)
+}
+
+func ProcessCancellationBound(t testing.TB) time.Duration {
+	t.Helper()
+	return scaled(t, time.Second)
+}
+
+func ExternalToolTimeoutSlack(t testing.TB) time.Duration {
+	t.Helper()
+	return scaled(t, time.Second)
+}
+
+func ResourceCleanupSlack(t testing.TB) time.Duration {
+	t.Helper()
+	return scaled(t, 2*time.Second)
 }
 
 // FailureDetails reports the budget context for a bounded test subprocess.

@@ -95,6 +95,17 @@ func TestChecksTimeoutConfiguration(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCategoriesMayDeclareOnlyInternalTools(t *testing.T) {
+	defaultGating := "workspace:\n  categories:\n    packages:\n      match: [packages/*]\n      preset: node-lib\n    private:\n      match: [tools/runner]\n      preset: go-binary\n      releaseLane: internal-tool\n"
+	if _, err := parseYAMLBytes([]byte(defaultGating)); err != nil {
+		t.Fatalf("parse default-gating and internal-tool categories: %v", err)
+	}
+	unsupported := strings.Replace(defaultGating, "releaseLane: internal-tool", "releaseLane: outside-release", 1)
+	if _, err := parseYAMLBytes([]byte(unsupported)); err == nil || !strings.Contains(err.Error(), "unsupported releaseLane") {
+		t.Fatalf("unsupported release lane error = %v, want internal-tool-only diagnostic", err)
+	}
+}
+
 // case: S-179.27
 func TestChecksTimeoutInheritedFromExtendedPack(t *testing.T) {
 	root := t.TempDir()

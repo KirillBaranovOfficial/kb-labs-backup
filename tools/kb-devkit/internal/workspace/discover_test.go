@@ -84,11 +84,41 @@ func TestDiscoverPackagesFallsBackToPackageJSONWorkspaces(t *testing.T) {
 	if len(pkgs) != 2 {
 		t.Fatalf("packages count = %d, want 2", len(pkgs))
 	}
+	if pkgs[0].ReleaseLane != "" || pkgs[1].ReleaseLane != "" {
+		t.Fatalf("default package release lanes = %q and %q, want empty default", pkgs[0].ReleaseLane, pkgs[1].ReleaseLane)
+	}
 
 	names := []string{pkgs[0].Name, pkgs[1].Name}
 	sort.Strings(names)
 	if names[0] != "@kb/alpha" || names[1] != "@kb/beta" {
 		t.Fatalf("package names = %#v", names)
+	}
+}
+
+func TestDiscoverPackagesDefaultsToGatingExceptDeclaredInternalTool(t *testing.T) {
+	root := t.TempDir()
+	mustWritePackage(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*","tools/*"]}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "host", "package.json"), `{"name":"@kb/host"}`)
+	mustWritePackage(t, filepath.Join(root, "tools", "runner", "package.json"), `{"name":"@kb/runner"}`)
+
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{
+		{Name: "host", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+		{Name: "internal-tool", Category: config.CategoryConfig{Match: []string{"tools/runner"}, Preset: "go-binary", ReleaseLane: "internal-tool"}},
+	}}}
+
+	pkgs, err := discoverPackages(root, cfg)
+	if err != nil {
+		t.Fatalf("discoverPackages error: %v", err)
+	}
+	if len(pkgs) != 2 {
+		t.Fatalf("packages count = %d, want 2", len(pkgs))
+	}
+	lanes := map[string]string{}
+	for _, pkg := range pkgs {
+		lanes[pkg.Name] = pkg.ReleaseLane
+	}
+	if lanes["@kb/host"] != "" || lanes["@kb/runner"] != "internal-tool" {
+		t.Fatalf("release lane defaults = %#v, want host default gating and runner internal-tool", lanes)
 	}
 }
 

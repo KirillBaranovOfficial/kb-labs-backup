@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -19,12 +20,7 @@ import (
 
 // case: S-050.3
 func TestInteractionPromptIsVisibleBeforePTYAnswer(t *testing.T) {
-	var command *exec.Cmd
-	if runtime.GOOS == "darwin" {
-		command = exec.Command("script", "-q", "/dev/null", os.Args[0], "-test.run=^TestInteractionPTYChild$")
-	} else {
-		command = exec.Command("script", "-q", "-c", shellQuote(os.Args[0])+" "+shellQuote("-test.run=^TestInteractionPTYChild$"), "/dev/null")
-	}
+	command := exec.Command("script", ptyScriptArguments(runtime.GOOS, os.Args[0], "-test.run=^TestInteractionPTYChild$")...)
 	command.Env = append(os.Environ(), "CLIKIT_INTERACTION_PTY_CHILD=1")
 	input, err := command.StdinPipe()
 	if err != nil {
@@ -86,6 +82,28 @@ func TestInteractionPromptIsVisibleBeforePTYAnswer(t *testing.T) {
 	}
 }
 
+func ptyScriptArguments(goos, executable string, args ...string) []string {
+	if goos == "linux" {
+		command := shellQuote(executable)
+		for _, arg := range args {
+			command += " " + shellQuote(arg)
+		}
+		return []string{"-q", "-c", command, "/dev/null"}
+	}
+	return append([]string{"-q", "/dev/null", executable}, args...)
+}
+
+func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
+
+func TestPTYScriptArgumentFormats(t *testing.T) {
+	if got, want := ptyScriptArguments("linux", "/tmp/a b", "-test.run=x"), []string{"-q", "-c", "'/tmp/a b' '-test.run=x'", "/dev/null"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Linux script arguments = %q, want %q", got, want)
+	}
+	if got, want := ptyScriptArguments("darwin", "/tmp/a b", "-test.run=x"), []string{"-q", "/dev/null", "/tmp/a b", "-test.run=x"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("BSD script arguments = %q, want %q", got, want)
+	}
+}
+
 func TestInteractionPTYChild(t *testing.T) {
 	if os.Getenv("CLIKIT_INTERACTION_PTY_CHILD") != "1" {
 		return
@@ -102,8 +120,4 @@ func TestInteractionPTYChild(t *testing.T) {
 	if code := Execute(root, []string{"run"}, os.Stdout, os.Stderr); code.Code() != 0 {
 		t.Fatalf("Execute() = %d", code.Code())
 	}
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

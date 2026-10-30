@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
@@ -54,7 +55,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer) diag.ExitStatus {
 	for _, finding := range findings {
 		issues = append(issues, checks.Issue{
 			Check: request.Check, Severity: checks.SeverityError,
-			Message: fmt.Sprintf("OS process setup %s belongs in %s", finding.Name, launchrail.OwnerDirectory),
+			Message: fmt.Sprintf("OS process setup %s belongs in %s", finding.Name, strings.Join(launchrail.Owners(), " or ")),
 			File:    finding.File, Line: finding.Line,
 		})
 	}

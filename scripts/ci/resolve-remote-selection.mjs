@@ -6,8 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const profile = process.argv[2];
 const verificationProfile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
+const profile = process.argv[2];
 const outputPath = process.argv[3];
 const executable = process.argv[4];
 const defaultBranch = process.env.DEFAULT_BRANCH;
@@ -49,16 +49,8 @@ try {
   if (envelope?.ok !== true || !Array.isArray(packages) || packages.some((name) => typeof name !== 'string' || !name)) {
     throw new Error('kb-devkit affected --json returned an invalid package selection. Rerun the remote verification prepare job.');
   }
-  if (!Array.isArray(internalToolPackages) || internalToolPackages.some((name) => typeof name !== 'string' || !name)) {
-    throw new Error('kb-devkit affected --json returned an invalid internal-tool package set. Rerun the remote verification prepare job.');
-  }
-  if (new Set(internalToolPackages).size !== internalToolPackages.length || internalToolPackages.some((name) => !packages.includes(name))) {
-    throw new Error('kb-devkit affected --json returned an inconsistent internal-tool package set. Rerun the remote verification prepare job.');
-  }
   if (typeof selectionReason !== 'string') throw new Error('kb-devkit affected --json returned an invalid selection reason. Rerun the remote verification prepare job.');
-  const selectedPackages = profile === 'candidate'
-    ? packages.filter((name) => !internalToolPackages.includes(name))
-    : packages;
+  if (!Array.isArray(internalToolPackages)) throw new Error('kb-devkit affected --json returned no internal-tool package selection. Rerun the remote verification prepare job.');
   const stages = [...verificationProfile.independentTestStages[profile], ...verificationProfile.buildDependentTestStages[profile]];
   const stagePackages = {};
   for (const stage of stages) {
@@ -70,12 +62,8 @@ try {
     stagePackages[stage] = [manifest.name];
   }
   const changedPaths = JSON.parse(readFileSync(changedFilesPath, 'utf8'));
-  const selectedCount = selectedPackages.length;
-  if (selectedCount === 0 && Object.keys(stagePackages).length === 0 && (profile === 'candidate' || changedPaths.length > 0)) {
-    throw new Error(`KB_REMOTE_EMPTY_SELECTION: ${profile} resolved ${changedPaths.length} changed path(s) to zero verification packages. Check the base-ref input and registry, then rerun the prepare selector.`);
-  }
-  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages: selectedPackages, internalToolPackages, stagePackages, changedPathCount: changedPaths.length, selectionReason }, selectedPackageCount: selectedCount })}\n`);
-  process.stdout.write(`Resolved ${selectedCount} package(s) from ${changedPaths.length} path(s) using kb-devkit.\n`);
+  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, internalToolPackages, stagePackages, changedPathCount: changedPaths.length, selectionReason }, selectedPackageCount: packages.length })}\n`);
+  process.stdout.write(`Resolved ${packages.length} package(s) from ${changedPaths.length} path(s) using kb-devkit.\n`);
 } catch (error) {
   process.stderr.write(`${error.message}\n`);
   process.exitCode = 1;
