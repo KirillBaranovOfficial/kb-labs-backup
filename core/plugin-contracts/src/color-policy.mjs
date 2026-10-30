@@ -7,6 +7,7 @@
  * FORCE_COLOR: https://github.com/chalk/supports-color
  */
 export const colorPolicy = {
+  forceColorInteger: { digits: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'], minimum: 1 },
   rules: [
     { when: 'noColorNonEmpty', result: false },
     { when: 'forceColorDisabled', result: false },
@@ -26,7 +27,11 @@ export const colorPolicy = {
     { name: 'FORCE_COLOR empty', tty: false, noColor: '', forceColor: '', term: 'dumb', want: true },
     { name: 'FORCE_COLOR true', tty: false, noColor: '', forceColor: 'true', term: 'dumb', want: true },
     { name: 'FORCE_COLOR numeric level', tty: false, noColor: '', forceColor: '2', term: 'dumb', want: true },
-    { name: 'FORCE_COLOR decimal level', tty: false, noColor: '', forceColor: '1.5', term: 'dumb', want: true },
+    { name: 'FORCE_COLOR decimal ignored by dumb TERM', tty: false, noColor: '', forceColor: '1.5', term: 'dumb', want: false },
+    { name: 'FORCE_COLOR signed positive ignored in pipe', tty: false, noColor: '', forceColor: '+1', term: 'xterm-256color', want: false },
+    { name: 'FORCE_COLOR signed negative falls through to TTY', tty: true, noColor: '', forceColor: '-1', term: 'xterm-256color', want: true },
+    { name: 'FORCE_COLOR leading zero integer enables', tty: false, noColor: '', forceColor: '01', term: 'dumb', want: true },
+    { name: 'FORCE_COLOR whitespace ignored in pipe', tty: false, noColor: '', forceColor: ' 1', term: 'xterm-256color', want: false },
     { name: 'FORCE_COLOR below one falls through', tty: false, noColor: '', forceColor: '0.5', term: 'xterm-256color', want: false },
     { name: 'FORCE_COLOR invalid pipe falls through', tty: false, noColor: '', forceColor: 'garbage', term: 'xterm-256color', want: false },
     { name: 'FORCE_COLOR invalid terminal falls through', tty: true, noColor: '', forceColor: 'garbage', term: 'dumb', want: false },
@@ -54,10 +59,10 @@ export function resolveColorSupport(isTTY, noColor, forceColor, term) {
   return false;
 }
 
+const forceColorIntegerPattern = new RegExp(`^[${colorPolicy.forceColorInteger.digits.join('')}]+$`);
+
 /** @param {string} value */
 function forceColorEnables(value) {
   if (value === '' || value === 'true') return true;
-  if (!/^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/.test(value)) return false;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 1;
+  return forceColorIntegerPattern.test(value) && Number(value) >= colorPolicy.forceColorInteger.minimum;
 }

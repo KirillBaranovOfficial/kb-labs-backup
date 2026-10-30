@@ -335,6 +335,12 @@ func externalCheckFailureError(cmd *cobra.Command, failures []externalCheckFailu
 		if err != nil {
 			return err
 		}
+		// A zero child exit can still fail when the managed-process observer
+		// cannot prove the child lifecycle. Do not present that as a failed
+		// command exit; the underlying cause is the actionable failure.
+		if failure.ExitCodeKnown && failure.ExitCode == 0 {
+			diagnostic.Message = fmt.Sprintf("Workspace check %s failed: %s", failure.Check, failure.Cause)
+		}
 		diagnostic.Cause = diag.RedactText(fmt.Sprintf("%s: %s; stderr tail: %s", failure.Check, failure.Cause, stderrTail))
 		diagnostics = append(diagnostics, diagnostic)
 	}

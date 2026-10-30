@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/proc/child"
 	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
@@ -285,6 +286,16 @@ func safeExternalCause(err error) string {
 	}
 	var exitErr *toolchain.CommandError
 	if errors.As(err, &exitErr) {
+		var observerErr *child.ProcessObservationError
+		if errors.As(exitErr, &observerErr) {
+			return fmt.Sprintf("external process observer error: %v", observerErr)
+		}
+		if exitErr.ExitCode == 0 {
+			if exitErr.Err != nil {
+				return fmt.Sprintf("external process completion error: %v", exitErr.Err)
+			}
+			return "external process completion failed without a cause"
+		}
 		return fmt.Sprintf("external command exited with status %d", exitErr.ExitCode)
 	}
 	return "external check output could not be read or decoded"

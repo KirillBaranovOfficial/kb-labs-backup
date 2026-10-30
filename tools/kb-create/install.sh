@@ -21,11 +21,10 @@ kb_color_enabled() {
     case "$FORCE_COLOR" in
       ''|true) return 0 ;;
       false|0) ;;
-      *[!0-9.]* ) ;;
-      *.*.*|.*) ;;
       *)
-        force_color_integer=${FORCE_COLOR%%.*}
-        case "$force_color_integer" in *[1-9]*) return 0 ;; esac
+        case "$FORCE_COLOR" in *[!0123456789]*) ;;
+          *) case "$FORCE_COLOR" in *[123456789]*) return 0 ;; esac ;;
+        esac
         ;;
     esac
   fi

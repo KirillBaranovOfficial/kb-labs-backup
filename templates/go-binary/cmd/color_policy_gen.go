@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,7 +11,8 @@ import (
 	"github.com/muesli/termenv"
 )
 
-var forceColorNumber = regexp.MustCompile("^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?$")
+var forceColorInteger = regexp.MustCompile("^[0123456789]+$")
+const forceColorMinimum = 1
 
 func resolveColorSupport(isTTY bool, noColor, forceColor string, forceColorSet bool, term string) bool {
 	if noColor != "" {
@@ -37,11 +37,12 @@ func forceColorEnables(value string) bool {
 	if value == "" || value == "true" {
 		return true
 	}
-	if !forceColorNumber.MatchString(value) {
+	if !forceColorInteger.MatchString(value) {
 		return false
 	}
-	level, err := strconv.ParseFloat(value, 64)
-	return err == nil && !math.IsNaN(level) && !math.IsInf(level, 0) && level >= 1
+	level := strings.TrimLeft(value, "0")
+	minimum := strconv.Itoa(forceColorMinimum)
+	return len(level) > len(minimum) || (len(level) == len(minimum) && level >= minimum)
 }
 
 func configureColor(enabled bool) {
