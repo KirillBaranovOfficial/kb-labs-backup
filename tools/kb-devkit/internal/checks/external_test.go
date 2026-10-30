@@ -199,7 +199,7 @@ func TestPackageExternalCheckReceivesDiscoveredWorkspaceAndTaskGraph(t *testing.
 	root := t.TempDir()
 	payloadPath := filepath.Join(root, "payload.json")
 	script := filepath.Join(root, "check.sh")
-	body := "#!/bin/sh\ncat > '" + payloadPath + "'\nprintf '{\\\"issues\\\":[]}' > " + resultFileEnvExpansion() + "\n"
+	body := "#!/bin/sh\ncat > '" + payloadPath + "'\nprintf '{\"issues\":[]}' > " + resultFileEnvExpansion() + "\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("write check script: %v", err)
 	}
