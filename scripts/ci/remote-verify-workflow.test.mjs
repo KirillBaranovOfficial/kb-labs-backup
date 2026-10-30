@@ -179,7 +179,11 @@ test('candidate producer, plan, stage, and aggregate preserve the manifest stage
     const result = await runStage({
       stage: matrixEntry.stage, packageNames: matrixEntry.packages, shard: matrixEntry.shard,
       selectedPackageCount: plan.include.length,
-      runCommand: async () => ({ status: 0, stdout: '{"ok":true,"data":{"results":[]}}', stderr: '' }),
+      runCommand: async () => ({
+        status: 0,
+        stdout: JSON.stringify({ ok: true, data: { results: [{ Package: 'kb-create', Task: 'test', OK: true, ExitCode: 0, Stdout: '', Stderr: '' }] } }),
+        stderr: '',
+      }),
     });
     const verdict = aggregateVerdict({
       sha: 'f'.repeat(40), prepare: { name: 'prepare', status: 'pass', selectedPackageCount: 1, failures: [], logTail: '' },

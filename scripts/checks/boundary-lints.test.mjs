@@ -12,6 +12,7 @@ import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { applyExceptions, loadExceptions } from './lib/boundary-common.mjs';
+import { runExternalCheck } from './lib/run-external-check.mjs';
 import { collect as collectSpawns, findPlatformBinarySpawns } from './check-platform-spawn.mjs';
 import { collect as collectBrowserNodeBuiltins } from './check-browser-node-builtins.mjs';
 import { collect as collectManifests, RULES, validateManifest } from './check-manifest-command-naming.mjs';
@@ -190,7 +191,15 @@ after(() => {
 });
 
 function runScript(script, args) {
-  const r = spawnSync(process.execPath, [join(HERE, script), ...args], { encoding: 'utf-8', input: arguments[2] ? JSON.stringify(arguments[2]) : undefined, env: arguments[2] ? { ...process.env, KB_DEVKIT_MODE: '1', KB_DEVKIT_PACKAGE_NAME: '@kb-labs/devkit' } : process.env });
+  const input = arguments[2];
+  if (input) {
+    const result = runExternalCheck(join(HERE, script), args, {
+      encoding: 'utf-8', input: JSON.stringify(input),
+      env: { KB_DEVKIT_MODE: '1', KB_DEVKIT_PACKAGE_NAME: '@kb-labs/devkit' },
+    });
+    return { code: result.exitCode, out: result.stdout, err: result.stderr, result: result.result };
+  }
+  const r = spawnSync(process.execPath, [join(HERE, script), ...args], { encoding: 'utf-8' });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
@@ -443,8 +452,8 @@ describe('manifest-command-naming (0.5)', () => {
     });
     const bad = runScript('check-manifest-command-naming.mjs', ['--root', root, '--exceptions', join(root, 'ex-empty.json')], pluginRegistry(['plugins/p']));
     const covered = runScript('check-manifest-command-naming.mjs', ['--root', root, '--exceptions', join(root, 'ex-full.json')], pluginRegistry(['plugins/p']));
-    assert.equal(JSON.parse(bad.out).issues.length, 1);
-    assert.deepEqual(JSON.parse(covered.out).issues, []);
+    assert.equal(bad.result.issues.length, 1);
+    assert.deepEqual(covered.result.issues, []);
   });
 });
 

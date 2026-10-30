@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { load } from 'js-yaml';
 import { nativeInstallCommands } from '../../e2e/journey/native-macos-install.mjs';
 import { discoverModules } from './go-module-suite.mjs';
+import { runExternalCheck } from '../checks/lib/run-external-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const temporaryDirectories = [];
@@ -117,13 +118,13 @@ test('suite refuses a TMPDIR root without Unix socket path capacity before runni
   assert.equal(existsSync(invocations), false, 'preflight refusal happens before go list or go test');
 
   const gate = path.join(root, 'scripts/ci/go-module-suite-gate.mjs');
-  const registeredCheck = spawnSync(process.execPath, [gate], {
+  const registeredCheck = runExternalCheck(gate, [], {
     cwd: root,
     encoding: 'utf8',
     env: { ...process.env, TMPDIR: longDefaultTemp, GO_SUITE_LOG: invocations, KB_DEVKIT_CHECK_NAME: 'go-module-suite' },
   });
-  assert.equal(registeredCheck.status, 1, registeredCheck.stderr || registeredCheck.stdout);
-  const issue = JSON.parse(registeredCheck.stdout).issues[0];
+  assert.equal(registeredCheck.exitCode, 1, registeredCheck.stderr || registeredCheck.stdout);
+  const issue = registeredCheck.result.issues[0];
   assert.equal(issue.fix, 'Rerun with: kb-devkit check --only go-module-suite');
   assert.ok(issue.message.endsWith("Rerun with: TMPDIR='/tmp' kb-devkit check --only go-module-suite"));
   assert.equal(existsSync(invocations), false, 'registered preflight refusal happens before go list or go test');
