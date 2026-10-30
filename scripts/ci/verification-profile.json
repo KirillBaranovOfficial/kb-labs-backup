@@ -7,6 +7,7 @@
   "stages": {
     "workspace-build": { "runner": "kb-devkit-build" },
     "workspace-unit-tests": { "runner": "kb-devkit-test" },
+    "internal-tool-tests": { "runner": "kb-devkit-internal-tool-suite" },
     "ci-script-suite": { "runner": "node-test-directory", "directory": "scripts/ci" },
     "kb-create-go-suite": { "runner": "node-script", "script": "scripts/ci/go-module-suite.mjs", "args": ["--module", "tools/kb-create"] },
     "kb-devkit-check": { "runner": "executable", "command": "./tools/kb-devkit/kb-devkit", "args": ["check"] },

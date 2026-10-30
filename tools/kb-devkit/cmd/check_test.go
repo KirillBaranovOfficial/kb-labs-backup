@@ -25,7 +25,7 @@ import (
 func TestCheckReportsConfiguredChecksPerCategory(t *testing.T) {
 	cfg := &config.DevkitConfig{Presets: map[string]config.Preset{"node-lib": {Language: "typescript"}}}
 	ws := &workspace.Workspace{Packages: []workspace.Package{{Name: "@acme/demo", Category: "ts-lib", Preset: "node-lib"}}}
-	counts := selectedCheckCounts(ws, cfg, checks.Default(), nil, "")
+	counts := selectedCheckCounts(ws, cfg, checks.Default(), nil, "", true)
 	if counts["ts-lib"] != len(checks.Default().RulesFor(cfg.Presets["node-lib"])) {
 		t.Fatalf("checksByCategory = %#v, want one count for each applicable rule", counts)
 	}
@@ -79,7 +79,7 @@ func TestCheckRejectsUnknownAndUnmatchedFilters(t *testing.T) {
 		{name: "known but unmatched", only: []string{"package_json"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateCheckSelection(ws, cfg, registry, test.only, "")
+			err := validateCheckSelection(ws, cfg, registry, test.only, "", true)
 			var failure *diag.Diag
 			if !errors.As(err, &failure) || failure.Code != "KB_RUNTIME_INPUT_INVALID" {
 				t.Fatalf("error = %v, want typed KB_RUNTIME_INPUT_INVALID", err)
@@ -97,13 +97,13 @@ func TestCheckSelectionRecognizesWorkspaceCircularCheck(t *testing.T) {
 	}
 	ws := &workspace.Workspace{Packages: []workspace.Package{{Name: "@kb/a", Preset: "node-lib"}}}
 	registry := checks.Default()
-	if err := validateCheckSelection(ws, cfg, registry, []string{"circular"}, ""); err != nil {
+	if err := validateCheckSelection(ws, cfg, registry, []string{"circular"}, "", true); err != nil {
 		t.Fatalf("validate circular selection: %v", err)
 	}
-	if counts := selectedCheckCounts(ws, cfg, registry, []string{"circular"}, ""); counts["circular"] != 1 {
+	if counts := selectedCheckCounts(ws, cfg, registry, []string{"circular"}, "", true); counts["circular"] != 1 {
 		t.Fatalf("check counts = %#v, want circular check count", counts)
 	}
-	err := validateCheckSelection(ws, cfg, registry, []string{"circular"}, "@kb/a")
+	err := validateCheckSelection(ws, cfg, registry, []string{"circular"}, "@kb/a", true)
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != "KB_RUNTIME_INPUT_INVALID" || !strings.Contains(failure.Hint, "kb-devkit check --only circular") {
 		t.Fatalf("package-scoped circular selection error = %v, want typed full-workspace instruction", err)
@@ -117,7 +117,7 @@ func TestCheckRejectsCategoryMismatchWithApplicableCategories(t *testing.T) {
 		Custom:  []config.CustomCheck{{Name: "cli-naming", Run: "true", On: []string{"check"}, Categories: []string{"plugin-entry"}}},
 	}
 	ws := &workspace.Workspace{Packages: []workspace.Package{{Name: "@kb-labs/viewer/core", Category: "ts-lib", Preset: "node-lib"}}}
-	err := validateCheckSelection(ws, cfg, checks.Build(cfg, ".", "check"), []string{"cli-naming"}, "@kb-labs/viewer/core")
+	err := validateCheckSelection(ws, cfg, checks.Build(cfg, ".", "check"), []string{"cli-naming"}, "@kb-labs/viewer/core", true)
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != "KB_RUNTIME_INPUT_INVALID" {
 		t.Fatalf("error = %v, want typed KB_RUNTIME_INPUT_INVALID", err)
@@ -490,7 +490,7 @@ func TestSelectedCheckCountsOnlyApplicablePackagePairs(t *testing.T) {
 	}}
 	registry := checks.Build(cfg, ".", "check")
 
-	wholeWorkspace := selectedCheckCounts(ws, cfg, registry, []string{"cli-naming"}, "")
+	wholeWorkspace := selectedCheckCounts(ws, cfg, registry, []string{"cli-naming"}, "", true)
 	if wholeWorkspace["plugin-entry"] != 2 || sumCheckCounts(wholeWorkspace) != 2 {
 		t.Fatalf("whole-workspace counts = %#v, want exactly two applicable packages", wholeWorkspace)
 	}
@@ -503,13 +503,55 @@ func TestSelectedCheckCountsOnlyApplicablePackagePairs(t *testing.T) {
 			t.Fatalf("%s execution count = %d, applicability owner returned a different count", name, wholeResults[name].ChecksRun)
 		}
 	}
-	mixed := selectedCheckCounts(ws, cfg, registry, []string{"cli-naming", "package_json"}, "")
+	mixed := selectedCheckCounts(ws, cfg, registry, []string{"cli-naming", "package_json"}, "", true)
 	if mixed["plugin-entry"] != 2*2 || mixed["ts-lib"] != 1 || sumCheckCounts(mixed) != 5 {
 		t.Fatalf("mixed counts = %#v, want 4 plugin-entry pairs and 1 ts-lib pair", mixed)
 	}
 	mixedResults := checks.RunAll(ws, cfg, registry, []string{"cli-naming", "package_json"}, nil)
 	if len(mixedResults) != 3 || mixedResults["@acme/plugin-a"].ChecksRun != 2 || mixedResults["@acme/plugin-b"].ChecksRun != 2 || mixedResults["@acme/library"].ChecksRun != 1 {
 		t.Fatalf("mixed execution = %#v, want only the five applicable pairs", mixedResults)
+	}
+}
+
+func TestSelectedCheckPackagesUsesDeclaredReleaseLaneAndAllowsExplicitInternalPackage(t *testing.T) {
+	ws := &workspace.Workspace{Packages: []workspace.Package{
+		{Name: "@acme/host"},
+		{Name: "@acme/runner", ReleaseLane: "internal-tool"},
+	}}
+	if got := selectedCheckPackages(ws, ""); len(got) != 1 || got[0].Name != "@acme/host" {
+		t.Fatalf("default package checks = %#v, want only gating package", got)
+	}
+	if got := selectedCheckPackages(ws, "@acme/runner"); len(got) != 1 || got[0].Name != "@acme/runner" {
+		t.Fatalf("explicit internal-tool checks = %#v, want runner", got)
+	}
+}
+
+func TestInternalToolCheckScopeRequiresDeclaredInternalLane(t *testing.T) {
+	ws := &workspace.Workspace{Packages: []workspace.Package{
+		{Name: "@acme/host"},
+		{Name: "@acme/runner", ReleaseLane: "internal-tool"},
+	}}
+	if got, err := internalToolCheckPackage(ws, "@acme/runner"); err != nil || len(got) != 1 || got[0].Name != "@acme/runner" {
+		t.Fatalf("internal-tool scope selection = %#v, %v; want runner", got, err)
+	}
+	if _, err := internalToolCheckPackage(ws, "@acme/host"); err == nil {
+		t.Fatal("internal-tool scope accepted an undeclared gating package")
+	}
+}
+
+func TestCheckCommandRegistersInternalToolPackageScope(t *testing.T) {
+	flag := checkCmd.Flags().Lookup("internal-tool-package")
+	if flag == nil || flag.Usage == "" {
+		t.Fatal("check command does not expose internal-tool package scope")
+	}
+}
+
+func TestCandidateCheckSelectionRetainsNonBoundaryPackageRules(t *testing.T) {
+	cfg := &config.DevkitConfig{Presets: map[string]config.Preset{"node-lib": {Language: "typescript"}}}
+	ws := &workspace.Workspace{Packages: []workspace.Package{{Name: "@acme/host", Category: "ts-lib", Preset: "node-lib"}}}
+	counts := selectedCheckCounts(ws, cfg, checks.Default(), nil, "", true)
+	if counts["ts-lib"] == 0 || counts["workspace"] == 0 {
+		t.Fatalf("candidate check counts = %#v, want package_json and workspace checks", counts)
 	}
 }
 
@@ -523,7 +565,7 @@ func TestWorkspaceScopedCheckCountIsAnchoredOnce(t *testing.T) {
 		{Name: "@acme/plugin-a", Category: "plugin-entry", Preset: "node-lib"},
 		{Name: "@acme/library", Category: "ts-lib", Preset: "node-lib"},
 	}}
-	counts := selectedCheckCounts(ws, cfg, checks.Build(cfg, ".", "check"), []string{"workspace-audit"}, "")
+	counts := selectedCheckCounts(ws, cfg, checks.Build(cfg, ".", "check"), []string{"workspace-audit"}, "", true)
 	if counts["workspace"] != 1 || sumCheckCounts(counts) != 1 {
 		t.Fatalf("workspace count = %#v, want one anchored check", counts)
 	}
@@ -533,10 +575,10 @@ func TestWorkspaceScopedCheckCountIsAnchoredOnce(t *testing.T) {
 	}
 	emptyWorkspace := &workspace.Workspace{Root: t.TempDir()}
 	registry := checks.Build(cfg, ".", "check")
-	if err := validateCheckSelection(emptyWorkspace, cfg, registry, []string{"workspace-audit"}, ""); err != nil {
+	if err := validateCheckSelection(emptyWorkspace, cfg, registry, []string{"workspace-audit"}, "", true); err != nil {
 		t.Fatalf("workspace-only check selection returned %v, want one real anchored check", err)
 	}
-	if counts := selectedCheckCounts(emptyWorkspace, cfg, registry, []string{"workspace-audit"}, ""); counts["workspace"] != 1 {
+	if counts := selectedCheckCounts(emptyWorkspace, cfg, registry, []string{"workspace-audit"}, "", true); counts["workspace"] != 1 {
 		t.Fatalf("empty workspace counts = %#v, want one anchored check", counts)
 	}
 }

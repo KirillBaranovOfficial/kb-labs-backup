@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,6 +18,7 @@ test('remote verification builds once and fans out independent and artifact-depe
   const build = workflow.jobs.build;
   const independent = workflow.jobs['independent-test-shards'];
   const dependent = workflow.jobs['build-dependent-test-shards'];
+  const internalTools = workflow.jobs['internal-tool-test-shards'];
   const finalize = workflow.jobs.verdict;
   const prepareResultUpload = prepare.steps.find((step) => step.name === 'Upload prepare stage result');
   const aggregateStep = finalize.steps.find((step) => step.name === 'Aggregate commit-bound verdict');
@@ -35,6 +36,10 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(independent.needs, 'prepare');
   assert.equal(independent.strategy.matrix, '${{ fromJSON(needs.prepare.outputs.independent_matrix) }}');
   assert.equal(dependent.needs, 'build');
+  assert.equal(internalTools.needs, 'prepare');
+  assert.equal(internalTools['continue-on-error'], true);
+  assert.equal(internalTools.strategy.matrix, '${{ fromJSON(needs.prepare.outputs.internal_tool_matrix) }}');
+  assert.equal(internalTools['timeout-minutes'], '${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}');
   assert.equal(dependent.strategy.matrix, '${{ fromJSON(needs.build.outputs.build_dependent_matrix) }}');
   assert.equal(independent.strategy['fail-fast'], "${{ inputs.profile != 'candidate' }}");
   assert.equal(dependent.strategy['fail-fast'], "${{ inputs.profile != 'candidate' }}");
@@ -42,6 +47,8 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(dependent.strategy['max-parallel'], '${{ fromJSON(needs.build.outputs.max_parallel) }}');
   assert.equal(build.outputs.build_dependent_matrix, '${{ needs.prepare.outputs.build_dependent_matrix }}');
   assert.equal(prepare.outputs.selected_package_count, '${{ steps.plan.outputs.selected_package_count }}');
+  assert.equal(prepare.outputs.internal_tool_matrix, '${{ steps.plan.outputs.internal_tool_matrix }}');
+  assert.equal(prepare.outputs.internal_tool_packages, '${{ steps.plan.outputs.internal_tool_packages }}');
   assert.equal(prepare.outputs.shard_timeout_minutes, '${{ steps.plan.outputs.shard_timeout_minutes }}');
   assert.equal(build.outputs.shard_timeout_minutes, '${{ needs.prepare.outputs.shard_timeout_minutes }}');
   assert.equal(independent['timeout-minutes'], '${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}');
@@ -69,6 +76,8 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(aggregateStep.env.GH_TOKEN, '${{ github.token }}');
   assert.ok(finalize.needs.includes('independent-test-shards'));
   assert.ok(finalize.needs.includes('build-dependent-test-shards'));
+  assert.ok(finalize.needs.includes('internal-tool-test-shards'));
+  assert.equal(aggregateStep.env.REMOTE_INTERNAL_TOOL_MATRIX, '${{ needs.prepare.outputs.internal_tool_matrix }}');
   assert.equal(buildSteps.filter((step) => step.name === 'Build selected workspace packages once').length, 1);
 });
 
@@ -100,53 +109,40 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
 });
 
 // case: S-262.7
-test('workflow base-ref wiring selects real workspace packages without origin/HEAD or laptop refs', () => {
+test('candidate producer-to-plan uses real workspace selection and keeps shipped package families', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');
-  const checkout = workflow.jobs.prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
-  const event = { repository: { default_branch: 'fixture-default' } };
-  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-hosted-shape-'));
-  const checkoutRoot = path.join(temporaryRoot, 'checkout');
+  const prepare = workflow.jobs.prepare;
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-workspace-'));
+  const home = path.join(temporaryRoot, 'home');
   const binary = path.join(temporaryRoot, 'kb-devkit');
   try {
-    assert.equal(checkout.with['fetch-depth'], 0);
+    assert.equal(prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@')).with['fetch-depth'], 0);
     assert.equal(workflow.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
-    assert.equal(workflow.jobs.prepare.env.VERIFICATION_PROFILE, "${{ github.event.inputs.profile || 'stream' }}");
-
-    execFileSync('git', ['clone', '--shared', '--no-checkout', root, checkoutRoot], { stdio: 'pipe' });
-    execFileSync('git', ['checkout', '--detach', 'HEAD'], { cwd: checkoutRoot, stdio: 'pipe' });
-    const baseline = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkoutRoot, encoding: 'utf8' }).trim();
-    execFileSync('git', ['update-ref', `refs/remotes/origin/${event.repository.default_branch}`, baseline], { cwd: checkoutRoot });
-    execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/HEAD'], { cwd: checkoutRoot });
-    assert.equal(spawnSync('git', ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/HEAD'], { cwd: checkoutRoot }).status, 1);
-    execFileSync('git', ['config', 'user.name', 'Remote verification fixture'], { cwd: checkoutRoot });
-    execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: checkoutRoot });
-    execFileSync('sh', ['-c', 'printf "\\n" >> core/types/package.json'], { cwd: checkoutRoot });
-    execFileSync('git', ['add', 'core/types/package.json'], { cwd: checkoutRoot });
-    execFileSync('git', ['commit', '-m', 'fixture change'], { cwd: checkoutRoot, stdio: 'pipe' });
-
-    cpSync(path.join(root, 'scripts/ci/resolve-remote-selection.mjs'), path.join(checkoutRoot, 'scripts/ci/resolve-remote-selection.mjs'));
-    cpSync(path.join(root, 'scripts/ci/remote-changed-files.mjs'), path.join(checkoutRoot, 'scripts/ci/remote-changed-files.mjs'));
-    execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(checkoutRoot, 'tools/kb-devkit'), stdio: 'pipe' });
-
-    for (const profile of ['stream', 'candidate']) {
-      const outputPath = path.join(temporaryRoot, `${profile}.json`);
-      const result = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', profile, outputPath, binary], {
-        cwd: checkoutRoot,
-        encoding: 'utf8',
-        env: { ...process.env, DEFAULT_BRANCH: event.repository.default_branch, VERIFICATION_PROFILE: profile },
-      });
-      assert.equal(result.status, 0, `${profile} selection failed: ${result.stderr}`);
-      const selection = JSON.parse(readFileSync(outputPath, 'utf8'));
-      assert.ok(selection.data.packages.length > 0, `${profile} selected no packages`);
-      assert.deepEqual(parseAffectedSelection(JSON.stringify(selection), profile), {
-        packages: selection.data.packages,
-        changedPathCount: selection.data.changedPathCount,
-        selectionReason: selection.data.selectionReason,
-      });
-      assert.equal(selection.selectedPackageCount, selection.data.packages.length);
-      assert.ok(selection.data.changedPathCount > 0, `${profile} workflow inputs produced an empty diff: ${result.stdout}`);
-      if (profile === 'candidate') assert.ok(selection.data.changedPathCount >= selection.selectedPackageCount);
+    assert.equal(prepare.env.VERIFICATION_PROFILE, "${{ github.event.inputs.profile || 'stream' }}");
+    mkdirSync(home);
+    const goPaths = execFileSync('go', ['env', 'GOPATH', 'GOMODCACHE', 'GOCACHE'], { encoding: 'utf8' }).trim().split('\n');
+    const controlledGoEnv = { PATH: process.env.PATH, HOME: home, GOPATH: goPaths[0], GOMODCACHE: goPaths[1], GOCACHE: goPaths[2], GOTOOLCHAIN: 'local', GOWORK: 'off', GOFLAGS: '', GOENV: 'off' };
+    execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(root, 'tools/kb-devkit'), env: controlledGoEnv, stdio: 'pipe' });
+    const affectedPath = path.join(temporaryRoot, 'affected.json');
+    const selectionRun = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', affectedPath, binary], {
+      cwd: root, encoding: 'utf8', env: { ...controlledGoEnv, VERIFICATION_PROFILE: 'candidate' },
+    });
+    assert.equal(selectionRun.status, 0, `real candidate selection failed: ${selectionRun.stderr}`);
+    const affected = readFileSync(affectedPath, 'utf8');
+    const selection = parseAffectedSelection(affected, 'candidate');
+    const planPath = path.join(temporaryRoot, 'plan.json');
+    const githubOutput = path.join(temporaryRoot, 'github-output');
+    const planRun = spawnSync(process.execPath, ['scripts/ci/remote-verify-plan.mjs', 'candidate', affectedPath, planPath, githubOutput], { cwd: root, encoding: 'utf8' });
+    assert.equal(planRun.status, 0, `real candidate plan failed: ${planRun.stderr}`);
+    const matrix = JSON.parse(readFileSync(planPath, 'utf8'));
+    const gatedPackages = matrix.dependent.include.flatMap(({ packages = [] }) => packages);
+    const kbRunnerModule = 'github.com/kb-labs/kb-runner';
+    assert.ok(selection.internalToolPackages.includes(kbRunnerModule));
+    assert.ok(!gatedPackages.includes(kbRunnerModule));
+    for (const name of ['@kb-labs/commit', '@kb-labs/e2e-plugins', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-labs-web', '@kb-labs/core-platform']) {
+      assert.ok(gatedPackages.includes(name), `candidate plan omitted ${name}`);
     }
+    assert.deepEqual(gatedPackages.sort(), selection.packages.sort());
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }

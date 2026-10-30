@@ -32,6 +32,52 @@ test('stream matrix uses the kb-devkit package set and registered stream suites'
   ]);
 });
 
+// case: S-277.1
+test('candidate plan keeps all previous gating packages except internal tools', () => {
+  const selection = parseAffectedSelection(JSON.stringify({
+    ok: true,
+    data: {
+      packages: [
+        '@kb-labs/core-platform',
+        '@kb-labs/commit',
+        '@kb-labs/e2e-plugins',
+        '@kb-labs/e2e-shared',
+        '@kb-labs/e2e-platform',
+        '@kb-labs/e2e-llm-deterministic',
+        'kb-labs-web',
+        'github.com/kb-labs/kb-runner',
+      ],
+      internalToolPackages: ['github.com/kb-labs/kb-runner'],
+      changedPathCount: 2,
+      selectionReason: 'full: candidate selection',
+    },
+  }), 'candidate');
+
+  assert.deepEqual(selection.packages, ['@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-plugins', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-labs-web']);
+  assert.deepEqual(selection.internalToolPackages, ['github.com/kb-labs/kb-runner']);
+  const matrix = createTestMatrix(selection, profile.independentTestStages.candidate, profile.buildDependentTestStages.candidate, profile.packageTestStage, profile.maxParallel);
+  assert.deepEqual(matrix.dependent.include.flatMap(({ packages = [] }) => packages), selection.packages);
+  assert.deepEqual(matrix.internalTool.include, [{ stage: 'internal-tool-tests', shard: 1, packages: ['github.com/kb-labs/kb-runner'] }]);
+});
+
+// case: S-277.2
+test('stream plan gates an internal-tool change in its ordinary package test shard', () => {
+  const selection = parseAffectedSelection(JSON.stringify({
+    ok: true,
+    data: {
+      packages: ['github.com/kb-labs/kb-runner'],
+      internalToolPackages: ['github.com/kb-labs/kb-runner'],
+      changedPathCount: 1,
+      selectionReason: 'changed internal tool',
+    },
+  }), 'stream');
+  const matrix = createTestMatrix(selection, profile.independentTestStages.stream, profile.buildDependentTestStages.stream, profile.packageTestStage, profile.maxParallel);
+
+  assert.deepEqual(selection.packages, ['github.com/kb-labs/kb-runner']);
+  assert.deepEqual(matrix.dependent.include, [{ stage: profile.packageTestStage, shard: 1, packages: ['github.com/kb-labs/kb-runner'] }]);
+  assert.deepEqual(matrix.internalTool.include, []);
+});
+
 // case: S-262.7
 test('candidate profile separates output-dependent suites from independent suites', () => {
   const matrix = createTestMatrix(['@kb-labs/core'], profile.independentTestStages.candidate, profile.buildDependentTestStages.candidate, profile.packageTestStage, profile.maxParallel);
@@ -41,6 +87,12 @@ test('candidate profile separates output-dependent suites from independent suite
     ...profile.buildDependentTestStages.candidate,
     profile.packageTestStage,
   ]);
+});
+
+test('candidate retains the complete kb-devkit check stage', () => {
+  const stage = profile.stages['kb-devkit-check'];
+  assert.deepEqual(stage.args, ['check']);
+  assert.ok(profile.independentTestStages.candidate.includes('kb-devkit-check'));
 });
 
 // case: S-262.7
@@ -64,10 +116,10 @@ test('rejects unsuccessful or malformed affected-package output instead of widen
 
 // case: S-262.7
 test('rejects zero packages for a non-empty stream diff and for every candidate selection', () => {
-  const emptyChangedStream = JSON.stringify({ ok: true, data: { packages: [], changedPathCount: 0 } });
-  assert.deepEqual(parseAffectedSelection(emptyChangedStream, 'stream'), { packages: [], changedPathCount: 0, selectionReason: '' });
+  const emptyChangedStream = JSON.stringify({ ok: true, data: { packages: [], internalToolPackages: [], changedPathCount: 0 } });
+  assert.deepEqual(parseAffectedSelection(emptyChangedStream, 'stream'), { packages: [], internalToolPackages: [], changedPathCount: 0, selectionReason: '' });
   assert.throws(
-    () => parseAffectedSelection(JSON.stringify({ ok: true, data: { packages: [], changedPathCount: 3 } }), 'stream'),
+    () => parseAffectedSelection(JSON.stringify({ ok: true, data: { packages: [], internalToolPackages: [], changedPathCount: 3 } }), 'stream'),
     /KB_REMOTE_EMPTY_SELECTION/,
   );
   assert.throws(
@@ -80,10 +132,16 @@ test('rejects zero packages for a non-empty stream diff and for every candidate 
 test('carries the kb-devkit full-selection reason into prepare plan evidence', () => {
   const selection = JSON.stringify({
     ok: true,
-    data: { packages: ['@kb-labs/core', '@kb-labs/cli'], changedPathCount: 2, selectionReason: 'full: unowned path tsconfig.base.json' },
+    data: {
+      packages: ['@kb-labs/core', '@kb-labs/cli'],
+      internalToolPackages: [],
+      changedPathCount: 2,
+      selectionReason: 'full: unowned path tsconfig.base.json',
+    },
   });
   assert.deepEqual(parseAffectedSelection(selection, 'stream'), {
     packages: ['@kb-labs/core', '@kb-labs/cli'],
+    internalToolPackages: [],
     changedPathCount: 2,
     selectionReason: 'full: unowned path tsconfig.base.json',
   });

@@ -14,6 +14,19 @@ function failingNames(log) {
 export function boundedTail(log) {
   return log.split(/\r?\n/).slice(-80).join('\n').slice(-12_000);
 }
+
+function internalToolCommandOutput(outcome) {
+  let envelope;
+  try {
+    envelope = JSON.parse(outcome.stdout ?? '');
+  } catch {
+    return [outcome.stderr, outcome.stdout, outcome.error?.message].filter(Boolean).join('\n');
+  }
+  const failedTasks = envelope?.data?.results?.filter((task) => task?.OK === false) ?? [];
+  const taskOutput = failedTasks.flatMap((task) => [task.Stderr, task.Stdout]).filter((text) => typeof text === 'string' && text.trim());
+  return [outcome.stderr, ...taskOutput, ...(taskOutput.length ? [] : [outcome.stdout]), outcome.error?.message].filter(Boolean).join('\n');
+}
+
 function cacheStatus(value) {
   if (value === 'true') return 'exact-hit';
   if (value === 'false') return 'miss-or-restore-prefix';
@@ -33,6 +46,7 @@ export async function runStage({
   let command;
   let args;
   let name = stage;
+  const internalToolStage = stage === 'internal-tool-tests';
   if (stage === profile.buildStage) {
     name = stage;
     const selected = packages ?? [];
@@ -51,6 +65,12 @@ export async function runStage({
     command = './tools/kb-devkit/kb-devkit';
     args = ['run', 'test', '--packages', packageNames.join(','), '--concurrency', '1', '--json'];
     name = `${stage}:shard-${shard}`;
+  } else if (internalToolStage) {
+    if (!Array.isArray(packageNames) || packageNames.length === 0 || packageNames.some((packageName) => typeof packageName !== 'string' || !packageName)) throw new Error('internal-tool-tests requires packages selected by the kb-devkit release classification.');
+    if (!Number.isSafeInteger(shard) || shard < 1) throw new Error('internal-tool-tests requires a positive shard number from the remote verification plan.');
+    command = './tools/kb-devkit/kb-devkit';
+    args = [];
+    name = `${stage}:shard-${shard}`;
   } else {
     [command, args] = commandFor(definition);
   }
@@ -59,7 +79,7 @@ export async function runStage({
   const persistPartial = (status = 'running') => {
     if (!partialResultPath) return;
     const partial = {
-      name, status, selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : selectedPackageCount,
+      name, status, selectedPackageCount: stage === profile.packageTestStage || internalToolStage ? packageNames.length : selectedPackageCount,
       failures: [...sampleFailures], logTail: '', startedAt: new Date(startedAt).toISOString(),
       finishedAt: null, durationMs: Math.max(0, now() - startedAt),
       ...(stage === profile.buildStage ? { resourceLimits: buildLimits, resourcePeaks: resourcePeaks(buildSamples), lastResourceSample: buildSamples.at(-1) } : {}),
@@ -112,7 +132,26 @@ export async function runStage({
   persistPartial();
   let result;
   try {
-    result = await runCommand(command, args, { cwd: root, env: {} });
+    if (internalToolStage) {
+      const commands = [
+        ['internal-tool build', './tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', packageNames.join(','), '--concurrency', '1', '--json']],
+        ['internal-tool test', './tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', packageNames.join(','), '--concurrency', '1', '--json']],
+        ...packageNames.map((packageName) => [`internal-tool check ${packageName}`, './tools/kb-devkit/kb-devkit', ['check', '--internal-tool-package', packageName, '--json']]),
+      ];
+      const outcomes = [];
+      for (const [label, executable, commandArgs] of commands) {
+        const outcome = await runCommand(executable, commandArgs, { cwd: root, env: {} });
+        outcomes.push({ label, ...outcome });
+      }
+      result = {
+        status: outcomes.every((outcome) => outcome.status === 0) ? 0 : 1,
+        stdout: outcomes.map((outcome) => `${outcome.label} (exit ${outcome.status})\n${outcome.stdout ?? ''}`).join('\n'),
+        stderr: outcomes.map((outcome) => `${outcome.label} (exit ${outcome.status})\n${outcome.stderr ?? outcome.error?.message ?? ''}`).filter((output) => output.trim()).join('\n'),
+        internalToolFailures: outcomes.filter((outcome) => outcome.status !== 0).map((outcome) => `${outcome.label} exited ${outcome.status}: ${boundedTail(internalToolCommandOutput(outcome))}`),
+      };
+    } else {
+      result = await runCommand(command, args, { cwd: root, env: {} });
+    }
   } finally {
     if (timer) clearInterval(timer);
   }
@@ -124,22 +163,24 @@ export async function runStage({
     const label = [failure.package, failure.task].filter(Boolean).join(':');
     return [label, failure.logPath, failure.logTail || failure.error].filter(Boolean).join('\n');
   }).join('\n\n');
-  const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage;
+  const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage || internalToolStage;
   const visibleLog = taskFailures.length ? taskLogOutput : isDevkitStage ? (result.stderr || '') : log;
-  const failures = stage === profile.buildStage
+  const failures = internalToolStage
+    ? result.internalToolFailures
+    : stage === profile.buildStage
     ? taskFailures.map(formatBuildTaskFailure)
     : [...failingNames(log), ...taskFailures.flatMap((failure) => (failure.logTail || failure.error || '').split(/\r?\n/).filter(Boolean)), ...sampleFailures];
   const stageResult = {
     name,
     status: result.status === 0 && sampleFailures.length === 0 ? 'pass' : 'fail',
-    selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : selectedPackageCount,
+    selectedPackageCount: stage === profile.packageTestStage || internalToolStage ? packageNames.length : selectedPackageCount,
     failures: [...failures, ...sampleFailures],
     taskFailures,
     logTail: boundedTail(visibleLog),
     startedAt: new Date(startedAt).toISOString(),
     finishedAt: new Date(finishedAt).toISOString(),
     durationMs: Math.max(0, finishedAt - startedAt),
-    ...(stage === profile.packageTestStage ? { packages: packageNames } : {}),
+    ...(stage === profile.packageTestStage || internalToolStage ? { packages: packageNames } : {}),
     cache: cacheRecord(cache),
     ...(stage === profile.buildStage ? {
       resourceLimits: buildLimits,

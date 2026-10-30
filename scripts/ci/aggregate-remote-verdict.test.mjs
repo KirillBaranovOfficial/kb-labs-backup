@@ -38,6 +38,111 @@ test('aggregates every shard with the existing verdict shape and per-stage timin
   assert.deepEqual(verdict.jobs.map(({ selectedPackageCount }) => selectedPackageCount), [41, 41, 41, 1]);
 });
 
+// case: S-277.1
+test('candidate verdict reports internal-tool failures without using them for the candidate status', () => {
+  const verdict = aggregateVerdict({
+    sha: 'd'.repeat(40),
+    prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+    matrix: {
+      include: [{ stage: profile.packageTestStage, shard: 1, packages: ['@kb-labs/core'] }],
+      internalTool: { include: [{ stage: 'internal-tool-tests', shard: 1, packages: ['kb-runner'] }] },
+    },
+    results: [
+      { name: `${profile.packageTestStage}:shard-1`, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+      { name: 'internal-tool-tests:shard-1', status: 'fail', selectedPackageCount: 1, failures: ['runner test failed'], logTail: 'runner test failed', durationMs: 20 },
+    ],
+    selectedPackageCount: 1,
+    prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'candidate',
+    githubJobs: [
+      { name: 'Build-dependent test 1', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Internal tool test 1', conclusion: 'success', steps: [], annotations: [] },
+    ],
+  });
+
+  assert.equal(verdict.status, 'pass');
+  assert.equal(verdict.internalToolResults.status, 'fail');
+  assert.deepEqual(verdict.internalToolResults.jobs.map(({ name, status }) => [name, status]), [['internal-tool-tests:shard-1', 'fail']]);
+  assert.equal(verdict.internalToolResults.jobs[0].jobConclusion, 'success');
+});
+
+// case: S-277.1
+test('candidate internalToolResults preserve stdout-only package failure evidence', () => {
+  const stdoutFailure = 'internal-tool test kb-runner exited 1: {"ok":false,"failures":["runner_test.go: failed"]}';
+  const verdict = aggregateVerdict({
+    sha: 'f'.repeat(40),
+    prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+    matrix: { include: [{ stage: profile.packageTestStage, shard: 1, packages: ['@kb-labs/core'] }], internalTool: { include: [{ stage: 'internal-tool-tests', shard: 1, packages: ['kb-runner'] }] } },
+    results: [
+      { name: `${profile.packageTestStage}:shard-1`, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+      { name: 'internal-tool-tests:shard-1', status: 'fail', failures: [stdoutFailure], logTail: '', durationMs: 20 },
+    ],
+    selectedPackageCount: 1, prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'candidate',
+    githubJobs: [
+      { name: 'Build-dependent test 1', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Internal tool test 1', conclusion: 'success', steps: [], annotations: [] },
+    ],
+  });
+
+  assert.equal(verdict.status, 'pass');
+  assert.equal(verdict.internalToolResults.status, 'fail');
+  assert.deepEqual(verdict.internalToolResults.jobs[0].failures, [stdoutFailure]);
+});
+
+// case: S-277.1
+test('candidate Go suite excludes runner while its failed Go test remains an internal result', () => {
+  const registry = spawnSync(process.execPath, ['scripts/read-go-binary-registry.mjs'], { cwd: root, encoding: 'utf8' });
+  assert.equal(registry.status, 0, registry.stderr || registry.stdout);
+  assert.ok(!JSON.parse(registry.stdout).includes('tools/kb-runner'));
+  const verdict = aggregateVerdict({
+    sha: 'a'.repeat(40),
+    prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+    matrix: {
+      include: [
+        { stage: profile.packageTestStage, shard: 1, packages: ['@kb-labs/core'] },
+        { stage: 'kb-devkit-check' },
+      ],
+      internalTool: { include: [{ stage: 'internal-tool-tests', shard: 1, packages: ['kb-runner'] }] },
+    },
+    results: [
+      { name: `${profile.packageTestStage}:shard-1`, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+      { name: 'kb-devkit-check', status: 'pass', selectedPackageCount: 166, failures: [], logTail: 'workspace Go suite ran gating modules', durationMs: 10 },
+      { name: 'internal-tool-tests:shard-1', status: 'fail', selectedPackageCount: 1, failures: ['kb-runner go test: runner_test.go failed'], logTail: '', durationMs: 20 },
+    ],
+    selectedPackageCount: 1,
+    prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'candidate',
+    githubJobs: [
+      { name: 'Build-dependent test 1', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Independent test kb-devkit-check', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Internal tool test 1', conclusion: 'success', steps: [], annotations: [] },
+    ],
+  });
+
+  assert.equal(verdict.status, 'pass');
+  assert.equal(verdict.jobs.find(({ name }) => name === 'kb-devkit-check').status, 'pass');
+  assert.equal(verdict.internalToolResults.status, 'fail');
+  assert.match(verdict.internalToolResults.jobs[0].failures.join('\n'), /runner_test\.go failed/);
+});
+
+// case: S-277.2
+test('stream verdict fails when the kb-runner package-test shard fails', () => {
+  const verdict = aggregateVerdict({
+    sha: 'e'.repeat(40),
+    prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+    matrix: { include: [{ stage: profile.packageTestStage, shard: 1, packages: ['kb-runner'] }] },
+    results: [{ name: `${profile.packageTestStage}:shard-1`, status: 'fail', selectedPackageCount: 1, failures: ['runner test failed'], logTail: 'runner test failed', durationMs: 20 }],
+    selectedPackageCount: 1,
+    prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'stream',
+    githubJobs: [{ name: 'Build-dependent test 1', conclusion: 'failure', steps: [], annotations: [] }],
+  });
+
+  assert.equal(verdict.status, 'fail');
+  assert.equal(verdict.jobs.at(-1).status, 'fail');
+});
+
 // case: S-262.7
 test('marks matrix shards cancelled by stream fail-fast as skipped, never as a passing verdict', () => {
   const verdict = aggregateVerdict({
