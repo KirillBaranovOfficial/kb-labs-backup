@@ -77,6 +77,39 @@ func TestRunAllForPackagesKeepsWorkspaceRulesFullAndScopesPackageRules(t *testin
 	}
 }
 
+type workspaceFailureRule struct{}
+
+func (workspaceFailureRule) Name() string                                   { return "workspace-failure" }
+func (workspaceFailureRule) Scope() string                                  { return "workspace" }
+func (workspaceFailureRule) Check(workspace.Package, config.Preset) []Issue { return nil }
+func (workspaceFailureRule) CheckWorkspace(*workspace.Workspace) []Issue {
+	return []Issue{{Check: "workspace-failure", Severity: SeverityError, Message: "workspace failure"}}
+}
+
+func TestRunPackageRulesForInternalToolIgnoresWorkspaceFailureAndKeepsPackageFailure(t *testing.T) {
+	root := t.TempDir()
+	internal := workspace.Package{Name: "github.com/kb-labs/kb-runner", Preset: "node-lib", Language: "typescript", Dir: filepath.Join(root, "tools/kb-runner"), ReleaseLane: "internal-tool"}
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{internal}}
+	cfg := &config.DevkitConfig{Presets: map[string]config.Preset{"node-lib": {Language: "typescript"}}}
+	registry := &Registry{}
+	registry.Register(workspaceFailureRule{})
+	registry.Register(fakeRule{name: "package-rule"})
+
+	passed := RunPackageRulesForPackages(ws, []workspace.Package{internal}, cfg, registry, nil, nil)
+	if _, exists := passed["workspace"]; exists {
+		t.Fatalf("package-only checks returned workspace result %#v", passed["workspace"])
+	}
+	if got := passed[internal.Name]; got.ChecksRun != 1 || len(got.Issues) != 0 {
+		t.Fatalf("package-only result = %#v, want one passing package check", got)
+	}
+
+	registry.Register(fakeRule{name: "failing-package-rule", issues: []Issue{{Check: "failing-package-rule", Severity: SeverityError, Message: "internal package failure"}}})
+	failed := RunPackageRulesForPackages(ws, []workspace.Package{internal}, cfg, registry, nil, nil)
+	if got := failed[internal.Name]; len(got.Issues) != 1 || got.Issues[0].Message != "internal package failure" {
+		t.Fatalf("package failure evidence = %#v, want the internal package finding", got.Issues)
+	}
+}
+
 type fakeRule struct {
 	name   string
 	issues []Issue

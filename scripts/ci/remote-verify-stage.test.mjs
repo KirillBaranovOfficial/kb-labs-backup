@@ -52,11 +52,49 @@ test('candidate internal-tool lane builds, tests, and checks each selected packa
   assert.deepEqual(invocations, [
     ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', 'kb-runner', '--concurrency', '1', '--json']],
     ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', 'kb-runner', '--concurrency', '1', '--json']],
-    ['./tools/kb-devkit/kb-devkit', ['check', '--package', 'kb-runner', '--json']],
+    ['./tools/kb-devkit/kb-devkit', ['check', '--internal-tool-package', 'kb-runner', '--json']],
   ]);
   assert.equal(result.name, 'internal-tool-tests:shard-1');
   assert.equal(result.selectedPackageCount, 1);
   assert.equal(result.status, 'pass');
+});
+
+// case: S-277.1
+test('internal-tool stage retains stdout-only JSON failure evidence', async () => {
+  const result = await runStage({
+    stage: 'internal-tool-tests',
+    packageNames: ['kb-runner'],
+    selectedPackageCount: 1,
+    shard: 1,
+    runCommand: async (_command, args) => args[0] === 'run' && args[1] === 'test'
+      ? { status: 1, stdout: '{"ok":false,"failures":["runner_test.go: failed"]}', stderr: '' }
+      : { status: 0, stdout: '{"ok":true}', stderr: '' },
+  });
+
+  assert.equal(result.status, 'fail');
+  assert.equal(result.failures.length, 1);
+  assert.match(result.failures[0], /runner_test\.go: failed/);
+});
+
+// case: S-277.1
+test('internal-tool package-check failure remains fail with its stdout evidence', async () => {
+  const invocations = [];
+  const result = await runStage({
+    stage: 'internal-tool-tests',
+    packageNames: ['kb-runner'],
+    selectedPackageCount: 1,
+    shard: 1,
+    runCommand: async (_command, args) => {
+      invocations.push(args);
+      return args[0] === 'check'
+        ? { status: 1, stdout: '{"ok":false,"issues":[{"check":"runner-package-rule","message":"package check failed"}]}', stderr: '' }
+        : { status: 0, stdout: '{"ok":true}', stderr: '' };
+    },
+  });
+
+  assert.equal(result.status, 'fail');
+  assert.match(result.failures.join('\n'), /runner-package-rule.*package check failed/);
+  assert.ok(invocations.some((args) => args[0] === 'check' && args.includes('--internal-tool-package')));
 });
 // case: S-262.7
 test('journey unit shard records its failure instead of losing it before artifact upload', async () => {
