@@ -21,17 +21,32 @@ export function parseAffectedPackages(output) {
 export function parseAffectedSelection(output, profileName) {
   const packages = parseAffectedPackages(output);
   const envelope = JSON.parse(output);
+  const internalToolPackages = envelope?.data?.internalToolPackages;
   const changedPathCount = envelope?.data?.changedPathCount;
   if (!Number.isSafeInteger(changedPathCount) || changedPathCount < 0) throw new Error(`kb-devkit affected selection is missing its changed-path count. Rerun the prepare selector: ${selectionCommand}.`);
-  if (packages.length === 0 && (profileName === 'candidate' || changedPathCount > 0)) {
+  if (!Array.isArray(internalToolPackages) || internalToolPackages.some((name) => typeof name !== 'string' || !name) || new Set(internalToolPackages).size !== internalToolPackages.length || internalToolPackages.some((name) => !packages.includes(name))) {
+    throw new Error(`kb-devkit affected selection returned an invalid internal-tool package list. Rerun the prepare selector: ${selectionCommand}.`);
+  }
+  if (packages.length === 0 && profileName === 'stream' && changedPathCount > 0) {
     throw new Error(`KB_REMOTE_EMPTY_SELECTION: ${profileName} resolved ${changedPathCount} changed path(s) to zero workspace packages. Check the base-ref input and registry, then rerun the prepare selector: ${selectionCommand}.`);
   }
   const selectionReason = envelope?.data?.selectionReason ?? '';
   if (typeof selectionReason !== 'string') throw new Error(`kb-devkit affected selection returned an invalid selection reason. Rerun the prepare selector: ${selectionCommand}.`);
-  return { packages, changedPathCount, selectionReason };
+  if (profileName === 'candidate' && packages.length === 0) {
+    throw new Error(`KB_REMOTE_EMPTY_SELECTION: candidate resolved ${changedPathCount} changed path(s) to zero workspace packages. Check the base-ref input and registry, then rerun the prepare selector: ${selectionCommand}.`);
+  }
+  const internalSet = new Set(internalToolPackages);
+  return {
+    packages: profileName === 'candidate' ? packages.filter((name) => !internalSet.has(name)) : packages,
+    internalToolPackages: profileName === 'candidate' ? internalToolPackages : [],
+    changedPathCount,
+    selectionReason,
+  };
 }
 
-export function createTestMatrix(packages, independentStages, buildDependentStages, packageTestStage, shardLimit) {
+export function createTestMatrix(packagesOrSelection, independentStages, buildDependentStages, packageTestStage, shardLimit) {
+  const selection = Array.isArray(packagesOrSelection) ? { packages: packagesOrSelection, internalToolPackages: [] } : packagesOrSelection;
+  const packages = selection.packages;
   if (!Number.isSafeInteger(shardLimit) || shardLimit < 1) throw new Error('Verification profile maxParallel must be a positive integer.');
   if (new Set(packages).size !== packages.length) throw new Error('Affected package selection contains a duplicate package.');
   const testStages = [...independentStages, ...buildDependentStages];
@@ -45,24 +60,30 @@ export function createTestMatrix(packages, independentStages, buildDependentStag
   packages.forEach((packageName, index) => packageShards[index % shardCount].packages.push(packageName));
   const independent = { include: independentStages.map((stage) => ({ stage })) };
   const dependent = { include: [...buildDependentStages.map((stage) => ({ stage })), ...packageShards] };
+  const internalShardCount = Math.min(selection.internalToolPackages.length, shardLimit);
+  const internalTool = {
+    include: Array.from({ length: internalShardCount }, (_, index) => ({ stage: 'internal-tool-tests', shard: index + 1, packages: [] })),
+  };
+  selection.internalToolPackages.forEach((packageName, index) => internalTool.include[index % internalShardCount].packages.push(packageName));
   return {
     independent,
     dependent,
     include: [...independent.include, ...dependent.include],
+    internalTool,
   };
 }
 
 function main() {
   const [profileName, affectedPath, planPath, outputPath] = process.argv.slice(2);
   if (!profileName || !affectedPath || !planPath || !outputPath) throw new Error('Usage: node scripts/ci/remote-verify-plan.mjs <stream|candidate> <affected-json> <plan-json> <github-output>');
-  const { packages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
+  const { packages, internalToolPackages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
   const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
   const independentStages = profile.independentTestStages[profileName];
   const buildDependentStages = profile.buildDependentTestStages[profileName];
   if (!independentStages || !buildDependentStages) throw new Error(`Unknown verification profile ${profileName}; use stream or candidate.`);
-  const matrix = createTestMatrix(packages, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
+  const matrix = createTestMatrix({ packages, internalToolPackages }, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
   writeFileSync(planPath, `${JSON.stringify(matrix)}\n`);
-  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_package_count=${packages.length}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
+  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\ninternal_tool_matrix=${JSON.stringify(matrix.internalTool)}\ninternal_tool_packages=${internalToolPackages.join(',')}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_package_count=${packages.length}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
   process.stdout.write(`Planned ${matrix.include.length} test shard(s) from ${packages.length} kb-devkit-selected package(s).\n`);
 }
 

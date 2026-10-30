@@ -763,9 +763,8 @@ func readGoWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.P
 }
 
 // readWorkspaceDeps returns workspace-internal dependency names for a package.
-// Reads dependencies, devDependencies, and peerDependencies — all three are
-// relevant for build-time ordering (devDeps like @kb-labs/devkit are needed
-// during the build phase inside Docker containers).
+// Reads dependencies, optionalDependencies, devDependencies, and peerDependencies;
+// all four sections can contain workspace packages needed for build ordering.
 func readWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Package) []WorkspaceDependency {
 	data, err := os.ReadFile(dir + "/package.json")
 	if err != nil {
@@ -773,9 +772,10 @@ func readWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Pac
 	}
 
 	var pkg struct {
-		Dependencies     map[string]string `json:"dependencies"`
-		DevDependencies  map[string]string `json:"devDependencies"`
-		PeerDependencies map[string]string `json:"peerDependencies"`
+		Dependencies         map[string]string `json:"dependencies"`
+		OptionalDependencies map[string]string `json:"optionalDependencies"`
+		DevDependencies      map[string]string `json:"devDependencies"`
+		PeerDependencies     map[string]string `json:"peerDependencies"`
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		return nil
@@ -786,6 +786,7 @@ func readWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Pac
 		deps map[string]string
 	}{
 		{kind: DependenciesKind, deps: pkg.Dependencies},
+		{kind: DependenciesKind, deps: pkg.OptionalDependencies},
 		{kind: DevDependenciesKind, deps: pkg.DevDependencies},
 		{kind: PeerDependenciesKind, deps: pkg.PeerDependencies},
 	}
@@ -806,8 +807,8 @@ func readWorkspaceDependencyEdges(dir string, pkgByName map[string]workspace.Pac
 	return result
 }
 
-// WorkspaceDeps returns direct workspace:* dependency names for a package dir.
-// Reads dependencies + devDependencies + peerDependencies.
+// WorkspaceDeps returns direct workspace dependency names for a package dir.
+// Reads dependencies, optionalDependencies, devDependencies, and peerDependencies.
 // pkgByName must cover all workspace packages to correctly filter internal deps.
 func WorkspaceDeps(pkgDir string, pkgByName map[string]workspace.Package) ([]string, error) {
 	edges := readWorkspaceDependencyEdges(pkgDir, pkgByName)

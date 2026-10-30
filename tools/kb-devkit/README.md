@@ -241,10 +241,18 @@ workspace:
       match:
         - "tools/devkit"   # literal path — Go package without package.json
       preset: go-binary
+
+    private-tool:
+      match:
+        - "tools/private-tool"
+      preset: go-binary
+      releaseLane: internal-tool
 ```
 
 **Matching rules:**
 - Categories are evaluated top-to-bottom; first match wins — declaration order matters.
+- `releaseLane: internal-tool` marks a private developer tool. Categories without this declaration keep their existing gating membership.
+- Candidate verification removes only selected internal tools from its gating package set. Internal tools retain build, test, and package check tasks, and their candidate results are reported separately from the candidate verdict.
 - Literal paths (no `*` or `**`) and glob patterns can be mixed freely in any order.
 - Go packages or other non-JS directories don't need `package.json` — use a literal path in `match`.
 - Packages that don't match any category are silently ignored by all commands.

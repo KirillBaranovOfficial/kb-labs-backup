@@ -25,10 +25,14 @@ var affectedCmd = &cobra.Command{
 
 		if jsonMode {
 			packages := make([]string, 0, len(selection.Packages))
+			internalToolPackages := make([]string, 0)
 			for _, pkg := range selection.Packages {
 				packages = append(packages, pkg.Name)
+				if pkg.ReleaseLane == "internal-tool" {
+					internalToolPackages = append(internalToolPackages, pkg.Name)
+				}
 			}
-			return JSONOut(map[string]any{"packages": packages, "selectionReason": selection.Reason})
+			return JSONOut(map[string]any{"packages": packages, "internalToolPackages": internalToolPackages, "selectionReason": selection.Reason})
 		}
 
 		if len(selection.Packages) == 0 {

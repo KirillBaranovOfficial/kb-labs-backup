@@ -17,6 +17,7 @@ type Package struct {
 	Name        string // @acme/core-runtime
 	Dir         string // absolute path
 	Category    string // ts-lib, go-binary, site, ...
+	ReleaseLane string // internal-tool; an empty value retains default gating membership
 	Preset      string // node-lib, go-binary, ...
 	Language    string // typescript, go
 	RelPath     string // relative to workspace root

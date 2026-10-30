@@ -97,9 +97,10 @@ type NamedCategory struct {
 
 // CategoryConfig matches packages to a preset by glob patterns.
 type CategoryConfig struct {
-	Match    []string `yaml:"match"`
-	Language string   `yaml:"language"`
-	Preset   string   `yaml:"preset"`
+	Match       []string `yaml:"match"`
+	Language    string   `yaml:"language"`
+	Preset      string   `yaml:"preset"`
+	ReleaseLane string   `yaml:"releaseLane"`
 }
 
 // PresetConfig resolves the preset for this category from the given config.

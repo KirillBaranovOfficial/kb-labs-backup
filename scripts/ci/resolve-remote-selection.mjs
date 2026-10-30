@@ -45,13 +45,15 @@ try {
   if (result.status !== 0) throw new Error(`kb-devkit affected selection failed (exit ${result.status}): ${result.stderr || result.stdout}`);
   const envelope = JSON.parse(result.stdout);
   const packages = envelope?.data?.packages;
+  const internalToolPackages = envelope?.data?.internalToolPackages;
   const selectionReason = envelope?.data?.selectionReason;
   if (envelope?.ok !== true || !Array.isArray(packages) || packages.some((name) => typeof name !== 'string' || !name)) {
     throw new Error('kb-devkit affected --json returned an invalid package selection. Rerun the remote verification prepare job.');
   }
   if (typeof selectionReason !== 'string') throw new Error('kb-devkit affected --json returned an invalid selection reason. Rerun the remote verification prepare job.');
+  if (!Array.isArray(internalToolPackages)) throw new Error('kb-devkit affected --json returned no internal-tool package selection. Rerun the remote verification prepare job.');
   const changedPaths = JSON.parse(readFileSync(changedFilesPath, 'utf8'));
-  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, changedPathCount: changedPaths.length, selectionReason }, selectedPackageCount: packages.length })}\n`);
+  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, internalToolPackages, changedPathCount: changedPaths.length, selectionReason }, selectedPackageCount: packages.length })}\n`);
   process.stdout.write(`Resolved ${packages.length} package(s) from ${changedPaths.length} path(s) using kb-devkit.\n`);
 } catch (error) {
   process.stderr.write(`${error.message}\n`);
