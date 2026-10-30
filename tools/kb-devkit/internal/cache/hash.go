@@ -3,13 +3,13 @@ package cache
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -62,7 +62,7 @@ func ContentDigest(workspaceRoot string, files []string, tracked map[string]Trac
 		if err != nil {
 			return "", err
 		}
-		_, _ = io.WriteString(h, filepath.ToSlash(rel)+"\x00")
+		path := filepath.ToSlash(rel)
 		entry, ok := tracked[filepath.Clean(file)]
 		if !ok {
 			return "", fmt.Errorf("tracked metadata missing for %s", file)
@@ -72,35 +72,40 @@ func ContentDigest(workspaceRoot string, files []string, tracked map[string]Trac
 		default:
 			return "", fmt.Errorf("unsupported Git mode %o for %s", entry.Mode, file)
 		}
-		_, _ = io.WriteString(h, strconv.FormatUint(uint64(entry.Mode), 8)+"\x00")
-		if entry.Mode == 0160000 {
-			_, _ = io.WriteString(h, entry.ObjectID+"\x00")
-			continue
-		}
-		_, err = os.Lstat(file)
-		if os.IsNotExist(err) {
-			_, _ = io.WriteString(h, "deleted\x00")
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
 		var content []byte
-		switch entry.Mode {
-		case 0120000:
-			link, err := os.Readlink(file)
-			if err != nil {
+		if entry.Mode == 0160000 {
+			content = []byte(entry.ObjectID)
+		} else {
+			_, err = os.Lstat(file)
+			if os.IsNotExist(err) {
+				content = []byte("deleted")
+			} else if err != nil {
 				return "", err
-			}
-			content = []byte(link)
-		case 0100644, 0100755:
-			content, err = os.ReadFile(file)
-			if err != nil {
-				return "", err
+			} else {
+				switch entry.Mode {
+				case 0120000:
+					link, err := os.Readlink(file)
+					if err != nil {
+						return "", err
+					}
+					content = []byte(link)
+				case 0100644, 0100755:
+					content, err = os.ReadFile(file)
+					if err != nil {
+						return "", err
+					}
+				}
 			}
 		}
-		_, _ = h.Write(content)
-		_, _ = io.WriteString(h, "\x00")
+		contentDigest := sha256.Sum256(content)
+		var pathLength [8]byte
+		binary.BigEndian.PutUint64(pathLength[:], uint64(len(path)))
+		var mode [4]byte
+		binary.BigEndian.PutUint32(mode[:], entry.Mode)
+		_, _ = h.Write(pathLength[:])
+		_, _ = io.WriteString(h, path)
+		_, _ = h.Write(mode[:])
+		_, _ = h.Write(contentDigest[:])
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
