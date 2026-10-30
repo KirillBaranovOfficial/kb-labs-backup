@@ -81,7 +81,7 @@ export const symbols = {
 // Check if colors are supported
 export const supportsColor = (() => {
   if (typeof process === 'undefined') {return false;}
-  return resolveColorSupport(process.stdout?.isTTY, process.env.NO_COLOR, process.env.FORCE_COLOR);
+  return resolveColorSupport(process.stdout?.isTTY, process.env.NO_COLOR, process.env.FORCE_COLOR, process.env.TERM);
 })();
 
 // Color functions that respect NO_COLOR

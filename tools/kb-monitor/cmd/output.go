@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	clikitui "github.com/kb-labs/clikit/ui"
 )
 
 // output provides unified CLI formatting with lipgloss.
@@ -81,15 +81,5 @@ func color(enabled bool, ansi string) lipgloss.TerminalColor {
 }
 
 func colorEnabled() bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	if strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return false
-	}
-	fi, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	return clikitui.StdoutColorEnabled()
 }

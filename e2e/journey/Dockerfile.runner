@@ -16,8 +16,11 @@ RUN go build -trimpath -o /out/kb-create-release-index ./v2/cmd/kb-create-releas
 # journey_resources.TOOLCHAIN_STAGE_INPUTS and hashed into the image tag.
 FROM node:24-bookworm AS toolchain
 
+COPY package.json /tmp/workspace-package.json
 RUN apt-get update -qq && apt-get install -y -qq ca-certificates curl git jq python3 procps iproute2 lsof \
-    && npm install -g pnpm@12.8.1 \
+    && corepack enable \
+    && corepack prepare "$(node -p 'require("/tmp/workspace-package.json").packageManager')" --activate \
+    && rm /tmp/workspace-package.json \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright

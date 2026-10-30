@@ -2,6 +2,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 
 const selectionCommand = 'node scripts/ci/resolve-remote-selection.mjs "$VERIFICATION_PROFILE" "$RUNNER_TEMP/affected-packages.json" ./tools/kb-devkit/kb-devkit';
+const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 
 export function parseAffectedPackages(output) {
   let envelope;
@@ -23,6 +24,15 @@ export function parseAffectedSelection(output, profileName) {
   const envelope = JSON.parse(output);
   const changedPathCount = envelope?.data?.changedPathCount;
   if (!Number.isSafeInteger(changedPathCount) || changedPathCount < 0) throw new Error(`kb-devkit affected selection is missing its changed-path count. Rerun the prepare selector: ${selectionCommand}.`);
+  if (profileName === 'candidate') {
+    for (const definition of Object.values(profile.stages)) {
+      if (definition.runner !== 'kb-devkit-test-package') continue;
+      const manifestPath = new URL(`../../${definition.packageManifest}`, import.meta.url);
+      const packageName = JSON.parse(readFileSync(manifestPath, 'utf8')).name;
+      if (typeof packageName !== 'string' || packageName.length === 0) throw new Error(`Candidate package manifest ${definition.packageManifest} has no package name.`);
+      if (!packages.includes(packageName)) packages.push(packageName);
+    }
+  }
   if (packages.length === 0 && (profileName === 'candidate' || changedPathCount > 0)) {
     throw new Error(`KB_REMOTE_EMPTY_SELECTION: ${profileName} resolved ${changedPathCount} changed path(s) to zero workspace packages. Check the base-ref input and registry, then rerun the prepare selector: ${selectionCommand}.`);
   }
@@ -56,7 +66,6 @@ function main() {
   const [profileName, affectedPath, planPath, outputPath] = process.argv.slice(2);
   if (!profileName || !affectedPath || !planPath || !outputPath) throw new Error('Usage: node scripts/ci/remote-verify-plan.mjs <stream|candidate> <affected-json> <plan-json> <github-output>');
   const { packages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
-  const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
   const independentStages = profile.independentTestStages[profileName];
   const buildDependentStages = profile.buildDependentTestStages[profileName];
   if (!independentStages || !buildDependentStages) throw new Error(`Unknown verification profile ${profileName}; use stream or candidate.`);

@@ -1,0 +1,12 @@
+[
+  {"name":"piped default","tty":false,"noColor":"","forceColor":"","want":false},
+  {"name":"terminal default","tty":true,"noColor":"","forceColor":"","want":true},
+  {"name":"NO_COLOR non-empty zero","tty":true,"noColor":"0","forceColor":"","want":false},
+  {"name":"NO_COLOR beats force","tty":true,"noColor":"1","forceColor":"1","want":false},
+  {"name":"NO_COLOR beats force off","tty":false,"noColor":"1","forceColor":"0","want":false},
+  {"name":"force color in pipe","tty":false,"noColor":"","forceColor":"1","want":true},
+  {"name":"force off in terminal","tty":true,"noColor":"","forceColor":"0","want":false},
+  {"name":"empty NO_COLOR is unset","tty":true,"noColor":"","forceColor":"","want":true},
+  {"name":"dumb terminal disables default","tty":true,"noColor":"","forceColor":"","term":"dumb","want":false},
+  {"name":"forced color overrides dumb terminal","tty":false,"noColor":"","forceColor":"1","term":"dumb","want":true}
+]

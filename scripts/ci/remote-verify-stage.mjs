@@ -148,7 +148,7 @@ export async function runStage({
     finishedAt: new Date(finishedAt).toISOString(),
     durationMs: Math.max(0, finishedAt - startedAt),
     ...(stage === profile.packageTestStage ? { packages: packageNames } : {}),
-    ...(definition.runner === 'kb-devkit-test-package' ? { packages: [definition.package] } : {}),
+    ...(definition.runner === 'kb-devkit-test-package' ? { packages: [packageName] } : {}),
     cache: cacheRecord(cache),
     ...(stage === profile.buildStage ? {
       resourceLimits: buildLimits,

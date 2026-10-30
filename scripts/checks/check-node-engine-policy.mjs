@@ -108,6 +108,9 @@ if (rootPolicy !== undefined) {
 }
 
 process.stdout.write(JSON.stringify({ issues }));
+for (const finding of issues) {
+  process.stderr.write(`${finding.check}: ${finding.file}: ${finding.message}\n`);
+}
 
 function readStdin() {
   return new Promise((resolve, reject) => {

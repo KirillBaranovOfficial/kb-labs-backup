@@ -4,10 +4,10 @@ import (
 	"fmt"
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kb-labs/clikit/result"
+	clikitui "github.com/kb-labs/clikit/ui"
 )
 
 // output provides unified CLI formatting with lipgloss.
@@ -117,13 +117,7 @@ func color(enabled bool, ansi string) lipgloss.TerminalColor {
 }
 
 func colorEnabled() bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	if strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return false
-	}
-	return stdoutIsTerminal()
+	return clikitui.StdoutColorEnabled()
 }
 
 func stdoutIsTerminal() bool {

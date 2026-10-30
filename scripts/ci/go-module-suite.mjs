@@ -237,6 +237,13 @@ function runSuite({ root = workspaceRoot, registry, go = 'go', modules = [] } = 
       const label = `${module} [TMPDIR ${variant}]`;
       try {
         const packages = goPackages(go, moduleDir, env);
+        if (variant === 'one') {
+          const linuxVet = run(go, ['vet', ...packages], { cwd: moduleDir, env: { ...env, GOOS: 'linux' } });
+          if (linuxVet.status !== 0) {
+            failed = true;
+            process.stderr.write(`${label} [GOOS=linux go vet]: FAIL\n${linuxVet.stdout}${linuxVet.stderr}`);
+          }
+        }
         const test = run(go, ['test', ...packages], { cwd: moduleDir, env });
         if (test.status !== 0) {
           failed = true;
