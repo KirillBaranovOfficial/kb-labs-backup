@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 )
 
@@ -125,6 +126,10 @@ func TestExecChainIdentityChecks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	startupSpec, err := host.NewSpec(directory, contracts.HostSpec{Command: scripts[0]})
+	if err != nil {
+		t.Fatalf("construct default host startup budget: %v", err)
+	}
 	const starts = 1000
 	oldUndetermined, oldMismatches, boundedFailures := 0, 0, 0
 	for index := range starts {
@@ -157,7 +162,7 @@ func TestExecChainIdentityChecks(t *testing.T) {
 		case host.ProcessIdentityMismatch:
 			oldMismatches++
 		}
-		if got := host.WaitForProcessIdentityWithReader(process.Process.Pid, identity, exited, time.Now().Add(time.Second), nil); got != host.ProcessIdentityMatch {
+		if got := host.WaitForProcessIdentityWithReader(process.Process.Pid, identity, exited, time.Now().Add(startupSpec.ReadyTimeout), nil); got != host.ProcessIdentityMatch {
 			boundedFailures++
 		}
 		_ = stdin.Close()

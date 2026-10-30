@@ -164,7 +164,8 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 		t.Fatalf("workspace check calls = %q, want one invocation", got)
 	}
 	var input struct {
-		Workspace struct {
+		GraphTasks []string `json:"graphTasks"`
+		Workspace  struct {
 			Root     string `json:"root"`
 			Packages []struct {
 				Name        string `json:"name"`
@@ -180,6 +181,9 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 	if input.Workspace.Root != root || len(input.Workspace.Packages) != 2 {
 		t.Fatalf("workspace input = %#v, want root and both discovered packages", input.Workspace)
 	}
+	if strings.Join(input.GraphTasks, ",") != "build,verify" {
+		t.Fatalf("workspace task graph = %v, want sorted task names [build verify]", input.GraphTasks)
+	}
 	if input.Workspace.Packages[0].Category != "adapter" || input.Workspace.Packages[1].Category != "ts-lib" {
 		t.Fatalf("package categories = %#v, want resolved devkit categories", input.Workspace.Packages)
 	}
@@ -188,6 +192,45 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 	}
 	if result, ok := results["workspace"]; !ok || len(result.Issues) != 0 || result.ChecksRun != 3 {
 		t.Fatalf("clean workspace check result = %#v, want the custom check, task-ownership check, and release boundary check", result)
+	}
+}
+
+func TestPackageExternalCheckReceivesDiscoveredWorkspaceAndTaskGraph(t *testing.T) {
+	root := t.TempDir()
+	payloadPath := filepath.Join(root, "payload.json")
+	script := filepath.Join(root, "check.sh")
+	body := "#!/bin/sh\ncat > '" + payloadPath + "'\nprintf '{\\\"issues\\\":[]}' > " + resultFileEnvExpansion() + "\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write check script: %v", err)
+	}
+	cfg := &config.DevkitConfig{
+		Presets: map[string]config.Preset{"typescript": {Language: "typescript"}},
+		Tasks:   map[string]config.TaskConfig{"test": {{Command: "true"}}, "build": {{Command: "true"}}},
+		Custom:  []config.CustomCheck{{Name: "package-check", Run: script, On: []string{"check"}, Language: "typescript"}},
+	}
+	pkg := workspace.Package{Name: "@acme/demo", Dir: root, RelPath: "packages/demo", Category: "ts-lib", Preset: "typescript", Language: "typescript"}
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{pkg}}
+	results := RunPackageRulesForPackages(ws, ws.Packages, cfg, Build(cfg, root, "check"), []string{"package-check"}, nil)
+	if result := results[pkg.Name]; len(result.Issues) != 0 {
+		t.Fatalf("package-check issues = %#v", result.Issues)
+	}
+	var input struct {
+		GraphTasks []string `json:"graphTasks"`
+		Workspace  struct {
+			Root     string `json:"root"`
+			Packages []struct {
+				Name string `json:"name"`
+			} `json:"packages"`
+		} `json:"workspace"`
+	}
+	if err := json.Unmarshal(mustReadFile(t, payloadPath), &input); err != nil {
+		t.Fatalf("decode package-check stdin: %v", err)
+	}
+	if input.Workspace.Root != root || len(input.Workspace.Packages) != 1 || input.Workspace.Packages[0].Name != pkg.Name {
+		t.Fatalf("package check workspace = %#v, want discovered package context", input.Workspace)
+	}
+	if strings.Join(input.GraphTasks, ",") != "build,test" {
+		t.Fatalf("package check task graph = %v, want sorted task names [build test]", input.GraphTasks)
 	}
 }
 

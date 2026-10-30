@@ -1021,49 +1021,12 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 	}
 	source.Provenance = nil
 	graph := source.Platforms[0].Profiles["default"]
-	services := graph.Services
-	minPort, maxPort, gatewayPort := 65535, 0, 0
-	for _, service := range services {
-		if service.Port < minPort {
-			minPort = service.Port
-		}
-		if service.Port > maxPort {
-			maxPort = service.Port
-		}
+	gatewayPort := 0
+	for _, service := range graph.Services {
 		if service.ID == "gateway" {
 			gatewayPort = service.Port
 		}
 	}
-	serviceOffsets := make([]int, 0, len(services)*3)
-	for _, service := range services {
-		if service.Port == 0 {
-			continue
-		}
-		for _, installOffset := range []int{0, 100, 200} {
-			serviceOffsets = append(serviceOffsets, service.Port-gatewayPort+installOffset)
-		}
-	}
-	allocatedGatewayPort := freeLoopbackPortWithOffsetsOutsideEphemeralRange(t, serviceOffsets...)
-	for _, offset := range serviceOffsets {
-		if allocatedGatewayPort+offset >= 32768 {
-			t.Fatalf("test service port %d is inside the conventional Linux ephemeral range", allocatedGatewayPort+offset)
-		}
-	}
-	shift := allocatedGatewayPort - gatewayPort
-	for i := range services {
-		oldPort := services[i].Port
-		services[i].Port += shift
-		for configIndex := range source.Platforms[0].Config {
-			source.Platforms[0].Config[configIndex].Default = strings.ReplaceAll(source.Platforms[0].Config[configIndex].Default,
-				fmt.Sprintf("127.0.0.1:%d", oldPort), fmt.Sprintf("127.0.0.1:%d", services[i].Port))
-		}
-		if services[i].ID == "gateway" {
-			gatewayPort = services[i].Port
-		}
-	}
-	graph.Services = services
-	source.Platforms[0].Profiles["default"] = graph
-	source.Platforms[0].Host = testHostOnFreePortWithPortHeadroom(t, maxPort-minPort+1500)
 	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)

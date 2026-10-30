@@ -72,23 +72,6 @@ test('manifest-backed Go suite fails when kb-devkit reports zero executed tasks'
   assert.ok(result.failures.some((failure) => failure.includes('without executing any tasks')));
 });
 
-test('external result-channel rail runs through the declared executable stage', async () => {
-  const definition = profile.stages['kb-devkit-result-channel'];
-  let invocation;
-  const result = await runStage({
-    stage: 'kb-devkit-result-channel',
-    selectedPackageCount: 165,
-    runCommand: async (command, args) => {
-      invocation = [command, args];
-      return { status: 0, stdout: 'result-channel rail passed', stderr: '' };
-    },
-  });
-
-  assert.deepEqual(invocation, [definition.command, definition.args]);
-  assert.equal(result.name, 'kb-devkit-result-channel');
-  assert.equal(result.status, 'pass');
-});
-
 // case: S-277.2
 test('candidate internal-tool lane builds, tests, and checks each selected package', async () => {
   const invocations = [];

@@ -21,7 +21,7 @@ describe('CLI presenter color policy', () => {
     const { colors } = await import('./colors.js');
     expect(/\u001b\[/.test(colors.red('color-policy-probe'))).toBe(want);
 
-    const { colors: sharedColors } = await import('../../../../shared/cli-ui/src/colors');
+    const { colors: sharedColors } = await import('@kb-labs/shared-cli-ui');
     expect(/\u001b\[/.test(sharedColors.error('color-policy-probe'))).toBe(want);
   });
 });
