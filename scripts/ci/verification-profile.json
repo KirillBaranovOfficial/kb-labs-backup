@@ -8,16 +8,16 @@
     "workspace-build": { "runner": "kb-devkit-build" },
     "workspace-unit-tests": { "runner": "kb-devkit-test" },
     "ci-script-suite": { "runner": "node-test-directory", "directory": "scripts/ci" },
-    "kb-create-go-suite": { "runner": "node-script", "script": "scripts/ci/go-module-suite.mjs", "args": ["--module", "tools/kb-create"] },
+    "kb-create-go-suite": { "runner": "kb-devkit-test-package", "package": "github.com/kb-labs/create" },
     "kb-devkit-check": { "runner": "executable", "command": "./tools/kb-devkit/kb-devkit", "args": ["check"] },
     "journey-unit-suite": { "runner": "process", "command": "python3", "args": ["-m", "unittest", "discover", "-s", "e2e/journey", "-p", "test_*.py"] }
   },
   "independentTestStages": {
     "stream": ["ci-script-suite"],
-    "candidate": ["ci-script-suite", "kb-create-go-suite", "kb-devkit-check"]
+    "candidate": ["ci-script-suite", "kb-devkit-check"]
   },
   "buildDependentTestStages": {
     "stream": [],
-    "candidate": ["journey-unit-suite"]
+    "candidate": ["kb-create-go-suite", "journey-unit-suite"]
   }
 }

@@ -124,7 +124,7 @@ export async function runStage({
     const label = [failure.package, failure.task].filter(Boolean).join(':');
     return [label, failure.logPath, failure.logTail || failure.error].filter(Boolean).join('\n');
   }).join('\n\n');
-  const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage;
+  const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage || definition.runner === 'kb-devkit-test-package';
   const visibleLog = taskFailures.length ? taskLogOutput : isDevkitStage ? (result.stderr || '') : log;
   const failures = stage === profile.buildStage
     ? taskFailures.map(formatBuildTaskFailure)
@@ -132,7 +132,7 @@ export async function runStage({
   const stageResult = {
     name,
     status: result.status === 0 && sampleFailures.length === 0 ? 'pass' : 'fail',
-    selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : selectedPackageCount,
+    selectedPackageCount: stage === profile.packageTestStage ? packageNames.length : definition.runner === 'kb-devkit-test-package' ? 1 : selectedPackageCount,
     failures: [...failures, ...sampleFailures],
     taskFailures,
     logTail: boundedTail(visibleLog),
@@ -140,6 +140,7 @@ export async function runStage({
     finishedAt: new Date(finishedAt).toISOString(),
     durationMs: Math.max(0, finishedAt - startedAt),
     ...(stage === profile.packageTestStage ? { packages: packageNames } : {}),
+    ...(definition.runner === 'kb-devkit-test-package' ? { packages: [definition.package] } : {}),
     cache: cacheRecord(cache),
     ...(stage === profile.buildStage ? {
       resourceLimits: buildLimits,
@@ -158,7 +159,8 @@ function writeAtomicJSON(file, value) {
 }
 
 function devkitTaskFailures(stage, result) {
-  if ((stage !== profile.buildStage && stage !== profile.packageTestStage) || result.status === 0) return [];
+  const definition = stageDefinitions.find((entry) => entry.id === stage);
+  if ((stage !== profile.buildStage && stage !== profile.packageTestStage && definition?.runner !== 'kb-devkit-test-package') || result.status === 0) return [];
   let envelope;
   try {
     envelope = JSON.parse(result.stdout);
@@ -213,6 +215,10 @@ function commandFor(definition) {
     return [process.execPath, ['--test', ...files]];
   }
   if (definition.runner === 'node-script') return [process.execPath, [definition.script, ...definition.args]];
+  if (definition.runner === 'kb-devkit-test-package') {
+    if (typeof definition.package !== 'string' || definition.package.length === 0) throw new Error(`Verification stage ${definition.id} requires a package registered by its stage definition.`);
+    return ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', definition.package, '--concurrency', '1', '--json']];
+  }
   if (definition.runner === 'process' || definition.runner === 'executable') return [definition.command, definition.args];
   throw new Error(`Unsupported verification runner ${definition.runner}; declare a supported runner in scripts/ci/verification-profile.json.`);
 }
