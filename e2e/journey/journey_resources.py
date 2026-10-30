@@ -38,14 +38,14 @@ TOOLCHAIN_IMAGE_REPOSITORY = "kb-journey-runner-toolchain"
 TOOLCHAIN_IMAGE_LABEL = "org.kb-labs.journey.runner-toolchain"
 TOOLCHAIN_IMAGE_BUILD_ARGUMENT = "KB_JOURNEY_TOOLCHAIN_IMAGE"
 TOOLCHAIN_DOCKERFILE = "e2e/journey/Dockerfile.runner"
-PLAYWRIGHT_VERSION_INPUT = ".journey/runner-inputs/studio-playwright-version"
+STUDIO_PACKAGE_MANIFEST = "e2e/studio/package.json"
 
 # The slow, rarely-changing runner toolchain layers. They are copied inside the
 # `FROM ... AS toolchain` stage of Dockerfile.runner, which e2e/journey/run.sh
 # builds and tags from these inputs so per-run cache trimming cannot evict them.
 TOOLCHAIN_STAGE_INPUTS = (
     RunnerImageResource("package.json", "/tmp/workspace-package.json"),
-    RunnerImageResource(PLAYWRIGHT_VERSION_INPUT, "/tmp/studio-playwright-version"),
+    RunnerImageResource(STUDIO_PACKAGE_MANIFEST, "/tmp/studio-package.json"),
 )
 
 
@@ -158,7 +158,6 @@ def stage_runner_image_inputs() -> tuple[Path, ...]:
     """Stage declared runner inputs whose repository source is generated or ignored."""
     staged_paths = list(stage_studio_playwright_specs(
         workspace_resource(".journey", "runner-inputs", "studio-specs")))
-    staged_paths.append(stage_studio_playwright_version())
     staged_paths.append(stage_config_jsonc_parser())
     for resource in RUNNER_IMAGE_RESOURCES:
         if resource.stage_source is None:
@@ -176,29 +175,6 @@ def stage_runner_image_inputs() -> tuple[Path, ...]:
     if not staged_paths:
         raise RuntimeError("the journey runner resource set declares no staged runner inputs")
     return tuple(staged_paths)
-
-
-def stage_studio_playwright_version() -> Path:
-    """Stage the exact Playwright version installed from the workspace lockfile."""
-    playwright = workspace_resource("e2e", "studio", "node_modules", ".bin", "playwright")
-    if not playwright.is_file():
-        raise FileNotFoundError(
-            f"Studio Playwright CLI is missing at {playwright}. "
-            "Restore workspace dependencies with `corepack pnpm install --frozen-lockfile`."
-        )
-    from invocations import run_harness_command
-
-    result = run_harness_command([str(playwright), "--version"])
-    if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        raise RuntimeError(f"Studio Playwright version discovery failed: {detail}")
-    version = result.stdout.strip().removeprefix("Version ")
-    if not version:
-        raise ValueError("Studio Playwright version discovery returned no version")
-    destination = workspace_resource(".journey", "runner-inputs", "studio-playwright-version")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(version + "\n", encoding="utf-8")
-    return destination
 
 
 def stage_config_jsonc_parser() -> Path:
@@ -309,26 +285,24 @@ def runner_toolchain_stage_text(dockerfile: Path | None = None) -> str:
 
 
 def runner_toolchain_image(*, dockerfile: Path | None = None,
-                           playwright_version_input: Path | None = None,
-                           package_manifest_input: Path | None = None) -> str:
+                           package_manifest_input: Path | None = None,
+                           studio_manifest_input: Path | None = None) -> str:
     """Derive the tagged toolchain image reference from its exact build inputs.
 
-    The tag hashes the toolchain stage of Dockerfile.runner, the staged
-    Playwright version, and the root packageManager declaration used by
+    The tag hashes the toolchain stage of Dockerfile.runner, the source
+    Playwright declaration, and the root packageManager declaration used by
     Corepack. A changed input yields a new tag that the harness builds, while
     per-run runner-stage changes reuse the existing image.
     """
     stage = runner_toolchain_stage_text(dockerfile)
-    version_input = playwright_version_input or workspace_resource(
-        *PurePosixPath(PLAYWRIGHT_VERSION_INPUT).parts)
+    studio_manifest = studio_manifest_input or workspace_resource(*STUDIO_PACKAGE_MANIFEST.split("/"))
     try:
-        playwright_version = version_input.read_text(encoding="utf-8")
+        studio_dependencies = json.loads(studio_manifest.read_text(encoding="utf-8")).get("devDependencies", {})
     except FileNotFoundError as error:
-        raise FileNotFoundError(
-            f"The journey runner toolchain needs its staged Playwright version at "
-            f"{version_input}. Next: bash e2e/journey/stage-runner-inputs.sh "
-            "(or e2e/journey/prepare-candidate.sh before the journey build)."
-        ) from error
+        raise FileNotFoundError(f"The journey runner toolchain needs Studio's source package.json at {studio_manifest}.") from error
+    playwright_version = studio_dependencies.get("@playwright/test") if isinstance(studio_dependencies, dict) else None
+    if not isinstance(playwright_version, str) or not playwright_version:
+        raise ValueError(f"The journey runner toolchain requires devDependencies.@playwright/test in {studio_manifest}.")
     package_manifest = package_manifest_input or workspace_resource("package.json")
     try:
         package_manager = json.loads(package_manifest.read_text(encoding="utf-8")).get("packageManager")
@@ -341,8 +315,8 @@ def runner_toolchain_image(*, dockerfile: Path | None = None,
 
 
 def runner_toolchain_contract(*, dockerfile: Path | None = None,
-                              playwright_version_input: Path | None = None,
-                              package_manifest_input: Path | None = None) -> dict[str, str]:
+                              package_manifest_input: Path | None = None,
+                              studio_manifest_input: Path | None = None) -> dict[str, str]:
     """Return the Dockerfile input and derived image used by the runner stage."""
     return {
         "dockerfile": TOOLCHAIN_DOCKERFILE,
@@ -350,8 +324,8 @@ def runner_toolchain_contract(*, dockerfile: Path | None = None,
         "imageLabel": TOOLCHAIN_IMAGE_LABEL,
         "imageArgument": TOOLCHAIN_IMAGE_BUILD_ARGUMENT,
         "imageReference": runner_toolchain_image(dockerfile=dockerfile,
-                                                  playwright_version_input=playwright_version_input,
-                                                  package_manifest_input=package_manifest_input),
+                                                  package_manifest_input=package_manifest_input,
+                                                  studio_manifest_input=studio_manifest_input),
     }
 
 

@@ -24,24 +24,20 @@ export function parseAffectedSelection(output, profileName) {
   const envelope = JSON.parse(output);
   const changedPathCount = envelope?.data?.changedPathCount;
   if (!Number.isSafeInteger(changedPathCount) || changedPathCount < 0) throw new Error(`kb-devkit affected selection is missing its changed-path count. Rerun the prepare selector: ${selectionCommand}.`);
-  if (profileName === 'candidate') {
-    for (const definition of Object.values(profile.stages)) {
-      if (definition.runner !== 'kb-devkit-test-package') continue;
-      const manifestPath = new URL(`../../${definition.packageManifest}`, import.meta.url);
-      const packageName = JSON.parse(readFileSync(manifestPath, 'utf8')).name;
-      if (typeof packageName !== 'string' || packageName.length === 0) throw new Error(`Candidate package manifest ${definition.packageManifest} has no package name.`);
-      if (!packages.includes(packageName)) packages.push(packageName);
+  const stagePackages = envelope?.data?.stagePackages;
+  if (!stagePackages || typeof stagePackages !== 'object' || Array.isArray(stagePackages)) throw new Error(`Remote package selection did not include its manifest-backed stage packages. Rerun the prepare selector: ${selectionCommand}.`);
+  for (const [stage, names] of Object.entries(stagePackages)) {
+    if (!profile.stages[stage] || profile.stages[stage].runner !== 'kb-devkit-test-package' || !Array.isArray(names) || names.length === 0 || names.some((name) => typeof name !== 'string' || !name) || new Set(names).size !== names.length) {
+      throw new Error(`Remote package selection contains invalid stage package data for ${stage}. Rerun the prepare selector: ${selectionCommand}.`);
     }
   }
-  if (packages.length === 0 && (profileName === 'candidate' || changedPathCount > 0)) {
-    throw new Error(`KB_REMOTE_EMPTY_SELECTION: ${profileName} resolved ${changedPathCount} changed path(s) to zero workspace packages. Check the base-ref input and registry, then rerun the prepare selector: ${selectionCommand}.`);
-  }
+  if (packages.length === 0 && Object.keys(stagePackages).length === 0 && (profileName === 'candidate' || changedPathCount > 0)) throw new Error(`KB_REMOTE_EMPTY_SELECTION: ${profileName} resolved ${changedPathCount} changed path(s) to zero verification packages. Check the base-ref input and registry, then rerun the prepare selector: ${selectionCommand}.`);
   const selectionReason = envelope?.data?.selectionReason ?? '';
   if (typeof selectionReason !== 'string') throw new Error(`kb-devkit affected selection returned an invalid selection reason. Rerun the prepare selector: ${selectionCommand}.`);
-  return { packages, changedPathCount, selectionReason };
+  return { packages, stagePackages, changedPathCount, selectionReason };
 }
 
-export function createTestMatrix(packages, independentStages, buildDependentStages, packageTestStage, shardLimit) {
+export function createTestMatrix(packages, independentStages, buildDependentStages, packageTestStage, shardLimit, stagePackages = {}) {
   if (!Number.isSafeInteger(shardLimit) || shardLimit < 1) throw new Error('Verification profile maxParallel must be a positive integer.');
   if (new Set(packages).size !== packages.length) throw new Error('Affected package selection contains a duplicate package.');
   const testStages = [...independentStages, ...buildDependentStages];
@@ -53,8 +49,9 @@ export function createTestMatrix(packages, independentStages, buildDependentStag
     packages: [],
   }));
   packages.forEach((packageName, index) => packageShards[index % shardCount].packages.push(packageName));
-  const independent = { include: independentStages.map((stage) => ({ stage })) };
-  const dependent = { include: [...buildDependentStages.map((stage) => ({ stage })), ...packageShards] };
+  const stageEntry = (stage) => ({ stage, ...(stagePackages[stage] ? { packages: stagePackages[stage] } : {}) });
+  const independent = { include: independentStages.map(stageEntry) };
+  const dependent = { include: [...buildDependentStages.map(stageEntry), ...packageShards] };
   return {
     independent,
     dependent,
@@ -65,11 +62,11 @@ export function createTestMatrix(packages, independentStages, buildDependentStag
 function main() {
   const [profileName, affectedPath, planPath, outputPath] = process.argv.slice(2);
   if (!profileName || !affectedPath || !planPath || !outputPath) throw new Error('Usage: node scripts/ci/remote-verify-plan.mjs <stream|candidate> <affected-json> <plan-json> <github-output>');
-  const { packages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
+  const { packages, stagePackages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
   const independentStages = profile.independentTestStages[profileName];
   const buildDependentStages = profile.buildDependentTestStages[profileName];
   if (!independentStages || !buildDependentStages) throw new Error(`Unknown verification profile ${profileName}; use stream or candidate.`);
-  const matrix = createTestMatrix(packages, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
+  const matrix = createTestMatrix(packages, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel, stagePackages);
   writeFileSync(planPath, `${JSON.stringify(matrix)}\n`);
   appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_package_count=${packages.length}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
   process.stdout.write(`Planned ${matrix.include.length} test shard(s) from ${packages.length} kb-devkit-selected package(s).\n`);

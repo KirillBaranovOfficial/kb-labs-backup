@@ -29,9 +29,10 @@ func (o *yamlOrderedCategories) UnmarshalYAML(value *yaml.Node) error {
 		*o = append(*o, NamedCategory{
 			Name: keyNode.Value,
 			Category: CategoryConfig{
-				Match:    cat.Match,
-				Language: cat.Language,
-				Preset:   cat.Preset,
+				Match:       cat.Match,
+				Language:    cat.Language,
+				Preset:      cat.Preset,
+				ReleaseLane: cat.ReleaseLane,
 			},
 		})
 	}
@@ -125,9 +126,10 @@ type yamlWorkspace struct {
 }
 
 type yamlCategory struct {
-	Match    []string `yaml:"match"`
-	Language string   `yaml:"language"`
-	Preset   string   `yaml:"preset"`
+	Match       []string `yaml:"match"`
+	Language    string   `yaml:"language"`
+	Preset      string   `yaml:"preset"`
+	ReleaseLane string   `yaml:"releaseLane"`
 }
 
 type yamlPreset struct {
@@ -344,6 +346,11 @@ func parseYAMLBytes(data []byte) (*DevkitConfig, error) {
 		}
 		if check.Scope == "workspace" && (check.Language != "" || len(check.Categories) > 0) {
 			return nil, fmt.Errorf("custom check %q uses workspace scope and cannot set package language or categories", check.Name)
+		}
+	}
+	for _, category := range cfg.Workspace.Categories {
+		if category.Category.ReleaseLane != "" && category.Category.ReleaseLane != "internal-tool" {
+			return nil, fmt.Errorf("workspace category %q has unsupported releaseLane %q", category.Name, category.Category.ReleaseLane)
 		}
 	}
 	return cfg, nil

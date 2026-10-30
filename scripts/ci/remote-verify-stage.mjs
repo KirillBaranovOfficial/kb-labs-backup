@@ -55,8 +55,8 @@ export async function runStage({
   } else {
     if (definition.runner === 'kb-devkit-test-package') {
       packageName = packageNameFromManifest(stage, definition);
-      if (!Array.isArray(packages) || !packages.includes(packageName)) {
-        throw new Error(`Verification stage ${stage} package ${packageName} is absent from the package set selected by kb-devkit affected --json.`);
+      if (!Array.isArray(packageNames) || !packageNames.includes(packageName)) {
+        throw new Error(`Verification stage ${stage} package ${packageName} is absent from its manifest-backed package selection. Rerun the remote selector: node scripts/ci/resolve-remote-selection.mjs "$VERIFICATION_PROFILE" "$RUNNER_TEMP/affected-packages.json" ./tools/kb-devkit/kb-devkit.`);
       }
       command = './tools/kb-devkit/kb-devkit';
       args = ['run', 'test', '--packages', packageName, '--concurrency', '1', '--json'];

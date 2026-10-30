@@ -1053,6 +1053,22 @@ func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) (Affect
 	return selectAffectedPackages(ws, changedFiles)
 }
 
+// AffectedPackagesFromFiles selects packages from the changed-file manifest
+// produced by the remote verification selector.
+func AffectedPackagesFromFiles(ws *workspace.Workspace, files []string) (AffectedSelection, error) {
+	changedFiles := make([]string, 0, len(files))
+	for _, file := range files {
+		if file == "" {
+			return AffectedSelection{}, fmt.Errorf("changed-file manifest contains an empty path")
+		}
+		if !filepath.IsAbs(file) {
+			file = filepath.Join(ws.Root, file)
+		}
+		changedFiles = append(changedFiles, filepath.Clean(file))
+	}
+	return selectAffectedPackages(ws, changedFiles)
+}
+
 func selectAffectedPackages(ws *workspace.Workspace, changedFiles []string) (AffectedSelection, error) {
 	directlyChanged := make(map[string]bool)
 	unowned := make([]string, 0)

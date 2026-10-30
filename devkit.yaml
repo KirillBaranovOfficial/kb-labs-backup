@@ -149,6 +149,13 @@ workspace:
       language: typescript
       preset: site-pkg
 
+    internal-tool:
+      match:
+        - "tools/kb-runner"
+      language: go
+      preset: go-binary
+      releaseLane: internal-tool
+
     go-binary:
       match:
         - "tools/clikit"
@@ -158,7 +165,6 @@ workspace:
         - "tools/kb-deploy"
         - "tools/kb-monitor"
         - "tools/kb-env"
-        - "tools/kb-runner"
       language: go
       preset: go-binary
 
@@ -594,7 +600,7 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [go-binary]
+    - categories: [go-binary, internal-tool]
       command: make build
       inputs:
         - "**/*.go"
@@ -633,7 +639,7 @@ tasks:
         - ".eslintrc*"
       outputs: []
 
-    - categories: [go-binary]
+    - categories: [go-binary, internal-tool]
       command: go vet ./...
       inputs:
         - "**/*.go"
@@ -709,7 +715,7 @@ tasks:
       deps:
         - "build"
 
-    - categories: [go-binary]
+    - categories: [go-binary, internal-tool]
       command: make test
       inputs:
         - "**/*.go"
@@ -736,7 +742,7 @@ tasks:
       deps:
         - "build"
 
-    - categories: [go-binary]
+    - categories: [go-binary, internal-tool]
       command: go test -short -coverprofile=coverage.out -covermode=atomic ./...
       inputs:
         - "**/*.go"
@@ -875,6 +881,11 @@ custom_checks:
 
   - name: node-engine-policy
     run: node scripts/checks/check-node-engine-policy.mjs
+    on: [check]
+    scope: workspace
+
+  - name: color-policy-generated
+    run: node tools/clikit/ui/generate-color-policy.mjs --check
     on: [check]
     scope: workspace
 
@@ -1033,7 +1044,7 @@ custom_checks:
   - name: tool-binaries-fresh
     run: node scripts/checks/check-tool-binaries.mjs
     on: [check]
-    categories: [go-binary]
+    categories: [go-binary, internal-tool]
 
   # .kb/marketplace.lock hygiene — catches drift (a package dir was deleted
   # or moved but its lock entry wasn't) and corruption (malformed id/path

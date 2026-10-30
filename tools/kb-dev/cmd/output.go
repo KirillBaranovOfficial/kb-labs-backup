@@ -30,12 +30,13 @@ type output struct {
 
 func newOutput() output {
 	enabled := colorEnabled()
+	clikitui.ConfigureLipglossColor(enabled)
 	return output{
-		infoTag: lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "14")).Render("[INFO]"),
-		okTag:   lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "10")).Render("[ OK ]"),
-		warnTag: lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "11")).Render("[WARN]"),
-		errTag:  lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "9")).Render("[ERR ]"),
-		label:   lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "8")),
+		infoTag: lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "14")).Render("[INFO]"),
+		okTag:   lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "10")).Render("[ OK ]"),
+		warnTag: lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "11")).Render("[WARN]"),
+		errTag:  lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "9")).Render("[ERR ]"),
+		label:   lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "8")),
 		value:   lipgloss.NewStyle().Foreground(color(enabled, "14")),
 		dim:     lipgloss.NewStyle().Foreground(color(enabled, "8")),
 		bullet:  lipgloss.NewStyle().Foreground(color(enabled, "10")),

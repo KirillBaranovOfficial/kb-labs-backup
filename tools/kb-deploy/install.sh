@@ -9,15 +9,17 @@ CHANNEL="stable"
 RESOLVED_VERSION=""
 START_TS="$(date +%s)"
 
-# NO_COLOR takes precedence; FORCE_COLOR=0 disables and other non-empty values force color.
-if [ -n "${NO_COLOR:-}" ] || [ "${FORCE_COLOR:-}" = "0" ]; then
-  COLOR_ENABLED=0
-elif [ -n "${FORCE_COLOR:-}" ] || { [ -t 1 ] && [ "${TERM:-}" != "dumb" ]; }; then
-  COLOR_ENABLED=1
-else
-  COLOR_ENABLED=0
-fi
-if [ "$COLOR_ENABLED" = 1 ]; then
+# BEGIN GENERATED COLOR POLICY
+kb_color_enabled() {
+  if [ -n "${NO_COLOR:-}" ]; then return 1; fi
+  if [ "${FORCE_COLOR:-}" = "0" ]; then return 1; fi
+  if [ -n "${FORCE_COLOR:-}" ]; then return 0; fi
+  case "${TERM:-}" in [Dd][Uu][Mm][Bb]) return 1 ;; esac
+  if [ -t 1 ]; then return 0; fi
+  return 1
+}
+# END GENERATED COLOR POLICY
+if kb_color_enabled; then
   C_RESET="$(printf '\033[0m')"
   C_BOLD="$(printf '\033[1m')"
   C_DIM="$(printf '\033[2m')"

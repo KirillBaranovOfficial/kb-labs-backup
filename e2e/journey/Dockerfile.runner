@@ -26,10 +26,10 @@ RUN apt-get update -qq && apt-get install -y -qq ca-certificates curl git jq pyt
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV NODE_PATH=/opt/kb-studio-playwright/node_modules
 
-COPY .journey/runner-inputs/studio-playwright-version /tmp/studio-playwright-version
-RUN npm install --prefix /opt/kb-studio-playwright "@playwright/test@$(cat /tmp/studio-playwright-version)" \
+COPY e2e/studio/package.json /tmp/studio-package.json
+RUN npm install --prefix /opt/kb-studio-playwright "@playwright/test@$(node -p 'require("/tmp/studio-package.json").devDependencies["@playwright/test"]')" \
     && /opt/kb-studio-playwright/node_modules/.bin/playwright install --with-deps chromium
-RUN rm /tmp/studio-playwright-version
+RUN rm /tmp/studio-package.json
 
 ENV PATH="/root/.local/bin:/root/.local/share/pnpm:$PATH"
 

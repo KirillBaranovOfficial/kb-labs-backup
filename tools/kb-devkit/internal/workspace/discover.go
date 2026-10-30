@@ -309,18 +309,19 @@ func classifyPackages(root string, dirs []string, cfg *config.DevkitConfig) []Pa
 			continue
 		}
 
-		category, preset, language := classify(rel, cfg)
+		category, preset, language, releaseLane := classify(rel, cfg)
 		if category == "" {
 			continue // uncategorized — skip silently
 		}
 
 		result = append(result, Package{
-			Name:     name,
-			Dir:      dir,
-			Category: category,
-			Preset:   preset,
-			Language: language,
-			RelPath:  rel,
+			Name:        name,
+			Dir:         dir,
+			Category:    category,
+			ReleaseLane: releaseLane,
+			Preset:      preset,
+			Language:    language,
+			RelPath:     rel,
 		})
 	}
 	return result
@@ -328,9 +329,10 @@ func classifyPackages(root string, dirs []string, cfg *config.DevkitConfig) []Pa
 
 // classify returns category/preset/language for a relative package path.
 // Categories are evaluated in declaration order — first match wins.
-func classify(relPath string, cfg *config.DevkitConfig) (category, preset, language string) {
+
+func classify(relPath string, cfg *config.DevkitConfig) (category, preset, language, releaseLane string) {
 	if cfg == nil || len(cfg.Workspace.Categories) == 0 {
-		return "", "", ""
+		return "", "", "", ""
 	}
 
 	for _, nc := range cfg.Workspace.Categories {
@@ -340,11 +342,11 @@ func classify(relPath string, cfg *config.DevkitConfig) (category, preset, langu
 				if lang == "" {
 					lang = inferLanguage(nc.Category.Preset)
 				}
-				return nc.Name, nc.Category.Preset, lang
+				return nc.Name, nc.Category.Preset, lang, nc.Category.ReleaseLane
 			}
 		}
 	}
-	return "", "", ""
+	return "", "", "", ""
 }
 
 // matchPattern matches a pnpm-style glob pattern against a relative path.
