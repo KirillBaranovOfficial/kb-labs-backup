@@ -33,6 +33,31 @@ test('workspace package shard uses kb-devkit and records a stage result with ela
   assert.equal(result.durationMs, 250);
   assert.equal(result.selectedPackageCount, 2);
 });
+
+// case: S-277.2
+test('candidate internal-tool lane builds, tests, and checks each selected package', async () => {
+  const invocations = [];
+  const result = await runStage({
+    stage: 'internal-tool-tests',
+    packageNames: ['kb-runner'],
+    selectedPackageCount: 4,
+    shard: 1,
+    runCommand: async (command, args) => {
+      invocations.push([command, args]);
+      return { status: 0, stdout: '{"ok":true}', stderr: '' };
+    },
+    now: (() => { let value = 0; return () => value += 10; })(),
+  });
+
+  assert.deepEqual(invocations, [
+    ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', 'kb-runner', '--concurrency', '1', '--json']],
+    ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', 'kb-runner', '--concurrency', '1', '--json']],
+    ['./tools/kb-devkit/kb-devkit', ['check', '--package', 'kb-runner', '--json']],
+  ]);
+  assert.equal(result.name, 'internal-tool-tests:shard-1');
+  assert.equal(result.selectedPackageCount, 1);
+  assert.equal(result.status, 'pass');
+});
 // case: S-262.7
 test('journey unit shard records its failure instead of losing it before artifact upload', async () => {
   const result = await runStage({

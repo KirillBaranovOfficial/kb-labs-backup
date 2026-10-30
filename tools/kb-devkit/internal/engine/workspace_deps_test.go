@@ -9,7 +9,7 @@ import (
 	"github.com/kb-labs/devkit/internal/workspace"
 )
 
-func TestWorkspaceDepsReadsAllThreeSections(t *testing.T) {
+func TestWorkspaceDepsReadsAllDependencySections(t *testing.T) {
 	root := t.TempDir()
 
 	// @kb/types is a workspace package listed in peerDependencies — it IS in pkgByName,
@@ -18,12 +18,14 @@ func TestWorkspaceDepsReadsAllThreeSections(t *testing.T) {
 		"@kb/core":    {Name: "@kb/core", Dir: filepath.Join(root, "core")},
 		"@kb/devkit":  {Name: "@kb/devkit", Dir: filepath.Join(root, "devkit")},
 		"@kb/types":   {Name: "@kb/types", Dir: filepath.Join(root, "types")},
-		"@kb/testing": {Name: "@kb/testing", Dir: filepath.Join(root, "testing")},
+		"@kb/testing":  {Name: "@kb/testing", Dir: filepath.Join(root, "testing")},
+		"@kb/optional": {Name: "@kb/optional", Dir: filepath.Join(root, "optional")},
 	}
 
 	pkgJSON := `{
 		"name": "@kb/app",
 		"dependencies":    {"@kb/core":    "workspace:*"},
+		"optionalDependencies": {"@kb/optional": "workspace:*"},
 		"devDependencies": {"@kb/devkit":  "workspace:*", "@kb/testing": "workspace:*"},
 		"peerDependencies":{"@kb/types":   "workspace:*"}
 	}`
@@ -42,7 +44,7 @@ func TestWorkspaceDepsReadsAllThreeSections(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	want := []string{"@kb/core", "@kb/devkit", "@kb/testing", "@kb/types"}
+	want := []string{"@kb/core", "@kb/devkit", "@kb/optional", "@kb/testing", "@kb/types"}
 	if len(got) != len(want) {
 		t.Fatalf("WorkspaceDeps = %v, want %v", got, want)
 	}

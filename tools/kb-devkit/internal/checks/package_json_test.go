@@ -43,8 +43,8 @@ func TestRegistryRulesForGoAndRegister(t *testing.T) {
 		t.Fatalf("RulesFor(go) = %#v, want structure and deps", goRules)
 	}
 
-	if len(registry.All()) != len(tsRules) {
-		t.Fatalf("All() length = %d, want %d", len(registry.All()), len(tsRules))
+	if len(registry.All()) != len(tsRules)+1 {
+		t.Fatalf("All() length = %d, want %d package rules plus workspace release boundary", len(registry.All()), len(tsRules)+1)
 	}
 }
 

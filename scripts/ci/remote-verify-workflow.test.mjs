@@ -18,6 +18,7 @@ test('remote verification builds once and fans out independent and artifact-depe
   const build = workflow.jobs.build;
   const independent = workflow.jobs['independent-test-shards'];
   const dependent = workflow.jobs['build-dependent-test-shards'];
+  const internalTools = workflow.jobs['internal-tool-test-shards'];
   const finalize = workflow.jobs.verdict;
   const prepareResultUpload = prepare.steps.find((step) => step.name === 'Upload prepare stage result');
   const aggregateStep = finalize.steps.find((step) => step.name === 'Aggregate commit-bound verdict');
@@ -35,6 +36,10 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(independent.needs, 'prepare');
   assert.equal(independent.strategy.matrix, '${{ fromJSON(needs.prepare.outputs.independent_matrix) }}');
   assert.equal(dependent.needs, 'build');
+  assert.equal(internalTools.needs, 'prepare');
+  assert.equal(internalTools['continue-on-error'], true);
+  assert.equal(internalTools.strategy.matrix, '${{ fromJSON(needs.prepare.outputs.internal_tool_matrix) }}');
+  assert.equal(internalTools['timeout-minutes'], '${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}');
   assert.equal(dependent.strategy.matrix, '${{ fromJSON(needs.build.outputs.build_dependent_matrix) }}');
   assert.equal(independent.strategy['fail-fast'], "${{ inputs.profile != 'candidate' }}");
   assert.equal(dependent.strategy['fail-fast'], "${{ inputs.profile != 'candidate' }}");
@@ -42,6 +47,8 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(dependent.strategy['max-parallel'], '${{ fromJSON(needs.build.outputs.max_parallel) }}');
   assert.equal(build.outputs.build_dependent_matrix, '${{ needs.prepare.outputs.build_dependent_matrix }}');
   assert.equal(prepare.outputs.selected_package_count, '${{ steps.plan.outputs.selected_package_count }}');
+  assert.equal(prepare.outputs.internal_tool_matrix, '${{ steps.plan.outputs.internal_tool_matrix }}');
+  assert.equal(prepare.outputs.internal_tool_packages, '${{ steps.plan.outputs.internal_tool_packages }}');
   assert.equal(prepare.outputs.shard_timeout_minutes, '${{ steps.plan.outputs.shard_timeout_minutes }}');
   assert.equal(build.outputs.shard_timeout_minutes, '${{ needs.prepare.outputs.shard_timeout_minutes }}');
   assert.equal(independent['timeout-minutes'], '${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}');
@@ -69,6 +76,8 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(aggregateStep.env.GH_TOKEN, '${{ github.token }}');
   assert.ok(finalize.needs.includes('independent-test-shards'));
   assert.ok(finalize.needs.includes('build-dependent-test-shards'));
+  assert.ok(finalize.needs.includes('internal-tool-test-shards'));
+  assert.equal(aggregateStep.env.REMOTE_INTERNAL_TOOL_MATRIX, '${{ needs.prepare.outputs.internal_tool_matrix }}');
   assert.equal(buildSteps.filter((step) => step.name === 'Build selected workspace packages once').length, 1);
 });
 
@@ -100,13 +109,12 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
 });
 
 // case: S-262.7
-test('workflow base-ref wiring selects real workspace packages without origin/HEAD or laptop refs', () => {
+test('workflow base-ref wiring feeds the plan from the exact remote changed-path manifest', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');
   const checkout = workflow.jobs.prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
   const event = { repository: { default_branch: 'fixture-default' } };
   const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-hosted-shape-'));
   const checkoutRoot = path.join(temporaryRoot, 'checkout');
-  const binary = path.join(temporaryRoot, 'kb-devkit');
   try {
     assert.equal(checkout.with['fetch-depth'], 0);
     assert.equal(workflow.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
@@ -124,28 +132,37 @@ test('workflow base-ref wiring selects real workspace packages without origin/HE
     execFileSync('git', ['add', 'core/types/package.json'], { cwd: checkoutRoot });
     execFileSync('git', ['commit', '-m', 'fixture change'], { cwd: checkoutRoot, stdio: 'pipe' });
 
-    cpSync(path.join(root, 'scripts/ci/resolve-remote-selection.mjs'), path.join(checkoutRoot, 'scripts/ci/resolve-remote-selection.mjs'));
     cpSync(path.join(root, 'scripts/ci/remote-changed-files.mjs'), path.join(checkoutRoot, 'scripts/ci/remote-changed-files.mjs'));
-    execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(checkoutRoot, 'tools/kb-devkit'), stdio: 'pipe' });
 
     for (const profile of ['stream', 'candidate']) {
-      const outputPath = path.join(temporaryRoot, `${profile}.json`);
-      const result = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', profile, outputPath, binary], {
+      const manifestPath = path.join(temporaryRoot, `${profile}-changed.json`);
+      const result = spawnSync(process.execPath, ['scripts/ci/remote-changed-files.mjs'], {
         cwd: checkoutRoot,
         encoding: 'utf8',
-        env: { ...process.env, DEFAULT_BRANCH: event.repository.default_branch, VERIFICATION_PROFILE: profile },
+        env: {
+          ...process.env,
+          VERIFICATION_PROFILE: profile,
+          KB_DEVKIT_BASE_REF: profile === 'stream' ? `origin/${event.repository.default_branch}...HEAD` : execFileSync('git', ['hash-object', '-t', 'tree', '--stdin'], { cwd: checkoutRoot, input: '', encoding: 'utf8' }).trim(),
+          KB_REMOTE_CHANGED_FILES_PATH: manifestPath,
+        },
       });
       assert.equal(result.status, 0, `${profile} selection failed: ${result.stderr}`);
-      const selection = JSON.parse(readFileSync(outputPath, 'utf8'));
-      assert.ok(selection.data.packages.length > 0, `${profile} selected no packages`);
-      assert.deepEqual(parseAffectedSelection(JSON.stringify(selection), profile), {
-        packages: selection.data.packages,
-        changedPathCount: selection.data.changedPathCount,
-        selectionReason: selection.data.selectionReason,
-      });
-      assert.equal(selection.selectedPackageCount, selection.data.packages.length);
-      assert.ok(selection.data.changedPathCount > 0, `${profile} workflow inputs produced an empty diff: ${result.stdout}`);
-      if (profile === 'candidate') assert.ok(selection.data.changedPathCount >= selection.selectedPackageCount);
+      const changedPaths = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      assert.ok(changedPaths.includes('core/types/package.json'), `${profile} did not include the committed package path`);
+      const packages = ['@kb-labs/core'];
+      const selection = {
+        ok: true,
+        data: {
+          packages,
+          internalToolPackages: [],
+          changedPathCount: changedPaths.length,
+          selectionReason: 'fixture package ownership',
+        },
+      };
+      const parsed = parseAffectedSelection(JSON.stringify(selection), profile);
+      assert.deepEqual(parsed.packages, packages);
+      assert.deepEqual(parsed.internalToolPackages, []);
+      assert.ok(parsed.changedPathCount > 0, `${profile} workflow inputs produced an empty diff: ${result.stdout}`);
     }
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });

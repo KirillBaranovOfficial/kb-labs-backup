@@ -34,7 +34,7 @@ func TestRunAllReportsPerCheckProgress(t *testing.T) {
 	}
 	started, completed := false, false
 	for _, event := range events {
-		if event.Package != "@acme/demo" || event.Check == "" {
+		if event.Package != "@acme/demo" && event.Package != "workspace" || event.Check == "" {
 			t.Fatalf("progress event = %#v, want package and check identity", event)
 		}
 		started = started || event.Running

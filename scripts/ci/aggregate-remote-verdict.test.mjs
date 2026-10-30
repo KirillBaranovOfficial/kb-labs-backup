@@ -38,6 +38,51 @@ test('aggregates every shard with the existing verdict shape and per-stage timin
   assert.deepEqual(verdict.jobs.map(({ selectedPackageCount }) => selectedPackageCount), [41, 41, 41, 1]);
 });
 
+// case: S-277.1
+test('candidate verdict reports internal-tool failures without using them for the candidate status', () => {
+  const verdict = aggregateVerdict({
+    sha: 'd'.repeat(40),
+    prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+    matrix: {
+      include: [{ stage: profile.packageTestStage, shard: 1, packages: ['@kb-labs/core'] }],
+      internalTool: { include: [{ stage: 'internal-tool-tests', shard: 1, packages: ['kb-runner'] }] },
+    },
+    results: [
+      { name: `${profile.packageTestStage}:shard-1`, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+      { name: 'internal-tool-tests:shard-1', status: 'fail', selectedPackageCount: 1, failures: ['runner test failed'], logTail: 'runner test failed', durationMs: 20 },
+    ],
+    selectedPackageCount: 1,
+    prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'candidate',
+    githubJobs: [
+      { name: 'Build-dependent test 1', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Internal tool test 1', conclusion: 'success', steps: [], annotations: [] },
+    ],
+  });
+
+  assert.equal(verdict.status, 'pass');
+  assert.equal(verdict.internalToolResults.status, 'fail');
+  assert.deepEqual(verdict.internalToolResults.jobs.map(({ name, status }) => [name, status]), [['internal-tool-tests:shard-1', 'fail']]);
+  assert.equal(verdict.internalToolResults.jobs[0].jobConclusion, 'success');
+});
+
+// case: S-277.2
+test('stream verdict fails when the kb-runner package-test shard fails', () => {
+  const verdict = aggregateVerdict({
+    sha: 'e'.repeat(40),
+    prepare: passingPrepare(),
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+    matrix: { include: [{ stage: profile.packageTestStage, shard: 1, packages: ['kb-runner'] }] },
+    results: [{ name: `${profile.packageTestStage}:shard-1`, status: 'fail', selectedPackageCount: 1, failures: ['runner test failed'], logTail: 'runner test failed', durationMs: 20 }],
+    selectedPackageCount: 1,
+    prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'stream',
+    githubJobs: [{ name: 'Build-dependent test 1', conclusion: 'failure', steps: [], annotations: [] }],
+  });
+
+  assert.equal(verdict.status, 'fail');
+  assert.equal(verdict.jobs.at(-1).status, 'fail');
+});
+
 // case: S-262.7
 test('marks matrix shards cancelled by stream fail-fast as skipped, never as a passing verdict', () => {
   const verdict = aggregateVerdict({

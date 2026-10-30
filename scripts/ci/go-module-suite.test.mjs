@@ -34,7 +34,7 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
   writeFileSync(path.join(moduleOne, 'go.mod'), 'module fixture/first\n\ngo 1.22\n');
   writeFileSync(path.join(moduleTwo, 'go.mod'), 'module fixture/second\n\ngo 1.22\n');
   const registry = path.join(fixture, 'devkit.yaml');
-  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n`);
+  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      language: go\n      match:\n        - "modules/first"\n    internal-tool:\n      language: go\n      match:\n        - "modules/second"\n`);
   const invocations = path.join(fixture, 'go-invocations.jsonl');
   const fakeGo = path.join(fixture, 'go');
   writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "{\\"args\\":\\"$*\\",\\"cwd\\":\\"$PWD\\",\\"home\\":\\"$HOME\\",\\"tmpdir\\":\\"$TMPDIR\\",\\"platform_root\\":\\"$KB_PLATFORM_ROOT\\",\\"kb_home\\":\\"$KB_HOME\\",\\"net_offset\\":\\"$KB_NET_OFFSET\\",\\"goflags\\":\\"$GOFLAGS\\",\\"deadline_scale\\":\\"$KB_TEST_DEADLINE_SCALE\\"}" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first' 'fixture/first/e2e' 'fixture/second'; fi\n`);
@@ -90,7 +90,7 @@ test('suite refuses a TMPDIR root without Unix socket path capacity before runni
   mkdirSync(moduleDir, { recursive: true });
   writeFileSync(path.join(moduleDir, 'go.mod'), 'module fixture/first\n\ngo 1.22\n');
   const registry = path.join(fixture, 'devkit.yaml');
-  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n`);
+  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      language: go\n      match:\n        - "modules/*"\n`);
   const invocations = path.join(fixture, 'go-invocations.jsonl');
   const fakeGo = path.join(fixture, 'go');
   writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first'; fi\n`);
@@ -130,15 +130,24 @@ test('registry discovery fails when it is empty or a registered pattern has no m
   const modules = path.join(fixture, 'modules');
   mkdirSync(modules, { recursive: true });
   const registry = path.join(fixture, 'devkit.yaml');
-  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      match: []\n');
+  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      language: go\n      match: []\n');
   const empty = spawnSync(process.execPath, [suite, '--registry', registry, '--root', fixture], { cwd: root, encoding: 'utf8' });
   assert.notEqual(empty.status, 0);
   assert.match(empty.stderr, /match array|empty set/);
 
-  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n');
+  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      language: go\n      match:\n        - "modules/*"\n');
   const unmatched = spawnSync(process.execPath, [suite, '--registry', registry, '--root', fixture], { cwd: root, encoding: 'utf8' });
   assert.notEqual(unmatched.status, 0);
   assert.match(unmatched.stderr, /matched no modules/);
+});
+
+// case: S-277.2
+test('Go module suite derives internal-tool modules from the devkit category declaration', () => {
+  const result = spawnSync(process.execPath, [path.join(root, 'scripts/read-go-binary-registry.mjs')], { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const categories = JSON.parse(result.stdout);
+  assert.ok(categories.includes('tools/kb-runner'));
+  assert.ok(categories.includes('tools/clikit'));
 });
 
 // case: S-261.1
