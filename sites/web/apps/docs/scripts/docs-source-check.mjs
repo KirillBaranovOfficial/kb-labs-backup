@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { writeCheckResult } from '../../../../scripts/checks/lib/check-result.mjs';
+import { writeCheckResult } from '../../../../../scripts/checks/lib/check-result.mjs';
 
 import { syncDocSources } from '../lib/expand-doc-sources.mjs';
 import { collectGeneratedSources, getDocsDir } from './docs-source-sync.mjs';

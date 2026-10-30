@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeCheckResult } from '../../../../scripts/checks/lib/check-result.mjs';
+import { writeCheckResult } from '../../../../../scripts/checks/lib/check-result.mjs';
 /**
  * seo-check.mjs — SEO guard for KB Labs marketing site.
  *

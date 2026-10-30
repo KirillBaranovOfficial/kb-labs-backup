@@ -214,8 +214,9 @@ function packageNameFromManifest(stage, definition) {
 }
 
 function devkitTaskFailures(stage, result) {
-  const packageTask = stageDefinitions.find((entry) => entry.id === stage)?.runner === 'kb-devkit-test-package';
-  if ((stage !== profile.buildStage && stage !== profile.packageTestStage && !packageTask) || result.status === 0) return [];
+  const taskStage = stage === profile.buildStage || stage === profile.packageTestStage
+    || stageDefinitions.find((entry) => entry.id === stage)?.runner === 'kb-devkit-test-package';
+  if (!taskStage) return [];
   let envelope;
   try {
     envelope = JSON.parse(result.stdout);
@@ -223,7 +224,16 @@ function devkitTaskFailures(stage, result) {
     return [{ error: `kb-devkit run --json returned invalid JSON: ${error.message}` }];
   }
   const results = envelope?.data?.results;
-  if (envelope?.ok !== false || !Array.isArray(results)) {
+  if (!Array.isArray(results)) {
+    return [{ error: 'kb-devkit run --json returned no structured task results.' }];
+  }
+  if (result.status === 0 && envelope?.ok !== true) {
+    return [{ error: 'kb-devkit run --json reported a non-passing envelope for a successful process.' }];
+  }
+  if (results.length === 0) {
+    return [{ error: 'kb-devkit run --json completed without executing any tasks.' }];
+  }
+  if (result.status !== 0 && envelope?.ok !== false) {
     return [{ error: 'kb-devkit run --json returned no structured task results for a failed stage.' }];
   }
   return results.filter((task) => task?.OK === false).map((task) => {

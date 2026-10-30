@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeCheckResult } from '../../../../scripts/checks/lib/check-result.mjs';
+import { writeCheckResult } from '../../../../../scripts/checks/lib/check-result.mjs';
 /**
  * i18n-check.mjs — translation guard for KB Labs site.
  *

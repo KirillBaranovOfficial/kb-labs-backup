@@ -233,14 +233,14 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 			problem = fmt.Errorf("%w; command error: %v", problem, runErr)
 		}
 		return externalCheckOutput{}, &externalOutputError{
-			exitCode: result.ExitCode, stderrTail: result.Stderr,
+			exitCode: result.ExitCode, stderrTail: strings.TrimSpace(result.Stderr),
 			err: problem,
 		}
 	}
 	parsed, err := decodeExternalCheckOutput(resultJSON)
 	if err != nil {
 		return externalCheckOutput{}, &externalOutputError{
-			exitCode: result.ExitCode, stderrTail: result.Stderr,
+			exitCode: result.ExitCode, stderrTail: strings.TrimSpace(result.Stderr),
 			err: fmt.Errorf("invalid result envelope in result file for external check %s at %s: %w", r.name, resultPath, err),
 		}
 	}

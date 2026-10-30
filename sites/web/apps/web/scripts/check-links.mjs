@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeCheckResult } from '../../../../scripts/checks/lib/check-result.mjs';
+import { writeCheckResult } from '../../../../../scripts/checks/lib/check-result.mjs';
 /**
  * check-links.mjs — broken-link guard for KB Labs sites.
  *
