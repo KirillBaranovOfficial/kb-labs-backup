@@ -2534,6 +2534,9 @@ importers:
 
   e2e/studio:
     devDependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared

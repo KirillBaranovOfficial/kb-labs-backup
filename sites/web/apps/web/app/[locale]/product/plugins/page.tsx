@@ -327,7 +327,16 @@ export default async function PluginsPage({ params }: Props) {
 
               {/* Right: lifecycle diagram */}
               <AnimateOnScroll animation="slide-up" delay={100}>
-                <PluginLifecycleDiagram className="w-full" />
+                <PluginLifecycleDiagram
+                  className="w-full"
+                  subtitles={{
+                    manifest: t('lifecycleDiagram.manifest'),
+                    install: t('lifecycleDiagram.install'),
+                    discover: t('lifecycleDiagram.discover'),
+                    register: t('lifecycleDiagram.register'),
+                    execute: t('lifecycleDiagram.execute'),
+                  }}
+                />
               </AnimateOnScroll>
 
             </div>
