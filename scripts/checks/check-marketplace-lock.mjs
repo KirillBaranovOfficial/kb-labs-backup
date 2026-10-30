@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * check-marketplace-lock — validates the workspace lock under the scope
  * assigned to its root by the runtime root resolver.
@@ -69,9 +70,9 @@ async function main() {
       if (raw) {pkgName = JSON.parse(raw)?.name ?? '';}
     }
     if (pkgName !== ANCHOR_PACKAGE) {
-      process.stdout.write(JSON.stringify({ issues: [] }) + '\n');
+      writeCheckResult([]);
     } else {
-      process.stdout.write(JSON.stringify({ issues: await checkMarketplaceLock(LOCK_ROOT, roots) }) + '\n');
+      writeCheckResult(await checkMarketplaceLock(LOCK_ROOT, roots));
     }
   } else {
     const issues = await checkMarketplaceLock(LOCK_ROOT, roots);

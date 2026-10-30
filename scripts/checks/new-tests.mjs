@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * new-tests check
  *
@@ -72,4 +73,4 @@ const issues = missing.map((file) => ({
   fix: `Create ${dirname(file)}/${basename(file, '.ts')}.spec.ts`,
 }));
 
-process.stdout.write(JSON.stringify({ issues }));
+writeCheckResult(issues);

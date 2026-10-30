@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from '../../../../scripts/checks/lib/check-result.mjs';
 /**
  * check-links.mjs — broken-link guard for KB Labs sites.
  *
@@ -32,7 +33,7 @@
  *   sites/web/apps/docs/{app,content}/   (if exists)
  */
 
-import { readFileSync, readdirSync, existsSync, writeSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, extname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -66,7 +67,7 @@ const SCAN_DIRS = [
 // ─── Devkit helpers ───────────────────────────────────────────────────────────
 
 function exitWithJson(obj) {
-  writeSync(1, JSON.stringify(obj));
+  writeCheckResult(obj.issues);
   process.exit(0);
 }
 

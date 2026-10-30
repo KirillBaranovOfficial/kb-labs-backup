@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from '../checks/lib/check-result.mjs';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -56,5 +57,5 @@ try {
     });
   }
 }
-process.stdout.write(`${JSON.stringify({ issues })}\n`);
+writeCheckResult(issues);
 process.exitCode = issues.length === 0 ? 0 : 1;

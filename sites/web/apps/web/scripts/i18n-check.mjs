@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from '../../../../scripts/checks/lib/check-result.mjs';
 /**
  * i18n-check.mjs — translation guard for KB Labs site.
  *
@@ -48,7 +49,6 @@ import {
   readdirSync,
   existsSync,
   writeFileSync,
-  writeSync,
   mkdirSync,
 } from 'node:fs';
 import { join, extname, relative, dirname, basename } from 'node:path';
@@ -252,7 +252,7 @@ function pruneDeadCollections(node) {
 // ─── Devkit helpers ───────────────────────────────────────────────────────────
 
 function exitWithJson(obj) {
-  writeSync(1, JSON.stringify(obj));
+  writeCheckResult(obj.issues);
   process.exit(0);
 }
 

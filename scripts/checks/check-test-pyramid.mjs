@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * check-test-pyramid custom check
  *
@@ -99,7 +100,7 @@ async function main() {
     file: target,
     ...(fix ? { fix } : {}),
   }));
-  process.stdout.write(JSON.stringify({ issues }));
+  writeCheckResult(issues);
 }
 
 main().catch((err) => {

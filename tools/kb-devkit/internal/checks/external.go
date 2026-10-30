@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -61,10 +61,18 @@ type externalCheckOutput struct {
 	Issues []Issue `json:"issues"`
 }
 
-// WriteExternalCheckOutput writes the shared JSON contract consumed from
-// workspace-scope custom checks.
-func WriteExternalCheckOutput(writer io.Writer, issues []Issue) error {
-	return json.NewEncoder(writer).Encode(externalCheckOutput{Issues: issues})
+// WriteExternalCheckOutput writes the shared result contract to the file path
+// supplied by kb-devkit. stdout and stderr remain diagnostic streams.
+func WriteExternalCheckOutput(issues []Issue) error {
+	resultPath := os.Getenv(ExternalCheckResultFileEnv)
+	if resultPath == "" {
+		return fmt.Errorf("%s is not set", ExternalCheckResultFileEnv)
+	}
+	data, err := json.Marshal(externalCheckOutput{Issues: issues})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(resultPath, data, 0o600)
 }
 
 type externalFixOutput struct {
@@ -183,8 +191,15 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 		return externalCheckOutput{}, fmt.Errorf("marshal external check input for %s: %w", r.name, err)
 	}
 
+	resultDir, err := os.MkdirTemp("", "kb-devkit-check-result-")
+	if err != nil {
+		return externalCheckOutput{}, fmt.Errorf("create result directory for external check %s: %w", r.name, err)
+	}
+	defer os.RemoveAll(resultDir)
+	resultPath := filepath.Join(resultDir, "result.json")
 	env := append(os.Environ(),
 		"KB_DEVKIT_MODE="+modeForCommand(input.Issues),
+		ExternalCheckResultFileEnv+"="+resultPath,
 		"KB_DEVKIT_CHECK_NAME="+r.name,
 		"KB_DEVKIT_WORKSPACE_ROOT="+r.workspaceRoot,
 		"KB_DEVKIT_PACKAGE_NAME="+input.Package.Name,
@@ -206,11 +221,27 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 		Tool: "sh", Executable: "sh", Args: []string{"-c", command}, Dir: r.workspaceRoot,
 		Env: env, Stdin: bytes.NewReader(payload), Operation: toolchain.OperationWorkspaceTask,
 	})
+	var timeoutErr *toolchain.TimeoutError
+	if errors.As(runErr, &timeoutErr) {
+		return externalCheckOutput{}, fmt.Errorf("external command timed out: %w", runErr)
+	}
 
+	resultJSON, readErr := os.ReadFile(resultPath)
+	if readErr != nil {
+		problem := fmt.Errorf("read result file for external check %s at %s: %w", r.name, resultPath, readErr)
+		if runErr != nil {
+			problem = fmt.Errorf("%w; command error: %v", problem, runErr)
+		}
+		return externalCheckOutput{}, &externalOutputError{
+			exitCode: result.ExitCode, stderrTail: result.Stderr,
+			err:      problem,
+		}
+	}
 	var parsed externalCheckOutput
-	if strings.TrimSpace(result.Stdout) != "" {
-		if err := json.Unmarshal([]byte(result.Stdout), &parsed); err != nil && runErr == nil {
-			return externalCheckOutput{}, &externalOutputError{exitCode: result.ExitCode, stderrTail: result.Stderr, err: fmt.Errorf("decode external check %s output: %w", r.name, err)}
+	if err := json.Unmarshal(resultJSON, &parsed); err != nil {
+		return externalCheckOutput{}, &externalOutputError{
+			exitCode: result.ExitCode, stderrTail: result.Stderr,
+			err:      fmt.Errorf("decode result file for external check %s at %s: %w", r.name, resultPath, err),
 		}
 	}
 
@@ -225,6 +256,10 @@ func safeExternalCause(err error) string {
 	var timeoutErr *toolchain.TimeoutError
 	if errors.As(err, &timeoutErr) && timeoutErr.Bound == toolchain.BoundCaller {
 		return fmt.Sprintf("external check exceeded its configured %s execution budget", timeoutErr.Budget.Round(time.Millisecond))
+	}
+	var outputErr *externalOutputError
+	if errors.As(err, &outputErr) {
+		return outputErr.Error()
 	}
 	var exitErr *toolchain.CommandError
 	if errors.As(err, &exitErr) {

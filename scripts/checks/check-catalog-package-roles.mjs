@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,9 +40,7 @@ async function main() {
     }
     issues.push(...catalogRoleIssues(packages));
   }
-  process.stdout.write(JSON.stringify({
-    issues: issues.map((issue) => ({ ...issue, check: 'catalog-package-roles', severity: 'error' })),
-  }));
+  writeCheckResult(issues.map((issue) => ({ ...issue, check: 'catalog-package-roles', severity: 'error' })));
 }
 
 export function catalogRoleIssues(packages) {

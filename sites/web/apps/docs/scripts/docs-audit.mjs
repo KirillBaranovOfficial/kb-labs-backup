@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from '../../../../scripts/checks/lib/check-result.mjs';
 /**
  * docs-audit.mjs — KB Labs Docs structural audit
  *
@@ -24,7 +25,7 @@ const PKG_NAME = process.env.KB_DEVKIT_PACKAGE_NAME ?? '';
 const DOCS_PKG = '@kb-labs/docs-site';
 
 if (DEVKIT_MODE && PKG_NAME !== DOCS_PKG) {
-  process.stdout.write(JSON.stringify({ ok: true, items: [] }));
+  writeCheckResult([]);
   process.exit(0);
 }
 
@@ -274,7 +275,7 @@ function finish(items) {
   const result = { ok: errors.length === 0, items };
 
   if (DEVKIT_MODE) {
-    process.stdout.write(JSON.stringify(result, null, 2));
+    writeCheckResult(items.map(({ target, ...issue }) => ({ ...issue, file: target })));
   } else {
     if (items.length === 0) {
       console.log('✓ All doc conventions pass');

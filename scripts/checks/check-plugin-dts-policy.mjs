@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -42,7 +43,7 @@ try {
   issue(`cannot resolve tsup config: ${error.message}; correct the config and run ${nextBuildCommand()}.`);
 }
 
-process.stdout.write(JSON.stringify({ issues }));
+writeCheckResult(issues);
 
 function readStdin() {
   return new Promise((resolve, reject) => {

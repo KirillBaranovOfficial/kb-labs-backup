@@ -20,7 +20,7 @@ type input struct {
 }
 
 func main() {
-	command.Exit(run(os.Stdin, os.Stdout, os.Stderr))
+	command.Exit(run(os.Stdin, os.Stderr))
 }
 
 func nextCommand(check string) string {
@@ -30,7 +30,7 @@ func nextCommand(check string) string {
 	return fmt.Sprintf("Run `kb-devkit check --only %s` from the workspace root.", check)
 }
 
-func run(stdin io.Reader, stdout, stderr io.Writer) diag.ExitStatus {
+func run(stdin io.Reader, stderr io.Writer) diag.ExitStatus {
 	var request input
 	if err := json.NewDecoder(stdin).Decode(&request); err != nil {
 		d := diag.FromError(fmt.Errorf("read DevKit workspace check input: %w", err))
@@ -59,7 +59,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer) diag.ExitStatus {
 			File:    finding.File, Line: finding.Line,
 		})
 	}
-	if err := checks.WriteExternalCheckOutput(stdout, issues); err != nil {
+	if err := checks.WriteExternalCheckOutput(issues); err != nil {
 		d := diag.FromError(fmt.Errorf("write process launcher check result: %w", err))
 		d.Message = "The process launcher check could not write its result."
 		d.Hint = nextCommand(request.Check)

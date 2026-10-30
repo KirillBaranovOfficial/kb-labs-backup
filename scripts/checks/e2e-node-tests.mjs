@@ -1,3 +1,4 @@
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFileSync, readdirSync } from 'node:fs';
 import { glob } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve } from 'node:path';
@@ -105,5 +106,5 @@ export async function e2eNodeTestIssues(root) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const input = JSON.parse(readFileSync(0, 'utf8'));
   const root = input.workspaceRoot ?? input.WorkspaceRoot;
-  process.stdout.write(`${JSON.stringify({ issues: await e2eNodeTestIssues(root) })}\n`);
+  writeCheckResult(await e2eNodeTestIssues(root));
 }

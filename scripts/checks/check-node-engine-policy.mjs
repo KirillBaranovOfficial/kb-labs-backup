@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -107,7 +108,7 @@ if (rootPolicy !== undefined) {
   }
 }
 
-process.stdout.write(JSON.stringify({ issues }));
+  writeCheckResult(issues);
 for (const finding of issues) {
   process.stderr.write(`${finding.check}: ${finding.file}: ${finding.message}\n`);
 }

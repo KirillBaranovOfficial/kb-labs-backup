@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -10,7 +11,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const root = path.resolve(input.workspaceRoot);
   const packages = input.workspace.packages;
   const issues = await collect(root, packages);
-  process.stdout.write(JSON.stringify({ issues }));
+  writeCheckResult(issues);
 }
 
 export async function collect(root, packages) {

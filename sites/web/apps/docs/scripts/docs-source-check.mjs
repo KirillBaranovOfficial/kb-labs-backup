@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { writeCheckResult } from '../../../../scripts/checks/lib/check-result.mjs';
 
 import { syncDocSources } from '../lib/expand-doc-sources.mjs';
 import { collectGeneratedSources, getDocsDir } from './docs-source-sync.mjs';
@@ -93,6 +94,7 @@ function main() {
   if (process.env.GITHUB_STEP_SUMMARY) {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
   }
+  writeCheckResult(failures.map((message) => ({ check: 'docs-source-check', severity: 'error', message, file: 'sites/web/apps/docs' })));
   process.stdout.write(summary);
   if (failures.length) {
     process.stderr.write(`${failures.map((failure) => `- ${failure}`).join('\n')}\n`);

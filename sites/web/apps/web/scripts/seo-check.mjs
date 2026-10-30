@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from '../../../../scripts/checks/lib/check-result.mjs';
 /**
  * seo-check.mjs — SEO guard for KB Labs marketing site.
  *
@@ -31,7 +32,7 @@
  * Dynamic routes ([slug]) are skipped for checks 3-8 (external data, can't validate).
  */
 
-import { readFileSync, readdirSync, existsSync, writeSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,7 +42,7 @@ const DEVKIT_MODE = Boolean(process.env.KB_DEVKIT_MODE);
 const NO_COLOR    = process.env.CI === 'true' || process.argv.includes('--no-color') || DEVKIT_MODE;
 
 function exitWithJson(obj) {
-  writeSync(1, JSON.stringify(obj));
+  writeCheckResult(obj.issues);
   process.exit(0);
 }
 

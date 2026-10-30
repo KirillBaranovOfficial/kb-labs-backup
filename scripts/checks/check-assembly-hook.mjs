@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * check-assembly-hook — verifies all service bootstrap.ts files import makeAssemblyHook.
  *
@@ -133,12 +134,12 @@ if (DEVKIT_MODE) {
   }
 
   if (pkgName !== ANCHOR_PACKAGE) {
-    process.stdout.write(JSON.stringify({ issues: [] }) + '\n');
+    writeCheckResult([]);
     process.exit(0);
   }
 
   const issues = validate();
-  process.stdout.write(JSON.stringify({ issues }) + '\n');
+  writeCheckResult(issues);
   process.exit(0); // devkit aggregates severity; never hard-fail the runner
 } else {
   const issues = validate();

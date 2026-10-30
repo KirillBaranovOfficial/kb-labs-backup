@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,7 +45,7 @@ async function main() {
   const issues = Array.isArray(packages) && Array.isArray(graphTasks)
     ? lifecycleTaskIssues(packages, graphTasks)
     : [{ check: 'lifecycle-builds', severity: 'error', message: 'kb-devkit did not provide its discovered workspace package set and parsed task graph; rerun kb-devkit check --only lifecycle-builds from the workspace root.', file: '.' }];
-  process.stdout.write(JSON.stringify({ issues }));
+  writeCheckResult(issues);
 }
 
 function readStdin() {

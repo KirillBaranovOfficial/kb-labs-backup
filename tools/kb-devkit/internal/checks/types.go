@@ -2,10 +2,22 @@
 package checks
 
 import (
+	_ "embed"
+	"strings"
+
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
+
+// externalCheckResultFileEnv is shared with Node check producers.
+//
+//go:embed external-check-result-env.txt
+var externalCheckResultFileEnv string
+
+// ExternalCheckResultFileEnv names the file where an external check must
+// synchronously write its JSON result. stdout and stderr remain diagnostics.
+var ExternalCheckResultFileEnv = strings.TrimSpace(externalCheckResultFileEnv)
 
 // Severity indicates how critical an issue is.
 type Severity string

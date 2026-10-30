@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { builtinModules } from 'node:module';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -306,9 +307,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const root = path.resolve(input.workspaceRoot ?? process.cwd());
   const packages = input.workspace?.packages;
   if (typeof input.workspaceRoot !== 'string' || !Array.isArray(packages)) {
-    process.stdout.write(JSON.stringify({ issues: [{ check: checkName, severity: 'error', message: 'browser Node-builtin check requires workspace package data on stdin', file: root }] }));
+    writeCheckResult([{ check: checkName, severity: 'error', message: 'browser Node-builtin check requires workspace package data on stdin', file: root }]);
   } else {
     const issues = collect(root, packages).map((finding) => ({ check: checkName, severity: 'error', ...finding }));
-    process.stdout.write(JSON.stringify({ issues }));
+    writeCheckResult(issues);
   }
 }
