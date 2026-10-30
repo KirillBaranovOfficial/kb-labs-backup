@@ -89,3 +89,7 @@ func procStartTime(boot time.Time, startTicks, clockTicks int64) time.Time {
 	nanos := remainingTicks * int64(time.Second) / clockTicks
 	return boot.Add(time.Duration(seconds)*time.Second + time.Duration(nanos))
 }
+
+func processStartBoundFromTicks(boot time.Time, uptimeTicks, clockTicks int64) time.Time {
+	return procStartTime(boot, uptimeTicks, clockTicks)
+}

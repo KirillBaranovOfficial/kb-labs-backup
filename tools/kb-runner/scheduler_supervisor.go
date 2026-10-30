@@ -6,7 +6,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 // schedulerJobSupervisor is the scheduler's only process-supervision boundary.
@@ -26,12 +26,9 @@ type schedulerJobRun interface {
 	Wait() error
 }
 
-type clikitSchedulerSupervisor struct{ hostResourceSource proc.HostResourceSource }
+type clikitSchedulerSupervisor struct{}
 
 func (supervisor clikitSchedulerSupervisor) Start(ctx context.Context, config proc.Config) (schedulerJobRun, error) {
-	if supervisor.hostResourceSource != nil {
-		return proc.StartWithHostResourceSource(ctx, config, supervisor.hostResourceSource)
-	}
 	return proc.Start(ctx, config)
 }
 

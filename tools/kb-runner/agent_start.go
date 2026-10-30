@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 const defaultAgentStall = 30 * time.Minute
@@ -279,7 +279,7 @@ func agentStartCommandWithContext(ctx context.Context, root runnerRoot, args []s
 	channelContext, stopTestChannel := context.WithCancel(context.Background())
 	channelErrors := make(chan error, 1)
 	if spool != "" {
-		broker := &testChannelBroker{state: *state, jobID: id, stream: *stream, worktree: *workdir, spool: spool, executor: newTestChannelExecutor(nil)}
+		broker := &testChannelBroker{state: *state, jobID: id, stream: *stream, worktree: *workdir, spool: spool, executor: newTestChannelExecutor()}
 		go func() { channelErrors <- broker.serve(channelContext) }()
 	}
 	defer stopTestChannel()

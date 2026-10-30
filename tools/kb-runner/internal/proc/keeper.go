@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kb-labs/clikit/proc/internal/processsignal"
+	"github.com/kb-labs/clikit/proc/child"
 )
 
 const (
@@ -69,7 +69,24 @@ func runKeeperWithReady(cfg keeperConfig, ready *os.File) int {
 	return runKeeperWithMonitor(cfg, ready, parentGone, monitorErr)
 }
 
+type runRecordWriter interface {
+	Write(record) error
+}
+
+type durableRunRecordWriter struct{}
+
+func (durableRunRecordWriter) Write(rec record) error { return writeRecord(rec) }
+
+func runKeeperWithReadyAndRecordWriter(cfg keeperConfig, ready *os.File, writer runRecordWriter) int {
+	parentGone, monitorErr := monitorParent(cfg.ParentPID, cfg.ParentIdentity)
+	return runKeeperWithMonitorAndRecordWriter(cfg, ready, parentGone, monitorErr, writer)
+}
+
 func runKeeperWithMonitor(cfg keeperConfig, ready *os.File, parentGone <-chan error, monitorErr error) int {
+	return runKeeperWithMonitorAndRecordWriter(cfg, ready, parentGone, monitorErr, durableRunRecordWriter{})
+}
+
+func runKeeperWithMonitorAndRecordWriter(cfg keeperConfig, ready *os.File, parentGone <-chan error, monitorErr error, writer runRecordWriter) int {
 	// The readiness descriptor belongs only to the keeper. Prevent commands
 	// started below this boundary from inheriting it across exec.
 	syscall.CloseOnExec(int(ready.Fd()))
@@ -167,7 +184,7 @@ func runKeeperWithMonitor(cfg keeperConfig, ready *os.File, parentGone <-chan er
 	}
 	rec.StartedAt = startedAt
 	rec.LatestTag = cfg.LatestTag
-	if err := writeRecord(rec); err != nil {
+	if err := writer.Write(rec); err != nil {
 		writeReadyError(ready, err)
 		return keeperError(rec, "record run", err)
 	}
@@ -233,7 +250,10 @@ func runKeeperWithMonitor(cfg keeperConfig, ready *os.File, parentGone <-chan er
 	defer stderrPipe.Close()
 	defer stderrWriter.Close()
 	var lastOutput atomic.Int64
-	rec.StartedAtTime = time.Now().UTC()
+	rec.StartedAtTime = cfg.RunStartedAt
+	if rec.StartedAtTime.IsZero() {
+		rec.StartedAtTime = time.Now().UTC()
+	}
 	lastOutput.Store(rec.StartedAtTime.UnixNano())
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
@@ -245,7 +265,7 @@ func runKeeperWithMonitor(cfg keeperConfig, ready *os.File, parentGone <-chan er
 	}
 	// Keep the token only in the supervised command after Start returns.
 	if err := closeRunToken(); err != nil {
-		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
+		if killErr := child.KillStartedProcess(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after run token close failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -256,7 +276,7 @@ func runKeeperWithMonitor(cfg keeperConfig, ready *os.File, parentGone <-chan er
 	}
 	commandIdentity, commandAlive, commandIdentityErr := ProcessIdentity(cmd.Process.Pid)
 	if commandIdentityErr != nil {
-		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
+		if killErr := child.KillStartedProcess(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after identity observation failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -272,7 +292,7 @@ func runKeeperWithMonitor(cfg keeperConfig, ready *os.File, parentGone <-chan er
 		})
 	}
 	if err := errors.Join(stdoutWriter.Close(), stderrWriter.Close()); err != nil {
-		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
+		if killErr := child.KillStartedProcess(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after output pipe close failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -301,7 +321,7 @@ func runKeeperWithMonitor(cfg keeperConfig, ready *os.File, parentGone <-chan er
 		return keeperError(rec, "record command start", err)
 	}
 	if err := json.NewEncoder(ready).Encode(readyMessage{Record: rec}); err != nil {
-		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
+		if killErr := child.KillStartedProcess(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after readiness failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -310,7 +330,7 @@ func runKeeperWithMonitor(cfg keeperConfig, ready *os.File, parentGone <-chan er
 		return keeperError(rec, "signal readiness", err)
 	}
 	if err := ready.Close(); err != nil {
-		if killErr := processsignal.SignalStartedChild(cmd.Process); killErr != nil {
+		if killErr := child.KillStartedProcess(cmd.Process); killErr != nil {
 			fmt.Fprintln(os.Stderr, "proc: stop command after readiness close failure:", killErr)
 		}
 		if waitErr := cmd.Wait(); waitErr != nil {
@@ -701,7 +721,7 @@ func waitForCommandAfterTreeCleanup(waitDone <-chan error, command *exec.Cmd, cl
 	if command == nil || command.Process == nil {
 		return <-waitDone, errors.New("process-tree cleanup failed before the command process handle was available")
 	}
-	stopErr := processsignal.SignalStartedChild(command.Process)
+	stopErr := child.KillStartedProcess(command.Process)
 	if errors.Is(stopErr, os.ErrProcessDone) {
 		stopErr = nil
 	}

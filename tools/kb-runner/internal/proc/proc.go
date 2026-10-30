@@ -545,9 +545,10 @@ type record struct {
 
 type keeperConfig struct {
 	Config
-	RunID          string `json:"run_id"`
-	ParentPID      int    `json:"parent_pid"`
-	ParentIdentity string `json:"parent_identity"`
+	RunID          string    `json:"run_id"`
+	ParentPID      int       `json:"parent_pid"`
+	ParentIdentity string    `json:"parent_identity"`
+	RunStartedAt   time.Time `json:"run_started_at"`
 }
 
 type readyMessage struct {
@@ -627,7 +628,7 @@ func (e *KeeperExitError) Unwrap() error {
 
 // Start launches this executable as the keeper helper.
 func Start(ctx context.Context, cfg Config) (*Run, error) {
-	return StartWithHostResourceSource(ctx, cfg, systemHostResourceSource())
+	return startWithHostResourceSource(ctx, cfg, systemHostResourceSource())
 }
 
 // CanonicalStateDir resolves a command-line state path before any keeper is started.
@@ -642,10 +643,7 @@ func CanonicalStateDir(stateDir string) (string, error) {
 	return canonical, nil
 }
 
-// StartWithHostResourceSource launches a run using the supplied host resource
-// reader for admission. All clients sharing a state directory should use the
-// same source so their decisions observe the same host contract.
-func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostResourceSource) (*Run, error) {
+func startWithHostResourceSource(ctx context.Context, cfg Config, source HostResourceSource) (*Run, error) {
 	if err := validateStartContext(ctx); err != nil {
 		return nil, err
 	}
@@ -736,7 +734,11 @@ func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSou
 			cleanupAdmission(cfg.StateDir, runID, "start failed")
 		}
 	}()
-	kc := keeperConfig{Config: cfg, RunID: runID, ParentPID: os.Getpid(), ParentIdentity: parentIdentity}
+	runStartedAt, err := processStartTimeBound()
+	if err != nil {
+		return nil, fmt.Errorf("proc: capture run start bound: %w", err)
+	}
+	kc := keeperConfig{Config: cfg, RunID: runID, ParentPID: os.Getpid(), ParentIdentity: parentIdentity, RunStartedAt: runStartedAt}
 	encoded, err := json.Marshal(kc)
 	if err != nil {
 		return nil, fmt.Errorf("proc: encode keeper configuration: %w", err)

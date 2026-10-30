@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 type schedulerPolicy struct {
@@ -659,7 +659,7 @@ func (root runnerRoot) jobSupervisor() schedulerJobSupervisor {
 	if root.supervisor != nil {
 		return root.supervisor
 	}
-	return clikitSchedulerSupervisor{hostResourceSource: root.hostResourceSource}
+	return clikitSchedulerSupervisor{}
 }
 
 type hygieneSupervisor struct {

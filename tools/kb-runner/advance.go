@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 type StreamAdvanceState string

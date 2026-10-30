@@ -13,7 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kb-labs/clikit/proc/internal/processsignal"
+	clikitproc "github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/clikit/proc/child"
 	"golang.org/x/sys/unix"
 )
 
@@ -22,6 +23,8 @@ const ancestrySampleInterval = 100 * time.Millisecond
 func configureKeeper(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
+
+func processStartTimeBound() (time.Time, error) { return time.Now().UTC(), nil }
 
 func readProcessCWD(pid int) (string, error) {
 	output, err := exec.Command("lsof", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn").CombinedOutput()
@@ -128,7 +131,7 @@ func (osProcessSource) ParentPID(pid int) (int, error) {
 	return int(info.Eproc.Ppid), nil
 }
 func (osProcessSource) Signal(pid int, identity string, signal syscall.Signal) error {
-	return processsignal.SignalPID(pid, identity, signal, readProcessIdentity)
+	return child.SignalIdentity(clikitproc.ChildProcessObserver(), child.ProcessIdentity{PID: pid, Identity: identity}, signal)
 }
 
 func readProcessIdentity(pid int) (string, bool, error) {

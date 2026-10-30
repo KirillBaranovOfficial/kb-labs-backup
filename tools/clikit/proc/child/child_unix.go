@@ -79,6 +79,19 @@ func waitCommand(ctx context.Context, command *exec.Cmd, waitDelay time.Duration
 	select {
 	case waitErr := <-waitDone:
 		triggered := time.Now()
+		members, observationErr := observeBounded(ctx, command.Process.Pid, "live members", teardownDeadline(ctx, triggered), nil, func() ([]ProcessMember, error) {
+			return observer.LiveMembers(command.Process.Pid, root)
+		})
+		if observationErr != nil {
+			var processObservationErr *ProcessObservationError
+			if errors.As(observationErr, &processObservationErr) {
+				processObservationErr.PIDs = memberPIDs(members)
+			}
+			return errors.Join(waitErr, observationErr)
+		}
+		if groupLeaderWasReused(command.Process.Pid, root, members) || len(members) == 0 {
+			return waitErr
+		}
 		signalErr := terminate(command)
 		return errors.Join(waitErr, signalErr, waitGroupGone(ctx, command.Process.Pid, observer, root, triggered, signalErr))
 	case <-ctx.Done():

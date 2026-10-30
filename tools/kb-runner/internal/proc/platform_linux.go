@@ -13,10 +13,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/kb-labs/clikit/proc/internal/processsignal"
+	clikitproc "github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/clikit/proc/child"
 	"golang.org/x/sys/unix"
 )
 
@@ -36,6 +38,37 @@ func prepareKeeperPlatform() error {
 
 func finishKeeperPlatform() error {
 	return unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0)
+}
+
+// processStartTimeBound converts the current uptime down to /proc stat clock
+// ticks. Callers capture it before spawning so same-tick descendants qualify.
+func processStartTimeBound() (time.Time, error) {
+	bootData, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read process boot time: %w", err)
+	}
+	boot, err := parseProcBootTime(string(bootData))
+	if err != nil {
+		return time.Time{}, err
+	}
+	clockTicks, err := procClockTicks()
+	if err != nil {
+		return time.Time{}, err
+	}
+	uptimeData, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read process uptime: %w", err)
+	}
+	fields := strings.Fields(string(uptimeData))
+	if len(fields) == 0 {
+		return time.Time{}, errors.New("parse process uptime: empty value")
+	}
+	uptime, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse process uptime: %w", err)
+	}
+	ticks := int64(uptime * float64(clockTicks))
+	return processStartBoundFromTicks(boot, ticks, clockTicks), nil
 }
 
 func monitorLauncher(_ int, _ string, lifetime *os.File) (<-chan error, error) {
@@ -160,7 +193,7 @@ func (osProcessSource) ParentPID(pid int) (int, error) {
 	return stat.PPID, nil
 }
 func (osProcessSource) Signal(pid int, identity string, signal syscall.Signal) error {
-	return processsignal.SignalPID(pid, identity, signal, readProcessIdentity)
+	return child.SignalIdentity(clikitproc.ChildProcessObserver(), child.ProcessIdentity{PID: pid, Identity: identity}, signal)
 }
 
 func readProcessIdentity(pid int) (string, bool, error) {

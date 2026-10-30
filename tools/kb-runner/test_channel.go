@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
 )
 
 const (
@@ -206,12 +205,11 @@ func boundedTail(source []string, markTruncation bool) []string {
 }
 
 type testExecution struct {
-	Request            TestRequest
-	JobID              string
-	RequestID          string
-	Stream             string
-	State              string
-	HostResourceSource proc.HostResourceSource
+	Request   TestRequest
+	JobID     string
+	RequestID string
+	Stream    string
+	State     string
 }
 
 type testExecutor interface {
@@ -224,11 +222,8 @@ func (execute testExecutorFunc) Execute(ctx context.Context, execution testExecu
 	return execute(ctx, execution)
 }
 
-func newTestChannelExecutor(source proc.HostResourceSource) testExecutor {
-	return testExecutorFunc(func(ctx context.Context, execution testExecution) testResult {
-		execution.HostResourceSource = source
-		return executeTestRequest(ctx, execution)
-	})
+func newTestChannelExecutor() testExecutor {
+	return testExecutorFunc(executeTestRequest)
 }
 
 type testChannelRefusal struct {

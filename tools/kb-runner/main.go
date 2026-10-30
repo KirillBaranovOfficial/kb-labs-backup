@@ -20,8 +20,8 @@ import (
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
 	"github.com/kb-labs/clikit/result"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 const runnerVersion = "kb-runner version 1"
@@ -75,10 +75,9 @@ func execute(args []string, stdout, stderr io.Writer) (int, error) {
 
 type runnerRoot struct {
 	command.Root
-	invocation         string
-	executable         string
-	supervisor         schedulerJobSupervisor
-	hostResourceSource proc.HostResourceSource
+	invocation string
+	executable string
+	supervisor schedulerJobSupervisor
 }
 
 func (root runnerRoot) Invocation() string { return root.invocation }
@@ -86,9 +85,6 @@ func (root runnerRoot) Invocation() string { return root.invocation }
 func (root runnerRoot) InvocationCommand() string { return shellQuote(root.invocation) }
 
 func (root runnerRoot) startProcess(ctx context.Context, config proc.Config) (*proc.Run, error) {
-	if root.hostResourceSource != nil {
-		return proc.StartWithHostResourceSource(ctx, config, root.hostResourceSource)
-	}
 	return proc.Start(ctx, config)
 }
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	clikitproc "github.com/kb-labs/clikit/proc"
 	"github.com/kb-labs/clikit/proc/child"
 	"golang.org/x/sys/unix"
 )
@@ -163,7 +164,7 @@ func resourceCommand(ctx context.Context, prefix []string, args ...string) ([]by
 	command := exec.Command(prefix[0], append(prefix[1:], args...)...)
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
-	err := child.Run(ctx, command, ChildProcessObserver())
+	err := child.Run(ctx, command, clikitproc.ChildProcessObserver())
 	return output.Bytes(), err
 }
 
