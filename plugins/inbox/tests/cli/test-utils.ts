@@ -14,12 +14,3 @@ vi.mock('../../src/core/index.js', () => ({
   moveMessage: vi.fn(async () => undefined),
   markMessage: vi.fn(async () => undefined),
 }));
-
-export const context = {
-  ui: {
-    info: vi.fn(),
-    success: vi.fn(),
-    chain: vi.fn(),
-    sideBox: vi.fn(),
-  },
-};

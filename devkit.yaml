@@ -199,7 +199,7 @@ presets:
       check_links: false
       check_circular: false
 
-  # Plugin entry packages — node-lib + required test:cli script
+  # Plugin entry packages — node-lib. CLI test requirements follow the plugin manifest.
   plugin-entry:
     extends: backend-construction-boundary
     language: typescript
@@ -208,7 +208,6 @@ presets:
         - build
         - dev
         - test
-        - test:cli
         - lint
         - type-check
         - clean
@@ -755,12 +754,13 @@ tasks:
   #             kb-devkit run e2e --affected                         (changed only)
   #             kb-devkit run e2e                                    (all)
   # Go:         only kb-create has a real suite; others are no-ops for uniformity.
-  # CLI handler tests — fast, no daemon required.
+  # CLI handler tests — fast, no daemon required. Commandless plugins have no script;
+  # plugin-cli-test-policy requires one for manifests that declare CLI commands.
   # Run: kb-devkit run test:cli
   # Run affected only: kb-devkit run test:cli --affected
   test:cli:
     - categories: [plugin-entry]
-      command: pnpm run test:cli
+      command: pnpm run --if-present test:cli
       inputs:
         - "src/__tests__/cli/**"
         - "src/commands/**"
@@ -919,6 +919,14 @@ custom_checks:
     run: node scripts/checks/check-plugin-package-identity.mjs
     on: [check]
     scope: workspace
+
+  # A plugin declares whether it has CLI commands in its manifest. CLI plugins must
+  # provide a non-empty test:cli suite; commandless plugins must not carry a dead script.
+  - name: plugin-cli-test-policy
+    run: node scripts/checks/check-plugin-cli-test-policy.mjs
+    on: [check]
+    scope: workspace
+    requires_build: ["@kb-labs/plugin-contracts"]
 
   - name: ci-clean-machine-lanes
     run: node scripts/ci/ci-clean-machine-lanes-check.mjs
