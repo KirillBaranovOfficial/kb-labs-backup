@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"github.com/kb-labs/clikit/diag"
 	"path/filepath"
+	"reflect"
 	stdruntime "runtime"
+	"sort"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
@@ -116,6 +118,7 @@ func TestPlanWithUpdateClassifiesDeclaredRangeIncompatibilityAtResolution(t *tes
 	}
 }
 
+// case: S-053.3
 func TestUpdateValidationRefusesDowngradeAndNamesInstalledPluginRange(t *testing.T) {
 	active := contracts.InstallReceipt{Plan: contracts.ResolvedInstallPlan{
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "3.2.0"},
@@ -139,6 +142,16 @@ func TestUpdateValidationRefusesDowngradeAndNamesInstalledPluginRange(t *testing
 	entry, ok := diag.LookupCatalog(contracts.CodeUpdateIncompatible)
 	if !ok || envelope.Hint == entry.Hint {
 		t.Fatalf("component compatibility hint was not rendered from the catalog: %q", envelope.Hint)
+	}
+	wantDetails := append([]string(nil), entry.TemplateParameters...)
+	gotDetails := make([]string, 0, len(envelope.Details))
+	for name := range envelope.Details {
+		gotDetails = append(gotDetails, name)
+	}
+	sort.Strings(wantDetails)
+	sort.Strings(gotDetails)
+	if !reflect.DeepEqual(gotDetails, wantDetails) {
+		t.Fatalf("component compatibility details = %v, catalog declares %v", gotDetails, wantDetails)
 	}
 }
 

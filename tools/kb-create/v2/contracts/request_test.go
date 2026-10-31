@@ -42,6 +42,52 @@ func TestNormalizeMakesRelativeRootsAbsolute(t *testing.T) {
 	}
 }
 
+func TestInstallRequestNormalizeCanonicalizesRelativeAndSymlinkPlatformRoots(t *testing.T) {
+	base, err := os.MkdirTemp(".", ".platform-roots-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	target := filepath.Join(base, "platform")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "platform-alias")
+	absoluteTarget, err := filepath.Abs(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absoluteAlias, err := filepath.Abs(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(absoluteTarget, absoluteAlias); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := filepath.EvalSymlinks(absoluteTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, root := range map[string]string{"relative": target, "symlink": absoluteAlias} {
+		t.Run(name, func(t *testing.T) {
+			rootInput := root
+			if name == "relative" {
+				rootInput, err = filepath.Rel(".", root)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			request, err := (InstallRequest{PlatformRoot: rootInput}).Normalize()
+			if err != nil {
+				t.Fatalf("Normalize() error = %v", err)
+			}
+			if request.PlatformRoot != canonical {
+				t.Fatalf("normalized platform root = %q, want canonical install root %q", request.PlatformRoot, canonical)
+			}
+		})
+	}
+}
+
 func TestInstallRequestNormalizeDoesNotRequireSelectedProjectToExist(t *testing.T) {
 	platformRoot := filepath.Join(t.TempDir(), "platform")
 	missingProject := filepath.Join(t.TempDir(), "missing-project")

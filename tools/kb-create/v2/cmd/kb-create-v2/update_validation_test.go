@@ -1,6 +1,7 @@
 package v2cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,12 +10,17 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	goruntime "runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -82,10 +88,35 @@ func TestUpdatePreservesTheResolverCodeForMalformedRequestData(t *testing.T) {
 	}
 }
 
+// case: S-023.12
 func TestUpdateBadChecksumIndexReturnsCataloguedApplyFailure(t *testing.T) {
 	inst := newInstallation(t)
 	if _, code, output := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start fixture host: %d %s", code, output)
+	}
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeTreeBefore, err := treeDigest(activeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentLinkBefore, err := os.Readlink(layout.PlatformRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processIdentityBefore, err := os.ReadFile(state.HostPID())
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	goodBinary := []byte("sealed update binary")
@@ -112,10 +143,6 @@ func TestUpdateBadChecksumIndexReturnsCataloguedApplyFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	layout, err := versionroot.New(inst.root)
-	if err != nil {
-		t.Fatal(err)
-	}
 	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
 	if err != nil {
 		t.Fatal(err)
@@ -149,6 +176,215 @@ func TestUpdateBadChecksumIndexReturnsCataloguedApplyFailure(t *testing.T) {
 	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
 		t.Fatalf("bad-checksum update changed shared state: before=%#v after=%#v", stateBefore, after)
 	}
+	if activeTreeAfter, err := treeDigest(activeRoot); err != nil || activeTreeAfter != activeTreeBefore {
+		t.Fatalf("bad-checksum update changed the active version root: %v", err)
+	}
+	if currentLinkAfter, err := os.Readlink(layout.PlatformRoot()); err != nil || currentLinkAfter != currentLinkBefore {
+		t.Fatalf("bad-checksum update changed the active version link: %q %v", currentLinkAfter, err)
+	}
+	if processIdentityAfter, err := os.ReadFile(state.HostPID()); err != nil || string(processIdentityAfter) != string(processIdentityBefore) {
+		t.Fatalf("bad-checksum update changed the running host identity: %v", err)
+	}
+}
+
+func TestPlanPreviewRetainsInstalledMarketplaceAdaptersFromActiveLock(t *testing.T) {
+	inst := newInstallation(t)
+	const adapterID = "vibeproxy-llm"
+	_, testFile, _, ok := goruntime.Caller(0)
+	if !ok {
+		t.Fatal("locate update validation test source")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(testFile), "../../../../.."))
+	packagePath := filepath.Join(repoRoot, "adapters", "vibeproxy", "package.json")
+	packageBytes, err := os.ReadFile(packagePath)
+	if err != nil {
+		t.Fatalf("read shipped VibeProxy package manifest: %v", err)
+	}
+	var packageManifest struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(packageBytes, &packageManifest); err != nil {
+		t.Fatalf("decode shipped VibeProxy package manifest: %v", err)
+	}
+	activeRoot := platformRootForTest(t, inst.root)
+	packageJSON := filepath.Join(activeRoot, "node_modules", filepath.FromSlash(packageManifest.Name), "package.json")
+	if err := os.MkdirAll(filepath.Dir(packageJSON), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(packageJSON, packageBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := marketplace.WriteLock(activeRoot, inst.root, []contracts.Artifact{
+		{ID: adapterID, Kind: "adapter", Package: packageManifest.Name, Version: packageManifest.Version},
+	}, time.Now()); err != nil {
+		t.Fatalf("write active marketplace lock: %v", err)
+	}
+
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Adapters = append(source.Adapters, catalog.Adapter{Component: catalog.Component{
+		ID: adapterID, Version: packageManifest.Version, Package: packageManifest.Name,
+		Tarball: "https://example.test/vibeproxy.tgz", SHA256: "vibeproxy",
+	}})
+	sealed, err := sealTestCatalog(t, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(t.TempDir(), "release-index.json")
+	encodedIndex, err := json.Marshal(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encodedIndex, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requestPath := filepath.Join(t.TempDir(), "request.json")
+	request, err := json.Marshal(contracts.InstallRequest{
+		PlatformRoot: inst.root,
+		Platform:     contracts.VersionSelector{Version: "2.0.0"},
+		SDK:          contracts.VersionSelector{Version: "2.0.0"},
+		Policy:       contracts.PolicyCompatible,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, request, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, failure := executePlan(context.Background(), planCommandInput{Index: indexPath, RequestFile: requestPath})
+	if failure != nil {
+		t.Fatalf("plan with active marketplace lock: code=%s reason=%s details=%v", failure.Code, failure.Reason, failure.Meta)
+	}
+	if !containsComponentRequest(result.Plan.Request.Adapters, adapterID) {
+		t.Fatalf("plan request omitted installed adapter %q: %#v", adapterID, result.Plan.Request.Adapters)
+	}
+	if !containsArtifact(result.Plan.Artifacts, adapterID, "adapter") {
+		t.Fatalf("plan omitted installed adapter artifact %q: %#v", adapterID, result.Plan.Artifacts)
+	}
+}
+
+// case: S-023.12
+func TestUpdateDownloadFailurePreservesActiveInstallation(t *testing.T) {
+	inst := newInstallation(t)
+	if _, code, output := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start fixture host: %d %s", code, output)
+	}
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeTreeBefore, err := treeDigest(activeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentLinkBefore, err := os.Readlink(layout.PlatformRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processIdentityBefore, err := os.ReadFile(state.HostPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
+	receiptPath := receipt.Path(platformRootForTest(t, inst.root))
+	receiptBefore, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "artifact temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Binaries[0].URL = server.URL + "/kb-create"
+	source.Platforms[0].Binaries[0].SHA256 = strings.Repeat("0", 64)
+	sealed, err := sealTestCatalog(t, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(t.TempDir(), "download-failure-release-index.json")
+	encodedIndex, err := json.Marshal(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encodedIndex, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, failure, exitCode, _ := executeForTest(t, operationTestSetup{
+		Operation: "update", Index: indexPath, JSON: true,
+		Direct: directRequest{PlatformRoot: inst.root, PlatformVersion: "2.0.0", SDKVersion: "2.0.0", Policy: "compatible"},
+		RuntimeDeps: &runtime.Dependencies{Artifacts: artifacts.Composite{
+			Binaries: artifacts.Binaries{Root: inst.root, CacheRoot: cacheRoot, Client: server.Client()},
+		}},
+		NodePreflight: func() error { return nil },
+	})
+	if failure == nil || failure.Code != contracts.CodeApplyFailed || exitCode != 1 {
+		t.Fatalf("download-failed update = code %v / exit %d; want %q / exit 1", failure, exitCode, contracts.CodeApplyFailed)
+	}
+	if _, err := diag.ToEnvelope(failure); err != nil {
+		t.Fatalf("download-failed update violated the diagnostic contract: %v", err)
+	}
+	if got, err := os.ReadFile(receiptPath); err != nil || string(got) != string(receiptBefore) {
+		t.Fatalf("download-failed update changed the active receipt: %v", err)
+	}
+	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
+		t.Fatalf("download-failed update changed shared state: before=%#v after=%#v", stateBefore, after)
+	}
+	if activeTreeAfter, err := treeDigest(activeRoot); err != nil || activeTreeAfter != activeTreeBefore {
+		t.Fatalf("download-failed update changed the active version root: %v", err)
+	}
+	if currentLinkAfter, err := os.Readlink(layout.PlatformRoot()); err != nil || currentLinkAfter != currentLinkBefore {
+		t.Fatalf("download-failed update changed the active version link: %q %v", currentLinkAfter, err)
+	}
+	if processIdentityAfter, err := os.ReadFile(state.HostPID()); err != nil || string(processIdentityAfter) != string(processIdentityBefore) {
+		t.Fatalf("download-failed update changed the running host identity: %v", err)
+	}
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusCtx, cancelStatus := context.WithTimeout(context.Background(), 5*time.Second)
+	status, err := runner.Status(statusCtx)
+	cancelStatus()
+	if err != nil || status.State != "running" || !status.Healthy {
+		t.Fatalf("download-failed update left host status %#v, %v; want running and healthy", status, err)
+	}
+	versionRoots, err := os.ReadDir(layout.VersionsDir())
+	if err != nil || len(versionRoots) != 1 || versionRoots[0].Name() != filepath.Base(activeRoot) {
+		t.Fatalf("download-failed update left version roots %#v, %v; want only %q", versionRoots, err, filepath.Base(activeRoot))
+	}
+}
+
+func containsComponentRequest(requests []contracts.ComponentRequest, id string) bool {
+	for _, request := range requests {
+		if request.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func containsArtifact(artifacts []contracts.Artifact, id, kind string) bool {
+	for _, artifact := range artifacts {
+		if artifact.ID == id && artifact.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // case: S-023.6

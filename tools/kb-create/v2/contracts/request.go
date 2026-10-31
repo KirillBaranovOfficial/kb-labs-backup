@@ -226,7 +226,7 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	}
 	// Resolve user supplied paths at the request boundary so later execution
 	// never interprets a relative root against a changed working directory.
-	root, err := AbsolutePath(r.PlatformRoot)
+	root, err := CanonicalPath(r.PlatformRoot)
 	if err != nil {
 		return InstallRequest{}, invalidRequestField("platformRoot", "platform root could not be resolved",
 			"Set `platformRoot` to a directory path that can be resolved in the request JSON.", err)
@@ -311,8 +311,39 @@ func ShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-// AbsolutePath applies the install request's lexical absolute-path rule. It
-// cleans path syntax but deliberately does not resolve filesystem identity.
+// CanonicalPath resolves existing path components and preserves missing
+// trailing components, giving install-root requests one filesystem identity.
+func CanonicalPath(value string) (string, error) {
+	abs, err := AbsolutePath(value)
+	if err != nil {
+		return "", err
+	}
+	missing := make([]string, 0)
+	for current := filepath.Clean(abs); ; current = filepath.Dir(current) {
+		_, err := os.Lstat(current)
+		if err == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(current)
+			if resolveErr != nil {
+				return "", resolveErr
+			}
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("no existing ancestor for %q", value)
+		}
+		missing = append(missing, filepath.Base(current))
+	}
+}
+
+// AbsolutePath applies the lexical absolute-path rule used for non-install
+// paths. It cleans path syntax without resolving filesystem identity.
 func AbsolutePath(value string) (string, error) {
 	if filepath.IsAbs(value) {
 		return filepath.Clean(value), nil

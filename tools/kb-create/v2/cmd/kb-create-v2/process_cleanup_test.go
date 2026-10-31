@@ -42,7 +42,7 @@ func TestTestHostCleanupRunsAfterFailure(t *testing.T) {
 		}
 	})
 	command := exec.Command(os.Args[0], "-test.run=^TestTestHostCleanupRunsAfterFailure$")
-	command.Env = append(os.Environ(), "KB_CREATE_TEST_FAILURE_CLEANUP=1",
+	command.Env = inst.childEnvironment("KB_CREATE_TEST_FAILURE_CLEANUP=1",
 		"KB_CREATE_TEST_FAILURE_ROOT="+root, "KB_CREATE_TEST_FAILURE_HOME="+kbHome,
 		"KB_CREATE_TEST_FAILURE_LAUNCHER="+launcher, "KB_CREATE_TEST_FAILURE_FAKEHOST="+fakehost,
 		"KB_CREATE_TEST_FAILURE_PORT="+strconv.Itoa(port))

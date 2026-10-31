@@ -2426,7 +2426,10 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             _, error = _diagnostic(result, "installed component update")
             meta = error.get("details", {})
             expected_code = "KB_UPDATE_INCOMPATIBLE"
-            expected_hint = f"Update or remove {kind} {component} first, then rerun `kb-create update`."
+            expected_hint = catalogued_error_hint(
+                "KB_UPDATE_INCOMPATIBLE", kind=kind, id=component,
+                selectedVersion="3.2.0", requiredRange="<3.2.0",
+            )
             after_files = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
             after_directories = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_dir()}
             if result.returncode == 0 or error.get("code") != expected_code or not isinstance(meta, dict):

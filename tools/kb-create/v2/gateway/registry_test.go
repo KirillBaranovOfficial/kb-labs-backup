@@ -46,6 +46,44 @@ func TestJourneySchema2FixtureRoundTripsThroughRegistryReaderAndWriter(t *testin
 	}
 }
 
+func TestRegisterForTransactionRestoresExactRegistryAndActiveReceiptOnCommitFailure(t *testing.T) {
+	root, active, _ := installedRootSpellings(t, filepath.Join(t.TempDir(), "platform"))
+	registry := Registry{Path: filepath.Join(t.TempDir(), "launcher", "gateway-roots.json"), OperationRoot: root}
+	if err := registry.Register(root, "http://127.0.0.1:4100"); err != nil {
+		t.Fatal(err)
+	}
+	registryBefore, err := os.ReadFile(registry.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptBefore, err := os.ReadFile(receipt.Path(active))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitFailure := errors.New("injected activation failure after registry registration")
+	err = registry.RegisterForTransaction(root, "http://127.0.0.1:4200", func() error {
+		registered, readErr := os.ReadFile(registry.Path)
+		if readErr != nil {
+			return readErr
+		}
+		if bytes.Equal(registered, registryBefore) || !bytes.Contains(registered, []byte("http://127.0.0.1:4200")) {
+			return errors.New("Gateway registry was not updated before the commit callback")
+		}
+		return commitFailure
+	})
+	if !errors.Is(err, commitFailure) {
+		t.Fatalf("transaction error = %v; want injected post-registration failure", err)
+	}
+	registryAfter, err := os.ReadFile(registry.Path)
+	if err != nil || !bytes.Equal(registryAfter, registryBefore) {
+		t.Fatalf("registry bytes = %q, %v; want exact prior bytes %q", registryAfter, err, registryBefore)
+	}
+	receiptAfter, err := os.ReadFile(receipt.Path(active))
+	if err != nil || !bytes.Equal(receiptAfter, receiptBefore) {
+		t.Fatalf("active receipt bytes = %q, %v; want exact prior bytes %q", receiptAfter, err, receiptBefore)
+	}
+}
+
 func TestRegistryUnreadableIndexReturnsActionableCataloguedDiagnostic(t *testing.T) {
 	base := t.TempDir()
 	root, _, _ := installedRootSpellings(t, filepath.Join(base, "platform"))

@@ -50,6 +50,7 @@ type planResult struct {
 
 type planCommandInput struct {
 	Index, RequestFile, ScenarioID, Answers, Registry, Executable string
+	RetryCommand                                                  string
 	Direct                                                        directRequest
 	Resume                                                        bool
 	KnownGateways                                                 []gateway.Root
@@ -109,6 +110,11 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be read for update comparison", "restore a named V2 snapshot, then rerun `kb-create plan`", readErr)
 			return planResult{}, failure
 		}
+		plan, failure = planUpdateWithMarketplaceLock(activeRoot, plan, resolved.Catalog, request.RetryCommand)
+		if failure != nil {
+			return planResult{}, failure
+		}
+		resolved.Plan = plan
 		summary, summaryErr := resolve.SummarizeUpdate(active, plan, resolved.Catalog)
 		if summaryErr != nil {
 			failure := contracts.NewDiag(contracts.CodeOperationFailed, "the installed platform could not be compared with the resolved plan", "verify the active receipt and sealed release index, then rerun `kb-create plan`", summaryErr)
