@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import { InMemoryStateBroker } from "@kb-labs/core-state-broker";
+import { AppendOnlyJournalStateBroker, InMemoryStateBroker } from "@kb-labs/core-state-broker";
 import {
+  createErrorEnvelope,
   createContextLogger,
   type IContextLogger,
   type ILogger,
@@ -23,6 +24,7 @@ import { randomUUID } from "node:crypto";
 export interface StateDaemonConfig {
   port?: number;
   host?: string;
+  platformDataRoot?: string;
   logger?: ILogger;
 }
 
@@ -36,7 +38,7 @@ function createFallbackLogger(): IContextLogger {
 }
 
 export class StateDaemonServer {
-  private readonly broker = new InMemoryStateBroker();
+  private broker: InMemoryStateBroker = new InMemoryStateBroker();
   private readonly observability = new HttpObservabilityCollector({
     serviceId: "state-daemon",
     serviceType: "state-daemon",
@@ -63,6 +65,19 @@ export class StateDaemonServer {
       );
     }
     const host = this.config.host ?? "localhost";
+
+    if (this.config.platformDataRoot) {
+      await this.broker.stop();
+      const broker = await AppendOnlyJournalStateBroker.open(this.config.platformDataRoot);
+      this.broker = broker;
+      if (broker.journalWasCorrupt) {
+        const diagnostic = createErrorEnvelope("KB_STATE_BROKER_PERSISTENCE_CORRUPT");
+        this.logger.warn(diagnostic.message, {
+          code: diagnostic.code,
+          hint: diagnostic.hint,
+        });
+      }
+    }
 
     const server = Fastify({
       logger: false,

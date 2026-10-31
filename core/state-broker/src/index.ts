@@ -158,6 +158,7 @@ export class RateLimitError extends Error {
 
 // Export backends
 export { InMemoryStateBroker } from './backends/in-memory';
+export { AppendOnlyJournalStateBroker } from './backends/append-only-journal';
 export { HTTPStateBroker } from './backends/http';
 
 // Export factory

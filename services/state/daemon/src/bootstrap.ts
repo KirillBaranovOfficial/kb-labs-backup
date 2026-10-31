@@ -10,10 +10,11 @@ export async function setup({
   port,
   host,
   logger,
-}: ServiceContext): Promise<() => Promise<void>> {
+}: ServiceContext, platformDataRoot?: string): Promise<() => Promise<void>> {
   const server = new StateDaemonServer({
     port,
     host,
+    ...(platformDataRoot ? { platformDataRoot } : {}),
     logger,
   });
   await server.start();
