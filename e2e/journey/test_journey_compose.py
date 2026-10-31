@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -53,6 +54,22 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.strip(), str(ROOT.resolve()))
+
+    def test_compose_owner_accepts_its_reduced_checkout_without_workspace_manifest(self):
+        with tempfile.TemporaryDirectory(prefix="journey-compose-owner-reduced-") as temp:
+            env, _ = self._fake_compose_environment(temp)
+            reduced_root = Path(temp) / "reduced-checkout"
+            (reduced_root / "e2e").mkdir(parents=True)
+            owner = reduced_root / "e2e" / "compose-owner.sh"
+            shutil.copy2(ROOT / "e2e" / "compose-owner.sh", owner)
+            result = subprocess.run(
+                ["bash", "-c",
+                 'set -e; source "$1"; journey_compose_init "$2"; printf "%s\\n" "$KB_JOURNEY_WORKSPACE_SOURCE"',
+                 "journey-compose-owner-reduced", str(owner), str(reduced_root)],
+                cwd=reduced_root, env=env, capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), str(reduced_root.resolve()))
 
     def test_compose_owner_rejects_another_existing_workspace(self):
         with tempfile.TemporaryDirectory(prefix="journey-compose-owner-mismatch-") as temp:
