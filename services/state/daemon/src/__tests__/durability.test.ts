@@ -128,6 +128,10 @@ describe('StateBroker durability', () => {
     const tsxLoader = createRequire(vitePath).resolve('tsx/esm');
     const childCode = `
       import { AppendOnlyJournalStateBroker } from ${JSON.stringify(moduleUrl)};
+      if (process.env.JOURNAL_BARRIER === '1') {
+        process.stdout.write('ready-to-open\\n');
+        await new Promise((resolve) => process.stdin.once('data', resolve));
+      }
       process.stdout.write('attempting-open\\n');
       const broker = await AppendOnlyJournalStateBroker.open(process.env.JOURNAL_ROOT);
       if (process.env.JOURNAL_ROLE === 'orphan') {
@@ -144,11 +148,11 @@ describe('StateBroker durability', () => {
       await broker.stop();
       process.stdout.write('stopped\\n');
     `;
-    const startChild = (role: string) => {
+    const startChild = (role: string, barrier = false) => {
       const child = spawn(process.execPath, [
         '--import', tsxLoader, '--input-type=module', '-e', childCode,
       ], {
-        env: { ...process.env, JOURNAL_ROOT: root, JOURNAL_ROLE: role },
+        env: { ...process.env, JOURNAL_ROOT: root, JOURNAL_ROLE: role, JOURNAL_BARRIER: barrier ? '1' : '0' },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       const stdout = child.stdout;
@@ -176,10 +180,14 @@ describe('StateBroker durability', () => {
       const waitForLine = (line: string) => {
         if (seen.has(line)) return Promise.resolve();
         return new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error(`timed out waiting for journal worker signal: ${line}`)), 10_000);
           const waiting = waiters.get(line) ?? [];
-          waiting.push({ resolve, reject });
+          waiting.push({
+            resolve: () => { clearTimeout(timeout); resolve(); },
+            reject: (error) => { clearTimeout(timeout); reject(error); },
+          });
           waiters.set(line, waiting);
-          child.once('error', (error) => reject(error));
+          child.once('error', (error) => { clearTimeout(timeout); reject(error); });
         });
       };
       return { child, stdin, lines, seen, waitForLine };
@@ -209,7 +217,9 @@ describe('StateBroker durability', () => {
       await orphan.waitForLine('locked-orphan');
       orphan.child.kill('SIGKILL');
       await once(orphan.child, 'exit');
-      const reclaimers = Array.from({ length: 8 }, (_, index) => startChild(`reclaimer-${index}`));
+      const reclaimers = Array.from({ length: 16 }, (_, index) => startChild(`reclaimer-${index}`, true));
+      await Promise.all(reclaimers.map((reclaimer) => reclaimer.waitForLine('ready-to-open')));
+      for (const reclaimer of reclaimers) reclaimer.stdin.write('go\n');
       await Promise.all(reclaimers.map((reclaimer) => reclaimer.waitForLine('attempting-open')));
       await Promise.all(reclaimers.map((reclaimer) => reclaimer.waitForLine('stopped')));
       const afterReclaim = await AppendOnlyJournalStateBroker.open(root);
@@ -282,10 +292,14 @@ describe('StateBroker durability', () => {
       const waitForLine = (line: string) => {
         if (seen.has(line)) return Promise.resolve();
         return new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error(`timed out waiting for journal worker signal: ${line}`)), 10_000);
           const waiting = waiters.get(line) ?? [];
-          waiting.push({ resolve, reject });
+          waiting.push({
+            resolve: () => { clearTimeout(timeout); resolve(); },
+            reject: (error) => { clearTimeout(timeout); reject(error); },
+          });
           waiters.set(line, waiting);
-          child.once('error', reject);
+          child.once('error', (error) => { clearTimeout(timeout); reject(error); });
         });
       };
       return { child, stdin, lines, waitForLine };
@@ -294,7 +308,9 @@ describe('StateBroker durability', () => {
     const live = startChild(liveRoot, true);
     let reclaimer: ReturnType<typeof startChild> | undefined;
     let fifoWriter: Awaited<ReturnType<typeof open>> | undefined;
+    let liveReleased = false;
     let watchingDirectory = false;
+    let directoryTimeout: NodeJS.Timeout | undefined;
     try {
       await live.waitForLine('locked');
       const liveRecord = JSON.parse(await readFile(liveLockPath, 'utf8')) as { pid: number; token: string };
@@ -311,22 +327,30 @@ describe('StateBroker durability', () => {
       await fifoWriter.writeFile(JSON.stringify({ pid: stalePid, token: 'stale-owner' }), 'utf8');
       await rename(liveLockPath, lockPath);
       const directoryBefore = await stat(reclaimDirectory);
-      const observed = new Promise<void>((resolve) => {
-        watchFile(reclaimDirectory, { interval: 1, persistent: false }, (current, previous) => {
-          if (current.ctimeMs !== previous.ctimeMs || current.mtimeMs !== previous.mtimeMs) resolve();
-        });
-        watchingDirectory = true;
+      let resolveDirectoryChange: (() => void) | undefined;
+      const directoryChanged = new Promise<void>((resolve) => { resolveDirectoryChange = resolve; });
+      watchFile(reclaimDirectory, { interval: 1, persistent: false }, (current, previous) => {
+        if (current.ctimeMs !== previous.ctimeMs || current.mtimeMs !== previous.mtimeMs) resolveDirectoryChange?.();
       });
+      watchingDirectory = true;
       await fifoWriter.close();
       fifoWriter = undefined;
-      await observed;
-      const directoryAfter = await stat(reclaimDirectory);
-      expect(directoryAfter.mtimeMs).not.toBe(directoryBefore.mtimeMs);
+      await Promise.race([
+        directoryChanged,
+        new Promise<never>((_resolve, reject) => {
+          directoryTimeout = setTimeout(() => reject(new Error('timed out waiting for stale reclaim completion')), 10_000);
+        }),
+      ]);
+      if (directoryTimeout) clearTimeout(directoryTimeout);
+      expect((await stat(reclaimDirectory)).mtimeMs).not.toBe(directoryBefore.mtimeMs);
       expect(JSON.parse(await readFile(lockPath, 'utf8'))).toEqual(liveRecord);
+      live.stdin.write('release\n');
+      liveReleased = true;
     } finally {
+      if (directoryTimeout) clearTimeout(directoryTimeout);
       if (watchingDirectory) unwatchFile(reclaimDirectory);
       await fifoWriter?.close();
-      live.stdin.write('release\n');
+      if (!liveReleased) live.stdin.write('release\n');
       const stopChild = async (child: ChildProcess | undefined) => {
         if (!child || child.exitCode !== null || child.signalCode !== null) return;
         child.kill();

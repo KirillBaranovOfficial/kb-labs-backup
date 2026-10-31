@@ -107,6 +107,57 @@ describe('StateDaemon durability', () => {
     expect(server).toBeDefined();
   });
 
+  // case: S-280.7
+  it('keeps only the verified prefix before a partial crash tail and reports it through the daemon', async () => {
+    const root = await makeRoot();
+    const port = 9882;
+    const records: Array<{ message: string; meta?: Record<string, unknown> }> = [];
+    await start(port, root);
+    expect((await setValue(port, 'verified-prefix', 'kept', 60_000)).status).toBe(204);
+    await activeServers.pop()?.stop();
+
+    const journal = path.join(root, 'state-broker', 'journal.jsonl');
+    const verified = await readFile(journal, 'utf8');
+    const partialTail = '{"version":1,"operation":"set","key":"partial"';
+    const trailingBytes = '\n{"version":1,"operation":"set","key":"trailing","value":"discard","expiresAt":9999999999999}\n';
+    await writeFile(journal, `${verified}${partialTail}${trailingBytes}`, 'utf8');
+    await start(port, root, makeLogger(records));
+
+    const ready = await fetch(`http://127.0.0.1:${port}/ready`);
+    expect(ready.status).toBe(200);
+    await expect(ready.json()).resolves.toMatchObject({ ready: true, status: 'ready' });
+    expect((await getValue(port, 'verified-prefix')).status).toBe(200);
+    expect((await getValue(port, 'partial')).status).toBe(404);
+    expect((await getValue(port, 'trailing')).status).toBe(404);
+    expect(await readFile(journal, 'utf8')).toBe(verified);
+    expect(records.some((record) => record.meta?.code === 'KB_STATE_BROKER_PERSISTENCE_CORRUPT')).toBe(true);
+  });
+
+  // case: S-280.6
+  it('closes admission and drains before a second daemon acquires the journal lock', async () => {
+    const root = await makeRoot();
+    const firstPort = 9883;
+    const secondPort = 9884;
+    const first = await start(firstPort, root);
+    try {
+      expect((await setValue(firstPort, 'before-shutdown', 'durable', 60_000)).status).toBe(204);
+      const stopping = first.stop();
+      const lateMutation = setValue(firstPort, 'late', 'must-not-slip-past-lock-release', 60_000)
+        .then((response) => response.status)
+        .catch(() => null);
+      const secondStarting = start(secondPort, root);
+      await stopping;
+      const lateStatus = await lateMutation;
+      expect(lateStatus).not.toBe(204);
+      await secondStarting;
+      expect((await fetch(`http://127.0.0.1:${secondPort}/ready`)).status).toBe(200);
+      expect((await getValue(secondPort, 'before-shutdown')).status).toBe(200);
+      expect((await getValue(secondPort, 'late')).status).toBe(404);
+    } finally {
+      await Promise.all(activeServers.splice(0).map((server) => server.stop()));
+    }
+  });
+
   it('creates journal files only below the supplied platform data root', async () => {
     const root = await makeRoot();
     const port = 9881;
