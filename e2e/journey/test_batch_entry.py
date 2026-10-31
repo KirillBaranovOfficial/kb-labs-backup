@@ -28,6 +28,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         (self.root / "tools/kb-devkit").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
         shutil.copy2(REPO / "e2e/journey/batch_summary.py", self.root / "e2e/journey/batch_summary.py")
+        shutil.copy2(REPO / "e2e/journey/scoreboard_contract.py", self.root / "e2e/journey/scoreboard_contract.py")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(
@@ -337,8 +338,10 @@ exec "$REAL_TAR" "$@"
     # case: S-262.8
     def test_partial_scoreboards_cannot_produce_a_passing_batch_verdict(self):
         import json
+        original_gates = {}
         for mode, fixture in self.scoreboard_fixtures.items():
             scoreboard = json.loads(fixture.read_text())
+            original_gates[mode] = scoreboard["releaseGate"]
             scoreboard["selection"] = ["S-023.1", "S-024.1"] if mode == "local" else []
             scoreboard["releaseGate"] = {"modes": "gate-path-must-not-be-read"}
             fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
@@ -350,14 +353,64 @@ exec "$REAL_TAR" "$@"
         self.assertIn("## Stage durations", summary)
         self.assertIn("local=[S-023.1, S-024.1]; secured=[]", summary)
 
-        for fixture in self.scoreboard_fixtures.values():
+        for mode, fixture in self.scoreboard_fixtures.items():
             scoreboard = json.loads(fixture.read_text())
             scoreboard["selection"] = []
-            scoreboard["releaseGate"] = {"modes": []}
+            scoreboard["releaseGate"] = original_gates[mode]
             fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
         full_result = self._run()
         self.assertEqual(full_result.returncode, 0, full_result.stderr + full_result.stdout)
         self.assertIn("- Result: PASS", (self.root / "out/shared/summary.md").read_text())
+
+    # case: S-262.8
+    def test_empty_release_gate_cannot_turn_local_failure_into_pass(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["releaseGate"]["modes"] = []
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        result = self._run("local", failure_kind="product")
+
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertNotIn("- Result: PASS", summary)
+        self.assertIn("- Result: FAIL", summary)
+        self.assertIn(
+            f"next: e2e/journey/batch.sh mode local {self.root / 'out'} "
+            f"{self.root / 'out/.artifact-local'}",
+            result.stderr,
+        )
+
+    # case: S-262.8
+    def test_finalizer_refuses_empty_release_gate_declarations(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["releaseGate"]["modes"] = []
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        result = self._run()
+
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertNotIn("- Result: PASS", summary)
+        self.assertIn("releaseGate.modes must equal ['local']; got []", summary)
+
+    # case: S-262.8
+    def test_finalizer_refuses_missing_release_gate_declarations(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard.pop("releaseGate")
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        result = self._run()
+
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertNotIn("- Result: PASS", summary)
+        self.assertIn("releaseGate.modes must equal ['local']; got None", summary)
 
     # case: S-262.8
     def test_scoreboard_contract_does_not_duplicate_partiality(self):
