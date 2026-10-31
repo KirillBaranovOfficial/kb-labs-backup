@@ -5,6 +5,7 @@
 
 import OpenAI from "openai";
 import { AdapterCredentialsMissingError } from "@kb-labs/sdk";
+import { DEFAULT_OPENAI_MODEL } from "./openai-defaults.js";
 export { manifest } from "./manifest.js";
 import type {
   ILLM,
@@ -56,7 +57,7 @@ export class OpenAILLM implements ILLM {
       baseURL: config.baseURL,
       organization: config.organization,
     });
-    this.defaultModel = config.model ?? config.defaultModel ?? "gpt-4o-mini";
+    this.defaultModel = config.model ?? config.defaultModel ?? DEFAULT_OPENAI_MODEL;
     this.defaultMaxTokens = config.defaultMaxTokens ?? DEFAULT_MAX_TOKENS;
   }
 
