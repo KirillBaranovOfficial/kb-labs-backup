@@ -205,7 +205,7 @@ def stage_marketplace_sync_fixture() -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     result = run_harness_command([
         str(_esbuild_binary()), str(source), "--bundle", "--platform=node", "--format=esm",
-        f"--outfile={destination}",
+        "--define:window=globalThis", f"--outfile={destination}",
     ])
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"

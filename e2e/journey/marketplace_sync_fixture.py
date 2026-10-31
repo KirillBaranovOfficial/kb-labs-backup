@@ -12,7 +12,7 @@ def marketplace_sync_fixture_command(workspace_root: Path, *, fixture_path: Path
                                      request_recorder: bool = False) -> list[str]:
     fixture = fixture_path or (
         Path(__file__).resolve().parents[1] / "platform" / "fixtures" / "marketplace-sync-server.mjs")
-    command = ["node", "--experimental-global-webcrypto", str(fixture), str(workspace_root)]
+    command = ["node", str(fixture), str(workspace_root)]
     if request_recorder:
         command.append("--request-recorder")
     return command
