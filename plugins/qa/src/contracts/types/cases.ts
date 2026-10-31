@@ -36,8 +36,10 @@ export interface QACaseClaim {
   testName?: string;
 }
 
+export const QA_CASE_RUN_SCHEMA = 'kb.qa-case-run/v2' as const;
+
 export interface QACaseRunResult {
-  schema: 'kb.qa-case-run/v1';
+  schema: typeof QA_CASE_RUN_SCHEMA;
   runId: string;
   mode: QACaseMode;
   claims: Array<{ claimId: string; kind: QACaseClaimKind; status: 'PASS' | 'FAIL' }>;
