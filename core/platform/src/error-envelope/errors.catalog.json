@@ -169,6 +169,17 @@
       "hint": "Run `kb marketplace install @kb-labs/adapters-analytics-sqlite --scope platform`, then `kb adapter bind analytics @kb-labs/adapters-analytics-sqlite` to retain analytics history across host restarts."
     },
     {
+      "code": "KB_STATE_BROKER_PERSISTENCE_CORRUPT",
+      "area": "runtime",
+      "stage": "recover",
+      "severity": "warning",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "httpStatus": 200,
+      "message": "The StateBroker journal is corrupt; the verified prefix was recovered and later records were not loaded.",
+      "hint": "Run `kb logs search KB_STATE_BROKER_PERSISTENCE_CORRUPT` to inspect the StateDaemon recovery diagnostic."
+    },
+    {
       "code": "KB_AUTH_CLOCK_SKEW",
       "area": "auth",
       "stage": "run",

@@ -4,17 +4,28 @@ HTTP daemon server for persistent cross-invocation state in KB Labs.
 
 ## Overview
 
-State Daemon provides a lightweight HTTP server that maintains persistent state across CLI command invocations, enabling fast in-memory caching with automatic TTL cleanup.
+State Daemon provides a lightweight HTTP server for state shared across CLI
+invocations. A host-managed daemon keeps unexpired values in an append-only
+journal under the platform data root; a standalone daemon without a supplied
+platform data root uses in-memory storage.
 
 ### Features
 
 - **Fastify-based HTTP server**: Uniform service foundation across KB Labs
-- **In-memory storage**: Fast key-value operations (~1ms)
+- **Host-managed journal**: Values survive daemon and host restarts
+- **Standalone in-memory storage**: Fast key-value operations (~1ms)
 - **Automatic TTL cleanup**: Background cleanup every 30s
 - **HTTP REST API**: Simple GET/PUT/DELETE endpoints
 - **Namespace isolation**: Per-plugin namespaces with statistics
 - **Observability contract**: `/health`, `/stats`, `/metrics`, `/observability/describe`, `/observability/health`
 - **Graceful shutdown**: SIGTERM/SIGINT handling
+
+Each host-managed mutation is appended and `fsync`ed before its StateBroker
+promise resolves. A resolved write has no process-crash loss window. A write
+whose promise has not resolved may be absent after a crash; a host or power
+failure may also lose the latest write if storage does not honor `fsync`.
+Expiry is stored as an absolute wall-clock deadline and is not extended by a
+restart. Omitting `ttl` retains the current five-minute default.
 
 ## Installation
 
@@ -62,6 +73,10 @@ process.on('SIGTERM', () => {
   void server.stop();
 });
 ```
+
+Host-managed startup supplies the data root resolved from the platform layout
+contract. Standalone examples above omit that host-owned value and therefore
+keep state in memory.
 
 ## HTTP API
 

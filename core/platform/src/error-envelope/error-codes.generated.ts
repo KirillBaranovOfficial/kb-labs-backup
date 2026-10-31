@@ -266,6 +266,7 @@ export type CatalogErrorCode =
   | "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE"
   | "KB_SERVICE_HEALTH_TIMEOUT"
   | "KB_SERVICE_UNAVAILABLE"
+  | "KB_STATE_BROKER_PERSISTENCE_CORRUPT"
   | "KB_TOOLCHAIN_EXTERNAL_TIMEOUT"
   | "KB_TOOLCHAIN_PNPM_UNAVAILABLE"
   | "KB_UPDATE_APPLY_FAILED"
@@ -547,6 +548,7 @@ export interface CatalogTemplateParameters {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": { "connectionId": string };
   "KB_SERVICE_HEALTH_TIMEOUT": Record<never, never>;
   "KB_SERVICE_UNAVAILABLE": Record<never, never>;
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": Record<never, never>;
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "argsSummary": string; "elapsed": string; "nextCommand": string; "tool": string };
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "nextCommand": string; "version": string };
   "KB_UPDATE_APPLY_FAILED": { "version": string };
@@ -828,6 +830,7 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": { "connectionId": string };
   "KB_SERVICE_HEALTH_TIMEOUT": Record<string, never>;
   "KB_SERVICE_UNAVAILABLE": { "service"?: string; "status"?: string; "timeout"?: string };
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": Record<string, never>;
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "argsSummary": string; "elapsed": string; "nextCommand": string; "tool": string; "stderrTail": string; "diagnosticPath"?: string; "logPath"?: string };
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "nextCommand": string; "version": string; "diagnosticPath"?: string; "logPath"?: string };
   "KB_UPDATE_APPLY_FAILED": { "version": string; "diagnosticPath"?: string; "logPath"?: string };
@@ -1132,6 +1135,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": [],
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["argsSummary","elapsed","nextCommand","tool"],
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["nextCommand","version"],
   "KB_UPDATE_APPLY_FAILED": ["version"],
@@ -1413,6 +1417,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": [],
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["argsSummary","elapsed","tool"],
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["version"],
   "KB_UPDATE_APPLY_FAILED": ["version"],
@@ -1694,6 +1699,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": [],
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["nextCommand"],
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["nextCommand"],
   "KB_UPDATE_APPLY_FAILED": [],
@@ -1975,6 +1981,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": [],
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["argsSummary","elapsed","nextCommand","tool"],
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["nextCommand","version"],
   "KB_UPDATE_APPLY_FAILED": ["version"],
@@ -2256,6 +2263,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": [],
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["argsSummary","elapsed","tool"],
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["version"],
   "KB_UPDATE_APPLY_FAILED": ["version"],
@@ -2537,6 +2545,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": [],
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": [],
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["nextCommand"],
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["nextCommand"],
   "KB_UPDATE_APPLY_FAILED": [],
@@ -2818,6 +2827,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": ["service","status","timeout"],
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": [],
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["tool","argsSummary","elapsed","stderrTail","nextCommand","diagnosticPath","logPath"],
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["diagnosticPath","logPath"],
   "KB_UPDATE_APPLY_FAILED": ["diagnosticPath","logPath"],
@@ -3099,6 +3109,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": { "connectionId": string };
   "KB_SERVICE_HEALTH_TIMEOUT": Record<never, never>;
   "KB_SERVICE_UNAVAILABLE": Record<never, never>;
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": Record<never, never>;
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "argsSummary": string; "elapsed": string; "tool": string };
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "version": string };
   "KB_UPDATE_APPLY_FAILED": { "version": string };
@@ -3380,6 +3391,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": Record<never, never>;
   "KB_SERVICE_HEALTH_TIMEOUT": Record<never, never>;
   "KB_SERVICE_UNAVAILABLE": Record<never, never>;
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": Record<never, never>;
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "nextCommand": string };
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "nextCommand": string };
   "KB_UPDATE_APPLY_FAILED": Record<never, never>;
@@ -3661,6 +3673,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": Record<never, never>;
   "KB_SERVICE_HEALTH_TIMEOUT": Record<never, never>;
   "KB_SERVICE_UNAVAILABLE": Record<never, never>;
+  "KB_STATE_BROKER_PERSISTENCE_CORRUPT": Record<never, never>;
   "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": Record<never, never>;
   "KB_TOOLCHAIN_PNPM_UNAVAILABLE": Record<never, never>;
   "KB_UPDATE_APPLY_FAILED": Record<never, never>;

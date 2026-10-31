@@ -20,7 +20,7 @@ import {
   resolveServiceListenAddress,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
-import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import { createProjectRegistry, resolvePlatformDataRoot } from "@kb-labs/core-project-registry";
 import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import type { PlatformAssemblyHook } from "@kb-labs/core-runtime";
 import {
@@ -83,7 +83,7 @@ interface InternalModuleSpec {
   upstreamName: string;
   prefix: string;
   rewritePrefix?: string;
-  setup: (ctx: ServiceContext) => Promise<Teardown>;
+  setup: (ctx: ServiceContext, platformDataRoot: string) => Promise<Teardown>;
 }
 
 const INTERNAL_MODULES: readonly InternalModuleSpec[] = [
@@ -109,6 +109,7 @@ const INTERNAL_MODULES: readonly InternalModuleSpec[] = [
 interface PreparedHost {
   settings: HostSettings;
   upstreams: GatewayUpstreams;
+  platformDataRoot: string;
   gatewayAddress?: string;
 }
 
@@ -317,7 +318,8 @@ export async function createHostConfig(
           );
           gatewayAddress = `http://${INTERNAL_BIND_HOST}:${listenAddress.port}`;
         }
-        return { settings, upstreams, gatewayAddress };
+        const platformDataRoot = await resolvePlatformDataRoot(ctx.platformRoot);
+        return { settings, upstreams, platformDataRoot, gatewayAddress };
       } catch (error) {
         releaseResolveHook();
         throw error;
@@ -339,7 +341,7 @@ export async function createHostConfig(
       // Internal modules never bind beyond loopback; no host env override.
       defaultHost: INTERNAL_BIND_HOST,
       setup: async (ctx) => {
-        const { settings } = await prepare(ctx);
+        const { settings, platformDataRoot } = await prepare(ctx);
         try {
           const teardown = await (async (): Promise<Teardown> => {
             if (!isSelected(settings, spec.id)) {
@@ -349,7 +351,7 @@ export async function createHostConfig(
               return skipped();
             }
             assertInternalAddress(ctx, spec.serviceId);
-            return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
+            return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) }, platformDataRoot);
           })();
           return releaseHookBeforeTeardown(teardown);
         } catch (error) {

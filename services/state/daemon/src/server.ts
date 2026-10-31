@@ -1,6 +1,11 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import { InMemoryStateBroker } from "@kb-labs/core-state-broker";
 import {
+  InMemoryStateBroker,
+  type StateBroker,
+} from "@kb-labs/core-state-broker";
+import { AppendOnlyJournalStateBroker } from "./backends/append-only-journal.js";
+import {
+  createErrorEnvelope,
   createContextLogger,
   type IContextLogger,
   type ILogger,
@@ -35,8 +40,8 @@ function createFallbackLogger(): IContextLogger {
   });
 }
 
-export class StateDaemonServer {
-  private readonly broker = new InMemoryStateBroker();
+class StateDaemonRuntime {
+  private broker: StateBroker = new InMemoryStateBroker();
   private readonly observability = new HttpObservabilityCollector({
     serviceId: "state-daemon",
     serviceType: "state-daemon",
@@ -45,8 +50,12 @@ export class StateDaemonServer {
   });
   private readonly logger: IContextLogger;
   private server: FastifyInstance | null = null;
+  private acceptingRequests = true;
 
-  constructor(private readonly config: StateDaemonConfig = {}) {
+  constructor(
+    private readonly config: StateDaemonConfig = {},
+    private readonly platformDataRoot?: string,
+  ) {
     this.logger = createContextLogger(config.logger ?? createFallbackLogger(), {
       applicationId: "kb-labs",
       serviceId: "state-daemon",
@@ -64,79 +73,128 @@ export class StateDaemonServer {
     }
     const host = this.config.host ?? "localhost";
 
-    const server = Fastify({
-      logger: false,
-      bodyLimit: 1048576,
-    });
-
-    server.addHook("onRequest", async (request, reply) => {
-      const requestId =
-        (request.headers["x-request-id"] as string | undefined) || randomUUID();
-      const traceId =
-        (request.headers["x-trace-id"] as string | undefined) || randomUUID();
-
-      request.id = requestId;
-      reply.header("X-Request-Id", requestId);
-      reply.header("X-Trace-Id", traceId);
-
-      request.kbLogger = createHttpLogger(this.logger, {
-        serviceId: "state-daemon",
-        layer: "service",
-        component: "http-request",
-        requestId,
-        traceId,
-        method: request.method,
-        url: request.url,
-        operation: "http.request",
-      });
-      request.kbLogger.debug("HTTP request started");
-
-      if (request.method === "OPTIONS") {
-        reply.code(204).send();
-      }
-    });
-    server.addHook("onResponse", async (request, reply) => {
-      const logger = request.kbLogger;
-      if (!logger) {
-        return;
+    let server: FastifyInstance | null = null;
+    this.acceptingRequests = true;
+    try {
+      if (this.platformDataRoot) {
+        await this.broker.stop();
+        const broker = await AppendOnlyJournalStateBroker.open(
+          this.platformDataRoot,
+        );
+        this.broker = broker;
+        if (broker.journalWasCorrupt) {
+          const diagnostic = createErrorEnvelope(
+            "KB_STATE_BROKER_PERSISTENCE_CORRUPT",
+          );
+          this.logger.warn(diagnostic.message, {
+            code: diagnostic.code,
+            hint: diagnostic.hint,
+          });
+        }
       }
 
-      logger.info("HTTP request completed", {
-        "http.status_code": reply.statusCode,
+      const instance = Fastify({
+        logger: false,
+        bodyLimit: 1048576,
       });
-    });
-    server.addHook("onSend", async (_request, reply, payload) => {
-      reply.header("Access-Control-Allow-Origin", "*");
-      reply.header(
-        "Access-Control-Allow-Methods",
-        "GET, PUT, DELETE, POST, OPTIONS",
-      );
-      reply.header("Access-Control-Allow-Headers", "Content-Type");
-      return payload;
-    });
+      server = instance;
+      this.server = instance;
 
-    await registerOpenAPI(server, {
-      title: "KB Labs State Daemon",
-      description: "State broker service for persistent cross-invocation state",
-      version: "1.2.0",
-      servers: [{ url: `http://${host}:${port}`, description: "Local dev" }],
-      ui: false,
-    });
+      instance.addHook("onRequest", async (request, reply) => {
+        if (!this.acceptingRequests) {
+          reply.code(503).send();
+          return;
+        }
+        const requestId =
+          (request.headers["x-request-id"] as string | undefined) ||
+          randomUUID();
+        const traceId =
+          (request.headers["x-trace-id"] as string | undefined) || randomUUID();
 
-    this.observability.register(server);
-    this.registerRoutes(server);
-    this.observability.recordOperation("state.bootstrap", 0, "ok");
-    this.server = server;
+        request.id = requestId;
+        reply.header("X-Request-Id", requestId);
+        reply.header("X-Trace-Id", traceId);
 
-    await server.listen(getListenOptions(port, host));
+        request.kbLogger = createHttpLogger(this.logger, {
+          serviceId: "state-daemon",
+          layer: "service",
+          component: "http-request",
+          requestId,
+          traceId,
+          method: request.method,
+          url: request.url,
+          operation: "http.request",
+        });
+        request.kbLogger.debug("HTTP request started");
+
+        if (request.method === "OPTIONS") {
+          reply.code(204).send();
+        }
+      });
+      instance.addHook("onResponse", async (request, reply) => {
+        const logger = request.kbLogger;
+        if (!logger) {
+          return;
+        }
+
+        logger.info("HTTP request completed", {
+          "http.status_code": reply.statusCode,
+        });
+      });
+      instance.addHook("onSend", async (_request, reply, payload) => {
+        reply.header("Access-Control-Allow-Origin", "*");
+        reply.header(
+          "Access-Control-Allow-Methods",
+          "GET, PUT, DELETE, POST, OPTIONS",
+        );
+        reply.header("Access-Control-Allow-Headers", "Content-Type");
+        return payload;
+      });
+
+      await registerOpenAPI(instance, {
+        title: "KB Labs State Daemon",
+        description:
+          "State broker service for persistent cross-invocation state",
+        version: "1.2.0",
+        servers: [{ url: `http://${host}:${port}`, description: "Local dev" }],
+        ui: false,
+      });
+
+      this.observability.register(instance);
+      this.registerRoutes(instance);
+      this.observability.recordOperation("state.bootstrap", 0, "ok");
+      await instance.listen(getListenOptions(port, host));
+    } catch (startupError) {
+      this.acceptingRequests = false;
+      const cleanup = await Promise.allSettled([
+        Promise.resolve().then(() => server?.close()),
+        Promise.resolve().then(() => this.broker.stop()),
+      ]);
+      this.server = null;
+      this.broker = new InMemoryStateBroker();
+      const cleanupErrors = cleanup
+        .filter(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        )
+        .map((result) => result.reason);
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(
+          [startupError, ...cleanupErrors],
+          "State Daemon startup and cleanup failed.",
+        );
+      }
+      throw startupError;
+    }
   }
 
   async stop(): Promise<void> {
-    await this.broker.stop();
     if (this.server) {
+      this.acceptingRequests = false;
       await this.server.close();
       this.server = null;
     }
+    await this.broker.stop();
   }
 
   private getBrokerHealth() {
@@ -296,6 +354,34 @@ export class StateDaemonServer {
   }
 }
 
+export class StateDaemonServer {
+  private readonly runtime: StateDaemonRuntime;
+
+  constructor(config: StateDaemonConfig = {}) {
+    this.runtime = new StateDaemonRuntime(config);
+  }
+
+  async start(): Promise<void> {
+    await this.runtime.start();
+  }
+
+  async stop(): Promise<void> {
+    await this.runtime.stop();
+  }
+}
+
+/** Internal host composition entry point; omitted from the package root. */
+export function createDurableStateDaemon(
+  config: StateDaemonConfig,
+  platformDataRoot: string,
+): Pick<StateDaemonServer, "start" | "stop"> {
+  const runtime = new StateDaemonRuntime(config, platformDataRoot);
+  return {
+    start: () => runtime.start(),
+    stop: () => runtime.stop(),
+  };
+}
+
 function mapBrokerHealthStatus(
   status: "ok" | "degraded" | "shutting_down",
 ): ServiceHealthStatus {
@@ -309,7 +395,7 @@ function mapBrokerHealthStatus(
 }
 
 function buildBrokerChecks(
-  health: Awaited<ReturnType<InMemoryStateBroker["getHealth"]>>,
+  health: Awaited<ReturnType<StateBroker["getHealth"]>>,
 ): ObservabilityCheck[] {
   return [
     {
@@ -326,7 +412,7 @@ function buildBrokerChecks(
 }
 
 function buildBrokerMetricLines(
-  stats: Awaited<ReturnType<InMemoryStateBroker["getStats"]>>,
+  stats: Awaited<ReturnType<StateBroker["getStats"]>>,
 ): string[] {
   return [
     "# HELP state_broker_entries_total Total entries stored by the state broker",

@@ -1,6 +1,6 @@
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
-import { StateDaemonServer } from "./server.js";
+import { createDurableStateDaemon, StateDaemonServer } from "./server.js";
 
 /**
  * State daemon service body. Importable and side-effect-free: it only starts
@@ -10,12 +10,15 @@ export async function setup({
   port,
   host,
   logger,
-}: ServiceContext): Promise<() => Promise<void>> {
-  const server = new StateDaemonServer({
+}: ServiceContext, platformDataRoot?: string): Promise<() => Promise<void>> {
+  const config = {
     port,
     host,
     logger,
-  });
+  };
+  const server = platformDataRoot
+    ? createDurableStateDaemon(config, platformDataRoot)
+    : new StateDaemonServer(config);
   await server.start();
   return () => server.stop();
 }
