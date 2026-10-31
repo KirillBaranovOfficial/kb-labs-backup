@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from adapter_defaults_steps import (_assert_missing_embeddings, _assert_vector_store_restart,
+from adapter_defaults_steps import (_assert_missing_embeddings, _assert_missing_vector_store, _assert_vector_store_restart,
                                     _assert_no_network_defaults, _assert_required_upstreams_ready, _json, _restore_platform_adapter_fixture,
                                     _run_from_registered_project, run_adapter_default_steps,
                                     _assert_no_project_adapter_config, _assert_missing_gateway_dispatch_error)
@@ -26,6 +26,33 @@ from invocations import catalogued_error_hint, catalogued_error_message
 
 
 class InstalledDefaultAdapterGapTests(unittest.TestCase):
+    # case: S-054.6
+    def test_missing_vector_store_journey_rejects_stack_trace_output(self):
+        with tempfile.TemporaryDirectory(prefix="journey-vector-missing-") as directory:
+            project = Path(directory) / "project"
+            project.mkdir()
+            env = {"HOME": directory, "KB_JOURNEY_SERVICE_TOKEN": "journey-token"}
+            platform_root = Path(directory) / "platform"
+            error = {"ok": False, "error": {
+                "code": "KB_ADAPTER_CREDENTIALS_MISSING",
+                "message": "Adapter embeddings is missing OPENAI_API_KEY.",
+                "details": {"service": "embeddings"},
+            }}
+
+            def runner(command, **kwargs):
+                if command[:2] == ["kb-create", "status"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                        "host": {"healthUrl": "http://gateway.test/health"},
+                    }}), "")
+                return subprocess.CompletedProcess(command, 1, json.dumps(error), "Traceback (most recent call last):")
+
+            def fake_open_http(_urlopen, request, *, timeout, env):
+                return 200, json.dumps({"ok": True, "data": None}).encode(), {}
+
+            with patch("adapter_defaults_steps.open_http", side_effect=fake_open_http):
+                with self.assertRaisesRegex(RuntimeError, "printed a stack trace"):
+                    _assert_missing_vector_store(runner, env, project, platform_root)
+
     # case: S-054.24
     def test_implicit_embeddings_reports_missing_key_and_exact_command(self):
         project = Path(tempfile.mkdtemp(prefix="journey-embeddings-default-"))
@@ -80,7 +107,13 @@ class InstalledDefaultAdapterGapTests(unittest.TestCase):
             project = Path(directory) / "project"
             project.mkdir()
             platform_root = Path(directory) / "platform"
-            env = {"HOME": directory, "KB_JOURNEY_SERVICE_TOKEN": "journey-token"}
+            project_id = "fixture-project"
+            kb_home = Path(directory) / ".kb"
+            kb_home.mkdir()
+            (kb_home / "projects.json").write_text(json.dumps({"projects": [
+                {"id": project_id, "path": str(project.resolve())},
+            ]}))
+            env = {"HOME": directory, "KB_HOME": str(kb_home), "KB_JOURNEY_SERVICE_TOKEN": "journey-token"}
             commands = []
             records = {}
 
@@ -98,7 +131,7 @@ class InstalledDefaultAdapterGapTests(unittest.TestCase):
                 payload = json.loads(request.data)
                 if request.full_url.endswith("/upsert"):
                     records[payload["args"][1], payload["args"][0][0]["id"]] = payload["args"][0][0]
-                    vector_database = platform_root / "state" / "data" / "vector-store" / "vectors.sqlite"
+                    vector_database = kb_home / "state" / project_id / "vector-store" / "vectors.sqlite"
                     vector_database.parent.mkdir(parents=True, exist_ok=True)
                     vector_database.touch()
                     result = None
@@ -756,7 +789,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         vectors, namespace = request_body["args"]
                         for record in vectors:
                             vector_records[namespace, record["id"]] = record
-                        vector_database = install_root / "state" / "data" / "vector-store" / "vectors.sqlite"
+                        vector_database = registry_home / "state" / project_id / "vector-store" / "vectors.sqlite"
                         vector_database.parent.mkdir(parents=True, exist_ok=True)
                         vector_database.touch()
                         return io.BytesIO(json.dumps({"ok": True, "data": None}).encode())

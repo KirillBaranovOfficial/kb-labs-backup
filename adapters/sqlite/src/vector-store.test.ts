@@ -55,8 +55,50 @@ describe('SQLite vector store', () => {
   it('registers the SQLite package as the vectorStore catalogue default', () => {
     expect(manifest.defaultFor?.vectorStore).toEqual(['vector-store']);
     expect(manifest.configSchema?.vectorFilename).toMatchObject({
-      pathBase: 'platformData',
-      default: 'vector-store/vectors.sqlite',
+      defaultPath: { root: 'projectState', segments: ['vector-store', 'vectors.sqlite'] },
     });
+  });
+
+  // case: S-280.1
+  it('rejects empty, non-finite, and zero-magnitude vectors before storing them', async () => {
+    const store = await createStore();
+    const invalidVectors = [[], [Number.NaN], [Number.POSITIVE_INFINITY], [0, 0]];
+
+    for (const [index, vector] of invalidVectors.entries()) {
+      await expect(store.upsert([{ id: `invalid-${index}`, vector }])).rejects.toMatchObject({
+        code: 'KB_RUNTIME_INPUT_INVALID', details: { field: 'vector' },
+      });
+    }
+    expect(await store.count()).toBe(0);
+  });
+
+  // case: S-280.2
+  it('rejects invalid and dimension-mismatched search queries', async () => {
+    const store = await createStore();
+    await store.upsert([{ id: 'valid', vector: [1, 0] }]);
+
+    for (const query of [[], [Number.NaN], [Number.NEGATIVE_INFINITY], [0, 0], [1]]) {
+      await expect(store.search(query, 10)).rejects.toMatchObject({
+        code: 'KB_RUNTIME_INPUT_INVALID', details: { field: 'vector' },
+      });
+    }
+    expect(await store.search([1, 0], 10)).toEqual([{ id: 'valid', score: 1 }]);
+  });
+
+  // case: S-280.3
+  it('rejects mixed dimensions without writing any record from the batch', async () => {
+    const store = await createStore();
+
+    await expect(store.upsert([
+      { id: 'dimension-2', vector: [1, 0] },
+      { id: 'dimension-3', vector: [1, 0, 0] },
+    ])).rejects.toMatchObject({ code: 'KB_RUNTIME_INPUT_INVALID', details: { field: 'vector' } });
+    expect(await store.count()).toBe(0);
+
+    await store.upsert([{ id: 'existing-dimension-2', vector: [0, 1] }], 'existing');
+    await expect(store.upsert([
+      { id: 'new-dimension-3', vector: [1, 0, 0] },
+    ], 'existing')).rejects.toMatchObject({ code: 'KB_RUNTIME_INPUT_INVALID', details: { field: 'vector' } });
+    expect(await store.count('existing')).toBe(1);
   });
 });

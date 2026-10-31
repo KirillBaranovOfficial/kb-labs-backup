@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { AdapterCredentialsMissingError } from '@kb-labs/sdk';
-import { OpenAILLM } from './llm.js';
+import { OpenAILLM, type OpenAILLMConfig } from './llm.js';
 import { OpenAIEmbeddings } from './embeddings.js';
 
 describe('OpenAILLM credentials', () => {
@@ -41,7 +41,9 @@ describe('OpenAILLM credentials', () => {
     const { manifest } = await import('./manifest.js');
     const adapter = new OpenAILLM({ apiKey: 'test-key' });
 
-    expect(Reflect.get(adapter, 'defaultModel')).toBe(manifest.configSchema?.model?.default);
+    expect(Reflect.get(adapter, 'model')).toBe(manifest.configSchema?.model?.default);
+    expectTypeOf<OpenAILLMConfig>().toHaveProperty('model');
+    expectTypeOf<'defaultModel' extends keyof OpenAILLMConfig ? true : false>().toEqualTypeOf<false>();
   });
 });
 
