@@ -9,6 +9,10 @@ on:
         description: Optional baseline label recorded in batch metadata; the build compares against the default branch
         required: false
         type: string
+      cases:
+        description: Optional comma-separated journey case or step IDs for an iteration-only partial batch
+        required: false
+        type: string
   pull_request:
     paths:
       - '.github/workflows/journey-batch.yml'
@@ -87,6 +91,7 @@ jobs:
       GOTOOLCHAIN: local
       BATCH_PRODUCER_INPUT: .journey/batch-input/producer
       BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/local
+      BATCH_CASES: ${{ inputs.cases || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -109,7 +114,7 @@ jobs:
           name: journey-build-candidate
           path: ${{ env.BATCH_PRODUCER_INPUT }}
       - name: Run local journey stage
-        run: e2e/journey/batch.sh mode local "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"
+        run: e2e/journey/batch.sh mode local "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$BATCH_CASES"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -129,6 +134,7 @@ jobs:
       GOTOOLCHAIN: local
       BATCH_PRODUCER_INPUT: .journey/batch-input/producer
       BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/secured
+      BATCH_CASES: ${{ inputs.cases || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -151,7 +157,7 @@ jobs:
           name: journey-build-candidate
           path: ${{ env.BATCH_PRODUCER_INPUT }}
       - name: Run secured journey stage
-        run: e2e/journey/batch.sh mode secured "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"
+        run: e2e/journey/batch.sh mode secured "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$BATCH_CASES"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:

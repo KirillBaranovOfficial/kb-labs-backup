@@ -15,7 +15,7 @@ STAGES = ("reset", "build", "unit", "candidate", "local", "secured", "total")
 def _read_metadata(directory: Path, mode: str) -> dict[str, Any]:
     path = directory / mode / "batch-metadata.json"
     value = json.loads(path.read_text(encoding="utf-8"))
-    allowed_results = {"PASS", "FAIL", "INTERRUPTED"} if mode == "shared" else {"PASS", "FAIL"}
+    allowed_results = {"PASS", "FAIL", "PARTIAL", "INTERRUPTED"} if mode == "shared" else {"PASS", "FAIL"}
     if (not isinstance(value, dict)
             or not isinstance(value.get("stageDurationsSeconds"), dict)
             or value.get("result") not in allowed_results):
@@ -23,18 +23,23 @@ def _read_metadata(directory: Path, mode: str) -> dict[str, Any]:
     return value
 
 
-def _read_release_gate(directory: Path) -> list[str]:
+def _read_scoreboard(directory: Path) -> dict[str, Any]:
     path = directory / "case-scoreboard.json"
     value = json.loads(path.read_text(encoding="utf-8"))
-    release_gate = value.get("releaseGate") if isinstance(value, dict) else None
+    if not isinstance(value, dict) or not isinstance(value.get("partial"), bool):
+        raise ValueError(f"scoreboard partial marker is invalid: {path}")
+    selection = value.get("selection")
+    if not isinstance(selection, list) or any(not isinstance(item, str) for item in selection):
+        raise ValueError(f"scoreboard selection is invalid: {path}")
+    release_gate = value.get("releaseGate")
     modes = release_gate.get("modes") if isinstance(release_gate, dict) else None
     if not isinstance(modes, list) or any(not isinstance(mode, str) for mode in modes):
         raise ValueError(f"scoreboard releaseGate is invalid: {path}")
-    return modes
+    return value
 
 
 def mode_is_gating(directory: Path, mode: str) -> bool:
-    return mode in _read_release_gate(directory)
+    return mode in _read_scoreboard(directory)["releaseGate"]["modes"]
 
 
 def _write_metadata(path: Path, value: dict[str, Any]) -> None:
@@ -44,6 +49,18 @@ def _write_metadata(path: Path, value: dict[str, Any]) -> None:
 def write_run(path: Path, commit: str, baseline: str, build_base: str) -> None:
     path.write_text(json.dumps({"commit": commit, "baseline": baseline, "buildBase": build_base}) + "\n",
                     encoding="utf-8")
+
+
+def verify_run_commit(path: Path, current_commit: str) -> None:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    producer_commit = value.get("commit") if isinstance(value, dict) else None
+    if not isinstance(producer_commit, str) or not producer_commit:
+        raise ValueError(f"journey producer artifact has no commit identity: {path}")
+    if producer_commit != current_commit:
+        raise ValueError(
+            f"candidate artifact is bound to {producer_commit}, checked out {current_commit}; "
+            "next: rerun e2e/journey/batch.sh prepare for this commit"
+        )
 
 
 def write_stage_metadata(path: Path, mode: str, result: str, commit: str, baseline: str,
@@ -107,12 +124,14 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
     producer_metadata = _read_metadata(output, "shared")
     local_metadata = _read_metadata(output, "local")
     secured_metadata = _read_metadata(output, "secured")
-    release_gates = {
-        mode: _read_release_gate(output / mode)
+    scoreboards = {
+        mode: _read_scoreboard(output / mode)
         for mode in ("local", "secured")
     }
+    release_gates = {mode: board["releaseGate"]["modes"] for mode, board in scoreboards.items()}
     if release_gates["local"] != release_gates["secured"]:
         raise ValueError("local and secured scoreboards publish different releaseGate modes")
+    partial = any(board["partial"] for board in scoreboards.values())
     local_durations = local_metadata["stageDurationsSeconds"]
     secured_durations = secured_metadata["stageDurationsSeconds"]
     shared_durations = producer_metadata["stageDurationsSeconds"]
@@ -138,13 +157,21 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
         mode in gate_modes and result != "PASS"
         for mode, result in mode_results.items()
     )
-    overall_result = "PASS" if shared_passed and not gating_mode_failed else "FAIL"
+    overall_result = ("PARTIAL" if partial else
+                      "PASS" if shared_passed and not gating_mode_failed else "FAIL")
     run = json.loads((output / "shared" / "run.json").read_text(encoding="utf-8"))
     lines = ["# Journey batch", "", f"- Commit: `{run['commit']}`",
              f"- Baseline: `{run['baseline']}`", f"- Build base: `{run['buildBase']}`", "",
              "## Stage durations"]
     lines.extend(f"- {stage}: {durations[stage]} seconds" for stage in STAGES)
     lines.extend(["", "- Modes: local and secured", "- Reports and logs: one directory per mode", ""])
+    if partial:
+        selections = "; ".join(
+            f"{mode}=[{', '.join(scoreboards[mode]['selection'])}]"
+            for mode in ("local", "secured")
+        )
+        lines.extend([f"- Partial selection: {selections}",
+                      "- Partial evidence is iteration-only and cannot produce a gate verdict.", ""])
     lines.extend(
         f"- {mode}: {mode_results[mode]} ({'gating' if mode in gate_modes else 'non-gating for Release 1'})"
         for mode in mode_metadata
@@ -162,6 +189,13 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 4 and argv[1] == "verify-run":
+        try:
+            verify_run_commit(Path(argv[2]), argv[3])
+            return 0
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            print(f"journey batch candidate identity check failed: {error}", file=sys.stderr)
+            return 1
     if len(argv) == 6 and argv[1] == "run":
         try:
             write_run(Path(argv[2]), argv[3], argv[4], argv[5])

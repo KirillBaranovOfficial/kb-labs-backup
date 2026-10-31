@@ -44,6 +44,13 @@ result. A filtered scoreboard lists the selection and marks itself partial;
 partial evidence does not count toward case status or full-run deltas. Run the
 normal mode without `KB_JOURNEY_CASES` to produce full scoreboard evidence.
 
+For a hosted iteration, dispatch `Journey batch` with its optional `cases`
+input, for example `S-023,S-024`. The local and secured jobs resolve that set
+through the same case catalogue and prerequisite graph. Their scoreboards and
+batch summary are marked partial, and finalization exits non-zero so this
+evidence cannot pass or combine into the full-batch gate. A dispatch without
+`cases` runs the full gating batch.
+
 The installed smoke covers successful fresh installation and the registered
 project workflow and REST runtime health claims. Run these two commands to
 prove both access modes:
@@ -100,6 +107,11 @@ Callback state held in closures and `FlowGraph.states` is not covered by
 step to depend on install/start/registration producers. Those gaps are the
 follow-up stream **journey state migration**; until it lands, do not treat the
 static lints or declared edges as proof of those broader properties.
+The workflow history checkpoint runs its host restart inside the workflow
+group. After that group, the runner re-probes the declared `host-running`
+prerequisite even when the checkpoint failed, so later groups can continue if
+the installed host is still healthy; later groups remain blocked when that
+health check fails.
 
 The local run verifies loopback access without login. The secured run creates
 an isolated admin during installation, creates and activates a member through
