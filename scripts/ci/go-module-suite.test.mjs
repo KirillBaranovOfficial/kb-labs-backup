@@ -243,6 +243,11 @@ test('reusable installer workflow runs a native macOS install from the candidate
   assert.deepEqual(workflow.jobs.journey.strategy.matrix.os, ['ubuntu-latest']);
   const native = workflow.jobs.native_macos;
   assert.equal(native['runs-on'], 'macos-latest');
+  const nodeSetup = native.steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
+  assert.equal(nodeSetup.with['node-version-file'], 'package.json');
+  const coverage = workflow.jobs.coverage;
+  const coverageNodeSetup = coverage.steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
+  assert.equal(coverageNodeSetup.with['node-version-file'], 'package.json');
   const downloads = native.steps.find((step) => step.uses?.startsWith('actions/download-artifact@'));
   assert.equal(downloads.with.name, 'installer-journey-candidate');
   const setup = native.steps.find((step) => step.name === 'Install candidate natively and smoke the installed CLI');

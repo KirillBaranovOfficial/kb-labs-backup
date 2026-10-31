@@ -68,10 +68,12 @@ if [ -n "$KB_JOURNEY_ONLY" ] && [ ! -s "$ROOT/core/fixture/dist/index.js" ]; the
   exit 10
 fi
 mkdir -p "$REPORTS"
-case "$mode" in
-  local) cp "$SCOREBOARD_LOCAL" "$REPORTS/case-scoreboard.json" ;;
-  secured) cp "$SCOREBOARD_SECURED" "$REPORTS/case-scoreboard.json" ;;
-esac
+if [ "${OMIT_SCOREBOARD:-}" != "$mode" ]; then
+  case "$mode" in
+    local) cp "$SCOREBOARD_LOCAL" "$REPORTS/case-scoreboard.json" ;;
+    secured) cp "$SCOREBOARD_SECURED" "$REPORTS/case-scoreboard.json" ;;
+  esac
+fi
 printf '%s report\\n' "$mode" > "$REPORTS/$mode.json"
 if [ "$mode" = "${FAIL_MODE:-}" ] && [ ! -f "$ATTEMPT_MARKER" ]; then
   : > "$ATTEMPT_MARKER"
@@ -216,6 +218,16 @@ exec "$REAL_TAR" "$@"
             capture_output=True,
             check=False,
         )
+
+    def test_mode_without_scoreboard_fails_with_entry_cause(self):
+        env = dict(self.env, OMIT_SCOREBOARD="local")
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("produced no case scoreboard", result.stderr)
+        self.assertIn("entry exited with 0", result.stderr)
 
     # case: S-262.1
     def test_entry_runs_product_steps_in_order_and_exports_both_modes(self):

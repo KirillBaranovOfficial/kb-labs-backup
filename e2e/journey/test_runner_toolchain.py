@@ -117,7 +117,7 @@ class RunnerToolchainTagTests(unittest.TestCase):
         baseline = runner_toolchain_image(studio_manifest_input=self.studio_manifest,
                                           package_manifest_input=self.package_manifest)
         mutations = {
-            "base image": mutated_dockerfile("FROM node:24-bookworm AS toolchain",
+            "base image": mutated_dockerfile("FROM ${KB_JOURNEY_TOOLCHAIN_IMAGE} AS toolchain",
                                              "FROM node:25-bookworm AS toolchain"),
             "apt package list": mutated_dockerfile("procps iproute2 lsof",
                                                    "procps iproute2"),
@@ -169,7 +169,7 @@ class RunnerToolchainTagTests(unittest.TestCase):
 
     def test_dockerfile_without_a_toolchain_stage_is_refused(self):
         source = RUNNER_DOCKERFILE.read_text(encoding="utf-8").replace(
-            "FROM node:24-bookworm AS toolchain", "FROM node:24-bookworm")
+            "FROM ${KB_JOURNEY_TOOLCHAIN_IMAGE} AS toolchain", "FROM ${KB_JOURNEY_TOOLCHAIN_IMAGE}")
         handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix="-dockerfile", delete=False)
         with handle:
             handle.write(source)
@@ -273,9 +273,12 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
         fixture = root / "workspace"
         (fixture / "e2e" / "journey").mkdir(parents=True)
         shutil.copy2(RUNNER_DOCKERFILE, fixture / "e2e" / "journey" / "Dockerfile.runner")
+        policy_directory = fixture / "tools/clikit/toolchain"
+        policy_directory.mkdir(parents=True)
+        shutil.copy2(REPOSITORY_ROOT / "tools/clikit/toolchain/node_policy_gen.json", policy_directory)
         for name in ("journey_resources.py", "journey_values.py"):
             shutil.copy2(JOURNEY_DIR / name, fixture / "e2e" / "journey" / name)
-        (fixture / "package.json").write_text(json.dumps({"packageManager": "pnpm@11.4.0"}), encoding="utf-8")
+        shutil.copy2(REPOSITORY_ROOT / "package.json", fixture / "package.json")
         studio = fixture / "e2e" / "studio"
         studio.mkdir(parents=True)
         (studio / "package.json").write_text(json.dumps({"devDependencies": {
@@ -283,7 +286,7 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
         }}), encoding="utf-8")
         return fixture
 
-    def _fake_docker(self, bin_dir: Path, state_path: Path) -> Path:
+    def _fake_docker(self, bin_dir: Path, state_path: Path, image_argument: str) -> Path:
         bin_dir.mkdir(parents=True, exist_ok=True)
         docker = bin_dir / "docker"
         docker.write_text(
@@ -297,6 +300,10 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
             "if args[:2] == ['images', '-q']:\n"
             "    print('\\n'.join(image['id'] for image in state['images'] if image['ref'] == args[2]))\n"
             "elif args[0] == 'build':\n"
+            f"    build_args = [arg for arg in args if arg.startswith({(image_argument + '=')!r})]\n"
+            "    if len(build_args) != 1:\n"
+            f"        print('missing build argument {image_argument}', file=sys.stderr)\n"
+            "        raise SystemExit(2)\n"
             "    target = args[args.index('--target') + 1]\n"
             "    tag = args[args.index('-t') + 1]\n"
             "    label = args[args.index('--label') + 1]\n"
@@ -325,13 +332,16 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
             expected = runner_toolchain_image(
                 studio_manifest_input=fixture / "e2e" / "studio" / "package.json",
                 package_manifest_input=fixture / "package.json")
+            policy_image = json.loads((fixture / "tools/clikit/toolchain/node_policy_gen.json").read_text())[
+                "nodeBaseImage"]
+            image_argument = runner_toolchain_contract()["imageArgument"]
             bin_dir = Path(temporary) / "bin"
             state_path = Path(temporary) / "docker-state.json"
             state_path.write_text(json.dumps({"images": [
                 {"id": "id-previous", "ref": f"{TOOLCHAIN_IMAGE_REPOSITORY}:0000000000000000",
                  "label": f"{TOOLCHAIN_IMAGE_LABEL}=0000000000000000"},
             ]}), encoding="utf-8")
-            self._fake_docker(bin_dir, state_path)
+            self._fake_docker(bin_dir, state_path, image_argument)
             env = isolated_environment(
                 Path(temporary) / "home", bin_dir,
                 required_tools=("bash", "python3"),
@@ -354,6 +364,7 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
         builds = [call for call in state["calls"] if call[0] == "build"]
         self.assertEqual(builds, [["build", "--target", "toolchain", "-t", expected,
                                    "--label", f"{TOOLCHAIN_IMAGE_LABEL}={expected.split(':', 1)[1]}",
+                                   "--build-arg", f"{image_argument}={policy_image}",
                                    "-f", "e2e/journey/Dockerfile.runner", "."]])
         self.assertNotIn("id-previous", [image["id"] for image in state["images"]],
                          "the previous toolchain image must be reclaimed by its label")
@@ -371,7 +382,8 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
                 {"id": "id-stuck", "ref": f"{TOOLCHAIN_IMAGE_REPOSITORY}:0000000000000000",
                  "label": f"{TOOLCHAIN_IMAGE_LABEL}=0000000000000000"},
             ]}), encoding="utf-8")
-            docker = self._fake_docker(bin_dir, state_path)
+            image_argument = runner_toolchain_contract()["imageArgument"]
+            docker = self._fake_docker(bin_dir, state_path, image_argument)
             docker.write_text(docker.read_text(encoding="utf-8").replace(
                 "elif args[:3] == ['image', 'rm', '-f']:\n"
                 "    state['images'] = [image for image in state['images'] if image['id'] != args[3]]\n",
