@@ -51,6 +51,16 @@ def _journey_modules(journey_root: Path = JOURNEY_DIR,
 
 
 class JourneyImportOrderTests(unittest.TestCase):
+    def test_runner_image_keeps_ux_contract_at_its_repository_relative_path(self):
+        from journey_resources import RUNNER_IMAGE_RESOURCES
+
+        resource = next(item for item in RUNNER_IMAGE_RESOURCES
+                        if item.source == "core/platform/contracts/ux-result")
+        self.assertEqual(
+            resource.destination,
+            "/opt/kb-journey/core/platform/contracts/ux-result",
+        )
+
     def test_workspace_layout_resolves_the_built_config_parser(self):
         env = os.environ.copy()
         env.pop("KB_JOURNEY_RESOURCE_LAYOUT", None)
@@ -117,6 +127,30 @@ class JourneyImportOrderTests(unittest.TestCase):
             0,
             f"runner input stage failed\nstdout:\n{staged.stdout}\nstderr:\n{staged.stderr}",
         )
+
+    def test_runner_marketplace_fixture_starts_from_its_bundled_workspace_closure(self):
+        from journey_resources import stage_marketplace_sync_fixture, workspace_resource
+
+        stage_marketplace_sync_fixture()
+        bundle = workspace_resource(".journey", "runner-inputs", "marketplace-sync-server.mjs")
+        with tempfile.TemporaryDirectory(prefix="journey-marketplace-runner-root-") as temporary:
+            process = subprocess.Popen(
+                ["node", str(bundle), temporary],
+                cwd=REPOSITORY_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=3)
+            except subprocess.TimeoutExpired as error:
+                process.terminate()
+                stdout, stderr = process.communicate(timeout=3)
+                self.assertEqual(process.returncode, 0, stderr)
+                self.assertTrue(stdout.splitlines(), "bundled Marketplace fixture did not emit its URL")
+                self.assertTrue(json.loads(stdout.splitlines()[0])["url"].startswith("http://127.0.0.1:"))
+            else:
+                self.fail(f"bundled Marketplace fixture exited before serving: {stdout}\n{stderr}")
 
     def test_every_journey_module_imports_first_in_a_fresh_interpreter(self):
         env = os.environ.copy()

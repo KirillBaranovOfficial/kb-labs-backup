@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after } from 'node:test';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
+import { prepareReleaseProvenance } from './release-provenance.mjs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
 import { readPlatformReleaseConfig, releaseArtifactPackageNames } from 'kb-create/scripts/platform-release-config.mjs';
 
@@ -140,9 +141,31 @@ test('versions every release-manifest artifact and preserves package code', () =
   }
 });
 
+test('sealed candidate provenance covers the complete shipped release manifest closure', () => {
+  const root = mkdtempSync(join(tmpdir(), 'journey-release-provenance-'));
+  try {
+    const packages = join(root, 'packages');
+    const packageNames = seedReleasePackages(root, packages);
+    const manifest = packageNames.map(name => ({
+      name,
+      version: '3.0.0',
+      tarball: packageFilename(name, '3.0.0'),
+    }));
+    writeFileSync(join(packages, 'manifest.json'), JSON.stringify(manifest));
+
+    const provenance = prepareReleaseProvenance(packages, 'test-revision', digestTool);
+    const sealedNames = provenance.map(item => item.package).sort();
+    assert.deepEqual(sealedNames, manifest.map(item => item.name).sort());
+    assert.ok(sealedNames.includes('@kb-labs/cli-bin'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('release-index Docker stage copies the package preparation helper', () => {
   const platformDirectory = dirname(fileURLToPath(import.meta.url));
   const dockerfile = readFileSync(join(platformDirectory, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /COPY e2e\/platform\/release-provenance\.mjs \/src\/release-provenance\.mjs/);
   assert.match(dockerfile, /COPY e2e\/platform\/journey-update-packages\.mjs \/src\/journey-update-packages\.mjs/);
   assert.match(dockerfile, /COPY tools\/kb-create\/scripts\/package-provenance\.mjs \/src\/node_modules\/kb-create\/scripts\/package-provenance\.mjs/);
   assert.match(dockerfile, /COPY tools\/kb-create\/scripts\/platform-release-config\.mjs \/src\/kb-create\/scripts\/platform-release-config\.mjs/);
