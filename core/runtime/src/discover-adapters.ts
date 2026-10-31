@@ -14,7 +14,7 @@ export interface DiscoveredAdapter {
   pkgRoot: string;
   createAdapter: (config?: unknown) => unknown;
   module: Record<string, unknown> & { manifest: AdapterManifest };
-  entrypointManifests?: Record<string, AdapterManifest>;
+  entrypointManifests: Record<string, AdapterManifest>;
 }
 
 export interface DiscoveredAdapterPath {
