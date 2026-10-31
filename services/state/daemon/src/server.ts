@@ -3,7 +3,7 @@ import {
   InMemoryStateBroker,
   type StateBroker,
 } from "@kb-labs/core-state-broker";
-import { AppendOnlyJournalStateBroker } from "../../../../core/state-broker/src/backends/append-only-journal.js";
+import { AppendOnlyJournalStateBroker } from "./backends/append-only-journal.js";
 import {
   createErrorEnvelope,
   createContextLogger,

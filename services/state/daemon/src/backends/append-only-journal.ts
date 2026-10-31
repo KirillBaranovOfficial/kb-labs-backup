@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { link, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rename, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
-import { InMemoryStateBroker } from './in-memory.js';
+import { InMemoryStateBroker } from '@kb-labs/core-state-broker';
 
 type JournalRecord =
   | { version: 1; operation: 'set'; key: string; value: unknown; expiresAt: number }
@@ -31,7 +31,9 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   static async open(dataRoot: string, cleanupIntervalMs = 30_000): Promise<AppendOnlyJournalStateBroker> {
     const broker = new AppendOnlyJournalStateBroker(dataRoot, cleanupIntervalMs);
     try {
-      await mkdir(path.dirname(broker.journalPath), { recursive: true });
+      const stateDirectory = path.dirname(broker.journalPath);
+      await mkdir(stateDirectory, { recursive: true });
+      await syncDirectoryChain(stateDirectory);
       await broker.acquireWriterLock();
       await broker.replay();
     } catch (error) {
@@ -125,13 +127,35 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
           throw new Error(`StateBroker journal already has a writer in process ${process.pid}.`);
         }
         if (!isProcessAlive(existing.pid)) {
-          await rm(this.lockPath, { force: true });
+          await this.reclaimStaleWriterLock(existing);
           continue;
         }
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     } finally {
       await rm(ownerPath, { force: true });
+    }
+  }
+
+  private async reclaimStaleWriterLock(observed: { pid: number; token: string }): Promise<void> {
+    const reclaimPath = `${this.lockPath}.reclaim`;
+    for (;;) {
+      try {
+        await mkdir(reclaimPath);
+        break;
+      } catch (error) {
+        if (!isAlreadyExists(error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+
+    try {
+      const current = await this.readWriterLock();
+      if (current?.pid === observed.pid && current.token === observed.token && !isProcessAlive(current.pid)) {
+        await rm(this.lockPath, { force: true });
+      }
+    } finally {
+      await rmdir(reclaimPath);
     }
   }
 
@@ -170,13 +194,22 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   }
 
   private async append(record: JournalRecord): Promise<void> {
-    const handle = await open(this.journalPath, 'a');
+    let created = false;
+    let handle;
+    try {
+      handle = await open(this.journalPath, 'wx');
+      created = true;
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+      handle = await open(this.journalPath, 'a');
+    }
     try {
       await handle.writeFile(`${JSON.stringify(record)}\n`, 'utf8');
       await handle.sync();
     } finally {
       await handle.close();
     }
+    if (created) await syncDirectoryChain(path.dirname(this.journalPath));
     this.journalRecords++;
   }
 
@@ -296,5 +329,20 @@ function isProcessAlive(pid: number): boolean {
     if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false;
     if (error instanceof Error && 'code' in error && error.code === 'EPERM') return true;
     throw error;
+  }
+}
+
+async function syncDirectoryChain(directory: string): Promise<void> {
+  let current = path.resolve(directory);
+  for (;;) {
+    const handle = await open(current, 'r');
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return;
+    current = parent;
   }
 }
