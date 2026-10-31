@@ -29,6 +29,9 @@ from pathlib import Path
 
 args = sys.argv[1:]
 root = Path.cwd()
+if args[-1:] == ["--help"] and args[:1] in (["commit"], ["review"]):
+    print("Registered plugin command help")
+    raise SystemExit(0)
 log = Path(os.environ["FAKE_JOURNEY_LOG"])
 with log.open("a", encoding="utf-8") as stream:
     stream.write("kb " + " ".join(args) + "\n")

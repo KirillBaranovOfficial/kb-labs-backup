@@ -11,11 +11,13 @@ import * as crypto from 'node:crypto';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 
 import {
-  writeMarketplaceLock,
   createEmptyLock,
   createMarketplaceEntry,
   addToMarketplaceLock,
   removeFromMarketplaceLock,
+  readMarketplaceLock,
+  writeMarketplaceLock,
+  DiagnosticCollector,
 } from '@kb-labs/core-discovery';
 
 import {
@@ -237,6 +239,40 @@ describe('Registry Integration', () => {
     expect(kinds).toContain('studio-widget');
 
     await registry.dispose();
+  });
+
+  it('refreshes a cached CLI capability when the platform marketplace lock changes', async () => {
+    const platformRoot = path.join(root, 'platform');
+    const projectRoot = path.join(root, 'project');
+    await fs.mkdir(platformRoot, { recursive: true });
+    await fs.mkdir(projectRoot, { recursive: true });
+    const commit = await createFakePlugin(platformRoot, '@kb-labs/commit', {
+      commands: [{ path: 'commit plan show', describe: 'Show the Commit plan' }],
+    });
+    const unrelated = await createFakePlugin(platformRoot, '@kb-labs/unrelated', {
+      workflows: [{ id: 'unrelated-workflow' }],
+    });
+    await registerPlugin(platformRoot, '@kb-labs/commit', commit.dir, commit.integrity, ['plugin', 'cli-command']);
+    await registerPlugin(platformRoot, '@kb-labs/unrelated', unrelated.dir, unrelated.integrity, ['plugin', 'workflow']);
+
+    const lock = await readMarketplaceLock(platformRoot, new DiagnosticCollector());
+    expect(lock).not.toBeNull();
+    lock!.plugins['@kb-labs/commit']!.enabled = false;
+    await writeMarketplaceLock(platformRoot, lock!);
+
+    const disabled = await openCatalog({ platformRoot, projectRoot });
+    expect(disabled.queryEntities({ kind: 'cli-command' })).toHaveLength(0);
+    await disabled.dispose();
+
+    const enabledLock = await readMarketplaceLock(platformRoot, new DiagnosticCollector());
+    expect(enabledLock).not.toBeNull();
+    enabledLock!.plugins['@kb-labs/commit']!.enabled = true;
+    await writeMarketplaceLock(platformRoot, enabledLock!);
+
+    const enabled = await openCatalog({ platformRoot, projectRoot });
+    expect(enabled.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId))
+      .toContain('commit plan show');
+    await enabled.dispose();
   });
 
   it('snapshot persistence and reload', async () => {
