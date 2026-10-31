@@ -27,6 +27,15 @@ class HostBashTests(unittest.TestCase):
             journey = repo / "e2e/journey"
             journey.mkdir(parents=True)
             (repo / "e2e/verdaccio").mkdir(parents=True)
+            shutil.copy2(ROOT / "package.json", repo / "package.json")
+            generated_policy = subprocess.run(
+                ["node", str(ROOT / "tools/clikit/toolchain/generate-node-policy.mjs"), "--root", str(repo)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(generated_policy.returncode, 0, generated_policy.stderr)
             shutil.copy2(ROOT / "e2e/verdaccio/clear-candidates.sh", repo / "e2e/verdaccio/clear-candidates.sh")
             for name in ("run.sh", "../compose-owner.sh", "candidate-services.sh", "runner-toolchain.sh", "teardown-compose.sh",
                          "container_outcomes.py", "jsonl.py"):

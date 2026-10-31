@@ -52,7 +52,7 @@ class StudioJourneyTests(unittest.TestCase):
         expected_version = studio_manifest["devDependencies"]["@playwright/test"]
         dockerfile = (Path(__file__).parent / "Dockerfile.runner").read_text()
 
-        self.assertIn("FROM ${KB_JOURNEY_TOOLCHAIN_IMAGE} AS toolchain", dockerfile)
+        self.assertIn("FROM ${KB_JOURNEY_NODE_BASE_IMAGE} AS toolchain", dockerfile)
         self.assertIn("COPY e2e/studio/package.json /tmp/studio-package.json", dockerfile)
         self.assertIn('@playwright/test"]\')', dockerfile)
         self.assertIn("ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright", dockerfile)

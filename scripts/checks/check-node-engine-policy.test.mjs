@@ -220,6 +220,7 @@ test('generated Node image contract follows the policy owner and detects JSON dr
     const policy = JSON.parse(await readFile(policyPath, 'utf8'));
     assert.equal(policy.requiredMajor, major);
     assert.equal(policy.nodeBaseImage, `node:${major}-bookworm`);
+    assert.ok(policy.nodeBaseImageArgument);
 
     const current = spawnSync(process.execPath, [generator, '--check', '--root', fixtureRoot], {
       cwd: root, encoding: 'utf8',
