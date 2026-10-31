@@ -33,8 +33,9 @@ journey_start_registry() {
 }
 
 journey_install_candidate_runtime() {
-  local index_path="$1" packages_directory="$2" install_root="$3"
-  local root="${KB_JOURNEY_WORKSPACE_SOURCE:-$(pwd)}"
+  local index_path="$1" packages_directory="$2" install_root="$3" root
+  journey_compose_require_workspace_source || return
+  root="$KB_JOURNEY_WORKSPACE_SOURCE"
   journey_start_registry || return
   (
     cd "$root/tools/kb-create"
@@ -57,8 +58,9 @@ journey_stop_registry() {
 }
 
 journey_start_candidate_registry() {
-  local packages_directory="$1" candidate_directory="$2" registry_pipe="$3"
-  local root="${KB_JOURNEY_WORKSPACE_SOURCE:-$(pwd)}"
+  local packages_directory="$1" candidate_directory="$2" registry_pipe="$3" root
+  journey_compose_require_workspace_source || return
+  root="$KB_JOURNEY_WORKSPACE_SOURCE"
   journey_start_registry
   node "$root/e2e/journey/candidate-package-registry.mjs" \
     "$packages_directory" "$candidate_directory" 0 "$JOURNEY_REGISTRY_HOST_URL" > "$registry_pipe" &
@@ -142,7 +144,9 @@ journey_stop_container_services() {
 }
 
 journey_start_host_services() {
-  local root="${KB_JOURNEY_WORKSPACE_SOURCE:-$(pwd)}"
+  local root
+  journey_compose_require_workspace_source || return
+  root="$KB_JOURNEY_WORKSPACE_SOURCE"
   local temp_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
   local host_line="127.0.0.1 origin"
   journey_start_registry

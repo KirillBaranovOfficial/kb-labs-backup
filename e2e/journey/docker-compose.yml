@@ -69,7 +69,7 @@ services:
       KB_JOURNEY_SUMMARY: /summary/journey-summary.md
     volumes:
       - ../.journey/reports:/summary
-      - ${KB_JOURNEY_WORKSPACE_SOURCE:?initialize Compose through journey_compose_init with the workspace root}:/opt/kb-workspace:ro
+      - ${KB_JOURNEY_WORKSPACE_SOURCE:?run journey_compose_init "$$ROOT" first}:/opt/kb-workspace:ro
       - ./oidc-idp/certs:/e2e-oidc-certs:ro
     networks: [journey]
     init: true
