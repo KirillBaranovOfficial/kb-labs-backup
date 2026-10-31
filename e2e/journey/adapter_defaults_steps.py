@@ -1087,6 +1087,10 @@ def _assert_missing_vector_store(
     if (result.returncode == 0 or error.get("code") != "KB_ADAPTER_CREDENTIALS_MISSING"
             or not isinstance(details, dict) or details.get("service") != "embeddings"):
         raise RuntimeError("Mind search did not reach the implicit embeddings provider")
+    output = f"{result.stdout}\n{result.stderr}".lower()
+    if ("traceback" in output or "goroutine " in output or "panic:" in output
+            or "stack trace" in output or "\n    at " in output):
+        raise RuntimeError("Mind search printed a stack trace for the missing embeddings credential")
 
 
 def _assert_missing_embeddings(
@@ -1194,9 +1198,9 @@ def _assert_vector_store_restart(
     project_before = _repository_tree(project)
     gateway = _installed_gateway_url(runner, env, project, platform_root)
     _platform_adapter_call(env, token, gateway, "upsert", [[record], "s054-project"])
-    vector_database = platform_root / "state" / "data" / "vector-store" / "vectors.sqlite"
+    vector_database = _project_state_dir(project, env) / "vector-store" / "vectors.sqlite"
     if not vector_database.is_file():
-        raise RuntimeError("SQLite vector store did not create its database beneath the install platform data root")
+        raise RuntimeError("SQLite vector store did not create its database beneath the registered project's durable state")
     restart = ["kb-create", "restart", "--platform-root", str(platform_root)]
     _run(runner, restart, project, env)
     results = _platform_adapter_call(

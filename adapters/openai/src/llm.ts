@@ -29,8 +29,6 @@ export interface OpenAILLMConfig {
   baseURL?: string;
   /** Default model to use (matches configSchema field name) */
   model?: string;
-  /** Default model to use (legacy alias for model) */
-  defaultModel?: string;
   /** Organization ID (optional) */
   organization?: string;
   /** Default max output tokens when caller does not specify. Overrides the API default (4096). */
@@ -45,7 +43,7 @@ const DEFAULT_MAX_TOKENS = 16_384;
  */
 export class OpenAILLM implements ILLM {
   private client: OpenAI;
-  private defaultModel: string;
+  private model: string;
   private defaultMaxTokens: number;
   private hasApiKey: boolean;
 
@@ -57,7 +55,7 @@ export class OpenAILLM implements ILLM {
       baseURL: config.baseURL,
       organization: config.organization,
     });
-    this.defaultModel = config.model ?? config.defaultModel ?? DEFAULT_OPENAI_MODEL;
+    this.model = config.model ?? DEFAULT_OPENAI_MODEL;
     this.defaultMaxTokens = config.defaultMaxTokens ?? DEFAULT_MAX_TOKENS;
   }
 
@@ -114,7 +112,7 @@ export class OpenAILLM implements ILLM {
 
   async complete(prompt: string, options?: LLMOptions): Promise<LLMResponse> {
     this.assertCredentials();
-    const model = options?.model ?? this.defaultModel;
+    const model = options?.model ?? this.model;
     const messages: OpenAI.ChatCompletionMessageParam[] = [];
 
     // Add system prompt if provided
@@ -153,7 +151,7 @@ export class OpenAILLM implements ILLM {
 
   async *stream(prompt: string, options?: LLMOptions): AsyncIterable<string> {
     this.assertCredentials();
-    const model = options?.model ?? this.defaultModel;
+    const model = options?.model ?? this.model;
     const messages: OpenAI.ChatCompletionMessageParam[] = [];
 
     // Add system prompt if provided
@@ -192,7 +190,7 @@ export class OpenAILLM implements ILLM {
     options: LLMToolCallOptions,
   ): Promise<LLMToolCallResponse> {
     this.assertCredentials();
-    const model = options?.model ?? this.defaultModel;
+    const model = options?.model ?? this.model;
 
     // Convert LLMMessage[] to OpenAI format
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = messages.map(

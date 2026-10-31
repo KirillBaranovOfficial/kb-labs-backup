@@ -14,6 +14,17 @@ import { acquireHandle, type SharedHandle } from './shared-handle.js';
 
 const TABLE = '_kb_vectors';
 
+class InvalidVectorInputError extends TypeError {
+  readonly code = 'KB_RUNTIME_INPUT_INVALID';
+  readonly details: { field: string };
+
+  constructor(field: string, message: string) {
+    super(message);
+    this.name = 'InvalidVectorInputError';
+    this.details = { field };
+  }
+}
+
 export interface SqliteVectorStoreConfig {
   /** SQLite file path. */
   filename: string;
@@ -48,15 +59,23 @@ export class SqliteVectorStore implements IVectorStore {
     namespace?: string,
   ): Promise<VectorSearchResult[]> {
     this.checkOpen();
+    validateVector(query, 'query');
     const rows = this.db.prepare(
       `SELECT id, vector, metadata FROM ${TABLE} WHERE namespace = ?`,
     ).all(namespace ?? '') as Array<{ id: string; vector: string; metadata: string | null }>;
-    return rows
-      .map((row) => ({
+    const records = rows.map((row) => {
+      const vector = JSON.parse(row.vector) as number[];
+      validateVector(vector, `stored vector ${row.id}`);
+      if (vector.length !== query.length) {
+        throw new InvalidVectorInputError('vector', `query dimensions do not match stored vector ${row.id}`);
+      }
+      return {
         id: row.id,
-        vector: JSON.parse(row.vector) as number[],
+        vector,
         metadata: row.metadata === null ? undefined : JSON.parse(row.metadata) as Record<string, unknown>,
-      }))
+      };
+    });
+    return records
       .filter((record) => !filter || matchesFilter(record.metadata, filter))
       .map((record) => ({
         id: record.id,
@@ -69,6 +88,26 @@ export class SqliteVectorStore implements IVectorStore {
 
   async upsert(vectors: VectorRecord[], namespace?: string): Promise<void> {
     this.checkOpen();
+    for (const record of vectors) {
+      validateVector(record.vector, `record ${record.id}`);
+    }
+    const dimensions = new Set(vectors.map(({ vector }) => vector.length));
+    if (dimensions.size > 1) {
+      throw new InvalidVectorInputError('vector', 'vectors in one namespace must have matching dimensions');
+    }
+    const batchDimensions = dimensions.values().next().value as number | undefined;
+    if (batchDimensions !== undefined) {
+      const existingRows = this.db.prepare(
+        `SELECT id, vector FROM ${TABLE} WHERE namespace = ?`,
+      ).all(namespace ?? '') as Array<{ id: string; vector: string }>;
+      for (const row of existingRows) {
+        const vector = JSON.parse(row.vector) as number[];
+        validateVector(vector, `stored vector ${row.id}`);
+        if (vector.length !== batchDimensions) {
+          throw new InvalidVectorInputError('vector', `dimensions do not match stored vector ${row.id}`);
+        }
+      }
+    }
     const insert = this.db.prepare(
       `INSERT INTO ${TABLE} (namespace, id, vector, metadata)
        VALUES (?, ?, ?, ?)
@@ -154,9 +193,6 @@ export class SqliteVectorStore implements IVectorStore {
 }
 
 function cosineSimilarity(left: number[], right: number[]): number {
-  if (left.length !== right.length || left.length === 0) {
-    return 0;
-  }
   let dot = 0;
   let leftMagnitude = 0;
   let rightMagnitude = 0;
@@ -167,10 +203,16 @@ function cosineSimilarity(left: number[], right: number[]): number {
     leftMagnitude += a * a;
     rightMagnitude += b * b;
   }
-  if (leftMagnitude === 0 || rightMagnitude === 0) {
-    return 0;
-  }
   return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude));
+}
+
+function validateVector(vector: number[], label: string): void {
+  if (vector.length === 0 || !vector.every(Number.isFinite)) {
+    throw new InvalidVectorInputError('vector', `${label} must contain finite numbers and cannot be empty`);
+  }
+  if (vector.every((component) => component === 0)) {
+    throw new InvalidVectorInputError('vector', `${label} must have non-zero magnitude`);
+  }
 }
 
 function matchesFilter(metadata: Record<string, unknown> | undefined, filter: VectorFilter): boolean {

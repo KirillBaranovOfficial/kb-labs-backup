@@ -45,8 +45,7 @@ export const manifest: AdapterManifest = {
     vectorFilename: {
       type: 'string',
       description: 'Vector database path (use :memory: for an in-memory store)',
-      pathBase: 'platformData',
-      default: 'vector-store/vectors.sqlite',
+      defaultPath: { root: 'projectState', segments: ['vector-store', 'vectors.sqlite'] },
       specialValues: [':memory:'],
     },
     readonly: {

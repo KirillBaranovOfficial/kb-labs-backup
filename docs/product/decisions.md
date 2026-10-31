@@ -9,8 +9,9 @@ entrypoint and the bundled SQLite vector-store entrypoint through their adapter
 manifests' `defaultFor` declarations. OpenAI credentials remain optional during
 installation and host startup; adapter listing and doctor report a missing key,
 and the first embeddings request returns the typed credentials error with the
-platform config command. The SQLite vector store persists beneath the platform
-data root and uses brute-force cosine search for small local indexes. Its
+platform config command. The SQLite vector store persists beneath each
+registered project's durable state directory and uses brute-force cosine
+search for small local indexes. Its
 scale limits are documented; larger indexes can bind another provider.
 `snapshotManager` remains optional and unconfigured because no active Release 1
 case requires it. This supersedes the embeddings and vector-store portion of
