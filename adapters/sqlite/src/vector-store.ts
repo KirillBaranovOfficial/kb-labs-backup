@@ -82,7 +82,7 @@ export class SqliteVectorStore implements IVectorStore {
         score: cosineSimilarity(query, record.vector),
         ...(record.metadata === undefined ? {} : { metadata: record.metadata }),
       }))
-      .sort((left, right) => right.score - left.score)
+      .sort((left, right) => right.score - left.score || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
       .slice(0, limit);
   }
 

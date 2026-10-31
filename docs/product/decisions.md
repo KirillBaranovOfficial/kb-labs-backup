@@ -2,6 +2,12 @@
 
 ## 2026-10-31
 
+### SQLite vector search breaks equal-score ties by record ID
+
+SQLite vector search orders equal cosine similarity scores by stable record ID
+ascending. This makes the returned order deterministic across database query
+plans and reopenings. Case: S-280.4.
+
 ### Stock embeddings and vector storage are local-install defaults
 
 Fresh Release 1 installs select the bundled OpenAI-compatible embeddings
