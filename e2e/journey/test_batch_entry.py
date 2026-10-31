@@ -66,6 +66,9 @@ if [ -n "$KB_JOURNEY_ONLY" ] && [ ! -s "$ROOT/core/fixture/dist/index.js" ]; the
   printf 'candidate build artifact missing\\n' >&2
   exit 10
 fi
+if [ -n "${KB_JOURNEY_CASES:-}" ]; then
+  printf 'cases %s\\n' "$KB_JOURNEY_CASES" >> "$CALLS"
+fi
 mkdir -p "$REPORTS"
 case "$mode" in
   local) cp "$SCOREBOARD_LOCAL" "$REPORTS/case-scoreboard.json" ;;
@@ -293,6 +296,68 @@ exec "$REAL_TAR" "$@"
         summary = (self.root / "out/shared/summary.md").read_text()
         self.assertIn("local: FAIL (gating)", summary)
         self.assertIn("- Result: FAIL", summary)
+
+    # case: S-262.8
+    def test_explicit_case_set_is_forwarded_to_the_mode_runner(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-023,S-024"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("cases S-023,S-024", self.calls.read_text().splitlines())
+
+    # case: S-262.1
+    def test_mode_refuses_a_candidate_artifact_from_another_commit(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        run_metadata = producer / "shared/run.json"
+        run_metadata.write_text('{"commit":"another-commit","baseline":"main"}\n')
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("candidate artifact is bound to another-commit, checked out deadbeef", result.stderr)
+        self.assertNotIn("journey service-local:explore --no-build", self.calls.read_text().splitlines())
+
+    # case: S-262.8
+    def test_partial_scoreboards_cannot_produce_a_passing_batch_verdict(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["partial"] = True
+            scoreboard["selection"] = ["S-023.1", "S-024.1"]
+            scoreboard["releaseGate"] = {"modes": []}
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        result = self._run()
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertIn("- Result: PARTIAL", summary)
+        self.assertIn("S-023.1, S-024.1", summary)
+
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["partial"] = False
+            scoreboard["selection"] = []
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+        full_result = self._run()
+        self.assertEqual(full_result.returncode, 0, full_result.stderr + full_result.stdout)
+        self.assertIn("- Result: PASS", (self.root / "out/shared/summary.md").read_text())
 
     # case: S-262.1
     def test_shared_preflight_failure_fails_batch_even_when_product_lanes_do_not_run(self):
@@ -604,6 +669,12 @@ exec "$REAL_TAR" "$@"
         self.assertIn("pull_request", spec["on"])
         self.assertIn("baseline", spec["on"]["workflow_dispatch"]["inputs"])
         self.assertIn("recorded in batch metadata", spec["on"]["workflow_dispatch"]["inputs"]["baseline"]["description"])
+        self.assertIn("cases", spec["on"]["workflow_dispatch"]["inputs"])
+        self.assertIn("partial batch", spec["on"]["workflow_dispatch"]["inputs"]["cases"]["description"])
+        for mode in ("local", "secured"):
+            command = next(step["run"] for step in spec["jobs"][mode]["steps"]
+                           if step.get("name") == f"Run {mode} journey stage")
+            self.assertIn('--cases "$BATCH_CASES"', command)
         self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
         self.assertEqual(spec["concurrency"]["group"], "journey-batch")
         jobs = spec["jobs"]
@@ -625,7 +696,7 @@ exec "$REAL_TAR" "$@"
                                 and step.get("with", {}).get("name") == "journey-build-candidate"
                                 for step in steps))
             run = next(step for step in steps if "batch.sh" in step.get("run", ""))
-            self.assertEqual(run["run"], f'e2e/journey/batch.sh mode {mode} "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"')
+            self.assertEqual(run["run"], f'e2e/journey/batch.sh mode {mode} "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$BATCH_CASES"')
             upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
             self.assertEqual(upload["with"]["name"], f"journey-{mode}")
         shared_upload = next(step for step in jobs["summary"]["steps"]
