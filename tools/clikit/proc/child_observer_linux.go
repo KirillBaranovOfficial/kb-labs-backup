@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kb-labs/clikit/proc/child"
@@ -35,7 +36,7 @@ func childProcessGroupMembers(groupID int, rootStartedAt time.Time) ([]child.Pro
 		}
 		stat, err := readChildProcStat(pid)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+			if childProcessVanished(err) {
 				continue
 			}
 			return nil, fmt.Errorf("inspect Linux process %d for group membership: %w", pid, err)
@@ -43,6 +44,13 @@ func childProcessGroupMembers(groupID int, rootStartedAt time.Time) ([]child.Pro
 		processes = append(processes, childProcessObservation{PID: pid, GroupID: stat.processGroupID, Identity: strconv.FormatInt(stat.startTicks, 10), StartedAt: time.Unix(0, stat.startTicks), State: stat.state})
 	}
 	return liveOwnedGroupMembers(processes, groupID, rootStartedAt), nil
+}
+
+// childProcessVanished reports whether reading /proc/<pid>/stat failed because the process
+// exited between enumeration and the read: open fails with ENOENT, while a read after the
+// process is reaped fails with ESRCH.
+func childProcessVanished(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }
 
 type childProcStat struct {

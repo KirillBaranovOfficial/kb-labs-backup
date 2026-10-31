@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +23,7 @@ async function main() {
       issues.push({ check: 'release-build-graph', severity: 'error', message: `could not validate release packages against the devkit build graph: ${error.message}`, file: registryPath });
     }
   }
-  process.stdout.write(JSON.stringify({ issues }));
+  writeCheckResult(issues);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) await main();

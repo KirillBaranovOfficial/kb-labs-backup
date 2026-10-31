@@ -34,7 +34,6 @@
   "scripts": {
     "build": "tsup --config tsup.config.ts && pnpm run build:studio",
     "dev": "pnpm run build:studio --watch",
-    "test:cli": "vitest run",
     "build:studio": "rspack build --config rspack.studio.config.mjs",
     "clean": "rimraf dist",
     "type-check": "tsc --noEmit",

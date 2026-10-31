@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -121,17 +122,62 @@ func TestAllocateUsesNextHundredPortOffsetAndKeepsRootAddress(t *testing.T) {
 	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
-	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
+	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "", gatewayOnlyGraph())
 	if err != nil || allocated != "http://127.0.0.1:4100" {
 		t.Fatalf("allocated = %q, error = %v", allocated, err)
 	}
 	if err := registry.Register(rootB, allocated); err != nil {
 		t.Fatal(err)
 	}
-	stable, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
+	stable, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "", gatewayOnlyGraph())
 	if err != nil || stable != allocated {
 		t.Fatalf("existing root allocation = %q, error = %v", stable, err)
 	}
+}
+
+func TestAllocateRejectsNextOffsetWhoseServicePortEntersEphemeralRange(t *testing.T) {
+	base := t.TempDir()
+	rootA, _, _ := installedRootSpellings(t, filepath.Join(base, "a"))
+	rootB, _, _ := installedRootSpellings(t, filepath.Join(base, "b"))
+	registry := Registry{Path: filepath.Join(t.TempDir(), "launcher", "gateways.json")}
+	graph := contracts.ServiceGraph{Services: []contracts.Service{
+		{ID: "gateway", Port: 4000},
+		{ID: "mcp-daemon", Port: 30000},
+	}}
+	if err := registry.Register(rootA, "http://127.0.0.1:6700"); err != nil {
+		t.Fatal(err)
+	}
+	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:6700", "", graph)
+	if err == nil {
+		t.Fatalf("allocated unsafe next Gateway %q; derived mcp-daemon port would be %d", allocated, 30000+(portFromOrigin(t, allocated)-4000))
+	}
+}
+
+func TestAllocateMovesOutOfDomainDefaultIntoSafeProductDomain(t *testing.T) {
+	root := t.TempDir()
+	rootA, _, _ := installedRootSpellings(t, filepath.Join(root, "a"))
+	registry := Registry{Path: filepath.Join(t.TempDir(), "launcher", "gateways.json")}
+	graph := contracts.ServiceGraph{Services: []contracts.Service{
+		{ID: "gateway", Port: 4000},
+		{ID: "mcp-daemon", Port: 5000},
+	}}
+	allocated, err := registry.Allocate(rootA, "http://127.0.0.1:36000", "", graph)
+	if err != nil || allocated != "http://127.0.0.1:4000" {
+		t.Fatalf("allocated = %q, error = %v; want first safe product-domain Gateway", allocated, err)
+	}
+}
+
+func gatewayOnlyGraph() contracts.ServiceGraph {
+	return contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Port: 4000}}}
+}
+
+func portFromOrigin(t *testing.T, origin string) int {
+	t.Helper()
+	port, err := strconv.Atoi(strings.TrimPrefix(origin, "http://127.0.0.1:"))
+	if err != nil {
+		t.Fatalf("parse port from %q: %v", origin, err)
+	}
+	return port
 }
 
 func TestAllocateHonorsExplicitAddress(t *testing.T) {
@@ -142,7 +188,7 @@ func TestAllocateHonorsExplicitAddress(t *testing.T) {
 	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
-	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "http://127.0.0.1:4200")
+	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "http://127.0.0.1:4200", gatewayOnlyGraph())
 	if err != nil || allocated != "http://127.0.0.1:4200" {
 		t.Fatalf("explicit Gateway = %q, error = %v", allocated, err)
 	}
@@ -159,7 +205,7 @@ func TestRemoveReleasesAddressForNextRoot(t *testing.T) {
 	if err := registry.Remove(rootA); err != nil {
 		t.Fatal(err)
 	}
-	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
+	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "", gatewayOnlyGraph())
 	if err != nil || allocated != "http://127.0.0.1:4000" {
 		t.Fatalf("allocated after remove = %q, error = %v", allocated, err)
 	}
@@ -178,11 +224,11 @@ func TestStoppedRootKeepsItsGatewayAllocationUntilUninstall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stoppedRoot, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
+	stoppedRoot, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "", gatewayOnlyGraph())
 	if err != nil || stoppedRoot != "http://127.0.0.1:4100" {
 		t.Fatalf("stopped root allocation = %q, error = %v; want its recorded address", stoppedRoot, err)
 	}
-	nextRoot, err := registry.Allocate(rootC, "http://127.0.0.1:4000", "")
+	nextRoot, err := registry.Allocate(rootC, "http://127.0.0.1:4000", "", gatewayOnlyGraph())
 	if err != nil || nextRoot != "http://127.0.0.1:4200" {
 		t.Fatalf("next root allocation = %q, error = %v; want the next offset after the stopped root", nextRoot, err)
 	}
@@ -216,7 +262,7 @@ func TestAllocationReleasesAddressFromRemovedInstallation(t *testing.T) {
 	if err := layout.RemoveOwned(); err != nil {
 		t.Fatal(err)
 	}
-	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
+	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "", gatewayOnlyGraph())
 	if err != nil || allocated != "http://127.0.0.1:4100" {
 		t.Fatalf("allocation with a removed root's stale address row = %q, %v; want next free address 4100", allocated, err)
 	}
@@ -268,7 +314,7 @@ func TestRegistryUsesInstallationIdentityAcrossRootSpellings(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, spelling := range []string{installRoot, currentRoot, versionRoot} {
-		allocated, err := registry.Allocate(spelling, "http://127.0.0.1:4000", "")
+		allocated, err := registry.Allocate(spelling, "http://127.0.0.1:4000", "", gatewayOnlyGraph())
 		if err != nil || allocated != "http://127.0.0.1:4000" {
 			t.Fatalf("Allocate(%q) = %q, %v; want the existing installation address", spelling, allocated, err)
 		}

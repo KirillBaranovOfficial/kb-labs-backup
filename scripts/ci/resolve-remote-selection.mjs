@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const verificationProfile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const profile = process.argv[2];
 const outputPath = process.argv[3];
 const executable = process.argv[4];
@@ -50,8 +51,18 @@ try {
   }
   if (typeof selectionReason !== 'string') throw new Error('kb-devkit affected --json returned an invalid selection reason. Rerun the remote verification prepare job.');
   if (!Array.isArray(internalToolPackages)) throw new Error('kb-devkit affected --json returned no internal-tool package selection. Rerun the remote verification prepare job.');
+  const stages = [...verificationProfile.independentTestStages[profile], ...verificationProfile.buildDependentTestStages[profile]];
+  const stagePackages = {};
+  for (const stage of stages) {
+    const definition = verificationProfile.stages[stage];
+    if (definition.runner !== 'kb-devkit-test-package') continue;
+    if (typeof definition.packageManifest !== 'string' || !definition.packageManifest) throw new Error(`Verification stage ${stage} needs a registered package manifest.`);
+    const manifest = JSON.parse(readFileSync(path.join(root, definition.packageManifest), 'utf8'));
+    if (typeof manifest.name !== 'string' || !manifest.name) throw new Error(`Verification stage ${stage} package manifest ${definition.packageManifest} has no package name.`);
+    stagePackages[stage] = [manifest.name];
+  }
   const changedPaths = JSON.parse(readFileSync(changedFilesPath, 'utf8'));
-  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, internalToolPackages, changedPathCount: changedPaths.length, selectionReason }, selectedPackageCount: packages.length })}\n`);
+  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, internalToolPackages, stagePackages, changedPathCount: changedPaths.length, selectionReason }, selectedPackageCount: packages.length })}\n`);
   process.stdout.write(`Resolved ${packages.length} package(s) from ${changedPaths.length} path(s) using kb-devkit.\n`);
 } catch (error) {
   process.stderr.write(`${error.message}\n`);

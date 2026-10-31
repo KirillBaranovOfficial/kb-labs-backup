@@ -13,8 +13,27 @@ CHANNEL="stable"
 RESOLVED_VERSION=""
 START_TS="$(date +%s)"
 
-# Colors are enabled only for interactive terminals and when NO_COLOR is unset.
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+# BEGIN GENERATED COLOR POLICY
+kb_color_enabled() {
+  if [ -n "${NO_COLOR:-}" ]; then return 1; fi
+  if [ "${FORCE_COLOR+x}" = x ] && { [ "$FORCE_COLOR" = false ] || [ "$FORCE_COLOR" = 0 ]; }; then return 1; fi
+  if [ "${FORCE_COLOR+x}" = x ]; then
+    case "$FORCE_COLOR" in
+      ''|true) return 0 ;;
+      false|0) ;;
+      *)
+        case "$FORCE_COLOR" in *[!0123456789]*) ;;
+          *) case "$FORCE_COLOR" in *[123456789]*) return 0 ;; esac ;;
+        esac
+        ;;
+    esac
+  fi
+  case "${TERM:-}" in [Dd][Uu][Mm][Bb]) return 1 ;; esac
+  if [ -t 1 ]; then return 0; fi
+  return 1
+}
+# END GENERATED COLOR POLICY
+if kb_color_enabled; then
   C_RESET="$(printf '\033[0m')"
   C_BOLD="$(printf '\033[1m')"
   C_DIM="$(printf '\033[2m')"

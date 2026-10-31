@@ -251,6 +251,10 @@ class ProjectIdentityStepsTest(unittest.TestCase):
             env = configure_hermetic_cli_fixture(
                 Path(home), env=os.environ,
                 source_config=repo_root / ".kb" / "kb.config.jsonc")
+            # This invocation captures stdout/stderr through pipes. The CLI contract is
+            # plain output for a non-TTY when neither color override is requested.
+            env.pop("FORCE_COLOR", None)
+            env.pop("NO_COLOR", None)
             cli = repo_root / "cli/bin/dist/bin.js"
             project = Path(home) / "unregistered-project"
             project.mkdir()

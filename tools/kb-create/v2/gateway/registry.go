@@ -20,6 +20,19 @@ import (
 
 const registrySchema = 2
 
+const (
+	// AllocatedGatewayPortMin is the first automatically allocated Gateway port.
+	AllocatedGatewayPortMin = 4000
+	// AllocatedGatewayPortMax is the last automatically allocated Gateway port.
+	AllocatedGatewayPortMax = 9900
+	// AllocatedGatewayPortStep is the fixed allocation increment.
+	AllocatedGatewayPortStep = 100
+)
+
+// The lower conventional ephemeral boundary is shared by Linux and macOS;
+// derived service ports must remain below it.
+const firstEphemeralPort = 32768
+
 type Root struct {
 	PlatformRoot   string `json:"platformRoot"`
 	InstallationID string `json:"installationId"`
@@ -108,11 +121,11 @@ func OriginFromHealthURL(value string) (string, error) {
 
 // Allocate keeps a root's registered address, honors an explicit URL, and
 // otherwise advances in 100-port offsets until no installed root claims it.
-func (r Registry) Allocate(platformRoot, defaultURL, explicitURL string) (string, error) {
-	return r.AllocateWithKnown(platformRoot, defaultURL, explicitURL, nil)
+func (r Registry) Allocate(platformRoot, defaultURL, explicitURL string, graph contracts.ServiceGraph) (string, error) {
+	return r.AllocateWithKnown(platformRoot, defaultURL, explicitURL, nil, graph)
 }
 
-func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string, known []Root) (string, error) {
+func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string, known []Root, graph contracts.ServiceGraph) (string, error) {
 	if explicitURL != "" {
 		return explicitURL, nil
 	}
@@ -148,18 +161,49 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 	if err != nil {
 		return "", fmt.Errorf("release Gateway origin %q has no valid port", defaultURL)
 	}
-	for {
+	baseGatewayPort := 0
+	for _, service := range graph.Services {
+		if service.ID == "gateway" {
+			baseGatewayPort = service.Port
+			break
+		}
+	}
+	if baseGatewayPort < 1 {
+		return "", fmt.Errorf("service graph has no valid Gateway port for allocation")
+	}
+	if !inAllocatedGatewayDomain(port) || !derivedServicePortsAreAllocatable(port, baseGatewayPort, graph.Services) {
+		port = AllocatedGatewayPortMin
+	}
+	for ; port <= AllocatedGatewayPortMax; port += AllocatedGatewayPortStep {
+		if !derivedServicePortsAreAllocatable(port, baseGatewayPort, graph.Services) {
+			continue
+		}
 		candidate := *parsed
 		candidate.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port()) + ":" + strconv.Itoa(port)
 		origin := candidate.String()
 		if _, exists := claimed[origin]; !exists {
 			return origin, nil
 		}
-		port += 100
-		if port > 65535 {
-			return "", fmt.Errorf("no Gateway port remains after release port %s", parsed.Port())
+	}
+	return "", fmt.Errorf("no Gateway port remains in the allocated port domain after release port %s", parsed.Port())
+}
+
+func inAllocatedGatewayDomain(port int) bool {
+	return port >= AllocatedGatewayPortMin && port <= AllocatedGatewayPortMax &&
+		(port-AllocatedGatewayPortMin)%AllocatedGatewayPortStep == 0
+}
+
+func derivedServicePortsAreAllocatable(gatewayPort, baseGatewayPort int, services []contracts.Service) bool {
+	for _, service := range services {
+		if service.Port == 0 {
+			continue
+		}
+		port := gatewayPort + service.Port - baseGatewayPort
+		if port < 1 || port > 65535 || port >= firstEphemeralPort {
+			return false
 		}
 	}
+	return true
 }
 
 func (r Registry) Claimant(platformRoot, gatewayURL string) (Root, bool, error) {

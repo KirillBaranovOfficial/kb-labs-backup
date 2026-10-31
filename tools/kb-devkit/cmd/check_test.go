@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/kb-labs/devkit/internal/testdeadline"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
+	clikitresult "github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
@@ -224,7 +225,8 @@ checks:
   timeout_ms: 5000
 custom_checks:
   - name: slow-check
-    run: "exec sleep 3"
+    run: >-
+      sleep 3; printf '{"issues":[]}' > "$KB_DEVKIT_CHECK_RESULT_FILE"
     on: [check]
     scope: workspace
 `
@@ -250,8 +252,9 @@ custom_checks:
 	command := exec.CommandContext(ctx, script, "-q", "-F", transcript, binary, "--config", configPath, "check", "--only", "slow-check", "--json")
 	command.Dir = fixtureRoot
 	command.Env = isolatedCheckEnv(t, home)
-	command.Stdout = io.Discard
-	command.Stderr = io.Discard
+	var commandStdout, commandStderr bytes.Buffer
+	command.Stdout = &commandStdout
+	command.Stderr = &commandStderr
 	if err := command.Start(); err != nil {
 		t.Fatalf("start built check through PTY: %v", err)
 	}
@@ -287,7 +290,7 @@ custom_checks:
 		}
 	}
 	if err := command.Wait(); err != nil {
-		t.Fatalf("built check through PTY: %v", err)
+		t.Fatalf("built check through PTY: %v; stdout: %s; stderr: %s", err, commandStdout.String(), commandStderr.String())
 	}
 	transcriptBytes, err := os.ReadFile(transcript)
 	if err != nil {
@@ -345,15 +348,21 @@ checks:
   timeout_ms: 5000
 custom_checks:
   - name: stderr-check
-    run: "printf 'fixture stderr detail\\n' >&2; printf 'stderr-check\\n' >> rerun.log; exit 1"
+    run: >-
+      printf 'fixture stderr detail\n' >&2; printf 'stderr-check\n' >> rerun.log;
+      printf '{"issues":[]}' > "$KB_DEVKIT_CHECK_RESULT_FILE"; exit 1
     on: [check]
     scope: workspace
   - name: stderr-check-two
-    run: "printf 'second stderr detail\\n' >&2; printf 'stderr-check-two\\n' >> rerun.log; exit 2"
+    run: >-
+      printf 'second stderr detail\n' >&2; printf 'stderr-check-two\n' >> rerun.log;
+      printf '{"issues":[]}' > "$KB_DEVKIT_CHECK_RESULT_FILE"; exit 2
     on: [check]
     scope: workspace
   - name: 'audit check; touch injected #'
-    run: "printf 'audit check; touch injected #\\n' >> rerun.log; exit 3"
+    run: >-
+      printf 'audit check; touch injected #\n' >> rerun.log;
+      printf '{"issues":[]}' > "$KB_DEVKIT_CHECK_RESULT_FILE"; exit 3
     on: [check]
     scope: workspace
 `
@@ -389,10 +398,11 @@ custom_checks:
 	var response struct {
 		Data struct {
 			Checks []struct {
-				Check        string `json:"check"`
-				ExitCode     int    `json:"exitCode"`
-				StderrTail   string `json:"stderrTail"`
-				RerunCommand string `json:"rerunCommand"`
+				Check         string `json:"check"`
+				ExitCode      int    `json:"exitCode"`
+				ExitCodeKnown bool   `json:"exitCodeKnown"`
+				StderrTail    string `json:"stderrTail"`
+				RerunCommand  string `json:"rerunCommand"`
 			} `json:"checks"`
 		} `json:"data"`
 		Error struct {
@@ -421,7 +431,7 @@ custom_checks:
 	}
 	for _, check := range response.Data.Checks {
 		want, exists := expectedFailures[check.Check]
-		if !exists || check.ExitCode != want.exitCode || check.StderrTail != want.stderrTail {
+		if !exists || !check.ExitCodeKnown || check.ExitCode != want.exitCode || check.StderrTail != want.stderrTail {
 			t.Fatalf("failure record = %#v, want check, process status, and stderr from the fixture", check)
 		}
 		if check.RerunCommand == "" {
@@ -600,9 +610,53 @@ func TestCheckFailureEnvelopeUsesStandardsViolationCodeAndData(t *testing.T) {
 	}
 }
 
+// case: S-179.44
+func TestCheckHumanWarningsAreNonBlocking(t *testing.T) {
+	results := map[string]checks.PackageResult{
+		"@acme/demo": {
+			Package: workspace.Package{Name: "@acme/demo", RelPath: "packages/demo", Category: "ts-lib"},
+			Issues:  []checks.Issue{{Check: "warning-check", Severity: checks.SeverityWarning, Message: "informational finding"}},
+		},
+	}
+	var humanOutput bytes.Buffer
+	restoreOutput := clikitcommand.SetOutputWriter(&humanOutput)
+	defer restoreOutput()
+	if err := outputCheckHuman(results, &config.DevkitConfig{}, map[string]int{"ts-lib": 1}, 1); err != nil {
+		t.Fatalf("warning-only check returned %v, want success", err)
+	}
+	if output := humanOutput.String(); !strings.Contains(output, "warning") || !strings.Contains(output, "informational finding") {
+		t.Fatalf("human output = %q, want warning label and finding text", output)
+	}
+	jsonErr := outputCheckJSON(results, &config.DevkitConfig{}, map[string]int{"ts-lib": 1}, 1)
+	jsonData, ok := clikitresult.ReturnedData(jsonErr)
+	if !ok {
+		t.Fatalf("warning-only JSON result = %v, want returned JSON data", jsonErr)
+	}
+	jsonResult, ok := jsonData.(checkJSONResult)
+	if !ok {
+		t.Fatalf("warning-only JSON data has type %T, want checkJSONResult", jsonData)
+	}
+	if !jsonResult.OK || jsonResult.Summary.Errors != 0 || jsonResult.Summary.Warnings != 1 {
+		t.Fatalf("warning-only JSON result = %#v, want ok with 0 errors and 1 warning", jsonResult)
+	}
+	packageResult, ok := jsonResult.Packages["@acme/demo"]
+	if !ok || !packageResult.OK || len(packageResult.Issues) != 1 || packageResult.Issues[0].Severity != checks.SeverityWarning {
+		t.Fatalf("warning-only JSON package result = %#v, want one warning issue and ok package", packageResult)
+	}
+	results["@acme/demo"] = checks.PackageResult{
+		Package: workspace.Package{Name: "@acme/demo", RelPath: "packages/demo", Category: "ts-lib"},
+		Issues:  []checks.Issue{{Check: "error-check", Severity: checks.SeverityError, Message: "blocking finding"}},
+	}
+	err := outputCheckHuman(results, &config.DevkitConfig{}, map[string]int{"ts-lib": 1}, 1)
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != "KB_DEVKIT_STANDARDS_VIOLATIONS" {
+		t.Fatalf("error-severity check returned %v, want standards-violation diagnostic", err)
+	}
+}
+
 // case: S-179.30
 func TestCheckExecutionFailureIsTypedAndActionable(t *testing.T) {
-	failures := []externalCheckFailure{{Check: "adapter-manifest", Cause: "external command exited with status 1", ExitCode: 1, StderrTail: "fixture detail"}}
+	failures := []externalCheckFailure{{Check: "adapter-manifest", Cause: "external command exited with status 1", ExitCode: 1, ExitCodeKnown: true, StderrTail: "fixture detail"}}
 	err := externalCheckFailureError(checkCmd, failures, nil)
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != "KB_DEVKIT_CHECK_EXECUTION_FAILED" {
@@ -637,6 +691,18 @@ func TestCheckExecutionFailureIsTypedAndActionable(t *testing.T) {
 		"b": {Issues: []checks.Issue{{Check: "adapter-manifest", CheckFailure: true, Cause: "exit 2"}}},
 	})) != 2 {
 		t.Fatal("checkExecutionFailures dropped a crashed check")
+	}
+}
+
+func TestKnownZeroExitStatusReportsActualFailureCause(t *testing.T) {
+	failures := []externalCheckFailure{{Check: "test-pyramid", Cause: "result file missing: /tmp/result.json", ExitCode: 0, ExitCodeKnown: true}}
+	err := externalCheckFailureError(checkCmd, failures, nil)
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) || !strings.Contains(diagnostic.Message, "result file missing: /tmp/result.json") {
+		t.Fatalf("diagnostic = %#v, want the actual result-file failure", err)
+	}
+	if strings.Contains(diagnostic.Message, "exited with status 0") {
+		t.Fatalf("diagnostic = %#v, must not report successful exit as the failure", diagnostic)
 	}
 }
 

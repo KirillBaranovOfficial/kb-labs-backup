@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -58,7 +59,7 @@ if (scannedPackages.size !== registeredPackages.size
   issue(workspaceRoot, 'scanned package set does not match the live devkit workspace registry');
 }
 
-process.stdout.write(JSON.stringify({ issues }));
+writeCheckResult(issues);
 
 function readStdin() {
   return new Promise((resolve, reject) => {

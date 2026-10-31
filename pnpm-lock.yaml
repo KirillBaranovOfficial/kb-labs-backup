@@ -2534,6 +2534,9 @@ importers:
 
   e2e/studio:
     devDependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared
@@ -6467,6 +6470,30 @@ importers:
 
   tools/kb-create:
     devDependencies:
+      '@kb-labs/adapters-openai':
+        specifier: workspace:*
+        version: link:../../adapters/openai
+      '@kb-labs/core-config':
+        specifier: workspace:*
+        version: link:../../core/config
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../core/project-registry
+      '@kb-labs/gateway-app':
+        specifier: workspace:*
+        version: link:../../services/gateway/app
+      '@kb-labs/host-app':
+        specifier: workspace:*
+        version: link:../../services/host/app
+      '@kb-labs/marketplace-app':
+        specifier: workspace:*
+        version: link:../../services/marketplace/app
+      '@kb-labs/marketplace-npm':
+        specifier: workspace:*
+        version: link:../../services/marketplace/npm
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../core/plugin-runtime

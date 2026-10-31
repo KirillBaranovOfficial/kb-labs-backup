@@ -373,6 +373,7 @@ export async function createHostConfig(
       }
       const logger = ctx.logger.forComponent("project-runtime");
       const registry = options.projectRegistry ?? createProjectRegistry();
+      const registryWrites = new Set<Promise<void>>();
       const overrides = options.projectRuntime ?? {};
       const launcher =
         overrides.launcher ??
@@ -413,12 +414,16 @@ export async function createHostConfig(
         ...(overrides.restart ? { restart: overrides.restart } : {}),
         getPluginSetDigest: (project) => fingerprintDiscoveryInputs([ctx.platformRoot, project.root]),
         onStarted: (project) => {
-          registry.touch(project.id).catch((error: unknown) => {
-            logger.warn("Could not record project use", {
-              projectId: project.id,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
+          const write = registry.touch(project.id)
+            .then(() => undefined)
+            .catch((error: unknown) => {
+              logger.warn("Could not record project use", {
+                projectId: project.id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            })
+            .finally(() => registryWrites.delete(write));
+          registryWrites.add(write);
         },
       });
       const hostControlCredential = process.env[catalogEnvironmentVariables.KB_HOST_CONTROL_TOKEN];
@@ -485,6 +490,7 @@ export async function createHostConfig(
             await activeWorkControl?.close();
           } finally {
             await manager.stopAll();
+            await Promise.all(registryWrites);
           }
         }
       });

@@ -252,13 +252,15 @@ type RunConfig struct {
 
 // CustomCheck is an escape-hatch checker executed as a shell command.
 type CustomCheck struct {
-	Name       string   `yaml:"name"`
-	Run        string   `yaml:"run"`
-	Fix        string   `yaml:"fix"`
-	On         []string `yaml:"on"`       // check | gate
-	Language   string   `yaml:"language"` // any | typescript | go
-	Categories []string `yaml:"categories"`
-	Scope      string   `yaml:"scope"` // package | workspace
+	Name           string   `yaml:"name"`
+	Run            string   `yaml:"run"`
+	Fix            string   `yaml:"fix"`
+	On             []string `yaml:"on"`       // check | gate
+	Language       string   `yaml:"language"` // any | typescript | go
+	Categories     []string `yaml:"categories"`
+	AnchorPackages []string `yaml:"anchor_packages"` // package contexts where the check runs
+	RequiresBuild  []string `yaml:"requires_build"`  // workspace packages whose dist output the check reads
+	Scope          string   `yaml:"scope"`           // package | workspace
 }
 
 type ChecksConfig struct {

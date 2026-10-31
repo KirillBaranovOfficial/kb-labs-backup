@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,8 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import test from 'node:test';
 import { parseAffectedSelection } from './remote-verify-plan.mjs';
+import { aggregateVerdict } from './aggregate-remote-verdict.mjs';
+import { runStage } from './remote-verify-stage.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const readYaml = (file) => load(readFileSync(path.join(root, file), 'utf8'));
 
 // case: S-262.7
@@ -26,6 +29,7 @@ test('remote verification builds once and fans out independent and artifact-depe
   const buildSteps = build.steps;
   const independentSteps = independent.steps;
   const dependentSteps = dependent.steps;
+  const dependentResultUpload = dependentSteps.find((step) => step.name === 'Upload build-dependent test result');
 
   assert.ok(prepare.steps.some((step) => step.run === 'node scripts/ci/run-remote-prepare.mjs'));
   assert.equal(prepareResultUpload.if, 'always()');
@@ -41,6 +45,9 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(internalTools.strategy.matrix, '${{ fromJSON(needs.prepare.outputs.internal_tool_matrix) }}');
   assert.equal(internalTools['timeout-minutes'], '${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}');
   assert.equal(dependent.strategy.matrix, '${{ fromJSON(needs.build.outputs.build_dependent_matrix) }}');
+  assert.equal(dependentSteps.find((step) => step.name === 'Run build-dependent test').env.REMOTE_STAGE_RESULT, 'stage-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}.json');
+  assert.equal(dependentResultUpload.with.name, 'remote-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}');
+  assert.equal(dependentResultUpload.with.path, 'stage-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}.json');
   assert.equal(independent.strategy['fail-fast'], "${{ inputs.profile != 'candidate' }}");
   assert.equal(dependent.strategy['fail-fast'], "${{ inputs.profile != 'candidate' }}");
   assert.equal(independent.strategy['max-parallel'], '${{ fromJSON(needs.prepare.outputs.max_parallel) }}');
@@ -135,7 +142,7 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     const planRun = spawnSync(process.execPath, ['scripts/ci/remote-verify-plan.mjs', 'candidate', affectedPath, planPath, githubOutput], { cwd: root, encoding: 'utf8' });
     assert.equal(planRun.status, 0, `real candidate plan failed: ${planRun.stderr}`);
     const matrix = JSON.parse(readFileSync(planPath, 'utf8'));
-    const gatedPackages = matrix.dependent.include.flatMap(({ packages = [] }) => packages);
+    const gatedPackages = matrix.dependent.include.filter(({ stage }) => stage === profile.packageTestStage).flatMap(({ packages = [] }) => packages);
     const kbRunnerModule = 'github.com/kb-labs/kb-runner';
     assert.ok(selection.internalToolPackages.includes(kbRunnerModule));
     assert.ok(!gatedPackages.includes(kbRunnerModule));
@@ -143,6 +150,50 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
       assert.ok(gatedPackages.includes(name), `candidate plan omitted ${name}`);
     }
     assert.deepEqual(gatedPackages.sort(), selection.packages.sort());
+    assert.deepEqual(matrix.dependent.include.find(({ stage }) => stage === 'kb-create-go-suite'), {
+      stage: 'kb-create-go-suite', shard: 1, packages: ['kb-create'],
+    });
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('candidate producer, plan, stage, and aggregate preserve the manifest stage shard identity', async () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-stage-identity-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const planPath = path.join(temporaryRoot, 'plan.json');
+  const githubOutput = path.join(temporaryRoot, 'github-output');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  try {
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform","github.com/kb-labs/kb-runner"],"internalToolPackages":["github.com/kb-labs/kb-runner"],"selectionReason":"fixture"}}\'\n');
+    chmodSync(fakeDevkit, 0o755);
+    const env = { ...process.env, VERIFICATION_PROFILE: 'candidate' };
+    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], { cwd: root, encoding: 'utf8', env });
+    assert.equal(producer.status, 0, `selection producer failed: ${producer.stderr}`);
+    const planner = spawnSync(process.execPath, ['scripts/ci/remote-verify-plan.mjs', 'candidate', selectionPath, planPath, githubOutput], { cwd: root, encoding: 'utf8', env });
+    assert.equal(planner.status, 0, `plan producer failed: ${planner.stderr}`);
+    const plan = JSON.parse(readFileSync(planPath, 'utf8'));
+    const matrixEntry = plan.dependent.include.find((entry) => entry.stage === 'kb-create-go-suite');
+    assert.deepEqual(matrixEntry, { stage: 'kb-create-go-suite', shard: 1, packages: ['kb-create'] });
+
+    const result = await runStage({
+      stage: matrixEntry.stage, packageNames: matrixEntry.packages, shard: matrixEntry.shard,
+      selectedPackageCount: plan.include.length,
+      runCommand: async () => ({
+        status: 0,
+        stdout: JSON.stringify({ ok: true, data: { results: [{ Package: 'kb-create', Task: 'test', OK: true, ExitCode: 0, Stdout: '', Stderr: '' }] } }),
+        stderr: '',
+      }),
+    });
+    const verdict = aggregateVerdict({
+      sha: 'f'.repeat(40), prepare: { name: 'prepare', status: 'pass', selectedPackageCount: 1, failures: [], logTail: '' },
+      build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '' },
+      matrix: { include: [matrixEntry], internalTool: { include: [] } }, results: [result],
+      selectedPackageCount: 1, verificationProfile: 'candidate', prepareJobResult: 'success', buildJobResult: 'success',
+      githubJobs: [{ name: 'Build-dependent test 1', conclusion: 'success', steps: [], annotations: [] }],
+    });
+    assert.equal(verdict.jobs.at(-1).name, 'kb-create-go-suite:shard-1');
+    assert.equal(verdict.jobs.at(-1).status, 'pass');
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }

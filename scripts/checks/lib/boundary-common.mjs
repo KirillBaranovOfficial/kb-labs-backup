@@ -1,3 +1,4 @@
+import { writeCheckResult } from './check-result.mjs';
 /**
  * Shared helpers for the boundary / naming lints (tasks 0.2, 0.3, 0.5).
  *
@@ -181,7 +182,7 @@ export async function runLint({ name, rules, collect, argv = process.argv.slice(
       pkgName ||= checkInput.name ?? '';
     }
     if (pkgName !== ANCHOR_PACKAGE) {
-      process.stdout.write(JSON.stringify({ issues: [] }) + '\n');
+      writeCheckResult([]);
       return 0;
     }
   }
@@ -207,7 +208,7 @@ export async function runLint({ name, rules, collect, argv = process.argv.slice(
   ];
 
   if (devkitMode) {
-    process.stdout.write(JSON.stringify({ issues }) + '\n');
+    writeCheckResult(issues);
     return 0; // devkit aggregates severity
   }
 

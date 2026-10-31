@@ -44,11 +44,11 @@ test('platform release roots include adapters and exclude plugin packages', () =
   for (const plugin of registryManifest.plugins) {
     assert.equal(roots.has(plugin.pkg), false, `plugin ${plugin.pkg} must not be a platform release root`);
   }
-  const updatePlugin = fixtureArtifacts.get('@kb-labs/fixture-compat');
+  const updatePlugin = fixtureArtifacts.get('fixture-compat');
   const updateAdapter = fixtureArtifacts.get('@kb-labs/fixture-adapter');
   assert.ok(updatePlugin, 'pack-extras must produce the registered compatibility plugin artifact');
   assert.ok(updateAdapter, 'pack-extras must produce the registered compatibility adapter artifact');
-  assert.equal(updatePlugin.packageJSON.name, '@kb-labs/fixture-compat');
+  assert.equal(updatePlugin.packageJSON.name, 'fixture-compat');
   assert.equal(updateAdapter.packageJSON.name, '@kb-labs/fixture-adapter');
   assert.equal(updatePlugin.manifest.id, 'fixture-compat');
   assert.equal(updateAdapter.manifest.id, 'fixture-adapter');

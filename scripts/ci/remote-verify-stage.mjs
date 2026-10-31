@@ -45,6 +45,7 @@ export async function runStage({
   const startedAt = now();
   let command;
   let args;
+  let packageName;
   let name = stage;
   const internalToolStage = stage === 'internal-tool-tests';
   if (stage === profile.buildStage) {
@@ -71,6 +72,13 @@ export async function runStage({
     command = './tools/kb-devkit/kb-devkit';
     args = [];
     name = `${stage}:shard-${shard}`;
+  } else if (definition.runner === 'kb-devkit-test-package') {
+    packageName = packageNameFromManifest(stage, definition);
+    if (!Array.isArray(packageNames) || !packageNames.includes(packageName)) throw new Error(`Verification stage ${stage} package ${packageName} is absent from its manifest-backed package selection. Rerun the remote selector: node scripts/ci/resolve-remote-selection.mjs "$VERIFICATION_PROFILE" "$RUNNER_TEMP/affected-packages.json" ./tools/kb-devkit/kb-devkit.`);
+    if (!Number.isSafeInteger(shard) || shard < 1) throw new Error(`${stage} requires a positive shard number from the remote verification plan.`);
+    command = './tools/kb-devkit/kb-devkit';
+    args = ['run', 'test', '--packages', packageName, '--concurrency', '1', '--json'];
+    name = `${stage}:shard-${shard}`;
   } else {
     [command, args] = commandFor(definition);
   }
@@ -79,7 +87,7 @@ export async function runStage({
   const persistPartial = (status = 'running') => {
     if (!partialResultPath) return;
     const partial = {
-      name, status, selectedPackageCount: stage === profile.packageTestStage || internalToolStage ? packageNames.length : selectedPackageCount,
+      name, status, selectedPackageCount: stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? packageNames.length : selectedPackageCount,
       failures: [...sampleFailures], logTail: '', startedAt: new Date(startedAt).toISOString(),
       finishedAt: null, durationMs: Math.max(0, now() - startedAt),
       ...(stage === profile.buildStage ? { resourceLimits: buildLimits, resourcePeaks: resourcePeaks(buildSamples), lastResourceSample: buildSamples.at(-1) } : {}),
@@ -163,7 +171,7 @@ export async function runStage({
     const label = [failure.package, failure.task].filter(Boolean).join(':');
     return [label, failure.logPath, failure.logTail || failure.error].filter(Boolean).join('\n');
   }).join('\n\n');
-  const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage || internalToolStage;
+  const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package';
   const visibleLog = taskFailures.length ? taskLogOutput : isDevkitStage ? (result.stderr || '') : log;
   const failures = internalToolStage
     ? result.internalToolFailures
@@ -172,15 +180,15 @@ export async function runStage({
     : [...failingNames(log), ...taskFailures.flatMap((failure) => (failure.logTail || failure.error || '').split(/\r?\n/).filter(Boolean)), ...sampleFailures];
   const stageResult = {
     name,
-    status: result.status === 0 && sampleFailures.length === 0 ? 'pass' : 'fail',
-    selectedPackageCount: stage === profile.packageTestStage || internalToolStage ? packageNames.length : selectedPackageCount,
+    status: result.status === 0 && taskFailures.length === 0 && sampleFailures.length === 0 ? 'pass' : 'fail',
+    selectedPackageCount: stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? packageNames.length : selectedPackageCount,
     failures: [...failures, ...sampleFailures],
     taskFailures,
     logTail: boundedTail(visibleLog),
     startedAt: new Date(startedAt).toISOString(),
     finishedAt: new Date(finishedAt).toISOString(),
     durationMs: Math.max(0, finishedAt - startedAt),
-    ...(stage === profile.packageTestStage || internalToolStage ? { packages: packageNames } : {}),
+    ...(stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? { packages: packageNames } : {}),
     cache: cacheRecord(cache),
     ...(stage === profile.buildStage ? {
       resourceLimits: buildLimits,
@@ -198,8 +206,17 @@ function writeAtomicJSON(file, value) {
   renameSync(temporary, file);
 }
 
+function packageNameFromManifest(stage, definition) {
+  if (typeof definition.packageManifest !== 'string' || definition.packageManifest.length === 0) throw new Error(`Verification stage ${stage} requires a package manifest registered by its stage definition.`);
+  const manifest = JSON.parse(readFileSync(path.resolve(root, definition.packageManifest), 'utf8'));
+  if (typeof manifest.name !== 'string' || manifest.name.length === 0) throw new Error(`Verification stage ${stage} package manifest ${definition.packageManifest} has no package name.`);
+  return manifest.name;
+}
+
 function devkitTaskFailures(stage, result) {
-  if ((stage !== profile.buildStage && stage !== profile.packageTestStage) || result.status === 0) return [];
+  const taskStage = stage === profile.buildStage || stage === profile.packageTestStage
+    || stageDefinitions.find((entry) => entry.id === stage)?.runner === 'kb-devkit-test-package';
+  if (!taskStage) return [];
   let envelope;
   try {
     envelope = JSON.parse(result.stdout);
@@ -207,7 +224,16 @@ function devkitTaskFailures(stage, result) {
     return [{ error: `kb-devkit run --json returned invalid JSON: ${error.message}` }];
   }
   const results = envelope?.data?.results;
-  if (envelope?.ok !== false || !Array.isArray(results)) {
+  if (!Array.isArray(results)) {
+    return [{ error: 'kb-devkit run --json returned no structured task results.' }];
+  }
+  if (result.status === 0 && envelope?.ok !== true) {
+    return [{ error: 'kb-devkit run --json reported a non-passing envelope for a successful process.' }];
+  }
+  if (results.length === 0) {
+    return [{ error: 'kb-devkit run --json completed without executing any tasks.' }];
+  }
+  if (result.status !== 0 && envelope?.ok !== false) {
     return [{ error: 'kb-devkit run --json returned no structured task results for a failed stage.' }];
   }
   return results.filter((task) => task?.OK === false).map((task) => {

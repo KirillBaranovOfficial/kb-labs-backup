@@ -49,6 +49,24 @@ tasks:
 	}
 }
 
+func TestYAMLReleaseLaneIsPreservedOnCategory(t *testing.T) {
+	cfg, err := parseYAMLBytes([]byte(`schemaVersion: 2
+workspace:
+  categories:
+    internal-tool:
+      match: ["tools/kb-runner"]
+      preset: go-binary
+      releaseLane: internal-tool
+`))
+	if err != nil {
+		t.Fatalf("parse internal-tool category: %v", err)
+	}
+	category, ok := cfg.Workspace.FindCategory("internal-tool")
+	if !ok || category.ReleaseLane != "internal-tool" {
+		t.Fatalf("internal-tool release lane = %q, found=%t", category.ReleaseLane, ok)
+	}
+}
+
 // case: S-179.27
 func TestChecksTimeoutConfiguration(t *testing.T) {
 	cfg, err := parseYAMLBytes([]byte("checks:\n  timeout_ms: 250\n"))
@@ -167,7 +185,7 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 			},
 		},
 		Custom: []yamlCustomCheck{
-			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}, Scope: "workspace"},
+			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}, AnchorPackages: []string{"@kb-labs/web-site"}, RequiresBuild: []string{"@kb-labs/core-platform"}, Scope: "workspace"},
 		},
 	}
 
@@ -192,6 +210,9 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 	}
 	if cfg.Custom[0].Scope != "workspace" {
 		t.Fatalf("mapped custom check scope = %q, want workspace", cfg.Custom[0].Scope)
+	}
+	if len(cfg.Custom[0].AnchorPackages) != 1 || cfg.Custom[0].AnchorPackages[0] != "@kb-labs/web-site" || len(cfg.Custom[0].RequiresBuild) != 1 || cfg.Custom[0].RequiresBuild[0] != "@kb-labs/core-platform" {
+		t.Fatalf("mapped package contexts = %#v, want anchor and required build package", cfg.Custom[0])
 	}
 
 	preset := mapPreset(raw.Presets["custom"])

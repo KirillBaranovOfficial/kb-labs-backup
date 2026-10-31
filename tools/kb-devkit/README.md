@@ -134,6 +134,22 @@ Package checks follow the declared release lane: the default check runs package 
 - `results`
 
 External command-based checks declared in `custom_checks` are included in the same pipeline.
+For each invocation, kb-devkit sets `KB_DEVKIT_CHECK_RESULT_FILE` to a private
+temporary result path. The check must synchronously write its JSON
+`{ "issues": [...] }` result there before exiting. stdout and stderr are kept
+for human diagnostics; kb-devkit does not decode results from either stream.
+Missing or invalid result files are reported as execution failures naming the
+check and the file problem.
+
+Node checks under `scripts/checks/` use the shared synchronous writer:
+
+```js
+import { writeCheckResult } from './lib/check-result.mjs';
+
+writeCheckResult(issues);
+```
+
+The helper writes to `KB_DEVKIT_CHECK_RESULT_FILE` when kb-devkit sets it.
 The workspace `checks.timeout_ms` value bounds each external check. It defaults
 to 900000 milliseconds (15 minutes); the KB Labs workspace declares 2400000
 milliseconds (40 minutes) to cover its two-pass Go suite. While checks run,

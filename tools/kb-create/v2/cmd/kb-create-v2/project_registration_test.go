@@ -30,6 +30,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/internal/testprocess"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
@@ -1033,7 +1034,7 @@ func startSecuredProjectRegistrationGateway(t *testing.T) string {
 		cancel()
 		t.Fatal(err)
 	}
-	var stderr bytes.Buffer
+	var stderr testprocess.Buffer
 	command.Stderr = &stderr
 	startTestProcessGroup(t, command)
 	t.Cleanup(func() {

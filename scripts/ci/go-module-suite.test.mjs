@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { load } from 'js-yaml';
 import { nativeInstallCommands } from '../../e2e/journey/native-macos-install.mjs';
 import { discoverModules } from './go-module-suite.mjs';
+import { runExternalCheck } from '../checks/lib/run-external-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const temporaryDirectories = [];
@@ -38,7 +39,7 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
   writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      language: go\n      match:\n        - "modules/first"\n    internal-tool:\n      language: go\n      match:\n        - "modules/second"\n`);
   const invocations = path.join(fixture, 'go-invocations.jsonl');
   const fakeGo = path.join(fixture, 'go');
-  writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "{\\"args\\":\\"$*\\",\\"cwd\\":\\"$PWD\\",\\"home\\":\\"$HOME\\",\\"tmpdir\\":\\"$TMPDIR\\",\\"platform_root\\":\\"$KB_PLATFORM_ROOT\\",\\"kb_home\\":\\"$KB_HOME\\",\\"net_offset\\":\\"$KB_NET_OFFSET\\",\\"goflags\\":\\"$GOFLAGS\\",\\"deadline_scale\\":\\"$KB_TEST_DEADLINE_SCALE\\"}" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first' 'fixture/first/e2e' 'fixture/second'; fi\n`);
+  writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "{\\"args\\":\\"$*\\",\\"cwd\\":\\"$PWD\\",\\"goos\\":\\"$GOOS\\",\\"home\\":\\"$HOME\\",\\"tmpdir\\":\\"$TMPDIR\\",\\"platform_root\\":\\"$KB_PLATFORM_ROOT\\",\\"kb_home\\":\\"$KB_HOME\\",\\"net_offset\\":\\"$KB_NET_OFFSET\\",\\"goflags\\":\\"$GOFLAGS\\",\\"deadline_scale\\":\\"$KB_TEST_DEADLINE_SCALE\\"}" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first' 'fixture/first/e2e' 'fixture/second'; fi\n`);
   const chmod = spawnSync('chmod', ['+x', fakeGo]);
   assert.equal(chmod.status, 0);
 
@@ -59,6 +60,10 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const calls = readFileSync(invocations, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   const tests = calls.filter((call) => call.args.startsWith('test '));
+  const linuxVets = calls.filter((call) => call.args.startsWith('vet '));
+  assert.equal(linuxVets.length, 2, 'each discovered module gets one Linux test-file vet pass');
+  assert.ok(linuxVets.every((call) => call.goos === 'linux'));
+  assert.ok(linuxVets.every((call) => !call.args.includes('/e2e')));
   assert.equal(tests.length, 4, 'two discovered modules run in each of two TMPDIR variants');
   assert.ok(calls.some((call) => call.args.includes('fixture/first/e2e')) === false, 'e2e packages are excluded');
   assert.equal(new Set(tests.map((call) => call.tmpdir)).size, 4, 'every module run has a fresh TMPDIR root');
@@ -113,13 +118,13 @@ test('suite refuses a TMPDIR root without Unix socket path capacity before runni
   assert.equal(existsSync(invocations), false, 'preflight refusal happens before go list or go test');
 
   const gate = path.join(root, 'scripts/ci/go-module-suite-gate.mjs');
-  const registeredCheck = spawnSync(process.execPath, [gate], {
+  const registeredCheck = runExternalCheck(gate, [], {
     cwd: root,
     encoding: 'utf8',
     env: { ...process.env, TMPDIR: longDefaultTemp, GO_SUITE_LOG: invocations, KB_DEVKIT_CHECK_NAME: 'go-module-suite' },
   });
-  assert.equal(registeredCheck.status, 1, registeredCheck.stderr || registeredCheck.stdout);
-  const issue = JSON.parse(registeredCheck.stdout).issues[0];
+  assert.equal(registeredCheck.exitCode, 1, registeredCheck.stderr || registeredCheck.stdout);
+  const issue = registeredCheck.result.issues[0];
   assert.equal(issue.fix, 'Rerun with: kb-devkit check --only go-module-suite');
   assert.ok(issue.message.endsWith("Rerun with: TMPDIR='/tmp' kb-devkit check --only go-module-suite"));
   assert.equal(existsSync(invocations), false, 'registered preflight refusal happens before go list or go test');

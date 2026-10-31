@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
 import { runKbCommand } from '../../../kb-command'
-import errorCatalog from '../../../../../core/platform/src/error-envelope/errors.catalog.json'
+import { errorCatalog } from '@kb-labs/core-platform/error-envelope'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 

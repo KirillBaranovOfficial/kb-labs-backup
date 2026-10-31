@@ -44,7 +44,8 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             bin_dir.mkdir()
             compose_command = require_compose_command(self)
             env = isolated_environment(Path(temp) / "home", bin_dir,
-                                       required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "rm", *compose_command),
+                                       required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "rm",
+                                                       tuple(compose_command)),
                                        overrides={
                                            "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
                                            "KB_JOURNEY_GIT_REVISION": "test-revision",

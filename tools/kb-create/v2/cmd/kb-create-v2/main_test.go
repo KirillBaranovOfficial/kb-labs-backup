@@ -194,7 +194,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	indexPath := filepath.Join(home, "release-index.json")
-	port := freeLoopbackPort(t)
+	port := freeAllocatedGatewayPortWithOffsets(t, 0)
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Host = &contracts.HostSpec{Command: hostBinary, Args: []string{"-test.run=^TestHostExecLauncher$"},
 		Env:       map[string]string{"KB_TEST_FAKEHOST": fakehost, "KB_TEST_FAKEHOST_PORT": fmt.Sprint(port)},
@@ -824,7 +824,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 
 	runInstall := func(t *testing.T, root string) (int, string) {
 		t.Helper()
-		gatewayPort := freeLoopbackPortWithOffsets(t, serviceOffsets...)
+		gatewayPort := freeAllocatedGatewayPortWithOffsets(t, serviceOffsets...)
 		if gatewayPort == baseGatewayPort {
 			t.Fatalf("test Gateway allocation reused default port %d", baseGatewayPort)
 		}
@@ -1021,37 +1021,12 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 	}
 	source.Provenance = nil
 	graph := source.Platforms[0].Profiles["default"]
-	services := graph.Services
-	minPort, maxPort, gatewayPort := 65535, 0, 0
-	for _, service := range services {
-		if service.Port < minPort {
-			minPort = service.Port
-		}
-		if service.Port > maxPort {
-			maxPort = service.Port
-		}
+	gatewayPort := 0
+	for _, service := range graph.Services {
 		if service.ID == "gateway" {
 			gatewayPort = service.Port
 		}
 	}
-	shift, foundPortRange := freePortRangeShift(t, services, minPort, maxPort-minPort+300)
-	if !foundPortRange {
-		t.Fatal("could not find a free contiguous service-port range for shim ownership regression")
-	}
-	for i := range services {
-		oldPort := services[i].Port
-		services[i].Port += shift
-		for configIndex := range source.Platforms[0].Config {
-			source.Platforms[0].Config[configIndex].Default = strings.ReplaceAll(source.Platforms[0].Config[configIndex].Default,
-				fmt.Sprintf("127.0.0.1:%d", oldPort), fmt.Sprintf("127.0.0.1:%d", services[i].Port))
-		}
-		if services[i].ID == "gateway" {
-			gatewayPort = services[i].Port
-		}
-	}
-	graph.Services = services
-	source.Platforms[0].Profiles["default"] = graph
-	source.Platforms[0].Host = testHostOnFreePortWithPortHeadroom(t, maxPort-minPort+1500)
 	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
@@ -1141,6 +1116,29 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	install(rootB, false)
+	rootAReceipt, err := receipt.Read(platformRootForTest(t, rootA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootBReceipt, err := receipt.Read(platformRootForTest(t, rootB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootAPorts := make(map[string]int, len(rootAReceipt.Plan.ServiceGraph.Services))
+	for _, service := range rootAReceipt.Plan.ServiceGraph.Services {
+		rootAPorts[service.ID] = service.Port
+	}
+	for _, service := range rootBReceipt.Plan.ServiceGraph.Services {
+		if service.Port == 0 {
+			continue
+		}
+		if rootAPorts[service.ID] == 0 || service.Port != rootAPorts[service.ID]+100 {
+			t.Fatalf("root-b service %s port = %d, root-a port = %d; registry allocation must shift the graph by 100", service.ID, service.Port, rootAPorts[service.ID])
+		}
+		if service.Port >= 32768 {
+			t.Fatalf("root-b service %s port %d is inside the conventional Linux ephemeral range", service.ID, service.Port)
+		}
+	}
 	var secondaryStatus struct {
 		Data struct {
 			Shim map[string]any `json:"shim"`
@@ -1219,34 +1217,6 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 	}
 }
 
-func freePortRangeShift(t *testing.T, services []contracts.Service, minPort, offsets int) (int, bool) {
-	t.Helper()
-	for base := 12000; base+offsets < 64000; base += 317 {
-		listeners := make([]net.Listener, 0, len(services)*3)
-		available := true
-		for _, offset := range []int{0, 100, 200} {
-			for _, service := range services {
-				listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", base+service.Port-minPort+offset))
-				if err != nil {
-					available = false
-					break
-				}
-				listeners = append(listeners, listener)
-			}
-			if !available {
-				break
-			}
-		}
-		for _, listener := range listeners {
-			_ = listener.Close()
-		}
-		if available {
-			return base - minPort, true
-		}
-	}
-	return 0, false
-}
-
 func TestOwnershipPublicationErrorsHaveActionableEnvelopes(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "kb-platform")
 	conflict := unsupportedPlatformLayout(root, versionroot.ErrOwnershipPublicationConflict)
@@ -1268,7 +1238,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
 	launcherBinary, fakehost := binaries(t)
-	port := freeLoopbackPortWithOffset(t, 100)
+	port := freeAllocatedGatewayPortWithOffsets(t, 100)
 	root := filepath.Join(home, "kb-platform")
 	index := filepath.Join(home, "release-index.json")
 	testExecutable, err := os.Executable()

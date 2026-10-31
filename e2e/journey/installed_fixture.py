@@ -236,7 +236,7 @@ def configure_hermetic_cli_fixture(
     home = Path(home)
     home.mkdir(parents=True, exist_ok=True)
     fixture_env = dict(os.environ if env is None else env)
-    for key in ("KB_PLATFORM_ROOT", "KB_PROJECT_ROOT", "KB_HOME", "KB_NET_OFFSET"):
+    for key in ("KB_PLATFORM_ROOT", "KB_PROJECT_ROOT", "KB_HOME", "KB_NET_OFFSET", "FORCE_COLOR"):
         fixture_env.pop(key, None)
 
     fixture_env["HOME"] = str(home)

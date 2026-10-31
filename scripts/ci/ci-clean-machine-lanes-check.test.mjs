@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { runExternalCheck } from '../checks/lib/run-external-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const script = path.join(root, 'scripts/ci/ci-clean-machine-lanes-check.mjs');
@@ -54,7 +54,7 @@ test('clean-machine check preserves suite failures when its isolated HOME contai
     'exit 7',
   ].join('\n') + '\n', { mode: 0o755 });
 
-  const result = spawnSync(process.execPath, [script], {
+  const result = runExternalCheck(script, [], {
     cwd: root,
     encoding: 'utf8',
     env: {
@@ -69,8 +69,8 @@ test('clean-machine check preserves suite failures when its isolated HOME contai
     },
   });
 
-  assert.equal(result.status, 1, result.stderr || result.stdout);
-  const { issues } = JSON.parse(result.stdout);
+  assert.equal(result.exitCode, 1, result.stderr || result.stdout);
+  const { issues } = result.result;
   assert.equal(issues.length, 2);
   assert.ok(issues[0].message.includes('Journey unit tests failed.'));
   assert.ok(issues[0].message.includes('journey suite failed before cleanup'));

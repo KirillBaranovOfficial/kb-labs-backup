@@ -14,6 +14,25 @@ import (
 	"time"
 )
 
+func TestBufferAllowsConcurrentOutputSnapshot(t *testing.T) {
+	var buffer Buffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for index := 0; index < 1000; index++ {
+			_, _ = buffer.Write([]byte("output\n"))
+		}
+	}()
+	for index := 0; index < 1000; index++ {
+		_ = buffer.Len()
+		_ = buffer.String()
+	}
+	<-done
+	if buffer.Len() == 0 {
+		t.Fatal("concurrent output writer produced no bytes")
+	}
+}
+
 // case: S-261.7
 func TestStartKillsDescendantsAfterDirectProcessWasReaped(t *testing.T) {
 	var descendantPID int

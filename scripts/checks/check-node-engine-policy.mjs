@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -57,7 +58,9 @@ if (workspaceRoot === undefined) {
 if (workspaceRoot !== undefined && rootPolicy !== undefined) {
   const { requiredMajor } = parseNodeEnginePolicy(rootPolicy);
   try {
-    for (const item of nodeImageIssues(workspaceRoot, requiredMajor)) {
+    for (const item of nodeImageIssues(workspaceRoot, requiredMajor, {
+      includeJourneyRunnerContract: workspaceRoot === repositoryRoot,
+    })) {
       issue(item.file, item.message);
     }
   } catch (error) {
@@ -105,7 +108,10 @@ if (rootPolicy !== undefined) {
   }
 }
 
-process.stdout.write(JSON.stringify({ issues }));
+  writeCheckResult(issues);
+for (const finding of issues) {
+  process.stderr.write(`${finding.check}: ${finding.file}: ${finding.message}\n`);
+}
 
 function readStdin() {
   return new Promise((resolve, reject) => {

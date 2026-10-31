@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { runExternalCheck } from '../lib/run-external-check.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const checkScript = path.join(workspaceRoot, 'scripts/checks/check-plugin-package-identity.mjs');
@@ -28,13 +28,13 @@ test('plugin package identity check rejects a package name that differs from its
       { name: 'clikit', dir: 'tools/clikit', language: 'go' },
     ] },
   };
-  const mismatch = spawnSync(process.execPath, [checkScript], {
+  const mismatch = runExternalCheck(checkScript, [], {
     cwd: workspaceRoot,
     encoding: 'utf8',
     input: JSON.stringify(input),
   });
-  assert.equal(mismatch.status, 0, mismatch.stderr);
-  const mismatchIssues = JSON.parse(mismatch.stdout).issues;
+  assert.equal(mismatch.exitCode, 0, mismatch.stderr);
+  const mismatchIssues = mismatch.result.issues;
   assert.deepEqual(mismatchIssues.map(({ message }) => message), [
     'plugin package name "@example/example-entry" differs from manifest identity "@example/example"',
   ]);
@@ -46,11 +46,11 @@ test('plugin package identity check rejects a package name that differs from its
   const manifestPath = path.join(packageRoot, 'manifest.mjs');
   const manifest = await readFile(manifestPath, 'utf8');
   await writeFile(manifestPath, manifest.replace("'@example/example'", "'@example/example-entry'"));
-  const aligned = spawnSync(process.execPath, [checkScript], {
+  const aligned = runExternalCheck(checkScript, [], {
     cwd: workspaceRoot,
     encoding: 'utf8',
     input: JSON.stringify(input),
   });
-  assert.equal(aligned.status, 0, aligned.stderr);
-  assert.deepEqual(JSON.parse(aligned.stdout).issues, []);
+  assert.equal(aligned.exitCode, 0, aligned.stderr);
+  assert.deepEqual(aligned.result.issues, []);
 });

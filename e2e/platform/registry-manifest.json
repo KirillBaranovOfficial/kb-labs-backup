@@ -242,7 +242,7 @@
       "default": false
     },
     {
-      "pkg": "@kb-labs/fixture-compat",
+      "pkg": "fixture-compat",
       "description": "Journey fixture for installed plugin update compatibility",
       "default": false
     },

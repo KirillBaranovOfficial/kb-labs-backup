@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { githubJobName } from './aggregate-remote-verdict.mjs';
 import { aggregateVerdict, fetchGitHubJobEvidence } from './aggregate-remote-verdict.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
@@ -115,7 +116,7 @@ test('candidate Go suite excludes runner while its failed Go test remains an int
     prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'candidate',
     githubJobs: [
       { name: 'Build-dependent test 1', conclusion: 'success', steps: [], annotations: [] },
-      { name: 'Independent test kb-devkit-check', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Build-dependent test kb-devkit-check', conclusion: 'success', steps: [], annotations: [] },
       { name: 'Internal tool test 1', conclusion: 'success', steps: [], annotations: [] },
     ],
   });
@@ -440,7 +441,7 @@ test('GitHub job evidence fetch reads job steps and annotations from the Actions
     runCommand: (endpoint) => {
       calls.push(endpoint);
       if (endpoint.endsWith('/jobs?per_page=100')) return JSON.stringify({ jobs: [{
-        name: 'Build-dependent test journey-unit-suite', conclusion: 'failure', steps: [{ name: 'test', conclusion: 'in_progress' }],
+        name: githubJobName({ stage: profile.buildDependentTestStages.candidate[0] }), conclusion: 'failure', steps: [{ name: 'test', conclusion: 'in_progress' }],
         check_run_url: 'https://api.github.com/repos/kb-labs/workspace/check-runs/123',
       }] });
       return JSON.stringify([{ message: 'hosted runner lost communication' }]);

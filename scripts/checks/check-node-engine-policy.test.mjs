@@ -10,6 +10,7 @@ import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '../../core/plu
 import { parseDockerfileFromInstructions } from './node-engine-dockerfiles.mjs';
 import { inspectPrebuildImportGraph } from './prebuild-imports.mjs';
 import { checkAuthoredEsmDeclarationDrift } from './authored-esm-declarations.mjs';
+import { runExternalCheck } from './lib/run-external-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const checker = path.join(root, 'scripts/checks/check-node-engine-policy.mjs');
@@ -121,8 +122,10 @@ test('pre-build import rail reports dependencies resolved outside the workspace'
 test('the shipped Node policy passes the workspace check', () => {
   const result = runDevkitCheck();
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).ok, true, result.stdout);
+  const diagnostics = [result.stdout, result.stderr].filter(Boolean).join('\n');
+  assert.equal(result.status, 0, diagnostics || 'kb-devkit check exited without diagnostics');
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, true, JSON.stringify(report.issues ?? report, null, 2));
 });
 
 test('node-engine-policy check diagnoses missing external-check input', () => {
@@ -148,12 +151,13 @@ test('workspace engine policy names every package whose declaration differs', as
       packageRecord(workspaceRoot, 'packages/mismatch', '@fixture/mismatch'),
     ]);
 
-    assert.equal(result.status, 0, result.stderr);
-    const issues = JSON.parse(result.stdout).issues;
+    assert.equal(result.exitCode, 0, result.stderr);
+    const issues = result.result.issues;
     assert.equal(issues.length, 1);
     assert.match(issues[0].message, /@fixture\/mismatch/);
     assert.match(issues[0].message, /26\.x/);
     assert.equal(issues[0].file, path.join(workspaceRoot, 'packages/mismatch/package.json'));
+    assert.match(result.stderr, /node-engine-policy: .*@fixture\/mismatch.*26\.x/);
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }
@@ -165,8 +169,8 @@ test('workspace engine policy rejects any root syntax other than MAJOR.x', async
     await writePackage(workspaceRoot, 'packages/declared', '@fixture/declared', '^24.x');
     const result = runCheck(workspaceRoot, [packageRecord(workspaceRoot, 'packages/declared', '@fixture/declared')]);
 
-    assert.equal(result.status, 0, result.stderr);
-    const issues = JSON.parse(result.stdout).issues;
+    assert.equal(result.exitCode, 0, result.stderr);
+    const issues = result.result.issues;
     assert.equal(issues.length, 1);
     assert.match(issues[0].message, /Unsupported Node\.js engine declaration "\^24\.x"/);
     assert.equal(issues[0].file, path.join(workspaceRoot, 'package.json'));
@@ -192,8 +196,8 @@ test('generated Go Node policy matches the owner and rejects root-owner drift', 
     packageManifest.engines.node = '26.x';
     await writeFile(packageManifestPath, JSON.stringify(packageManifest));
     const ownerDrift = runCheck(workspaceRoot, [packageRecord(workspaceRoot, 'packages/declared', '@fixture/declared')]);
-    assert.equal(ownerDrift.status, 0, ownerDrift.stderr);
-    assert.match(JSON.parse(ownerDrift.stdout).issues.map(({ message }) => message).join('\n'), /generated Go Node policy is stale/);
+    assert.equal(ownerDrift.exitCode, 0, ownerDrift.stderr);
+    assert.match(ownerDrift.result.issues.map(({ message }) => message).join('\n'), /generated Go Node policy is stale/);
 
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -222,7 +226,7 @@ test('tracked Node image with the matching policy tag passes', async (t) => {
   const requiredMajor = parseNodeEnginePolicy(declaration).requiredMajor;
   const { repositoryRoot } = await createTrackedDockerfileRepo(t, `FROM node:${requiredMajor}-slim AS runner\n`);
   const result = runCheck(repositoryRoot, []);
-  assert.deepEqual(JSON.parse(result.stdout).issues, []);
+  assert.deepEqual(result.result.issues, []);
 });
 
 // case: S-260.5
@@ -231,7 +235,7 @@ test('tracked Node image with a mismatched tag fails with file and line', async 
   const requiredMajor = parseNodeEnginePolicy(declaration).requiredMajor;
   const unsupportedMajor = requiredMajor + 2;
   const { repositoryRoot } = await createTrackedDockerfileRepo(t, `FROM node:${unsupportedMajor}-slim AS runner\n`);
-  const issues = JSON.parse(runCheck(repositoryRoot, []).stdout).issues;
+  const issues = runCheck(repositoryRoot, []).result.issues;
 
   assert.equal(issues.length, 1);
   assert.equal(issues[0].file, 'Dockerfile:1');
@@ -241,7 +245,7 @@ test('tracked Node image with a mismatched tag fails with file and line', async 
 // case: S-260.5
 test('tracked Node image with an unresolved ARG fails with file and line', async (t) => {
   const { repositoryRoot } = await createTrackedDockerfileRepo(t, 'FROM node:${X} AS runner\n');
-  const issues = JSON.parse(runCheck(repositoryRoot, []).stdout).issues;
+  const issues = runCheck(repositoryRoot, []).result.issues;
 
   assert.equal(issues.length, 1);
   assert.equal(issues[0].file, 'Dockerfile:1');
@@ -265,7 +269,7 @@ test('a declared external FROM ARG is refused unless it consumes the derived run
     'e2e/journey/Dockerfile.runner',
   );
   const result = runCheck(repositoryRoot, []);
-  const issues = JSON.parse(result.stdout).issues;
+  const issues = result.result.issues;
 
   assert.equal(issues.length, 1);
   assert.equal(issues[0].file, 'e2e/journey/Dockerfile.runner:4');
@@ -280,7 +284,7 @@ test('tracked Node image resolves a declared global ARG default', async (t) => {
     t,
     `ARG NODE_MAJOR=${requiredMajor}\nFROM node:\${NODE_MAJOR}-slim \\\n  AS runner\n`,
   );
-  assert.deepEqual(JSON.parse(runCheck(repositoryRoot, []).stdout).issues, []);
+  assert.deepEqual(runCheck(repositoryRoot, []).result.issues, []);
 });
 
 test('Dockerfile cases leave real-worktree Dockerfile status unchanged', () => {
@@ -352,8 +356,8 @@ function packageRecord(workspaceRoot, relativePath, name) {
 }
 
 function runCheck(workspaceRoot, packages) {
-  return spawnSync(process.execPath, [checker], {
-    cwd: root,
+  return runExternalCheck(checker, [], {
+    cwd: workspaceRoot,
     input: JSON.stringify({
       check: 'node-engine-policy',
       workspaceRoot,

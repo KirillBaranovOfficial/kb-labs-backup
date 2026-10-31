@@ -199,7 +199,7 @@ presets:
       check_links: false
       check_circular: false
 
-  # Plugin entry packages — node-lib + required test:cli script
+  # Plugin entry packages — node-lib. CLI test requirements follow the plugin manifest.
   plugin-entry:
     extends: backend-construction-boundary
     language: typescript
@@ -208,7 +208,6 @@ presets:
         - build
         - dev
         - test
-        - test:cli
         - lint
         - type-check
         - clean
@@ -723,7 +722,10 @@ tasks:
         - "go.sum"
         - "Makefile"
         - "internal/manifest/manifest.json"
+        - "^dist/**"
       outputs: []
+      deps:
+        - "^build"
 
   test:coverage:
     - categories: [ts-lib, ts-app]
@@ -752,12 +754,13 @@ tasks:
   #             kb-devkit run e2e --affected                         (changed only)
   #             kb-devkit run e2e                                    (all)
   # Go:         only kb-create has a real suite; others are no-ops for uniformity.
-  # CLI handler tests — fast, no daemon required.
+  # CLI handler tests — fast, no daemon required. Commandless plugins have no script;
+  # plugin-cli-test-policy requires one for manifests that declare CLI commands.
   # Run: kb-devkit run test:cli
   # Run affected only: kb-devkit run test:cli --affected
   test:cli:
     - categories: [plugin-entry]
-      command: pnpm run test:cli
+      command: pnpm run --if-present test:cli
       inputs:
         - "src/__tests__/cli/**"
         - "src/commands/**"
@@ -819,7 +822,7 @@ custom_checks:
     scope: workspace
 
   - name: repository-script-tests
-    run: env -u KB_DEVKIT_MODE node --test "scripts/**/*.test.mjs" "sites/web/apps/docs/scripts/**/*.test.mjs" "e2e/delivery/scripts/**/*.test.mjs" 1>&2 && TMPDIR=/tmp env -u KB_DEVKIT_MODE python3 scripts/local-gate.test.py 1>&2
+    run: env -u KB_DEVKIT_MODE node --test "scripts/**/*.test.mjs" "sites/web/apps/docs/scripts/**/*.test.mjs" "e2e/delivery/scripts/**/*.test.mjs" 1>&2 && TMPDIR=/tmp env -u KB_DEVKIT_MODE python3 scripts/local-gate.test.py 1>&2 && node scripts/checks/lib/check-result.mjs
     on: [check]
     scope: workspace
 
@@ -829,7 +832,7 @@ custom_checks:
     scope: workspace
 
   - name: test-catalog
-    run: node scripts/test-catalog.mjs --check 1>&2
+    run: node scripts/test-catalog.mjs --check 1>&2 && node scripts/checks/lib/check-result.mjs
     on: [check]
     scope: workspace
 
@@ -841,14 +844,14 @@ custom_checks:
   - name: pr-description
     run: |
       if [ -z "${GITHUB_EVENT_PATH:-}" ]; then
-        printf '{"issues":[]}\n'
+        node scripts/checks/lib/check-result.mjs
       else
         event_kind=$(node -e 'const fs = require("node:fs"); const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(event.pull_request ? "pull_request" : "other")')
         event_status=$?
         if [ "$event_status" -ne 0 ]; then
-          printf '{"issues":[{"check":"pr-description","severity":"error","message":"Could not read the GitHub event payload from GITHUB_EVENT_PATH."}]}\n'
+          exit "$event_status"
         elif [ "$event_kind" != "pull_request" ]; then
-          printf '{"issues":[]}\n'
+          node scripts/checks/lib/check-result.mjs
         else
           node scripts/ci/validate-pr-description.mjs 1>&2
         fi
@@ -881,6 +884,11 @@ custom_checks:
     on: [check]
     scope: workspace
 
+  - name: color-policy-generated
+    run: node tools/clikit/ui/generate-color-policy.mjs --check 1>&2 && node scripts/checks/lib/check-result.mjs
+    on: [check]
+    scope: workspace
+
   - name: pinned-specifiers
     run: node scripts/checks/check-pinned-specifiers.mjs
     on: [check]
@@ -905,11 +913,20 @@ custom_checks:
     run: node scripts/checks/check-adapter-manifest.mjs
     on: [check]
     scope: workspace
+    requires_build: ["@kb-labs/core-platform"]
 
   - name: plugin-package-identity
     run: node scripts/checks/check-plugin-package-identity.mjs
     on: [check]
     scope: workspace
+
+  # A plugin declares whether it has CLI commands in its manifest. CLI plugins must
+  # provide a non-empty test:cli suite; commandless plugins must not carry a dead script.
+  - name: plugin-cli-test-policy
+    run: node scripts/checks/check-plugin-cli-test-policy.mjs
+    on: [check]
+    scope: workspace
+    requires_build: ["@kb-labs/plugin-contracts"]
 
   - name: ci-clean-machine-lanes
     run: node scripts/ci/ci-clean-machine-lanes-check.mjs
@@ -947,34 +964,37 @@ custom_checks:
   # Blocks CI on: EN↔RU key mismatch, missing keys, hardcoded Cyrillic in .tsx.
   # UNUSED keys are emitted as warnings (autoFixable — devkit fix removes them).
   # Suppress per-line with: // i18n-ignore
-  # Script self-filters: skips all packages except @kb-labs/web-site.
+  # The four package contexts that receive this check are declared below.
   - name: i18n-check
     run: node sites/web/apps/web/scripts/i18n-check.mjs
     fix: node sites/web/apps/web/scripts/i18n-check.mjs
     on: [check]
     language: typescript
+    anchor_packages: ["@kb-labs/web-site", "@kb-labs/web-site-ui", "@kb-labs/web-og", "@kb-labs/docs-site"]
 
   # Broken-link guard for KB Labs sites (web + docs).
   # Blocks CI on: internal href with no matching Next.js route, or a controlled-domain
   # URL (kblabs.ru, docs.kblabs.ru, status.kblabs.ru) that returns 4xx.
   # 5xx / timeouts are warnings only.
   # Suppress per-line with: // link-ignore
-  # Script self-filters: skips all packages except @kb-labs/web-site.
+  # Runs at the declared @kb-labs/web-site anchor.
   - name: check-links
     run: node sites/web/apps/web/scripts/check-links.mjs
     on: [check]
     language: typescript
+    anchor_packages: ["@kb-labs/web-site"]
 
   # SEO guard for @kb-labs/web-site.
   # Blocks CI on: missing generateMetadata, imageSegment not set, opengraph-image.tsx absent,
   # OG image using non-.meta.* i18n keys, title/description out of length bounds.
   # JSON-LD absence is a warning only (future work).
   # Suppress per-file with: // seo-ignore <rule> (rules: og-image, og-keys, jsonld, title-brand)
-  # Script self-filters: skips all packages except @kb-labs/web-site.
+  # Runs at the declared @kb-labs/web-site anchor.
   - name: seo-check
     run: node sites/web/apps/web/scripts/seo-check.mjs
     on: [check]
     language: typescript
+    anchor_packages: ["@kb-labs/web-site"]
 
   # CLI manifest naming conventions (ADR-0018, docs/plans/cli-naming-audit.md)
   # Rules: no kebab in path segments, no reserved namespaces, single-word top-level.
@@ -997,12 +1017,13 @@ custom_checks:
   # Blocks CI on: slug without MDX file, missing title frontmatter, non-kebab-case names,
   #               directory without index.mdx, depth > 2.
   # Warns on:     orphaned MDX files, missing _meta.json, pages without owners.
-  # Self-filters: skips all packages except @kb-labs/docs-site.
+  # Runs at the declared @kb-labs/docs-site anchor.
   # Standalone:   node sites/web/apps/docs/scripts/docs-audit.mjs
   - name: docs-audit
     run: node sites/web/apps/docs/scripts/docs-audit.mjs
     on: [check]
     language: typescript
+    anchor_packages: ["@kb-labs/docs-site"]
 
   # Port allocation policy (ADR-0024).
   # Blocks CI on: port outside all ranges (UNKNOWN_RANGE), two services sharing a
@@ -1011,22 +1032,24 @@ custom_checks:
   #   matching the registry (PROD_PORT_MISMATCH), or a stale docs/ports.md (STALE_PORTS_DOC).
   # Source of truth: infra/port-registry.yaml + .kb/devservices*.yaml.
   # Fix a stale glossary with: pnpm ports:generate
-  # Self-filters: runs once, anchored to @kb-labs/devkit.
+  # Runs once at the declared @kb-labs/devkit anchor.
   # Standalone:   node scripts/checks/check-ports.mjs
   - name: check-ports
     run: node scripts/checks/check-ports.mjs
     on: [check]
+    anchor_packages: ["@kb-labs/devkit"]
 
   # Assembly hook enforcement.
   # Blocks CI if any service bootstrap.ts calls runService without
   # importing from @kb-labs/plugin-runtime (i.e. without makeAssemblyHook).
   # TypeScript enforces this at compile time (assemblyHook is a required field).
   # This check provides a human-readable CI gate with clear error messages.
-  # Self-filters: runs once, anchored to @kb-labs/devkit.
+  # Runs once at the declared @kb-labs/devkit anchor.
   # Standalone:   node scripts/checks/check-assembly-hook.mjs
   - name: check-assembly-hook
     run: node scripts/checks/check-assembly-hook.mjs
     on: [check]
+    anchor_packages: ["@kb-labs/devkit"]
 
   # Tracked Go tool binaries (tools/<name>/<name>) must be rebuilt when their
   # source changes — they ship in git so `pnpm build`/`dev:start` work without a
@@ -1044,17 +1067,19 @@ custom_checks:
   # diagnostics test and `kb marketplace doctor` both read.
   # The check resolves the lock's scope from the runtime's platform/project roots.
   # A shared development root is platform-owned; use the reported scope when syncing.
-  # Self-filters: runs once, anchored to @kb-labs/devkit.
+  # Runs once at the declared @kb-labs/devkit anchor.
   # Standalone: node scripts/checks/check-marketplace-lock.mjs
   - name: check-marketplace-lock
     run: node scripts/checks/check-marketplace-lock.mjs
     on: [check]
+    anchor_packages: ["@kb-labs/devkit"]
+    requires_build: ["@kb-labs/core-discovery", "@kb-labs/core-workspace"]
 
   # Architecture boundary + command-naming lints (tasks 0.2, 0.3, 0.5).
   # Pre-existing violations are listed with a date and reason in
   # scripts/checks/boundary-exceptions.json; anything not listed is an error, and an
   # exception whose violation is gone is a warning (delete it). Do not add exceptions
-  # to silence new code. All four self-filter: run once, anchored to @kb-labs/devkit.
+  # to silence new code. These checks use the declared @kb-labs/devkit anchor.
   # Standalone: node scripts/checks/check-<name>.mjs [--json] [--no-exceptions]
   # Tests:      pnpm test:checks
 
@@ -1063,6 +1088,7 @@ custom_checks:
   - name: platform-spawn
     run: node scripts/checks/check-platform-spawn.mjs
     on: [check]
+    anchor_packages: ["@kb-labs/devkit"]
 
   # Plugin package membership and both directions of the plugin/platform edge are checked
   # against the live workspace registry. Runtime imports are parsed as TypeScript AST nodes.
@@ -1076,7 +1102,7 @@ custom_checks:
   # Reads the build-emitted dist/manifest.json — unbuilt packages only produce a warning,
   # so run it after `kb-devkit run build`.
   - name: manifest-command-naming
-    run: node scripts/checks/check-manifest-command-naming.mjs
+    run: node scripts/checks/check-manifest-command-naming.mjs 1>&2
     on: [check]
 
 # ──────────────────────────────────────────────────────────────────────────────

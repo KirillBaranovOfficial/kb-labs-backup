@@ -34,7 +34,7 @@
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit",
-    "test:cli": "vitest run tests/cli --passWithNoTests"
+    "test:cli": "vitest run tests/cli"
   },
   "dependencies": {
     "react": "^19.0.0",
