@@ -32,10 +32,10 @@ test('adapter manifest emission derives kb-create credential requirements from c
       configSchema: {
         apiKey: {
           type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY',
-          doctor: {
-            id: 'openai.apiKey', optional: true, severity: 'warning', services: ['gateway'],
+          doctor: [{
+            slot: 'llm', id: 'openai.apiKey', optional: true, severity: 'warning', services: ['gateway'],
             action: 'set OPENAI_API_KEY to enable LLM features', hint: 'set OPENAI_API_KEY',
-          },
+          }],
         },
       },
     };

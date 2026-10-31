@@ -120,9 +120,13 @@ export function resolveDiscoveredAdapterDefaults(
     if (!entrypoint) {
       throw new Error(`Adapter ${adapter.packageName} declares default slot ${slot} without an entry point. Add the module path to its adapter manifest and rebuild it with \`corepack pnpm --filter ${adapter.packageName} build\`.`);
     }
+    const slotManifest = adapter.entrypointManifests?.[entrypoint.join('/')];
+    if (!slotManifest) {
+      throw new Error(`Adapter ${adapter.packageName} default entry point for ${slot} has no loaded manifest.`);
+    }
     adapters[config.key] = [adapter.packageName, ...entrypoint].join('/');
     adapterOptions[config.key] = {
-      ...declaredDefaults(adapter.module.manifest, projectRoot),
+      ...declaredDefaults(slotManifest, projectRoot),
       ...asRecord(adapterOptions[config.key]),
     };
   }
@@ -130,10 +134,12 @@ export function resolveDiscoveredAdapterDefaults(
   for (const [configKey, configured] of Object.entries(adapters)) {
     const adapterPath = Array.isArray(configured) ? configured[0] : configured;
     if (typeof adapterPath !== 'string') {continue;}
-    const adapter = findDiscoveredAdapter(adapterPath, discovered)?.adapter;
+    const resolved = findDiscoveredAdapter(adapterPath, discovered);
+    const adapter = resolved?.adapter;
     if (!adapter) {continue;}
+    const manifest = adapter.entrypointManifests?.[resolved.subpath] ?? adapter.module.manifest;
     adapterOptions[configKey] = {
-      ...declaredDefaults(adapter.module.manifest, projectRoot),
+      ...declaredDefaults(manifest, projectRoot),
       ...asRecord(adapterOptions[configKey]),
     };
   }

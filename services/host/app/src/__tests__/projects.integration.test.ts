@@ -223,6 +223,7 @@ describe("kb-host project routing", () => {
       logRingBuffer: "@kb-labs/adapters-log-ringbuffer",
       logPersistence: "@kb-labs/adapters-log-document",
       analytics: "@kb-labs/adapters-analytics-sqlite",
+      embeddings: "@kb-labs/adapters-openai/embeddings",
       serviceTransport: "@kb-labs/adapters-service-transport-http",
     };
     await writeFile(join(installedPlatformRoot, ".kb", "kb.config.json"), JSON.stringify({
@@ -408,6 +409,7 @@ describe("kb-host project routing", () => {
         logRingBuffer: "@kb-labs/adapters-log-ringbuffer",
         logPersistence: "@kb-labs/adapters-log-document",
         analytics: "@kb-labs/adapters-analytics-sqlite",
+        embeddings: "@kb-labs/adapters-openai/embeddings",
         serviceTransport: "@kb-labs/adapters-service-transport-http",
       };
       await writeFile(join(installedPlatformRoot, ".kb", "kb.config.json"), JSON.stringify({

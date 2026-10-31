@@ -332,13 +332,13 @@ describe('kb adapter list', () => {
     const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-openai');
     await mkdir(join(packageRoot, 'dist'), { recursive: true });
     await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-openai', type: 'module', kb: { adapter: { manifest: './dist/manifest.js' } } }));
+    const manifest = { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: true, defaultFor: { llm: ['llm'] }, configSchema: { apiKey: { type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY' } } };
+    const entrypointModule = `export const manifest = ${JSON.stringify(manifest)};\nexport function createAdapter() { return {}; }`;
     await writeFile(join(packageRoot, 'dist', 'manifest.js'), [
-      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: true, defaultFor: { llm: ['llm'] }, configSchema: { apiKey: { type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY' } } })};`,
+      `export const manifest = ${JSON.stringify(manifest)};`,
     ].join('\n'));
-    await writeFile(join(packageRoot, 'dist', 'index.js'), [
-      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: true, defaultFor: { llm: ['llm'] }, configSchema: { apiKey: { type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY' } } })};`,
-      'export function createAdapter() { return {}; }',
-    ].join('\n'));
+    await writeFile(join(packageRoot, 'dist', 'index.js'), entrypointModule);
+    await writeFile(join(packageRoot, 'dist', 'llm.js'), entrypointModule);
     await writeMarketplaceLock(platformRoot, {
       schema: 'kb.marketplace/3',
       plugins: {},

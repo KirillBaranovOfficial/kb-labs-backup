@@ -1,5 +1,29 @@
 # Product decisions log
 
+## 2026-10-31
+
+### SQLite vector search breaks equal-score ties by record ID
+
+SQLite vector search orders equal cosine similarity scores by stable record ID
+ascending. This makes the returned order deterministic across database query
+plans and reopenings. Case: S-281.4.
+
+### Stock embeddings and vector storage are local-install defaults
+
+Fresh Release 1 installs select the bundled OpenAI-compatible embeddings
+entrypoint and the bundled SQLite vector-store entrypoint through their adapter
+manifests' `defaultFor` declarations. OpenAI credentials remain optional during
+installation and host startup; adapter listing and doctor report a missing key,
+and the first embeddings request returns the typed credentials error with the
+platform config command. The SQLite vector store persists beneath each
+registered project's durable state directory and uses brute-force cosine
+search for small local indexes. Its
+scale limits are documented; larger indexes can bind another provider.
+`snapshotManager` remains optional and unconfigured because no active Release 1
+case requires it. This supersedes the embeddings and vector-store portion of
+[Persistent adapter defaults and analytics persistence disclosure](#persistent-adapter-defaults-and-analytics-persistence-disclosure).
+Cases: S-054.1, S-054.2, S-054.4, S-054.6, S-054.24, S-054.25.
+
 This log records the product decisions behind the case catalog (`docs/qa/scenarios/`). Cases state *what* the product does. This log records *why* a boundary sits where it does, so a later change of mind can be made deliberately, starting with a new entry and a case change.
 
 The current cross-cutting product invariants and their enforcement status are listed in [invariants.md](./invariants.md).
