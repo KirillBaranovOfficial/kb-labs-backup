@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -161,6 +161,69 @@ test('sealed candidate provenance covers the complete shipped release manifest c
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('a newly manifested package is sealed and required by installed identity verification', () => {
+  const root = mkdtempSync(join(tmpdir(), 'journey-release-manifest-addition-'));
+  try {
+    const addedPackage = '@kb-labs/release-fixture-addition';
+    const manifestFixture = structuredClone(registryManifest);
+    manifestFixture.core.push({ name: addedPackage });
+    const packages = join(root, 'packages');
+    const packageNames = seedReleasePackages(root, packages, manifestFixture);
+    const releaseManifest = packageNames.map(name => ({
+      name,
+      version: '3.0.0',
+      tarball: packageFilename(name, '3.0.0'),
+    }));
+    writeFileSync(join(packages, 'manifest.json'), JSON.stringify(releaseManifest));
+
+    const provenance = prepareReleaseProvenance(packages, 'test-revision', digestTool);
+    const sealedNames = provenance.map(item => item.package).sort();
+    assert.deepEqual(sealedNames, releaseManifest.map(item => item.name).sort());
+    assert.ok(sealedNames.includes(addedPackage));
+
+    const installedRoot = join(root, 'installed');
+    mkdirSync(join(installedRoot, '.kb/v2'), { recursive: true });
+    writeFileSync(join(installedRoot, '.kb/v2/receipt.json'), JSON.stringify({
+      plan: { artifacts: provenance.map(item => ({
+        package: item.package,
+        version: item.version,
+        provenance: { distSha256: item.distSha256 },
+      })) },
+    }));
+    writeFileSync(join(installedRoot, '.kb/v2/installed-provenance.json'), JSON.stringify({
+      packages: provenance.filter(item => item.package !== addedPackage).map(item => ({
+        name: item.package,
+        version: item.version,
+        integrity: item.integrity,
+        installedPath: `node_modules/${item.package}`,
+        sourceRevision: item.sourceRevision,
+        contentDigest: item.distSha256,
+      })),
+    }));
+
+    const pythonCheck = spawnSync('python3', ['-c', `
+import sys
+sys.path.insert(0, sys.argv[1])
+from installer_case_steps import verify_installed_candidate_provenance
+try:
+    verify_installed_candidate_provenance(sys.argv[2])
+except RuntimeError as error:
+    print(error)
+    raise SystemExit(0)
+raise SystemExit(7)
+`, join(rootPath(), 'e2e/journey'), installedRoot], { encoding: 'utf8' });
+    assert.equal(pythonCheck.status, 0, pythonCheck.stderr || 'installed verifier accepted an omitted manifest package');
+    assert.match(pythonCheck.stdout, /installed package closure differs from the sealed release manifest/);
+    assert.ok(pythonCheck.stdout.includes(addedPackage));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function rootPath() {
+  return resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+}
 
 test('release-index Docker stage copies the package preparation helper', () => {
   const platformDirectory = dirname(fileURLToPath(import.meta.url));
