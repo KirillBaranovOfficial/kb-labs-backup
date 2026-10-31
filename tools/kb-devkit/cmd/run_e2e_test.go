@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -377,6 +378,10 @@ func TestBuiltBinaryRunsUnfilteredBuildAcrossWorkspace(t *testing.T) {
 	noChanges.Env = append(os.Environ(), "HOME="+isolatedHome)
 	noChangesOutput, err := noChanges.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			t.Fatalf("built binary --affected with empty change set: %v\nstdout: %s\nstderr: %s", err, noChangesOutput, exitErr.Stderr)
+		}
 		t.Fatalf("built binary --affected with empty change set: %v\n%s", err, noChangesOutput)
 	}
 	if !strings.Contains(string(noChangesOutput), "No affected or dirty packages") {

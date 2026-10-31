@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/kb-labs/devkit/internal/testdeadline"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -224,7 +223,8 @@ checks:
   timeout_ms: 5000
 custom_checks:
   - name: slow-check
-    run: "exec sleep 3"
+    run: >-
+      sleep 3; printf '{"issues":[]}' > "$KB_DEVKIT_CHECK_RESULT_FILE"
     on: [check]
     scope: workspace
 `
@@ -250,8 +250,9 @@ custom_checks:
 	command := exec.CommandContext(ctx, script, "-q", "-F", transcript, binary, "--config", configPath, "check", "--only", "slow-check", "--json")
 	command.Dir = fixtureRoot
 	command.Env = isolatedCheckEnv(t, home)
-	command.Stdout = io.Discard
-	command.Stderr = io.Discard
+	var commandStdout, commandStderr bytes.Buffer
+	command.Stdout = &commandStdout
+	command.Stderr = &commandStderr
 	if err := command.Start(); err != nil {
 		t.Fatalf("start built check through PTY: %v", err)
 	}
@@ -287,7 +288,7 @@ custom_checks:
 		}
 	}
 	if err := command.Wait(); err != nil {
-		t.Fatalf("built check through PTY: %v", err)
+		t.Fatalf("built check through PTY: %v; stdout: %s; stderr: %s", err, commandStdout.String(), commandStderr.String())
 	}
 	transcriptBytes, err := os.ReadFile(transcript)
 	if err != nil {
@@ -604,6 +605,28 @@ func TestCheckFailureEnvelopeUsesStandardsViolationCodeAndData(t *testing.T) {
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != "KB_DEVKIT_STANDARDS_VIOLATIONS" || failure.Data == nil {
 		t.Fatalf("error = %#v, want standards-violation diagnostic with result data", err)
+	}
+}
+
+// case: S-179.44
+func TestCheckHumanWarningsAreNonBlocking(t *testing.T) {
+	results := map[string]checks.PackageResult{
+		"@acme/demo": {
+			Package: workspace.Package{Name: "@acme/demo", RelPath: "packages/demo", Category: "ts-lib"},
+			Issues:  []checks.Issue{{Check: "warning-check", Severity: checks.SeverityWarning, Message: "informational finding"}},
+		},
+	}
+	if err := outputCheckHuman(results, &config.DevkitConfig{}, map[string]int{"ts-lib": 1}, 1); err != nil {
+		t.Fatalf("warning-only check returned %v, want success", err)
+	}
+	results["@acme/demo"] = checks.PackageResult{
+		Package: workspace.Package{Name: "@acme/demo", RelPath: "packages/demo", Category: "ts-lib"},
+		Issues:  []checks.Issue{{Check: "error-check", Severity: checks.SeverityError, Message: "blocking finding"}},
+	}
+	err := outputCheckHuman(results, &config.DevkitConfig{}, map[string]int{"ts-lib": 1}, 1)
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != "KB_DEVKIT_STANDARDS_VIOLATIONS" {
+		t.Fatalf("error-severity check returned %v, want standards-violation diagnostic", err)
 	}
 }
 
