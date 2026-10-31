@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 from test_docker_build_inputs import copy_instructions
@@ -48,6 +49,14 @@ def runner_toolchain_contract(*, dockerfile: Path | None = None,
     sys.path.insert(0, str(JOURNEY_DIR))
     from journey_resources import runner_toolchain_contract as derive
     return derive(dockerfile=dockerfile, studio_manifest_input=studio_manifest_input)
+
+
+def build_toolchain_image(test_case: unittest.TestCase, image: str, command: list[str], *,
+                          cwd: Path) -> subprocess.CompletedProcess:
+    """Build a uniquely tagged image and remove it when the test case finishes."""
+    test_case.addCleanup(subprocess.run, ["docker", "image", "rm", "--force", image],
+                         cwd=cwd, text=True, capture_output=True, check=False)
+    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
 
 
 
@@ -205,18 +214,37 @@ class RunnerToolchainTagTests(unittest.TestCase):
 
 
 class RunnerToolchainImageContractTests(unittest.TestCase):
+    def test_image_cleanup_is_registered_before_build(self):
+        from unittest.mock import patch
+
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        case = unittest.TestCase()
+        with patch("test_runner_toolchain.subprocess.run", side_effect=run):
+            build_toolchain_image(case, "toolchain:test-unique", ["docker", "build"], cwd=Path("."))
+            case.doCleanups()
+
+        self.assertEqual(calls, [
+            ["docker", "build"],
+            ["docker", "image", "rm", "--force", "toolchain:test-unique"],
+        ])
+
     def test_toolchain_image_exposes_pinned_pnpm_from_shared_cache_to_non_root(self):
         policy = json.loads((REPOSITORY_ROOT / "tools/clikit/toolchain/node_policy_gen.json").read_text())
         package = json.loads((REPOSITORY_ROOT / "package.json").read_text())
         pnpm_version = package["packageManager"].removeprefix("pnpm@")
-        image = runner_toolchain_image()
+        image = f"{runner_toolchain_image()}-{uuid.uuid4().hex}"
         contract = runner_toolchain_contract()
-        build = subprocess.run([
+        build = build_toolchain_image(self, image, [
             "docker", "build", "--target", "toolchain", "-t", image,
             "--build-arg", f"{contract['imageArgument']}={policy['nodeBaseImage']}",
             "--build-arg", f"{policy['nodeBaseImageArgument']}={policy['nodeBaseImage']}",
             "-f", "e2e/journey/Dockerfile.runner", ".",
-        ], cwd=REPOSITORY_ROOT, text=True, capture_output=True, check=False)
+        ], cwd=REPOSITORY_ROOT)
         self.assertEqual(build.returncode, 0, build.stderr or build.stdout)
 
         probe = """
