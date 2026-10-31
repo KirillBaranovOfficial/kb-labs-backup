@@ -47,7 +47,7 @@ journey_compose_init() {
   if [[ "$owner_directory" == "$owner_source" ]]; then owner_directory="."; fi
   owner_directory="$(cd "$owner_directory" && pwd -P)" || return 2
   owner_root="$(cd "$owner_directory/.." && pwd -P)" || return 2
-  if [[ "$canonical_root" != "$owner_root" || ! -f "$canonical_root/pnpm-workspace.yaml" ]]; then
+  if [[ "$canonical_root" != "$owner_root" ]]; then
     printf 'workspace root must resolve to the checkout containing e2e/compose-owner.sh; use: journey_compose_init %q\n' "$owner_root" >&2
     return 2
   fi
