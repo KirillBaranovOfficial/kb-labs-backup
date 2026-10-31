@@ -14,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
+	clikitresult "github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
@@ -616,8 +618,30 @@ func TestCheckHumanWarningsAreNonBlocking(t *testing.T) {
 			Issues:  []checks.Issue{{Check: "warning-check", Severity: checks.SeverityWarning, Message: "informational finding"}},
 		},
 	}
+	var humanOutput bytes.Buffer
+	restoreOutput := clikitcommand.SetOutputWriter(&humanOutput)
+	defer restoreOutput()
 	if err := outputCheckHuman(results, &config.DevkitConfig{}, map[string]int{"ts-lib": 1}, 1); err != nil {
 		t.Fatalf("warning-only check returned %v, want success", err)
+	}
+	if output := humanOutput.String(); !strings.Contains(output, "warning") || !strings.Contains(output, "informational finding") {
+		t.Fatalf("human output = %q, want warning label and finding text", output)
+	}
+	jsonErr := outputCheckJSON(results, &config.DevkitConfig{}, map[string]int{"ts-lib": 1}, 1)
+	jsonData, ok := clikitresult.ReturnedData(jsonErr)
+	if !ok {
+		t.Fatalf("warning-only JSON result = %v, want returned JSON data", jsonErr)
+	}
+	jsonResult, ok := jsonData.(checkJSONResult)
+	if !ok {
+		t.Fatalf("warning-only JSON data has type %T, want checkJSONResult", jsonData)
+	}
+	if !jsonResult.OK || jsonResult.Summary.Errors != 0 || jsonResult.Summary.Warnings != 1 {
+		t.Fatalf("warning-only JSON result = %#v, want ok with 0 errors and 1 warning", jsonResult)
+	}
+	packageResult, ok := jsonResult.Packages["@acme/demo"]
+	if !ok || !packageResult.OK || len(packageResult.Issues) != 1 || packageResult.Issues[0].Severity != checks.SeverityWarning {
+		t.Fatalf("warning-only JSON package result = %#v, want one warning issue and ok package", packageResult)
 	}
 	results["@acme/demo"] = checks.PackageResult{
 		Package: workspace.Package{Name: "@acme/demo", RelPath: "packages/demo", Category: "ts-lib"},
