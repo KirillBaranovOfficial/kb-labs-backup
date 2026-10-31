@@ -153,13 +153,12 @@ class JourneyImportOrderTests(unittest.TestCase):
             else:
                 self.fail(f"bundled Marketplace fixture exited before serving: {stdout}\n{stderr}")
 
-    def test_marketplace_fixture_command_enables_secure_global_crypto(self):
+    def test_marketplace_fixture_command_uses_plain_node(self):
         from marketplace_sync_fixture import marketplace_sync_fixture_command
 
         command = marketplace_sync_fixture_command(Path("/tmp/marketplace-root"),
                                                    fixture_path=Path("/tmp/fixture.mjs"))
-        self.assertEqual(command, ["node", "--experimental-global-webcrypto",
-                                   "/tmp/fixture.mjs", "/tmp/marketplace-root"])
+        self.assertEqual(command, ["node", "/tmp/fixture.mjs", "/tmp/marketplace-root"])
 
     def test_every_journey_module_imports_first_in_a_fresh_interpreter(self):
         env = os.environ.copy()
