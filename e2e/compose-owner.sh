@@ -29,7 +29,13 @@ COMPOSE_AVAILABLE=0
 REGISTRY_COMPOSITION_ROOT=""
 
 journey_compose_init() {
-  local root="$1" rendered overlay_path
+  local root="${1:-}" rendered overlay_path
+
+  if [[ -z "$root" || ! -d "$root" ]]; then
+    printf 'journey_compose_init requires an existing workspace root; invoke it as: journey_compose_init "$ROOT".\n' >&2
+    return 2
+  fi
+  export KB_JOURNEY_WORKSPACE_SOURCE="$root"
 
   JOURNEY_COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
   if ! compose_owner_init; then

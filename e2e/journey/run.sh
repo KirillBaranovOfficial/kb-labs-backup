@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
-export KB_JOURNEY_WORKSPACE_SOURCE="$ROOT"
 export KB_JOURNEY_GIT_REVISION="$(git rev-parse HEAD)"
 export KB_JOURNEY_RUNNER_UID="$(id -u)"
 export KB_JOURNEY_RUNNER_GID="$(id -g)"
