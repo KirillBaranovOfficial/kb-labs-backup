@@ -214,23 +214,24 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   }
 
   private async replay(): Promise<void> {
-    let contents: string;
+    let contents: Buffer;
     try {
-      contents = await readFile(this.journalPath, 'utf8');
+      contents = await readFile(this.journalPath);
     } catch (error) {
       if (isMissingPath(error)) return;
       throw error;
     }
 
     let verifiedBytes = 0;
-    const lines = contents.split('\n');
-    for (let index = 0; index < lines.length; index++) {
-      const line = lines[index]!;
-      if (index === lines.length - 1 && line.length === 0) break;
-      const completeLine = index < lines.length - 1;
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    let lineStart = 0;
+    while (lineStart < contents.length) {
+      const lineEnd = contents.indexOf(0x0a, lineStart);
+      const completeLine = lineEnd !== -1;
       let record: JournalRecord;
       try {
         if (!completeLine) throw new Error('incomplete final record');
+        const line = decoder.decode(contents.subarray(lineStart, lineEnd));
         const parsed: unknown = JSON.parse(line);
         if (!isJournalRecord(parsed)) throw new Error('record does not match journal format');
         record = parsed;
@@ -239,8 +240,9 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
         break;
       }
       await this.apply(record);
-      verifiedBytes += Buffer.byteLength(line, 'utf8') + 1;
+      verifiedBytes = lineEnd + 1;
       this.journalRecords++;
+      lineStart = lineEnd + 1;
     }
 
     if (this.corrupted) {
