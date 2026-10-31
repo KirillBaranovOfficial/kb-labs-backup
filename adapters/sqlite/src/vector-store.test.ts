@@ -51,6 +51,20 @@ describe('SQLite vector store', () => {
     ]);
   });
 
+  // case: S-280.4
+  it('breaks equal cosine scores by stable record ID in ascending order', async () => {
+    const store = await createStore();
+    await store.upsert([
+      { id: 'z-last', vector: [1, 0] },
+      { id: 'a-first', vector: [1, 0] },
+    ]);
+
+    expect(await store.search([1, 0], 2)).toEqual([
+      { id: 'a-first', score: 1 },
+      { id: 'z-last', score: 1 },
+    ]);
+  });
+
   // case: S-054.1
   it('registers the SQLite package as the vectorStore catalogue default', () => {
     expect(manifest.defaultFor?.vectorStore).toEqual(['vector-store']);
