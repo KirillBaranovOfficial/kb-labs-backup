@@ -223,7 +223,7 @@ func TestSelectedPlatformMemberAdapterRetainsItsCredentialRequirement(t *testing
 	if err := json.Unmarshal(requirementsData, &requirementsFile); err != nil {
 		t.Fatal(err)
 	}
-	if len(requirementsFile.Requirements) != 1 {
+	if len(requirementsFile.Requirements) != 2 {
 		t.Fatalf("OpenAI package requirements = %#v", requirementsFile.Requirements)
 	}
 	requirement := requirementsFile.Requirements[0]

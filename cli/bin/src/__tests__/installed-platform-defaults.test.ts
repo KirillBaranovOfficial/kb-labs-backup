@@ -509,6 +509,7 @@ describe('installed platform adapter defaults', () => {
       '@kb-labs/adapters-pino',
       '@kb-labs/adapters-log-ringbuffer',
       '@kb-labs/adapters-log-document',
+      '@kb-labs/adapters-openai',
     ];
     const adapters = await writeInstalledAdapterLock(platformRoot, workspaceRoot, adapterPackages);
     const commitRoot = path.join(workspaceRoot, 'plugins/commit');
