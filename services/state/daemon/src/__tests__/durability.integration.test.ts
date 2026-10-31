@@ -21,6 +21,7 @@ function makeLogger(records: Array<{ message: string; meta?: Record<string, unkn
     fatal: () => {},
     debug: () => {},
     trace: () => {},
+    flush: async () => {},
     child: () => logger,
   };
   return logger;

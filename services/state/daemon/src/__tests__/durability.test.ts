@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import { tmpdir } from 'node:os';
@@ -79,6 +79,29 @@ describe('StateBroker durability', () => {
     }
   });
 
+  it('syncs the journal directory before acknowledging its first append', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-directory-sync-'));
+    const probe = await open(root, 'r');
+    const prototype = Object.getPrototypeOf(probe) as { sync: (...args: never[]) => Promise<void>; stat: () => Promise<{ isDirectory(): boolean }> };
+    const originalSync = prototype.sync;
+    let directorySyncs = 0;
+    prototype.sync = async function (this: typeof probe, ...args: never[]) {
+      if ((await this.stat()).isDirectory()) directorySyncs++;
+      return originalSync.apply(this, args);
+    };
+    try {
+      const broker = await AppendOnlyJournalStateBroker.open(root);
+      directorySyncs = 0;
+      await broker.set('first', 'durable', 60_000);
+      expect(directorySyncs).toBeGreaterThan(0);
+      await broker.stop();
+    } finally {
+      prototype.sync = originalSync;
+      await probe.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('compacts mutation history to the current snapshot', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-compaction-'));
     const journal = path.join(root, 'state-broker', 'journal.jsonl');
@@ -106,14 +129,16 @@ describe('StateBroker durability', () => {
       import { AppendOnlyJournalStateBroker } from ${JSON.stringify(moduleUrl)};
       process.stdout.write('attempting-open\\n');
       const broker = await AppendOnlyJournalStateBroker.open(process.env.JOURNAL_ROOT);
-      if (process.env.JOURNAL_ROLE === 'first') {
-        await broker.set('writer-one', 'acknowledged', 60000);
-        for (let value = 0; value < 1000; value++) await broker.set('compact-me', value, 60000);
-        process.stdout.write('locked\\n');
+      if (process.env.JOURNAL_ROLE === 'orphan') {
+        process.stdout.write('locked-orphan\\n');
         await new Promise((resolve) => process.stdin.once('data', resolve));
       } else {
-        process.stdout.write('locked-two\\n');
-        await broker.set('writer-two', 'acknowledged', 60000);
+        const role = process.env.JOURNAL_ROLE;
+        process.stdout.write('locked-' + role + '\\n');
+        await broker.set('writer-' + role, 'acknowledged', 60000);
+        if (role === 'first' || role === 'reclaimer-0') {
+          for (let value = 0; value < 1000; value++) await broker.set('compact-me', value, 60000);
+        }
       }
       await broker.stop();
       process.stdout.write('stopped\\n');
@@ -162,22 +187,38 @@ describe('StateBroker durability', () => {
     const first = startChild('first');
     let second: ReturnType<typeof startChild> | undefined;
     try {
-      await first.waitForLine('locked');
+      await first.waitForLine('locked-first');
       second = startChild('second');
       await second.waitForLine('attempting-open');
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(second.seen.has('locked-two')).toBe(false);
+      expect(second.seen.has('locked-second')).toBe(false);
 
       first.stdin.write('release\n');
       await first.waitForLine('stopped');
-      await second.waitForLine('locked-two');
+      await second.waitForLine('locked-second');
       await second.waitForLine('stopped');
 
       const restarted = await AppendOnlyJournalStateBroker.open(root);
-      await expect(restarted.get('writer-one')).resolves.toBe('acknowledged');
-      await expect(restarted.get('writer-two')).resolves.toBe('acknowledged');
+      await expect(restarted.get('writer-first')).resolves.toBe('acknowledged');
+      await expect(restarted.get('writer-second')).resolves.toBe('acknowledged');
       await expect(restarted.get('compact-me')).resolves.toBe(999);
       await restarted.stop();
+
+      const orphan = startChild('orphan');
+      await orphan.waitForLine('locked-orphan');
+      orphan.child.kill('SIGKILL');
+      await once(orphan.child, 'exit');
+      const reclaimers = Array.from({ length: 8 }, (_, index) => startChild(`reclaimer-${index}`));
+      await Promise.all(reclaimers.map((reclaimer) => reclaimer.waitForLine('attempting-open')));
+      await Promise.all(reclaimers.map((reclaimer) => reclaimer.waitForLine('stopped')));
+      const afterReclaim = await AppendOnlyJournalStateBroker.open(root);
+      await expect(afterReclaim.get('writer-reclaimer-0')).resolves.toBe('acknowledged');
+      for (let index = 1; index < reclaimers.length; index++) {
+        const role = `reclaimer-${index}`;
+        await expect(afterReclaim.get(`writer-${role}`)).resolves.toBe('acknowledged');
+      }
+      await expect(afterReclaim.get('compact-me')).resolves.toBe(999);
+      await afterReclaim.stop();
     } finally {
       const stopChild = async (child: ChildProcess | undefined) => {
         if (!child || child.exitCode !== null || child.signalCode !== null) return;
