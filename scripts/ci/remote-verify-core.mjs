@@ -218,11 +218,7 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
               deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
               callRemote, cadenceMs: policy.pollMs,
             });
-            const logTail = await retryOperation(() => gh.failureLogs(repo, run.id), {
-              deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
-              callRemote, cadenceMs: policy.pollMs,
-            });
-            verdict = failureVerdict(sha, [`Workflow failed before a valid verdict artifact was available: ${error.message}`], failureDetails(jobsResponse, logTail), options.profile);
+            verdict = failureVerdict(sha, [`Workflow failed before a valid verdict artifact was available: ${error.message}`], failureDetails(jobsResponse, ''), options.profile);
           } catch (detailsError) {
             if (detailsError instanceof RemoteTimeoutError || detailsError instanceof RemoteOutageError) throw detailsError;
             verdict = failureVerdict(sha, [`Workflow failed and diagnostics could not be retrieved: ${detailsError.message}`], { jobs: [] }, options.profile);
@@ -236,6 +232,57 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
       }
       if (run.conclusion !== 'success' && verdict.status === 'pass') {
         verdict = failureVerdict(sha, [`GitHub Actions concluded ${run.conclusion}; a passing artifact cannot override that result`], { jobs: verdict.jobs }, options.profile);
+      }
+      if (verdict?.status !== 'pass' && verdict?.status !== 'timeout' && verdict?.status !== 'outage') {
+        try {
+          const jobsResponse = await retryOperation(() => gh.failureJobs(repo, run.id), {
+            deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
+            callRemote, cadenceMs: policy.pollMs,
+          });
+          const failedJobs = (jobsResponse.jobs ?? []).filter((job) => job.conclusion !== 'success');
+          const logs = [];
+          for (const job of failedJobs) {
+            try {
+              const log = await retryOperation(() => gh.failureLogs(repo, run.id, job.id), {
+                deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
+                callRemote, cadenceMs: policy.pollMs,
+              });
+              logs.push({ name: job.name, log });
+            } catch (error) {
+              if (error instanceof RemoteTimeoutError || error instanceof RemoteOutageError) throw error;
+              logs.push({ name: job.name, log: '' });
+              verdict.diagnostics.push(`Failed-step log for ${job.name} could not be retrieved: ${error.message}`);
+            }
+          }
+          verdict.jobs = verdict.jobs.map((job) => {
+            const evidence = logs.find((item) => item.name === job.name);
+            return evidence ? { ...job, logTail: evidence.log } : job;
+          });
+          for (const sourceJob of failedJobs) {
+            const index = verdict.jobs.findIndex((job) => job.name === sourceJob.name);
+            const status = sourceJob.conclusion === 'skipped' ? 'skipped' : 'fail';
+            const failures = (sourceJob.steps ?? []).filter((step) => step.conclusion === 'failure').map((step) => step.name);
+            if (index < 0) {
+              verdict.jobs.push({ name: sourceJob.name, status, failures, logTail: logs.find((item) => item.name === sourceJob.name)?.log ?? '' });
+            } else if (verdict.jobs[index].status === 'pass') {
+              verdict.jobs[index] = { ...verdict.jobs[index], status, failures, logTail: logs.find((item) => item.name === sourceJob.name)?.log ?? '' };
+            }
+          }
+          let structuredArtifacts = [];
+          try {
+            structuredArtifacts = await retryOperation(() => gh.failureArtifacts(repo, run.id), {
+              deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
+              callRemote, cadenceMs: policy.pollMs,
+            });
+          } catch (error) {
+            if (error instanceof RemoteTimeoutError || error instanceof RemoteOutageError) throw error;
+            verdict.diagnostics.push(`Structured job findings could not be retrieved: ${error.message}`);
+          }
+          verdict.failureEvidence = { jobs: logs, structuredArtifacts };
+        } catch (error) {
+          if (error instanceof RemoteTimeoutError || error instanceof RemoteOutageError) throw error;
+          verdict.diagnostics.push(`Failed-job evidence could not be retrieved: ${error.message}`);
+        }
       }
     }
   } catch (error) {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import shlex
 import sys
 from typing import Any
 
@@ -112,6 +113,7 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
 
     missing = [str(path) for path in (
         output / "shared" / "batch-metadata.json",
+        output / "shared" / "run.json",
         output / "local" / "batch-metadata.json",
         output / "secured" / "batch-metadata.json",
     ) if not path.is_file()]
@@ -124,6 +126,25 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
     producer_metadata = _read_metadata(output, "shared")
     local_metadata = _read_metadata(output, "local")
     secured_metadata = _read_metadata(output, "secured")
+    run = json.loads((output / "shared" / "run.json").read_text(encoding="utf-8"))
+    run_commit = run.get("commit") if isinstance(run, dict) else None
+    commits = {
+        "shared/run.json": run_commit,
+        "shared/batch-metadata.json": producer_metadata.get("commit"),
+        "local/batch-metadata.json": local_metadata.get("commit"),
+        "secured/batch-metadata.json": secured_metadata.get("commit"),
+    }
+    if any(not isinstance(commit, str) or not commit for commit in commits.values()):
+        missing_identity = [name for name, commit in commits.items() if not isinstance(commit, str) or not commit]
+        raise ValueError(f"batch artifact commit identity is missing: {', '.join(missing_identity)}")
+    if len(set(commits.values())) != 1:
+        identities = ", ".join(f"{name}={commit}" for name, commit in commits.items())
+        for mode in ("shared", "local", "secured"):
+            metadata_path = output / mode / "batch-metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["result"] = "FAIL"
+            _write_metadata(metadata_path, metadata)
+        raise ValueError(f"batch artifacts contain mixed commit identities: {identities}")
     scoreboards = {
         mode: _read_scoreboard(output / mode)
         for mode in ("local", "secured")
@@ -159,7 +180,6 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
     )
     overall_result = ("PARTIAL" if partial else
                       "PASS" if shared_passed and not gating_mode_failed else "FAIL")
-    run = json.loads((output / "shared" / "run.json").read_text(encoding="utf-8"))
     lines = ["# Journey batch", "", f"- Commit: `{run['commit']}`",
              f"- Baseline: `{run['baseline']}`", f"- Build base: `{run['buildBase']}`", "",
              "## Stage durations"]
@@ -234,8 +254,17 @@ def main(argv: list[str]) -> int:
     try:
         return assemble(*(Path(value) for value in argv[1:]))
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
-        print(f"journey batch summary failed: {error}; next: inspect downloaded journey artifacts",
+        next_command = shlex.join([sys.executable, str(Path(argv[0]).resolve()), *argv[1:]])
+        print(f"journey batch summary failed: {error}; next: {next_command}",
               file=sys.stderr)
+        output = Path(argv[1])
+        shared = output / "shared"
+        shared.mkdir(parents=True, exist_ok=True)
+        (shared / "summary.md").write_text(
+            "# Journey batch\n\n- Result: FAIL\n"
+            f"- Finalization error: `{error}`\n\n",
+            encoding="utf-8",
+        )
         return 1
 
 
