@@ -22,6 +22,45 @@ CLEAR_CANDIDATES = ROOT / "e2e/verdaccio/clear-candidates.sh"
 
 
 class CandidatePackageRegistryTests(unittest.TestCase):
+    def _run_service_without_owner_source(self, temporary: str, service_call: str) -> tuple[subprocess.CompletedProcess[str], Path]:
+        root = Path(temporary)
+        workspace = root / "unrelated-workspace"
+        (workspace / "tools/kb-create").mkdir(parents=True)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        operations = root / "service-operations.txt"
+        for name, script in {
+            "go": '#!/bin/sh\nprintf "go\\n" >> "$SERVICE_OPERATIONS"\nexit 0\n',
+            "node": '#!/bin/sh\nprintf "node\\n" >> "$SERVICE_OPERATIONS"\nprintf "http://127.0.0.1:49666\\n"\n',
+            "python3": '#!/bin/sh\nprintf "python3\\n" >> "$SERVICE_OPERATIONS"\nexit 0\n',
+            "curl": '#!/bin/sh\nprintf "curl\\n" >> "$SERVICE_OPERATIONS"\nexit 0\n',
+            "sh": '#!/bin/sh\nprintf "sh\\n" >> "$SERVICE_OPERATIONS"\nexit 0\n',
+            "sudo": '#!/bin/sh\nprintf "sudo\\n" >> "$SERVICE_OPERATIONS"\nexit 0\n',
+        }.items():
+            command = bin_dir / name
+            command.write_text(script, encoding="utf-8")
+            command.chmod(0o755)
+        env = isolated_environment(
+            root / "home", bin_dir, required_tools=("bash", "mktemp"),
+            overrides={"RUNNER_TEMP": str(root), "SERVICE_OPERATIONS": str(operations)},
+        )
+        registry_pipe = root / "registry.pipe"
+        os.mkfifo(registry_pipe)
+        script = (
+            'source "$1"; source "$2"; COMPOSE_AVAILABLE=1; '
+            'journey_start_registry() { return 0; }; '
+            f'{service_call} "$3"; service_status=$?; '
+            'if [[ -n "${JOURNEY_CANDIDATE_REGISTRY_PID:-}" ]]; then '
+            'wait "$JOURNEY_CANDIDATE_REGISTRY_PID" 2>/dev/null || true; fi; '
+            'exit "$service_status"'
+        )
+        result = subprocess.run(
+            ["bash", "-c", script, "candidate-service-no-owner", str(ROOT / "e2e/compose-owner.sh"),
+             str(ROOT / "e2e/journey/candidate-services.sh"), str(registry_pipe)],
+            cwd=workspace, env=env, capture_output=True, text=True, check=False,
+        )
+        return result, operations
+
     def _start_compose_registry(self, temporary: str) -> tuple[subprocess.CompletedProcess[str], list[str], Path, list[str]]:
         root = Path(temporary)
         workspace = root / "workspace"
@@ -29,6 +68,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         bin_dir.mkdir()
         (workspace / "e2e/journey").mkdir(parents=True)
         (workspace / "e2e/verdaccio").mkdir(parents=True)
+        (workspace / "pnpm-workspace.yaml").write_text("packages: []\n", encoding="utf-8")
         shutil.copy2(ROOT / "e2e/compose-owner.sh", workspace / "e2e/compose-owner.sh")
         shutil.copy2(ROOT / "e2e/journey/candidate-services.sh", workspace / "e2e/journey/candidate-services.sh")
         shutil.copy2(REGISTRY, workspace / "e2e/journey/candidate-package-registry.mjs")
@@ -91,6 +131,36 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         self.assertIn("Journey candidate registry: http://127.0.0.1:49666", result.stdout)
         self.assertNotIn("127.0.0.1:4873", result.stdout)
 
+    def test_candidate_runtime_requires_owner_workspace_source(self):
+        with tempfile.TemporaryDirectory(prefix="journey-runtime-no-owner-") as temporary:
+            result, operations = self._run_service_without_owner_source(
+                temporary, 'journey_install_candidate_runtime index.json packages install-root',
+            )
+            operations_exist = operations.exists()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(operations_exist)
+        self.assertTrue(result.stderr)
+
+    def test_candidate_registry_requires_owner_workspace_source(self):
+        with tempfile.TemporaryDirectory(prefix="journey-registry-no-owner-") as temporary:
+            result, operations = self._run_service_without_owner_source(
+                temporary, 'journey_start_candidate_registry packages candidate',
+            )
+            operations_exist = operations.exists()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(operations_exist)
+        self.assertTrue(result.stderr)
+
+    def test_host_services_require_owner_workspace_source(self):
+        with tempfile.TemporaryDirectory(prefix="journey-host-no-owner-") as temporary:
+            result, operations = self._run_service_without_owner_source(
+                temporary, 'journey_start_host_services',
+            )
+            operations_exist = operations.exists()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(operations_exist)
+        self.assertTrue(result.stderr)
+
     # case: S-195.6
     def test_candidate_runtime_install_uses_compose_registry(self):
         with tempfile.TemporaryDirectory(prefix="journey-candidate-runtime-registry-") as temporary:
@@ -101,6 +171,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
             (workspace / "e2e/journey").mkdir(parents=True)
             (workspace / "e2e/verdaccio").mkdir(parents=True)
             (workspace / "tools/kb-create").mkdir(parents=True)
+            (workspace / "pnpm-workspace.yaml").write_text("packages: []\n", encoding="utf-8")
             shutil.copy2(ROOT / "e2e/compose-owner.sh", workspace / "e2e/compose-owner.sh")
             shutil.copy2(ROOT / "e2e/journey/candidate-services.sh", workspace / "e2e/journey/candidate-services.sh")
             shutil.copy2(CLEAR_CANDIDATES, workspace / "e2e/verdaccio/clear-candidates.sh")
@@ -158,7 +229,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         self.assertFalse(any("npx" in call or "verdaccio@" in call for call in compose_calls), compose_calls)
         self.assertEqual(len([call for call in compose_calls if call.startswith("compose ")]), 5, compose_calls)
         self.assertEqual(workspace_paths, {
-            "e2e", "e2e/journey", "e2e/compose-owner.sh", "e2e/journey/candidate-services.sh",
+            "pnpm-workspace.yaml", "e2e", "e2e/journey", "e2e/compose-owner.sh", "e2e/journey/candidate-services.sh",
             "e2e/verdaccio", "e2e/verdaccio/clear-candidates.sh", "tools", "tools/kb-create",
         })
 
@@ -222,7 +293,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         self.assertEqual(directory_names, {"workspace", "bin", "home", "compose-calls.txt", "cleared-storage-script.sh",
                                            "candidate-registry-args.txt", "registry.pipe"})
         self.assertEqual(workspace_paths, {
-            "e2e", "e2e/journey", "e2e/compose-owner.sh", "e2e/journey/candidate-services.sh",
+            "pnpm-workspace.yaml", "e2e", "e2e/journey", "e2e/compose-owner.sh", "e2e/journey/candidate-services.sh",
             "e2e/journey/candidate-package-registry.mjs",
             "e2e/verdaccio", "e2e/verdaccio/clear-candidates.sh",
         })

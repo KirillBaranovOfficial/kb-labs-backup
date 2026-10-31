@@ -22,6 +22,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         (self.root / "e2e/journey").mkdir(parents=True)
         (self.root / "e2e/scripts").mkdir(parents=True)
         (self.root / "core/fixture/dist").mkdir(parents=True)
+        (self.root / "pnpm-workspace.yaml").write_text("packages: []\n")
         (self.root / "package.json").write_text('{"name":"journey-fixture","private":true}\n')
         (self.root / "core/fixture/package.json").write_text('{"name":"fixture-build-output","private":true}\n')
         (self.root / "prompts").mkdir()

@@ -38,19 +38,37 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
                                    overrides={"COMPOSE_ARGS_OUT": str(compose_args)})
         return env, compose_args
 
-    def test_compose_owner_exports_workspace_root(self):
+    def test_compose_owner_canonicalizes_relative_and_symlinked_roots(self):
         with tempfile.TemporaryDirectory(prefix="journey-compose-owner-root-") as temp:
             env, _ = self._fake_compose_environment(temp)
-            workspace = Path(temp) / "workspace"
-            workspace.mkdir()
+            alias = Path(temp) / "workspace-link"
+            alias.symlink_to(ROOT, target_is_directory=True)
+            for supplied_root in (".", str(alias)):
+                with self.subTest(supplied_root=supplied_root):
+                    result = subprocess.run(
+                        ["bash", "-c",
+                         'source "$1"; journey_compose_init "$2"; printf "%s\\n" "$KB_JOURNEY_WORKSPACE_SOURCE"',
+                         "journey-compose-owner", str(ROOT / "e2e" / "compose-owner.sh"), supplied_root],
+                        cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), str(ROOT.resolve()))
+
+    def test_compose_owner_rejects_another_existing_workspace(self):
+        with tempfile.TemporaryDirectory(prefix="journey-compose-owner-mismatch-") as temp:
+            env, _ = self._fake_compose_environment(temp)
+            unrelated = Path(temp) / "unrelated"
+            unrelated.mkdir()
             result = subprocess.run(
                 ["bash", "-c",
-                 'source "$1"; journey_compose_init "$2"; printf "%s\\n" "$KB_JOURNEY_WORKSPACE_SOURCE"',
-                 "journey-compose-owner", str(ROOT / "e2e" / "compose-owner.sh"), str(workspace)],
+                 'source "$1"; if journey_compose_init "$2"; then exit 97; else status=$?; fi; '
+                 'printf "%s" "${KB_JOURNEY_WORKSPACE_SOURCE:-}"; exit "$status"',
+                 "journey-compose-owner", str(ROOT / "e2e" / "compose-owner.sh"), str(unrelated)],
                 cwd=ROOT, env=env, capture_output=True, text=True, check=False,
             )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), str(workspace))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertTrue(result.stderr)
 
     def test_compose_owner_requires_workspace_root(self):
         with tempfile.TemporaryDirectory(prefix="journey-compose-owner-missing-root-") as temp:
@@ -174,6 +192,25 @@ if (!configResult.ok || !lockResult.valid) {
         self.assertEqual(result.returncode, 0, result.stderr)
         rendered = json.loads(result.stdout)
         self.assertTrue(rendered["networks"]["journey"]["internal"])
+
+    def test_compose_configuration_rejects_missing_workspace_source(self):
+        compose_command = require_compose_command(self)
+        with tempfile.TemporaryDirectory(prefix="journey-compose-missing-source-") as temp:
+            env = isolated_environment(
+                Path(temp) / "home", Path(temp) / "bin", required_tools=(tuple(compose_command),),
+                overrides={
+                    "KB_JOURNEY_GIT_REVISION": "test-revision",
+                    "KB_JOURNEY_RUNNER_UID": str(os.getuid()),
+                    "KB_JOURNEY_RUNNER_GID": str(os.getgid()),
+                },
+            )
+            result = subprocess.run(
+                [*compose_command, "-f", "e2e/docker-compose.yml", "-f",
+                 "e2e/journey/docker-compose.yml", "config", "--quiet"],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("KB_JOURNEY_WORKSPACE_SOURCE", result.stderr)
 
     def test_registry_lane_adds_producer_overlay_through_compose_owner(self):
         for action, suffix in (("--render-compose-config", ["config", "--format", "json"]),
