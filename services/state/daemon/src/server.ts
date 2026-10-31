@@ -1,5 +1,8 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import { InMemoryStateBroker } from "@kb-labs/core-state-broker";
+import {
+  InMemoryStateBroker,
+  type StateBroker,
+} from "@kb-labs/core-state-broker";
 import { AppendOnlyJournalStateBroker } from "../../../../core/state-broker/src/backends/append-only-journal.js";
 import {
   createErrorEnvelope,
@@ -38,7 +41,7 @@ function createFallbackLogger(): IContextLogger {
 }
 
 class StateDaemonRuntime {
-  private broker: InMemoryStateBroker = new InMemoryStateBroker();
+  private broker: StateBroker = new InMemoryStateBroker();
   private readonly observability = new HttpObservabilityCollector({
     serviceId: "state-daemon",
     serviceType: "state-daemon",
@@ -355,7 +358,7 @@ function mapBrokerHealthStatus(
 }
 
 function buildBrokerChecks(
-  health: Awaited<ReturnType<InMemoryStateBroker["getHealth"]>>,
+  health: Awaited<ReturnType<StateBroker["getHealth"]>>,
 ): ObservabilityCheck[] {
   return [
     {
@@ -372,7 +375,7 @@ function buildBrokerChecks(
 }
 
 function buildBrokerMetricLines(
-  stats: Awaited<ReturnType<InMemoryStateBroker["getStats"]>>,
+  stats: Awaited<ReturnType<StateBroker["getStats"]>>,
 ): string[] {
   return [
     "# HELP state_broker_entries_total Total entries stored by the state broker",
