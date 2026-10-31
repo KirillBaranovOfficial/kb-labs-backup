@@ -70,6 +70,9 @@ export function parseDockerfileFromInstructions(source) {
 export function nodeImageIssues(repositoryRoot, requiredMajor, { includeJourneyRunnerContract = false } = {}) {
   const issues = [];
   const toolchainContract = includeJourneyRunnerContract ? readToolchainContract() : undefined;
+  const nodePolicy = includeJourneyRunnerContract
+    ? JSON.parse(readFileSync(path.join(repositoryRoot, 'tools/clikit/toolchain/node_policy_gen.json'), 'utf8'))
+    : undefined;
   for (const relativeFile of trackedDockerfiles(repositoryRoot)) {
     const absoluteFile = path.join(repositoryRoot, relativeFile);
     const source = readFileSync(absoluteFile, 'utf8');
@@ -84,13 +87,22 @@ export function nodeImageIssues(repositoryRoot, requiredMajor, { includeJourneyR
       }
 
       if (from.externalImage !== undefined) {
-        const isDerivedRunnerImage = toolchainContract !== undefined && relativeFile === toolchainContract.dockerfile
+        const isPolicyNodeImage = toolchainContract !== undefined && nodePolicy !== undefined
+          && relativeFile === toolchainContract.dockerfile
+          && from.stage === toolchainContract.toolchainStage
+          && from.externalArgs.length === 1
+          && from.externalArgs[0] === nodePolicy.nodeBaseImageArgument
+          && toolchainStage === from;
+        const isDerivedRunnerImage = toolchainContract !== undefined && nodePolicy !== undefined
+          && relativeFile === toolchainContract.dockerfile
           && from.externalArgs.length === 1
           && from.externalArgs[0] === toolchainContract.imageArgument
           && from.externalImage === `\${${toolchainContract.imageArgument}}`
           && toolchainStage !== undefined
-          && toolchainStage.image?.startsWith('node:');
-        if (!isDerivedRunnerImage) {
+          && (toolchainStage.image?.startsWith('node:')
+            || (toolchainStage.externalArgs?.length === 1
+              && toolchainStage.externalArgs[0] === nodePolicy.nodeBaseImageArgument));
+        if (!isDerivedRunnerImage && !isPolicyNodeImage) {
           issues.push({
             file: `${relativeFile}:${from.line}`,
             message: `FROM image ${JSON.stringify(from.externalImage)} is not derived from the checked runner toolchain stage`,

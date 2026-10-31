@@ -26,10 +26,33 @@ compose_owner_json() {
 JOURNEY_COMPOSE=()
 JOURNEY_COMPOSE_FILES=()
 COMPOSE_AVAILABLE=0
+JOURNEY_COMPOSE_INITIALIZED=0
 REGISTRY_COMPOSITION_ROOT=""
 
 journey_compose_init() {
-  local root="$1" rendered overlay_path
+  local root="${1:-}" canonical_root owner_directory owner_root rendered overlay_path owner_source
+
+  JOURNEY_COMPOSE=()
+  JOURNEY_COMPOSE_FILES=()
+  COMPOSE_AVAILABLE=0
+  JOURNEY_COMPOSE_INITIALIZED=0
+  unset KB_JOURNEY_WORKSPACE_SOURCE
+  if [[ -z "$root" || ! -d "$root" ]]; then
+    printf 'journey_compose_init requires an existing workspace root; invoke it as: journey_compose_init "$ROOT".\n' >&2
+    return 2
+  fi
+  canonical_root="$(cd "$root" && pwd -P)" || return 2
+  owner_source="${BASH_SOURCE[0]}"
+  owner_directory="${owner_source%/*}"
+  if [[ "$owner_directory" == "$owner_source" ]]; then owner_directory="."; fi
+  owner_directory="$(cd "$owner_directory" && pwd -P)" || return 2
+  owner_root="$(cd "$owner_directory/.." && pwd -P)" || return 2
+  if [[ "$canonical_root" != "$owner_root" ]]; then
+    printf 'workspace root must resolve to the checkout containing e2e/compose-owner.sh; use: journey_compose_init %q\n' "$owner_root" >&2
+    return 2
+  fi
+  export KB_JOURNEY_WORKSPACE_SOURCE="$canonical_root"
+  JOURNEY_COMPOSE_INITIALIZED=1
 
   JOURNEY_COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
   if ! compose_owner_init; then
@@ -49,6 +72,13 @@ journey_compose_init() {
   fi
 
   JOURNEY_COMPOSE=("${COMPOSE_OWNER_COMMAND[@]}" "${JOURNEY_COMPOSE_FILES[@]}")
+}
+
+journey_compose_require_workspace_source() {
+  if (( ! JOURNEY_COMPOSE_INITIALIZED )) || [[ -z "${KB_JOURNEY_WORKSPACE_SOURCE:-}" ]]; then
+    printf 'journey_compose_init "$ROOT" must succeed before candidate service helpers are called.\n' >&2
+    return 2
+  fi
 }
 
 journey_compose() {

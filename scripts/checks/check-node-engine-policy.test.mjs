@@ -204,6 +204,40 @@ test('generated Go Node policy matches the owner and rejects root-owner drift', 
   }
 });
 
+test('generated Node image contract follows the policy owner and detects JSON drift', async () => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-node-policy-image-'));
+  try {
+    await writeFile(path.join(fixtureRoot, 'package.json'), JSON.stringify({
+      engines: { node: '26.x' }, packageManager: 'pnpm@11.5.0',
+    }));
+    const generated = spawnSync(process.execPath, [generator, '--root', fixtureRoot], {
+      cwd: root, encoding: 'utf8',
+    });
+    assert.equal(generated.status, 0, generated.stderr);
+    const declaration = await readNodeEngineDeclaration(path.join(fixtureRoot, 'package.json'));
+    const major = parseNodeEnginePolicy(declaration).requiredMajor;
+    const policyPath = path.join(fixtureRoot, 'tools/clikit/toolchain/node_policy_gen.json');
+    const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+    assert.equal(policy.requiredMajor, major);
+    assert.equal(policy.nodeBaseImage, `node:${major}-bookworm`);
+    assert.ok(policy.nodeBaseImageArgument);
+
+    const current = spawnSync(process.execPath, [generator, '--check', '--root', fixtureRoot], {
+      cwd: root, encoding: 'utf8',
+    });
+    assert.equal(current.status, 0, current.stderr);
+    policy.nodeBaseImage = 'node:24-bookworm';
+    await writeFile(policyPath, JSON.stringify(policy, null, 2) + '\n');
+    const stale = spawnSync(process.execPath, [generator, '--check', '--root', fixtureRoot], {
+      cwd: root, encoding: 'utf8',
+    });
+    assert.notEqual(stale.status, 0);
+    assert.match(stale.stderr, /generated JSON Node policy is stale/);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test('Go compilation rejects a duplicate generated node policy constant in an isolated package', async () => {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-node-policy-duplicate-'));
   try {

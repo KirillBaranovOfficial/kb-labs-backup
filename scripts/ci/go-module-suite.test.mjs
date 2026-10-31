@@ -243,6 +243,11 @@ test('reusable installer workflow runs a native macOS install from the candidate
   assert.deepEqual(workflow.jobs.journey.strategy.matrix.os, ['ubuntu-latest']);
   const native = workflow.jobs.native_macos;
   assert.equal(native['runs-on'], 'macos-latest');
+  const nodeSetup = native.steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
+  assert.equal(nodeSetup.with['node-version-file'], 'package.json');
+  const coverage = workflow.jobs.coverage;
+  const coverageNodeSetup = coverage.steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
+  assert.equal(coverageNodeSetup.with['node-version-file'], 'package.json');
   const downloads = native.steps.find((step) => step.uses?.startsWith('actions/download-artifact@'));
   assert.equal(downloads.with.name, 'installer-journey-candidate');
   const setup = native.steps.find((step) => step.name === 'Install candidate natively and smoke the installed CLI');
@@ -291,10 +296,10 @@ test('shared candidate services start, publish, and clean up the native origin a
     + "  *' stop verdaccio') exit 0 ;;\n"
     + 'esac\nexit 97\n', { mode: 0o755 });
   writeFileSync(path.join(bin, 'sh'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$PUBLISH_CALL"\nexit 0\n', { mode: 0o755 });
-  const result = spawnSync('/bin/bash', ['-e', '-c', 'source "$1"; source "$2"; journey_compose_init "$KB_JOURNEY_WORKSPACE_SOURCE"; trap "journey_stop_host_services" EXIT; journey_start_host_services; journey_stop_host_services; trap - EXIT', 'candidate-services-test', path.join(root, 'e2e/compose-owner.sh'), path.join(root, 'e2e/journey/candidate-services.sh')], {
+  const result = spawnSync('/bin/bash', ['-e', '-c', 'source "$1"; source "$2"; journey_compose_init "$PWD"; trap "journey_stop_host_services" EXIT; journey_start_host_services; journey_stop_host_services; trap - EXIT', 'candidate-services-test', path.join(root, 'e2e/compose-owner.sh'), path.join(root, 'e2e/journey/candidate-services.sh')], {
     cwd: root,
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: fixture, SERVICE_PIDS: pids, PUBLISH_CALL: publish, KB_JOURNEY_WORKSPACE_SOURCE: root },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: fixture, SERVICE_PIDS: pids, PUBLISH_CALL: publish },
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(readFileSync(publish, 'utf8'), /e2e\/publisher\/publish\.sh/);

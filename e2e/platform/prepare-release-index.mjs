@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path';
 import { clearGeneratedReleasePackages, readPackedPackageManifests } from './release-index-package-stage.mjs';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
-import { invokePackageProvenanceOwner } from 'kb-create/scripts/package-provenance.mjs';
+import { prepareReleaseProvenance } from './release-provenance.mjs';
 import { readPlatformReleaseConfig, releaseArtifactPackageNames, shippedPlatformPackageSet } from 'kb-create/scripts/platform-release-config.mjs';
 
 const args = process.argv.slice(2);
@@ -371,9 +371,7 @@ const canary = spawnSync(process.execPath, [
 if (canary.status !== 0) process.exit(canary.status ?? 1);
 
 function writeProvenanceManifest(directory, revision) {
-  const packageManifest = JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8'));
-  const provenance = invokePackageProvenanceOwner(sealer,
-    ['provenance', directory, revision], JSON.stringify(packageManifest));
+  const provenance = prepareReleaseProvenance(directory, revision, sealer);
   const path = join(directory, 'provenance.json');
   writeFileSync(path, `${JSON.stringify(provenance, null, 2)}\n`);
   return path;

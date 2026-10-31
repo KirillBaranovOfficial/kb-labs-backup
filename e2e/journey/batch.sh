@@ -189,9 +189,18 @@ run_mode() {
   rm -rf .journey/reports/invocations
   duration=$(($(date +%s) - run_started))
   result=PASS; [ "$rc" -eq 0 ] || result=FAIL
+  scoreboard_missing=0
+  if [ ! -s "$mode_dir/case-scoreboard.json" ]; then
+    scoreboard_missing=1
+    result=FAIL
+  fi
   source_meta="$shared/batch-metadata.json"
   "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
     "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" || return 1
+  if [ "$scoreboard_missing" -eq 1 ]; then
+    echo "journey $mode mode produced no case scoreboard (entry exited with $rc); see $mode_dir/batch.log for the cause. Next: KB_JOURNEY_ONLY=service-$mode:explore e2e/journey/run.sh --no-build" >&2
+    return 1
+  fi
   if [ "$rc" -ne 0 ]; then
     printf '\n- Failed stage: `%s`\n- Stage log: `%s/batch.log`\n' "$mode" "$mode/batch.log" >> "$mode_dir/batch.log"
     gate_rc=0

@@ -7,7 +7,7 @@ import shlex
 import shutil
 import sys
 from pathlib import Path, PurePosixPath
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from journey_values import journey_value
 
@@ -32,6 +32,8 @@ CONFIG_JSONC_RESOURCE = RunnerImageResource(
     ".journey/runner-inputs/config-jsonc-edit.mjs",
     "/opt/kb-journey/core/config/dist/jsonc-edit.mjs",
 )
+MARKETPLACE_SYNC_BUNDLE = ".journey/runner-inputs/marketplace-sync-server.mjs"
+MARKETPLACE_SYNC_LOGO = ".journey/runner-inputs/static/logo.svg"
 
 TOOLCHAIN_STAGE_NAME = "toolchain"
 TOOLCHAIN_IMAGE_REPOSITORY = "kb-journey-runner-toolchain"
@@ -62,8 +64,10 @@ RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("docs/qa/scenarios", "/opt/kb-journey/docs/qa/scenarios"),
     RunnerImageResource("e2e/platform/fixtures/installer-cases",
                         "/opt/kb-journey/e2e/platform/fixtures/installer-cases"),
-    RunnerImageResource("e2e/platform/fixtures/marketplace-sync-server.mjs",
+    RunnerImageResource(MARKETPLACE_SYNC_BUNDLE,
                         "/opt/kb-journey/e2e/platform/fixtures/marketplace-sync-server.mjs"),
+    RunnerImageResource(MARKETPLACE_SYNC_LOGO,
+                        "/opt/kb-journey/e2e/platform/fixtures/static/logo.svg"),
     RunnerImageResource("e2e/platform/journey-update-packages.mjs",
                         "/opt/kb-journey/e2e/platform/journey-update-packages.mjs"),
     RunnerImageResource("tools/kb-create/package.json",
@@ -76,7 +80,8 @@ RUNNER_IMAGE_RESOURCES = (
                         "/opt/kb-journey/e2e/platform/registry-manifest.json"),
     RunnerImageResource("e2e/publisher/publish.sh",
                         "/opt/kb-journey/e2e/publisher/publish.sh"),
-    RunnerImageResource("core/platform/contracts/ux-result", "/opt/kb-journey/contracts/ux-result"),
+    RunnerImageResource("core/platform/contracts/ux-result",
+                        "/opt/kb-journey/core/platform/contracts/ux-result"),
     RunnerImageResource("core/platform/src/error-envelope/error-envelope.schema.json",
                         "/opt/kb-journey/core/platform/src/error-envelope/error-envelope.schema.json"),
     RunnerImageResource("core/platform/src/error-envelope/errors.catalog.json",
@@ -159,6 +164,8 @@ def stage_runner_image_inputs() -> tuple[Path, ...]:
     staged_paths = list(stage_studio_playwright_specs(
         workspace_resource(".journey", "runner-inputs", "studio-specs")))
     staged_paths.append(stage_config_jsonc_parser())
+    staged_paths.append(stage_marketplace_sync_fixture())
+    staged_paths.append(workspace_resource(*PurePosixPath(MARKETPLACE_SYNC_LOGO).parts))
     for resource in RUNNER_IMAGE_RESOURCES:
         if resource.stage_source is None:
             continue
@@ -191,6 +198,56 @@ def stage_config_jsonc_parser() -> Path:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise RuntimeError(f"Core config JSONC parser staging failed: {detail}")
     return destination
+
+
+def stage_marketplace_sync_fixture() -> Path:
+    """Bundle the fixture and its workspace package closure for the runner image."""
+    from invocations import run_harness_command
+
+    source = workspace_resource("e2e", "platform", "fixtures", "marketplace-sync-server.mjs")
+    destination = workspace_resource(*PurePosixPath(MARKETPLACE_SYNC_BUNDLE).parts)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    logo_source = _marketplace_sync_logo_source(run_harness_command)
+    logo_destination = workspace_resource(*PurePosixPath(MARKETPLACE_SYNC_LOGO).parts)
+    logo_destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(logo_source, logo_destination)
+    result = run_harness_command([
+        str(_esbuild_binary()), str(source), "--bundle", "--platform=node", "--format=esm",
+        "--define:__dirname=import.meta.dirname",
+        '--banner:js=import { createRequire as __createRequire } from "node:module"; '
+        "const require = __createRequire(import.meta.url);",
+        f"--outfile={destination}",
+    ])
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"Marketplace sync fixture staging failed: {detail}")
+    return destination
+
+
+def _marketplace_sync_logo_source(
+    run_harness_command: Callable[[list[str]], subprocess.CompletedProcess[str]],
+) -> Path:
+    """Resolve the logo file used by the bundled Fastify Swagger UI plugin."""
+    package_manifest = workspace_resource("services", "marketplace", "api", "package.json")
+    script = (
+        'const path = require("node:path"); '
+        'const { createRequire } = require("node:module"); '
+        'const appRequire = createRequire(path.resolve(process.argv[1])); '
+        'const fastifyRequire = createRequire(appRequire.resolve("fastify")); '
+        'process.stdout.write(path.join('
+        'path.dirname(fastifyRequire.resolve("@fastify/swagger-ui")), '
+        '"static", "logo.svg"));'
+    )
+    result = run_harness_command(["node", "-e", script, str(package_manifest)])
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"Marketplace sync fixture asset resolution failed: {detail}")
+    logo = Path(result.stdout.strip())
+    if not logo.is_file():
+        raise FileNotFoundError(
+            f"Marketplace sync fixture requires the Fastify Swagger UI logo at {logo}."
+        )
+    return logo
 
 
 def _esbuild_binary() -> Path:
@@ -286,13 +343,15 @@ def runner_toolchain_stage_text(dockerfile: Path | None = None) -> str:
 
 def runner_toolchain_image(*, dockerfile: Path | None = None,
                            package_manifest_input: Path | None = None,
-                           studio_manifest_input: Path | None = None) -> str:
+                           studio_manifest_input: Path | None = None,
+                           node_policy_input: Path | None = None) -> str:
     """Derive the tagged toolchain image reference from its exact build inputs.
 
     The tag hashes the toolchain stage of Dockerfile.runner, the source
-    Playwright declaration, and the root packageManager declaration used by
-    Corepack. A changed input yields a new tag that the harness builds, while
-    per-run runner-stage changes reuse the existing image.
+    Playwright declaration, the root packageManager declaration used by
+    Corepack, and the generated Node base image policy. A changed input yields
+    a new tag that the harness builds, while per-run runner-stage changes
+    reuse the existing image.
     """
     stage = runner_toolchain_stage_text(dockerfile)
     studio_manifest = studio_manifest_input or workspace_resource(*STUDIO_PACKAGE_MANIFEST.split("/"))
@@ -310,13 +369,29 @@ def runner_toolchain_image(*, dockerfile: Path | None = None,
         raise FileNotFoundError(f"The journey runner toolchain needs its workspace package.json at {package_manifest}.") from error
     if not isinstance(package_manager, str) or not package_manager.startswith("pnpm@"):
         raise ValueError(f"The journey runner toolchain requires a pnpm packageManager declaration in {package_manifest}.")
-    digest = hashlib.sha256(f"{stage}\n{playwright_version}\n{package_manager}".encode("utf-8")).hexdigest()[:16]
+    node_policy = node_policy_input or workspace_resource(
+        "tools", "clikit", "toolchain", "node_policy_gen.json")
+    try:
+        generated_node_policy = json.loads(node_policy.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"The journey runner toolchain needs generated Node policy at {node_policy}.") from error
+    node_base_image = generated_node_policy.get("nodeBaseImage")
+    node_base_image_argument = generated_node_policy.get("nodeBaseImageArgument")
+    if not isinstance(node_base_image, str) or not node_base_image:
+        raise ValueError(f"The generated Node policy at {node_policy} requires nodeBaseImage.")
+    if not isinstance(node_base_image_argument, str) or not node_base_image_argument:
+        raise ValueError(f"The generated Node policy at {node_policy} requires nodeBaseImageArgument.")
+    digest = hashlib.sha256(
+        f"{stage}\n{playwright_version}\n{package_manager}\n"
+        f"{node_base_image}\n{node_base_image_argument}".encode("utf-8")
+    ).hexdigest()[:16]
     return f"{TOOLCHAIN_IMAGE_REPOSITORY}:{digest}"
 
 
 def runner_toolchain_contract(*, dockerfile: Path | None = None,
                               package_manifest_input: Path | None = None,
-                              studio_manifest_input: Path | None = None) -> dict[str, str]:
+                              studio_manifest_input: Path | None = None,
+                              node_policy_input: Path | None = None) -> dict[str, str]:
     """Return the Dockerfile input and derived image used by the runner stage."""
     return {
         "dockerfile": TOOLCHAIN_DOCKERFILE,
@@ -325,7 +400,8 @@ def runner_toolchain_contract(*, dockerfile: Path | None = None,
         "imageArgument": TOOLCHAIN_IMAGE_BUILD_ARGUMENT,
         "imageReference": runner_toolchain_image(dockerfile=dockerfile,
                                                   package_manifest_input=package_manifest_input,
-                                                  studio_manifest_input=studio_manifest_input),
+                                                  studio_manifest_input=studio_manifest_input,
+                                                  node_policy_input=node_policy_input),
     }
 
 

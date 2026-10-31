@@ -352,6 +352,23 @@ class InstallerCaseStepsTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "installed executed package dist digests differ"):
                 installer_case_steps.verify_installed_candidate_provenance(root)
 
+    def test_installed_candidate_provenance_rejects_missing_shipped_package(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installed-missing-package-") as temporary:
+            root = Path(temporary)
+            (root / ".kb/v2").mkdir(parents=True)
+            (root / ".kb/v2/installed-provenance.json").write_text(json.dumps({
+                "packages": [{"name": "@kb-labs/sample", "version": "1.0.0",
+                              "integrity": "sha512-sample", "installedPath": "node_modules/@kb-labs/sample",
+                              "sourceRevision": "revision", "contentDigest": "sample-digest"}]}))
+            (root / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"artifacts": [
+                {"package": "@kb-labs/sample", "version": "1.0.0",
+                 "provenance": {"distSha256": "sample-digest"}},
+                {"package": "@kb-labs/cli-bin", "version": "1.0.0",
+                 "provenance": {"distSha256": "cli-digest"}},
+            ]}}))
+            with self.assertRaisesRegex(RuntimeError, "installed package closure differs"):
+                installer_case_steps.verify_installed_candidate_provenance(root)
+
     def test_journey_steps_resolve_layout_paths_by_identity(self):
         journey_root = Path(__file__).parents[2]
         layout = json.loads((journey_root / "tools/kb-create/v2/contracts/platform-layout.json").read_text())

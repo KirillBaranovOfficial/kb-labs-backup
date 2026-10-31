@@ -8,12 +8,19 @@ from typing import Mapping
 from invocations import BackgroundCommand, open_http, start_background_command
 
 
-def start_marketplace_sync_fixture(workspace_root: Path, env: dict[str, str], *,
-                                  request_recorder: bool = False):
-    fixture = Path(__file__).resolve().parents[1] / "platform" / "fixtures" / "marketplace-sync-server.mjs"
+def marketplace_sync_fixture_command(workspace_root: Path, *, fixture_path: Path | None = None,
+                                     request_recorder: bool = False) -> list[str]:
+    fixture = fixture_path or (
+        Path(__file__).resolve().parents[1] / "platform" / "fixtures" / "marketplace-sync-server.mjs")
     command = ["node", str(fixture), str(workspace_root)]
     if request_recorder:
         command.append("--request-recorder")
+    return command
+
+
+def start_marketplace_sync_fixture(workspace_root: Path, env: dict[str, str], *,
+                                  request_recorder: bool = False):
+    command = marketplace_sync_fixture_command(workspace_root, request_recorder=request_recorder)
     process = start_background_command(
         command, cwd=workspace_root, env=env)
     if not process.wait_for_output('"url":', 30):

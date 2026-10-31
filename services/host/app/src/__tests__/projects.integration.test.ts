@@ -903,7 +903,11 @@ describe("kb-host project routing", () => {
     expect(isAlive(pid)).toBe(true);
 
     await waitFor(() => !isAlive(pid), "the idle runtime to stop");
-
+    await waitFor(async () => {
+      const response = await subject.fetchGateway("/health");
+      const health = await readUxSuccessResult<HealthBody>(response);
+      return health.projectRuntimes.runtimes.length === 0;
+    }, "the stopped runtime to leave the health registry");
     const health = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
     expect(health.projectRuntimes.runtimes).toEqual([]);
     // The next request starts it again.

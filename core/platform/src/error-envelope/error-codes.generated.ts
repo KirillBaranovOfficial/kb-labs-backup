@@ -828,8 +828,8 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": { "connectionId": string };
   "KB_SERVICE_HEALTH_TIMEOUT": Record<string, never>;
   "KB_SERVICE_UNAVAILABLE": { "service"?: string; "status"?: string; "timeout"?: string };
-  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "argsSummary": string; "elapsed": string; "nextCommand": string; "tool": string; "stderrTail": string };
-  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "nextCommand": string; "version": string };
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": { "argsSummary": string; "elapsed": string; "nextCommand": string; "tool": string; "stderrTail": string; "diagnosticPath"?: string; "logPath"?: string };
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": { "nextCommand": string; "version": string; "diagnosticPath"?: string; "logPath"?: string };
   "KB_UPDATE_APPLY_FAILED": { "version": string; "diagnosticPath"?: string; "logPath"?: string };
   "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
   "KB_UPDATE_DOWNLOAD_FAILED": Record<string, never>;
@@ -2818,8 +2818,8 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
   "KB_SERVICE_UNAVAILABLE": ["service","status","timeout"],
-  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["tool","argsSummary","elapsed","stderrTail","nextCommand"],
-  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": [],
+  "KB_TOOLCHAIN_EXTERNAL_TIMEOUT": ["tool","argsSummary","elapsed","stderrTail","nextCommand","diagnosticPath","logPath"],
+  "KB_TOOLCHAIN_PNPM_UNAVAILABLE": ["diagnosticPath","logPath"],
   "KB_UPDATE_APPLY_FAILED": ["diagnosticPath","logPath"],
   "KB_UPDATE_DOWNGRADE_REFUSED": [],
   "KB_UPDATE_DOWNLOAD_FAILED": [],

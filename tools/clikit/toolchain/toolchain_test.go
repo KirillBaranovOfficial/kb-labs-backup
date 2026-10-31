@@ -18,6 +18,18 @@ import (
 
 var errFixtureExitedBeforeReadiness = errors.New("fixture exited before readiness")
 
+func assertInstallerOperationPathsAllowed(t *testing.T, failure *diag.Diag) {
+	t.Helper()
+	if failure.Meta == nil {
+		failure.Meta = map[string]any{}
+	}
+	failure.Meta["diagnosticPath"] = filepath.Join(t.TempDir(), "diagnostic.json")
+	failure.Meta["logPath"] = filepath.Join(t.TempDir(), "operation.log")
+	if _, err := diag.ToEnvelope(failure); err != nil {
+		t.Fatalf("installer operation paths violated %s diagnostic contract: %v", failure.Code, err)
+	}
+}
+
 // case: S-260.4
 func TestNodePolicyRejectsOlderAndNewerMajorsWithCatalogDiagnostic(t *testing.T) {
 	if err := ValidateNode(fmt.Sprintf("v%d.18.0", SupportedNodeMajor)); err != nil {
@@ -93,6 +105,7 @@ func TestExternalToolStallReturnsCataloguedDiagnostic(t *testing.T) {
 	if !errors.As(err, &failure) || failure.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" {
 		t.Fatalf("stall failure = %#v", err)
 	}
+	assertInstallerOperationPathsAllowed(t, failure)
 	if elapsed := time.Since(started); elapsed > stallTimeout+testdeadline.ExternalToolTimeoutSlack(t) {
 		t.Fatalf("stall bound took %s", elapsed)
 	}
@@ -230,6 +243,15 @@ func TestPnpmResolutionUsesCapturedOuterCorepackCacheAndFailsWithoutDownload(t *
 	if err != nil || got != script {
 		t.Fatalf("cached pnpm = %q, %v; want %q", got, err, script)
 	}
+}
+
+func TestPnpmResolutionDiagnosticSupportsInstallerOperationPaths(t *testing.T) {
+	_, _, err := resolvePnpmAt(t.TempDir())
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != "KB_TOOLCHAIN_PNPM_UNAVAILABLE" {
+		t.Fatalf("missing cached pnpm = %v", err)
+	}
+	assertInstallerOperationPathsAllowed(t, failure)
 }
 
 // case: S-260.4

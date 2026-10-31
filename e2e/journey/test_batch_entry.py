@@ -22,6 +22,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         (self.root / "e2e/journey").mkdir(parents=True)
         (self.root / "e2e/scripts").mkdir(parents=True)
         (self.root / "core/fixture/dist").mkdir(parents=True)
+        (self.root / "pnpm-workspace.yaml").write_text("packages: []\n")
         (self.root / "package.json").write_text('{"name":"journey-fixture","private":true}\n')
         (self.root / "core/fixture/package.json").write_text('{"name":"fixture-build-output","private":true}\n')
         (self.root / "prompts").mkdir()
@@ -67,10 +68,12 @@ if [ -n "$KB_JOURNEY_ONLY" ] && [ ! -s "$ROOT/core/fixture/dist/index.js" ]; the
   exit 10
 fi
 mkdir -p "$REPORTS"
-case "$mode" in
-  local) cp "$SCOREBOARD_LOCAL" "$REPORTS/case-scoreboard.json" ;;
-  secured) cp "$SCOREBOARD_SECURED" "$REPORTS/case-scoreboard.json" ;;
-esac
+if [ "${OMIT_SCOREBOARD:-}" != "$mode" ]; then
+  case "$mode" in
+    local) cp "$SCOREBOARD_LOCAL" "$REPORTS/case-scoreboard.json" ;;
+    secured) cp "$SCOREBOARD_SECURED" "$REPORTS/case-scoreboard.json" ;;
+  esac
+fi
 printf '%s report\\n' "$mode" > "$REPORTS/$mode.json"
 if [ "$mode" = "${FAIL_MODE:-}" ] && [ ! -f "$ATTEMPT_MARKER" ]; then
   : > "$ATTEMPT_MARKER"
@@ -215,6 +218,16 @@ exec "$REAL_TAR" "$@"
             capture_output=True,
             check=False,
         )
+
+    def test_mode_without_scoreboard_fails_with_entry_cause(self):
+        env = dict(self.env, OMIT_SCOREBOARD="local")
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("produced no case scoreboard", result.stderr)
+        self.assertIn("entry exited with 0", result.stderr)
 
     # case: S-262.1
     def test_entry_runs_product_steps_in_order_and_exports_both_modes(self):
@@ -665,13 +678,22 @@ exec "$REAL_TAR" "$@"
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(REPO / "e2e/compose-owner.sh", self.root / "e2e/compose-owner.sh")
         shutil.copy2(REPO / "e2e/journey/candidate-services.sh", self.root / "e2e/journey/candidate-services.sh")
-        env = {**self.env, "FAIL_OUTPUT_CHECK": "1"}
+        compose_source = self.root / "compose-workspace-source.txt"
+        self._script(self.bin / "docker", '''#!/bin/sh
+if [ "$1 $2" = "compose version" ]; then
+  printf '%s' "${KB_JOURNEY_WORKSPACE_SOURCE:-}" > "$COMPOSE_SOURCE"
+  exit 0
+fi
+exit 1
+''')
+        env = {**self.env, "FAIL_OUTPUT_CHECK": "1", "COMPOSE_SOURCE": str(compose_source)}
         result = subprocess.run(
             ["bash", str(self.root / "e2e/journey/prepare-candidate.sh")],
             cwd=self.root, env=env, text=True, capture_output=True, check=False,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("preflight fixture failed", result.stdout)
+        self.assertEqual(compose_source.read_text(), str(self.root))
         self.assertFalse((self.root / "e2e/packages").exists())
 
 
