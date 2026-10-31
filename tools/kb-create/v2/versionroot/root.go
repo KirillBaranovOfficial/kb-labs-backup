@@ -136,28 +136,7 @@ func New(installRoot string) (Layout, error) {
 }
 
 func canonicalPath(path string) (string, error) {
-	missing := make([]string, 0)
-	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
-		_, err := os.Lstat(current)
-		if err == nil {
-			resolved, resolveErr := filepath.EvalSymlinks(current)
-			if resolveErr != nil {
-				return "", resolveErr
-			}
-			for index := len(missing) - 1; index >= 0; index-- {
-				resolved = filepath.Join(resolved, missing[index])
-			}
-			return filepath.Clean(resolved), nil
-		}
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", err
-		}
-		missing = append(missing, filepath.Base(current))
-	}
+	return contracts.CanonicalPath(path)
 }
 
 func supportedOS(goos string) error {
@@ -872,6 +851,9 @@ const (
 	HandoffTargetFinalized              HandoffPoint = "target-finalized"
 	HandoffLinkPrepared                 HandoffPoint = "link-prepared"
 	HandoffLinkSwitched                 HandoffPoint = "link-switched"
+	HandoffBeforeActiveRootSync         HandoffPoint = "before-active-root-sync"
+	HandoffBeforeUpdateRecoveryWrite    HandoffPoint = "before-update-recovery-write"
+	HandoffBeforeVersionRetention       HandoffPoint = "before-version-retention"
 )
 
 // CrashPoints is the ordered source of truth for on-disk install/update
@@ -897,6 +879,29 @@ func notifyHandoff(after func(HandoffPoint) error, point HandoffPoint) error {
 
 func (l Layout) activate(stage, version, planHash, runningRoot string, updateMetadata *UpdateMetadata,
 	after func(HandoffPoint) error) (activeRecoveryRoot string, returnErr error) {
+	switched := false
+	previous := ""
+	var target string
+	var err error
+	defer func() {
+		if returnErr == nil || !switched {
+			return
+		}
+		link, rollbackErr := l.prepareCurrentLink(previous)
+		if rollbackErr == nil {
+			rollbackErr = os.Rename(link, l.PlatformRoot())
+			_ = os.Remove(link)
+		}
+		if rollbackErr == nil {
+			rollbackErr = syncDirectory(l.Root)
+		}
+		if rollbackErr == nil {
+			rollbackErr = os.RemoveAll(target)
+		}
+		if rollbackErr != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("restore active version after activation failure: %w", rollbackErr))
+		}
+	}()
 	if err := l.Validate(); err != nil {
 		return "", err
 	}
@@ -928,7 +933,7 @@ func (l Layout) activate(stage, version, planHash, runningRoot string, updateMet
 			}
 		}()
 	}
-	previous, err := l.Active()
+	previous, err = l.Active()
 	if err != nil {
 		return "", err
 	}
@@ -955,7 +960,7 @@ func (l Layout) activate(stage, version, planHash, runningRoot string, updateMet
 			return recovery, err
 		}
 	}
-	target := filepath.Join(l.VersionsDir(), versionKey(version, planHash))
+	target = filepath.Join(l.VersionsDir(), versionKey(version, planHash))
 	if _, err := os.Lstat(target); err == nil {
 		installed, readErr := receipt.Read(target)
 		if readErr != nil || installed.Plan.ServiceGraph.PlatformVersion != version || installed.Plan.PlanHash != planHash {
@@ -997,6 +1002,12 @@ func (l Layout) activate(stage, version, planHash, runningRoot string, updateMet
 		_ = os.RemoveAll(target)
 		return "", fmt.Errorf("switch active version: %w", err)
 	}
+	switched = true
+	if after != nil {
+		if err := after(HandoffBeforeActiveRootSync); err != nil {
+			return recovery, err
+		}
+	}
 	if err := syncDirectory(l.Root); err != nil {
 		return recovery, fmt.Errorf("sync installation root after switch: %w", err)
 	}
@@ -1006,10 +1017,20 @@ func (l Layout) activate(stage, version, planHash, runningRoot string, updateMet
 		}
 	}
 	if updateMetadata != nil {
+		if after != nil {
+			if err := after(HandoffBeforeUpdateRecoveryWrite); err != nil {
+				return recovery, err
+			}
+		}
+		updateMetadataWritten = true
 		if err := l.writeUpdateMetadata(*updateMetadata); err != nil {
 			return recovery, fmt.Errorf("write update recovery record during activation: %w", err)
 		}
-		updateMetadataWritten = true
+	}
+	if after != nil {
+		if err := after(HandoffBeforeVersionRetention); err != nil {
+			return recovery, err
+		}
 	}
 	if err := l.Retain(runningRoot); err != nil {
 		return recovery, fmt.Errorf("prune obsolete version roots: %w", err)
