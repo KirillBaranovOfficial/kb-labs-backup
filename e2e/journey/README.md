@@ -44,12 +44,19 @@ result. A filtered scoreboard lists the selection and marks itself partial;
 partial evidence does not count toward case status or full-run deltas. Run the
 normal mode without `KB_JOURNEY_CASES` to produce full scoreboard evidence.
 
-For a hosted iteration, dispatch `Journey batch` with its optional `cases`
-input, for example `S-023,S-024`. The local and secured jobs resolve that set
-through the same case catalogue and prerequisite graph. Their scoreboards and
-batch summary are marked partial, and finalization exits non-zero so this
-evidence cannot pass or combine into the full-batch gate. A dispatch without
-`cases` runs the full gating batch.
+For a hosted iteration with selected cases, run the orchestration entry from
+its root, for example:
+
+```bash
+sh prompts/journey-batch.sh --remote --cases S-023,S-024 x229-round3
+```
+
+The entry encodes the selection in the pushed `batch/<tag>/cases/<base64url>`
+ref; the `Journey batch` workflow decodes it and passes the same selection to
+the local and secured jobs. Both scoreboards identify the selected evidence,
+and finalization exits non-zero before reading gate metadata, so partial
+evidence cannot produce a gate verdict. A normal full dispatch or a push ref
+without `/cases/` runs the full gating batch.
 
 The installed smoke covers successful fresh installation and the registered
 project workflow and REST runtime health claims. Run these two commands to

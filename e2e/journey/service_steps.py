@@ -403,13 +403,13 @@ class Journey:
                 if step.status == "FAIL" or previous != "FAIL":
                     claims[case_id] = step.status
         case_run = {
-            "schema": "kb.qa-case-run/v1",
+            "schema": "kb.qa-case-run/v2",
             "runId": self.run_id,
             "mode": self.mode,
             "claims": [{"claimId": case_id, "kind": "journey", "status": result} for case_id, result in sorted(claims.items())],
         }
         if self.selection:
-            case_run.update({"partial": True, "selection": self.selection})
+            case_run.update({"selection": self.selection})
         return JourneyResult("kb.service-journey/v1", self.run_id, self.started_at,
                              round(time.monotonic() - self.started, 3), status, first,
                              [_step_dict(step) for step in self.steps], case_run)
