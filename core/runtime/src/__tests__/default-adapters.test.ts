@@ -213,8 +213,12 @@ describe('resolveDiscoveredAdapterDefaults', () => {
     expect(sqliteManifest?.defaultFor).toEqual({
       documentDatabase: [],
       kvStore: ['kv'],
+      vectorStore: ['vector-store'],
     });
-    expect(openaiManifest?.defaultFor).toEqual({ llm: ['llm'] });
+    expect(openaiManifest?.defaultFor).toEqual({
+      llm: ['llm'],
+      embeddings: ['embeddings'],
+    });
 
     const sqlite = discovered('@kb-labs/adapters-sqlite', sqliteManifest);
     const openai = discovered('@kb-labs/adapters-openai', openaiManifest);
@@ -226,7 +230,9 @@ describe('resolveDiscoveredAdapterDefaults', () => {
     expect(resolved.adapters).toEqual({
       documentDatabase: '@kb-labs/adapters-sqlite',
       kvStore: '@kb-labs/adapters-sqlite/kv',
+      vectorStore: '@kb-labs/adapters-sqlite/vector-store',
       llm: '@kb-labs/adapters-openai/llm',
+      embeddings: '@kb-labs/adapters-openai/embeddings',
     });
 
     const secondMultiEntryAdapter = discovered('@kb-labs/adapters-second-multi', {
