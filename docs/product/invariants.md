@@ -166,10 +166,10 @@ in `Owner`.
 
 **Why:** Review is valuable for judgment, but repeatable properties should fail close to the change that violates them.
 
-**Enforcement:** The workspace has `kb-devkit check` custom checks; [devkit.yaml](../../devkit.yaml#L813), and this document's `product-invariants-document` check validates each rule's Enforcement entry and linked repository paths; [check-product-invariants.mjs](../../scripts/checks/check-product-invariants.mjs). The shared Node ESLint template is [infra/devkit/eslint.config.js](../../infra/devkit/eslint.config.js#L14).
+**Enforcement:** The `product-invariants-document` check validates this document's fields and linked repository paths; it does not execute the cited rails or prove that they reject violating inputs. [check-product-invariants.mjs](../../scripts/checks/check-product-invariants.mjs), [check-product-invariants.test.mjs](../../scripts/checks/check-product-invariants.test.mjs). The workspace also has `kb-devkit check` custom checks; [devkit.yaml](../../devkit.yaml#L813), and a shared Node ESLint template; [eslint.config.js](../../infra/devkit/eslint.config.js#L14).
 
-**Gap:** Each partial or debt rule above names the missing mechanical check and its proper owner; the platform team should move each enforceable rule into devkit, lint, runtime validation, a generator, or a release gate as appropriate.
+**Gap:** No behavioral test currently runs each mechanically checkable rule's owning rail against a violating input and observes rejection. Add a behavioral absence test harness in the product-invariants check test suite that exercises the real owning checks with their real input formats; until that exists, INV-12 has no behavioral enforcement.
 
-**Owner:** [scripts/checks/check-product-invariants.mjs](../../scripts/checks/check-product-invariants.mjs)
+**Owner:** [scripts/checks/check-product-invariants.test.mjs](../../scripts/checks/check-product-invariants.test.mjs)
 
-**Status:** partial
+**Status:** debt
