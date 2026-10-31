@@ -1,4 +1,5 @@
 {
   "requiredMajor": 24,
-  "nodeBaseImage": "node:24-bookworm"
+  "nodeBaseImage": "node:24-bookworm",
+  "nodeBaseImageArgument": "KB_JOURNEY_NODE_BASE_IMAGE"
 }

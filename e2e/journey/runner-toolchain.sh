@@ -9,7 +9,7 @@
 # journey entry (e2e/journey/run.sh).
 
 journey_toolchain_ensure() {
-  local root="$1" policy_file contract toolchain_image toolchain_label image_argument node_base_image
+  local root="$1" policy_file contract toolchain_image toolchain_label image_argument node_base_image_argument node_base_image
   policy_file="$root/tools/clikit/toolchain/node_policy_gen.json"
   if ! contract="$(python3 "$root/e2e/journey/journey_resources.py" --toolchain-contract)"; then
     return 1
@@ -17,18 +17,20 @@ journey_toolchain_ensure() {
   toolchain_image="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["imageReference"])' <<< "$contract")"
   toolchain_label="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["imageLabel"])' <<< "$contract")"
   image_argument="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["imageArgument"])' <<< "$contract")"
+  node_base_image_argument="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["nodeBaseImageArgument"])' "$policy_file")"
   if ! node_base_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["nodeBaseImage"])' "$policy_file")"; then
     printf 'Journey runner toolchain needs generated Node policy %q. Next: (cd %q/tools/clikit && go generate ./toolchain)\n' \
       "$policy_file" "$root" >&2
     return 1
   fi
-  if [[ -z "$toolchain_image" || -z "$toolchain_label" || -z "$image_argument" || -z "$node_base_image" ]]; then
+  if [[ -z "$toolchain_image" || -z "$toolchain_label" || -z "$image_argument" || -z "$node_base_image_argument" || -z "$node_base_image" ]]; then
     echo "Journey runner toolchain derivation returned an incomplete contract. Next: python3 e2e/journey/journey_resources.py --toolchain-contract" >&2
     return 1
   fi
   local -a build_command=(docker build --target toolchain -t "$toolchain_image"
     --label "${toolchain_label}=${toolchain_image#*:}"
     --build-arg "$image_argument=$node_base_image"
+    --build-arg "$node_base_image_argument=$node_base_image"
     -f e2e/journey/Dockerfile.runner .)
   if [[ -z "$(docker images -q "$toolchain_image")" ]]; then
     if ! (cd "$root" && "${build_command[@]}"); then
@@ -44,6 +46,7 @@ journey_toolchain_ensure() {
   fi
   journey_toolchain_reclaim "$toolchain_label" "$toolchain_image"
   export "$image_argument=$toolchain_image"
+  export "$node_base_image_argument=$node_base_image"
 }
 
 journey_toolchain_reclaim() {

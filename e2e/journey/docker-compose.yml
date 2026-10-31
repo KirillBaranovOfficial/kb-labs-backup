@@ -37,6 +37,7 @@ services:
         # from the Dockerfile.runner `toolchain` stage; this sentinel is only
         # reachable by bypassing run.sh and names the required entry.
         KB_JOURNEY_TOOLCHAIN_IMAGE: ${KB_JOURNEY_TOOLCHAIN_IMAGE:-kb-journey-runner-toolchain:requires-e2e-journey-run-sh}
+        KB_JOURNEY_NODE_BASE_IMAGE: ${KB_JOURNEY_NODE_BASE_IMAGE}
     image: ${KB_JOURNEY_RUNNER_IMAGE:-kb-installer-journey:local}
     depends_on:
       origin:
