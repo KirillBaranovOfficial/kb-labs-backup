@@ -9,6 +9,7 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'no
 import { join, resolve } from 'node:path';
 import { clearGeneratedReleasePackages, readPackedPackageManifests } from './release-index-package-stage.mjs';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
+import { invokePackageProvenanceOwner } from 'kb-create/scripts/package-provenance.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
 import { prepareReleaseProvenance } from './release-provenance.mjs';
 import { readPlatformReleaseConfig, releaseArtifactPackageNames, shippedPlatformPackageSet } from 'kb-create/scripts/platform-release-config.mjs';
