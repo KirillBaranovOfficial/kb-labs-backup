@@ -51,14 +51,14 @@ COPY .journey/runner-inputs/config-jsonc-edit.mjs /opt/kb-journey/core/config/di
 COPY .journey/runner-inputs/project-service-path.js /opt/kb-journey/core/plugin-contracts/dist/project-service-path.js
 COPY docs/qa/scenarios /opt/kb-journey/docs/qa/scenarios
 COPY e2e/platform/fixtures/installer-cases /opt/kb-journey/e2e/platform/fixtures/installer-cases
-COPY e2e/platform/fixtures/marketplace-sync-server.mjs /opt/kb-journey/e2e/platform/fixtures/marketplace-sync-server.mjs
+COPY .journey/runner-inputs/marketplace-sync-server.mjs /opt/kb-journey/e2e/platform/fixtures/marketplace-sync-server.mjs
 COPY e2e/platform/journey-update-packages.mjs /opt/kb-journey/e2e/platform/journey-update-packages.mjs
 COPY tools/kb-create/package.json /opt/kb-journey/node_modules/kb-create/package.json
 COPY tools/kb-create/scripts/package-provenance.mjs /opt/kb-journey/node_modules/kb-create/scripts/package-provenance.mjs
 COPY tools/kb-create/scripts/platform-release-config.mjs /opt/kb-journey/node_modules/kb-create/scripts/platform-release-config.mjs
 COPY e2e/platform/registry-manifest.json /opt/kb-journey/e2e/platform/registry-manifest.json
 COPY e2e/publisher/publish.sh /opt/kb-journey/e2e/publisher/publish.sh
-COPY core/platform/contracts/ux-result /opt/kb-journey/contracts/ux-result
+COPY core/platform/contracts/ux-result /opt/kb-journey/core/platform/contracts/ux-result
 COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-journey/core/platform/src/error-envelope/error-envelope.schema.json
 COPY core/platform/src/error-envelope/errors.catalog.json /opt/kb-journey/core/platform/src/error-envelope/errors.catalog.json
 COPY tools/kb-create/v2/contracts/platform-layout.json /opt/kb-journey/tools/kb-create/v2/contracts/platform-layout.json

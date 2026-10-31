@@ -94,6 +94,12 @@ def verify_installed_candidate_provenance(active_root: Path) -> None:
         (package.get("name"), package.get("version")): package.get("contentDigest")
         for package in packages
     }
+    if set(executed) != set(sealed):
+        missing = sorted(set(sealed) - set(executed))
+        unexpected = sorted(set(executed) - set(sealed))
+        raise RuntimeError(
+            "installed package closure differs from the sealed release manifest: "
+            f"missing={missing}, unexpected={unexpected}")
     if not executed or any(sealed.get(identity) != digest for identity, digest in executed.items()):
         raise RuntimeError("installed executed package dist digests differ from the sealed provenance manifest")
 
