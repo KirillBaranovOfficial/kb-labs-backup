@@ -293,8 +293,12 @@ describe('resolveDiscoveredAdapterDefaults', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     if (!address || typeof address === 'string') {throw new Error('test server did not bind a TCP port');}
+    const embeddingsOptions = resolved.adapterOptions.embeddings;
+    if (typeof embeddingsOptions !== 'object' || embeddingsOptions === null || Array.isArray(embeddingsOptions)) {
+      throw new Error('resolved embeddings defaults must be an object');
+    }
     const client = await embeddingsModule.createAdapter({
-      ...resolved.adapterOptions.embeddings,
+      ...embeddingsOptions,
       apiKey: 'test-key',
       baseURL: `http://127.0.0.1:${address.port}/v1`,
     }, {});
