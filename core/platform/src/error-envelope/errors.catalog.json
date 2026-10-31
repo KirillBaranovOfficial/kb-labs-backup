@@ -1105,6 +1105,7 @@
       "processExitClass": "operation-failure",
       "message": "The workspace-pinned pnpm {version} is not present in the Corepack cache.",
       "hint": "Run `{nextCommand}` from the workspace root to populate the pinned toolchain cache, then rerun the command.",
+      "structuredDetailFields": ["diagnosticPath", "logPath"],
       "httpStatus": 500
     },
     {
@@ -1116,7 +1117,7 @@
       "processExitClass": "operation-failure",
       "message": "External tool {tool} stalled after {elapsed} while running {argsSummary}.",
       "hint": "Inspect the tool output, then rerun `{nextCommand}`.",
-      "structuredDetailFields": ["tool", "argsSummary", "elapsed", "stderrTail", "nextCommand"],
+      "structuredDetailFields": ["tool", "argsSummary", "elapsed", "stderrTail", "nextCommand", "diagnosticPath", "logPath"],
       "requiredStructuredDetailFields": ["tool", "argsSummary", "elapsed", "stderrTail", "nextCommand"],
       "httpStatus": 500
     },
