@@ -231,7 +231,10 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     const busyPid = pidOf(subject, a.id);
     idle.release();
 
-    await waitFor(() => !isAlive(idlePid), "the idle runtime to stop");
+    await waitFor(() => {
+      const runtimeIds = subject.status().runtimes.map((runtime) => runtime.projectId);
+      return !isAlive(idlePid) && runtimeIds.length === 1 && runtimeIds[0] === a.id;
+    }, "the idle runtime process group to stop and leave manager status");
     expect(subject.status().runtimes.map((r) => r.projectId)).toEqual([a.id]);
     // The busy one outlived several idle periods.
     expect(isAlive(busyPid)).toBe(true);

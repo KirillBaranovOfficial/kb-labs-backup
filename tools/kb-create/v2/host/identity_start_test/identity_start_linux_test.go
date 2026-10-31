@@ -135,6 +135,7 @@ func TestExecChainIdentityChecks(t *testing.T) {
 	}
 	const starts = 1000
 	oldUndetermined, oldMismatches, boundedFailures := 0, 0, 0
+	boundedMismatches, boundedUndetermined := 0, 0
 	for index := range starts {
 		identity, err := host.NewProcessIdentityToken()
 		if err != nil {
@@ -165,7 +166,13 @@ func TestExecChainIdentityChecks(t *testing.T) {
 		case host.ProcessIdentityMismatch:
 			oldMismatches++
 		}
-		if got := host.WaitForProcessIdentityWithReader(process.Process.Pid, identity, exited, time.Now().Add(startupSpec.ReadyTimeout), nil); got != host.ProcessIdentityMatch {
+		got := host.WaitForProcessIdentityWithReader(process.Process.Pid, identity, exited, time.Now().Add(startupSpec.ReadyTimeout), nil)
+		if got == host.ProcessIdentityMismatch {
+			boundedMismatches++
+		} else if got == host.ProcessIdentityUndetermined {
+			boundedUndetermined++
+		}
+		if got != host.ProcessIdentityMatch {
 			boundedFailures++
 		}
 		_ = stdin.Close()
@@ -173,9 +180,9 @@ func TestExecChainIdentityChecks(t *testing.T) {
 			t.Fatalf("exec chain %d exit: %v", index, err)
 		}
 	}
-	t.Logf("launch chain: old immediate undetermined %d/%d, mismatches %d/%d; bounded check failures %d/%d", oldUndetermined, starts, oldMismatches, starts, boundedFailures, starts)
+	t.Logf("launch chain: old immediate undetermined %d/%d, mismatches %d/%d; bounded check mismatches %d, undetermined %d, failures %d/%d", oldUndetermined, starts, oldMismatches, starts, boundedMismatches, boundedUndetermined, boundedFailures, starts)
 	if boundedFailures != 0 {
-		t.Fatalf("bounded identity verification failed %d/%d chained launches", boundedFailures, starts)
+		t.Fatalf("bounded identity verification failed %d/%d chained launches (mismatches %d, undetermined %d)", boundedFailures, starts, boundedMismatches, boundedUndetermined)
 	}
 }
 
