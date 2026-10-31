@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -53,6 +54,24 @@ async function getValue(port: number, key: string): Promise<Response> {
 }
 
 describe('StateDaemon durability', () => {
+  // case: S-280.8
+  it('releases the durable broker after listener startup fails', async () => {
+    const root = await makeRoot();
+    const blocker = createServer();
+    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+    const address = blocker.address();
+    if (!address || typeof address === 'string') throw new Error('listener blocker has no TCP port');
+    const failed = createDurableStateDaemon({ port: address.port, host: '127.0.0.1' }, root);
+
+    await expect(failed.start()).rejects.toThrow();
+    await new Promise<void>((resolve, reject) => blocker.close((error) => error ? reject(error) : resolve()));
+
+    await start(address.port, root);
+    const ready = await fetch(`http://127.0.0.1:${address.port}/ready`);
+    expect(ready.status).toBe(200);
+    await expect(ready.json()).resolves.toMatchObject({ ready: true, status: 'ready' });
+  });
+
   it('restores a successfully written value after daemon restart', async () => {
     const root = await makeRoot();
     const port = 9878;

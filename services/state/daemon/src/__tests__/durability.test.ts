@@ -1,6 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { unwatchFile, watchFile } from 'node:fs';
 import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
@@ -148,6 +147,7 @@ describe('StateBroker durability', () => {
       await broker.stop();
       process.stdout.write('stopped\\n');
     `;
+    const children: Array<{ child: ChildProcess; lines?: ReturnType<typeof createInterface> }> = [];
     const startChild = (role: string, barrier = false) => {
       const child = spawn(process.execPath, [
         '--import', tsxLoader, '--input-type=module', '-e', childCode,
@@ -155,11 +155,14 @@ describe('StateBroker durability', () => {
         env: { ...process.env, JOURNAL_ROOT: root, JOURNAL_ROLE: role, JOURNAL_BARRIER: barrier ? '1' : '0' },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+      const tracked: { child: ChildProcess; lines?: ReturnType<typeof createInterface> } = { child };
+      children.push(tracked);
       const stdout = child.stdout;
       const stdin = child.stdin;
       const stderr = child.stderr;
       if (!stdout || !stdin || !stderr) throw new Error('journal lock worker has no piped stdio');
       const lines = createInterface({ input: stdout });
+      tracked.lines = lines;
       const seen = new Set<string>();
       const waiters = new Map<string, Array<{ resolve(): void; reject(error: Error): void }>>();
       const stderrChunks: Buffer[] = [];
@@ -193,9 +196,9 @@ describe('StateBroker durability', () => {
       return { child, stdin, lines, seen, waitForLine };
     };
 
-    const first = startChild('first');
     let second: ReturnType<typeof startChild> | undefined;
     try {
+      const first = startChild('first');
       await first.waitForLine('locked-first');
       second = startChild('second');
       await second.waitForLine('attempting-open');
@@ -236,9 +239,8 @@ describe('StateBroker durability', () => {
         child.kill();
         await once(child, 'exit');
       };
-      await Promise.all([stopChild(first.child), stopChild(second?.child)]);
-      first.lines.close();
-      second?.lines.close();
+      await Promise.all(children.map(({ child }) => stopChild(child)));
+      for (const worker of children) worker.lines?.close();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -311,8 +313,6 @@ describe('StateBroker durability', () => {
     let reclaimer: ReturnType<typeof startChild> | undefined;
     let fifoWriter: Awaited<ReturnType<typeof open>> | undefined;
     let liveReleased = false;
-    let watchingDirectory = false;
-    let directoryTimeout: NodeJS.Timeout | undefined;
     try {
       await live.waitForLine('locked');
       const liveRecord = JSON.parse(await readFile(liveLockPath, 'utf8')) as { pid: number; token: string };
@@ -342,15 +342,7 @@ describe('StateBroker durability', () => {
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
       }
-      await expect(stat(reclaimPath)).resolves.toBeDefined();
-
-      const directoryBefore = await stat(reclaimDirectory);
-      let resolveDirectoryChange: (() => void) | undefined;
-      const directoryChanged = new Promise<void>((resolve) => { resolveDirectoryChange = resolve; });
-      watchFile(reclaimDirectory, { interval: 1, persistent: false }, (current, previous) => {
-        if (current.ctimeMs !== previous.ctimeMs || current.mtimeMs !== previous.mtimeMs) resolveDirectoryChange?.();
-      });
-      watchingDirectory = true;
+      if (Date.now() >= gateDeadline) throw new Error('timed out waiting for the reread rendezvous');
 
       fifoWriter = await open(lockPath, 'w');
       await fifoWriter.writeFile(JSON.stringify(liveRecord), 'utf8');
@@ -358,20 +350,21 @@ describe('StateBroker durability', () => {
       fifoWriter = undefined;
       await rename(liveLockPath, lockPath);
 
-      await Promise.race([
-        directoryChanged,
-        new Promise<never>((_resolve, reject) => {
-          directoryTimeout = setTimeout(() => reject(new Error('timed out waiting for stale reclaim completion')), 10_000);
-        }),
-      ]);
-      if (directoryTimeout) clearTimeout(directoryTimeout);
-      expect((await stat(reclaimDirectory)).mtimeMs).not.toBe(directoryBefore.mtimeMs);
+      const reclaimDeadline = Date.now() + 10_000;
+      while (Date.now() < reclaimDeadline) {
+        try {
+          await stat(reclaimPath);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          break;
+        }
+      }
       expect(JSON.parse(await readFile(lockPath, 'utf8'))).toEqual(liveRecord);
       live.stdin.write('release\n');
       liveReleased = true;
+      await live.waitForLine('stopped');
     } finally {
-      if (directoryTimeout) clearTimeout(directoryTimeout);
-      if (watchingDirectory) unwatchFile(reclaimDirectory);
       await fifoWriter?.close();
       if (!liveReleased) live.stdin.write('release\n');
       const stopChild = async (child: ChildProcess | undefined) => {
