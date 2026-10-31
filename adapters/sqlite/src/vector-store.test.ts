@@ -51,7 +51,7 @@ describe('SQLite vector store', () => {
     ]);
   });
 
-  // case: S-280.4
+  // case: S-281.4
   it('breaks equal cosine scores by stable record ID in ascending order', async () => {
     const store = await createStore();
     await store.upsert([
@@ -73,7 +73,7 @@ describe('SQLite vector store', () => {
     });
   });
 
-  // case: S-280.1
+  // case: S-281.1
   it('rejects empty, non-finite, and zero-magnitude vectors before storing them', async () => {
     const store = await createStore();
     const invalidVectors = [[], [Number.NaN], [Number.POSITIVE_INFINITY], [0, 0]];
@@ -86,7 +86,7 @@ describe('SQLite vector store', () => {
     expect(await store.count()).toBe(0);
   });
 
-  // case: S-280.2
+  // case: S-281.2
   it('rejects invalid and dimension-mismatched search queries', async () => {
     const store = await createStore();
     await store.upsert([{ id: 'valid', vector: [1, 0] }]);
@@ -99,7 +99,7 @@ describe('SQLite vector store', () => {
     expect(await store.search([1, 0], 10)).toEqual([{ id: 'valid', score: 1 }]);
   });
 
-  // case: S-280.3
+  // case: S-281.3
   it('rejects mixed dimensions without writing any record from the batch', async () => {
     const store = await createStore();
 
