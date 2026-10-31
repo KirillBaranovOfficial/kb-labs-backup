@@ -7,7 +7,7 @@ BASELINE=${BATCH_BASELINE:-j28}
 SCRIPT_DIR="$ROOT/e2e/journey"
 
 usage() {
-  echo "usage: batch.sh prepare <output-dir> [baseline] | mode <local|secured> <producer-artifact> <output-dir> | summarize <output-dir> <producer-artifact> <local-artifact> <secured-artifact> | <output-dir> [baseline]" >&2
+  echo "usage: batch.sh prepare <output-dir> [baseline] | mode <local|secured> <producer-artifact> <output-dir> [--cases <case-ids>] | summarize <output-dir> <producer-artifact> <local-artifact> <secured-artifact> | <output-dir> [baseline]" >&2
   exit 2
 }
 absolute() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$ROOT" "$1" ;; esac; }
@@ -21,7 +21,8 @@ write_metadata() {
   "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" metadata \
     "$metadata_path" "$metadata_mode" "$metadata_result" "$metadata_commit" "$metadata_baseline" "$metadata_build" \
     "${reset_seconds:-0}" "${build_seconds:-0}" "${unit_seconds:-0}" "${candidate_seconds:-0}" \
-    "${local_seconds:-0}" "${secured_seconds:-0}" "${total_seconds:-0}"
+    "${local_seconds:-0}" "${secured_seconds:-0}" "${total_seconds:-0}" \
+    "$(absolute "${metadata_path%/batch-metadata.json}/build-candidate.tar")"
 }
 run_prepare() {
   out=$(absolute "$1")
@@ -137,6 +138,7 @@ run_prepare() {
 }
 run_mode() {
   mode=$1 producer=$(absolute "$2") out=$(absolute "$3")
+  selected_cases=$4
   case "$mode" in local|secured) ;; *) usage ;; esac
   shared="$producer/shared"; mode_dir="$out/$mode"
   mkdir -p "$mode_dir"
@@ -147,6 +149,16 @@ run_mode() {
   fi
   if [ ! -s "$shared/batch-metadata.json" ] || [ ! -s "$shared/run.json" ]; then
     echo "journey producer artifact is missing shared batch metadata; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
+    return 1
+  fi
+  current_commit=$(git rev-parse HEAD) || {
+    echo "journey mode could not identify the checked-out commit; next: git rev-parse HEAD" >&2
+    return 1
+  }
+  if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" verify-run "$shared/run.json" "$current_commit"; then
+    return 1
+  fi
+  if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" verify-candidate "$shared/batch-metadata.json" "$shared/build-candidate.tar"; then
     return 1
   fi
   if ! tar -xf "$shared/build-candidate.tar" -C "$ROOT" > "$mode_dir/archive-extract.log" 2>&1; then
@@ -169,13 +181,13 @@ run_mode() {
   fi
   run_started=$(date +%s)
   rc=0
-  KB_JOURNEY_ONLY="service-$mode:explore" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
+  KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_ONLY="service-$mode:explore" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ] && grep -q '^failed to solve:' "$mode_dir/batch.log"; then
     mv "$mode_dir/batch.log" "$mode_dir/infra-failed.log"
     rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
     rm -rf .journey/reports/invocations
     rc=0
-    KB_JOURNEY_ONLY="service-$mode:explore" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
+    KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_ONLY="service-$mode:explore" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
     echo "INFRA: first attempt failed during docker image build; retried once" >> "$mode_dir/batch.log"
   fi
   printf 'exit=%s\n' "$rc" >> "$mode_dir/batch.log"
@@ -204,7 +216,7 @@ run_mode() {
   if [ "$rc" -ne 0 ]; then
     printf '\n- Failed stage: `%s`\n- Stage log: `%s/batch.log`\n' "$mode" "$mode/batch.log" >> "$mode_dir/batch.log"
     gate_rc=0
-    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-gating "$mode_dir" "$mode" || gate_rc=$?
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-gating "$mode_dir" "$mode" "$producer" "$out" "$selected_cases" || gate_rc=$?
     if [ "$gate_rc" -eq 1 ]; then
       printf 'Result: FAIL (non-gating for Release 1)\n' >> "$mode_dir/batch.log"
       return 0
@@ -220,8 +232,12 @@ case "${1:-}" in
     run_prepare "$2" "${3:-$BASELINE}"
     ;;
   mode)
-    [ "$#" -eq 4 ] || usage
-    run_mode "$2" "$3" "$4"
+    case "$#" in
+      4) selected_cases="" ;;
+      6) [ "$5" = "--cases" ] || usage; selected_cases=$6 ;;
+      *) usage ;;
+    esac
+    run_mode "$2" "$3" "$4" "$selected_cases"
     ;;
   summarize)
     [ "$#" -eq 5 ] || usage
@@ -235,7 +251,7 @@ case "${1:-}" in
     if [ "${prepare_rc:-0}" -eq 0 ]; then
       for mode in local secured; do
         mode_out="$full_out/.artifact-$mode"
-        run_mode "$mode" "$producer" "$mode_out" || mode_rc=1
+        run_mode "$mode" "$producer" "$mode_out" "" || mode_rc=1
       done
       "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$full_out" "$producer" "$full_out/.artifact-local" "$full_out/.artifact-secured" || summary_rc=1
     fi

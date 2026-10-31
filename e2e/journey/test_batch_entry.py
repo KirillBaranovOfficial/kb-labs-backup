@@ -29,6 +29,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         (self.root / "tools/kb-devkit").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
         shutil.copy2(REPO / "e2e/journey/batch_summary.py", self.root / "e2e/journey/batch_summary.py")
+        shutil.copy2(REPO / "e2e/journey/scoreboard_contract.py", self.root / "e2e/journey/scoreboard_contract.py")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(
@@ -66,6 +67,9 @@ esac
 if [ -n "$KB_JOURNEY_ONLY" ] && [ ! -s "$ROOT/core/fixture/dist/index.js" ]; then
   printf 'candidate build artifact missing\\n' >&2
   exit 10
+fi
+if [ -n "${KB_JOURNEY_CASES:-}" ]; then
+  printf 'cases %s\\n' "$KB_JOURNEY_CASES" >> "$CALLS"
 fi
 mkdir -p "$REPORTS"
 if [ "${OMIT_SCOREBOARD:-}" != "$mode" ]; then
@@ -306,6 +310,192 @@ exec "$REAL_TAR" "$@"
         summary = (self.root / "out/shared/summary.md").read_text()
         self.assertIn("local: FAIL (gating)", summary)
         self.assertIn("- Result: FAIL", summary)
+
+    # case: S-262.8
+    def test_explicit_case_set_is_forwarded_to_the_mode_runner(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-023,S-024"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("cases S-023,S-024", self.calls.read_text().splitlines())
+
+    # case: S-262.1
+    def test_mode_refuses_a_candidate_artifact_from_another_commit(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        run_metadata = producer / "shared/run.json"
+        run_metadata.write_text('{"commit":"another-commit","baseline":"main"}\n')
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("candidate artifact is bound to another-commit, checked out deadbeef", result.stderr)
+        self.assertNotIn("journey service-local:explore --no-build", self.calls.read_text().splitlines())
+
+    # case: S-262.8
+    def test_partial_scoreboards_cannot_produce_a_passing_batch_verdict(self):
+        import json
+        original_gates = {}
+        for mode, fixture in self.scoreboard_fixtures.items():
+            scoreboard = json.loads(fixture.read_text())
+            original_gates[mode] = scoreboard["releaseGate"]
+            scoreboard["selection"] = ["S-023.1", "S-024.1"] if mode == "local" else []
+            scoreboard["releaseGate"] = {"modes": "gate-path-must-not-be-read"}
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        result = self._run()
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertIn("- Result: PARTIAL", summary)
+        self.assertIn("## Stage durations", summary)
+        self.assertIn("local=[S-023.1, S-024.1]; secured=[]", summary)
+
+        for mode, fixture in self.scoreboard_fixtures.items():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["selection"] = []
+            scoreboard["releaseGate"] = original_gates[mode]
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+        full_result = self._run()
+        self.assertEqual(full_result.returncode, 0, full_result.stderr + full_result.stdout)
+        self.assertIn("- Result: PASS", (self.root / "out/shared/summary.md").read_text())
+
+    # case: S-262.8
+    def test_empty_release_gate_cannot_turn_local_failure_into_pass(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["releaseGate"]["modes"] = []
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        result = self._run("local", failure_kind="product")
+
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertNotIn("- Result: PASS", summary)
+        self.assertIn("- Result: FAIL", summary)
+        self.assertIn(
+            f"next: e2e/journey/batch.sh mode local {self.root / 'out'} "
+            f"{self.root / 'out/.artifact-local'}",
+            result.stderr,
+        )
+
+    # case: S-262.8
+    def test_finalizer_refuses_empty_release_gate_declarations(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["releaseGate"]["modes"] = []
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        result = self._run()
+
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertNotIn("- Result: PASS", summary)
+        self.assertIn("releaseGate.modes must equal ['local']; got []", summary)
+
+    # case: S-262.8
+    def test_finalizer_refuses_missing_release_gate_declarations(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard.pop("releaseGate")
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        result = self._run()
+
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertNotIn("- Result: PASS", summary)
+        self.assertIn("releaseGate.modes must equal ['local']; got None", summary)
+
+    # case: S-262.8
+    def test_scoreboard_contract_does_not_duplicate_partiality(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            self.assertNotIn("partial", scoreboard)
+
+    # case: S-262.1
+    def test_replaced_candidate_archive_cannot_reach_mode_or_summary_pass(self):
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        producer = self.root / "out/.artifact-local/shared/build-candidate.tar"
+        if not producer.is_file():
+            producer = self.root / "out/shared/build-candidate.tar"
+        producer.write_bytes(b"substituted candidate archive")
+
+        mode_result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(self.root / "out"), str(self.root / "tampered-local")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(mode_result.returncode, 0, mode_result.stderr + mode_result.stdout)
+        self.assertIn("candidate archive digest", mode_result.stderr)
+        self.assertIn(f"next: e2e/journey/batch.sh prepare {self.root / 'out'}", mode_result.stderr)
+        summary_result = subprocess.run(
+            [sys.executable, str(self.root / "e2e/journey/batch_summary.py"),
+             str(self.root / "summary"), str(self.root / "out"),
+             str(self.root / "out/.artifact-local"), str(self.root / "out/.artifact-secured")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(summary_result.returncode, 0, summary_result.stderr + summary_result.stdout)
+        self.assertIn(f"next: e2e/journey/batch.sh prepare {self.root / 'out'}", summary_result.stderr)
+        self.assertNotIn("- Result: PASS", (self.root / "summary/shared/summary.md").read_text())
+
+    # case: S-262.8
+    def test_summary_rejects_mixed_commit_identities_at_finalization(self):
+        import json
+        producer = self.root / "producer"
+        local = self.root / "local-artifact"
+        secured = self.root / "secured-artifact"
+        # Reuse a successful, fully produced fixture batch before changing only its commit identities.
+        self._run()
+        for mode, directory in (("shared", producer), ("local", local), ("secured", secured)):
+            (directory / mode).mkdir(parents=True)
+            shutil.copytree(self.root / f"out/{mode}", directory / mode, dirs_exist_ok=True)
+        run = json.loads((producer / "shared/run.json").read_text())
+        run["commit"] = "sha-a"
+        (producer / "shared/run.json").write_text(json.dumps(run))
+        for mode, directory, commit in (("shared", producer, "sha-a"),
+                                        ("local", local, "sha-b"),
+                                        ("secured", secured, "sha-c")):
+            metadata_path = directory / mode / "batch-metadata.json"
+            metadata = json.loads(metadata_path.read_text())
+            metadata["commit"] = commit
+            metadata_path.write_text(json.dumps(metadata))
+
+        result = subprocess.run(
+            [sys.executable, str(self.root / "e2e/journey/batch_summary.py"),
+             str(self.root / "mixed-summary"), str(producer), str(local), str(secured)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("commit", result.stderr)
+        summary_path = self.root / "mixed-summary/shared/summary.md"
+        if summary_path.exists():
+            self.assertNotIn("- Result: PASS", summary_path.read_text())
+            self.assertIn("- Result: FAIL", summary_path.read_text())
+        for mode in ("shared", "local", "secured"):
+            metadata_path = self.root / f"mixed-summary/{mode}/batch-metadata.json"
+            if metadata_path.exists():
+                self.assertEqual(json.loads(metadata_path.read_text())["result"], "FAIL")
 
     # case: S-262.1
     def test_shared_preflight_failure_fails_batch_even_when_product_lanes_do_not_run(self):
@@ -617,11 +807,22 @@ exec "$REAL_TAR" "$@"
         self.assertIn("pull_request", spec["on"])
         self.assertIn("baseline", spec["on"]["workflow_dispatch"]["inputs"])
         self.assertIn("recorded in batch metadata", spec["on"]["workflow_dispatch"]["inputs"]["baseline"]["description"])
+        self.assertNotIn("cases", spec["on"]["workflow_dispatch"]["inputs"])
+        self.assertEqual(spec["jobs"]["producer"]["outputs"]["cases_b64"], "${{ steps.selection.outputs.cases_b64 }}")
+        self.assertEqual(spec["jobs"]["local"]["env"]["BATCH_CASES_B64"], "${{ needs.producer.outputs.cases_b64 }}")
+        self.assertEqual(spec["jobs"]["secured"]["env"]["BATCH_CASES_B64"], "${{ needs.producer.outputs.cases_b64 }}")
+        for mode in ("local", "secured"):
+            command = next(step["run"] for step in spec["jobs"][mode]["steps"]
+                           if step.get("name") == f"Run {mode} journey stage")
+            self.assertIn('base64 --decode', command)
+            self.assertIn(f'--cases "$BATCH_CASES"', command)
         self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
         self.assertEqual(spec["concurrency"]["group"], "journey-batch")
         jobs = spec["jobs"]
         self.assertEqual(set(jobs), {"producer", "local", "secured", "summary"})
         producer_steps = jobs["producer"]["steps"]
+        selection_step = next(step for step in producer_steps if step.get("id") == "selection")
+        self.assertIn('GITHUB_REF_NAME##*/cases/', selection_step["run"])
         producer_entry = next(step for step in producer_steps if "batch.sh" in step.get("run", ""))
         self.assertEqual(producer_entry["run"], 'e2e/journey/batch.sh prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"')
         self.assertEqual(jobs["producer"]["timeout-minutes"], 60)
@@ -638,7 +839,7 @@ exec "$REAL_TAR" "$@"
                                 and step.get("with", {}).get("name") == "journey-build-candidate"
                                 for step in steps))
             run = next(step for step in steps if "batch.sh" in step.get("run", ""))
-            self.assertEqual(run["run"], f'e2e/journey/batch.sh mode {mode} "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"')
+            self.assertIn(f'e2e/journey/batch.sh mode {mode} "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$BATCH_CASES"', run["run"])
             upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
             self.assertEqual(upload["with"]["name"], f"journey-{mode}")
         shared_upload = next(step for step in jobs["summary"]["steps"]

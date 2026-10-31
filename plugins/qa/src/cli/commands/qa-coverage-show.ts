@@ -2,14 +2,22 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineCommand, useConfig, type CLIInput, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { computeQACaseCoverage, parseQACatalog, scanQACaseClaims } from '../../core/index.js';
-import type { QACaseClaimKind, QACaseMode, QACaseRunResult, QAPluginConfig } from '../../contracts/index.js';
+import {
+  QA_CASE_RUN_SCHEMA,
+  type QACaseClaimKind,
+  type QACaseMode,
+  type QACaseRunResult,
+  type QAPluginConfig,
+} from '../../contracts/index.js';
 import type { QaCasesCoverageFlags } from './flags.js';
 import { resolveCatalogPath } from './qa-cases-utils.js';
 
 function parseRunResult(value: unknown, knownSteps: Set<string>, declaredClaims: Set<string>): QACaseRunResult {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('result must be an object');
   const record = value as Record<string, unknown>;
-  if (record.schema !== 'kb.qa-case-run/v1') throw new Error('schema must be kb.qa-case-run/v1');
+  if (record.schema !== QA_CASE_RUN_SCHEMA) {
+    throw new Error(`schema must be ${QA_CASE_RUN_SCHEMA}`);
+  }
   if (typeof record.runId !== 'string' || !record.runId) throw new Error('runId must be a non-empty string');
   if (record.mode !== 'local' && record.mode !== 'secured') throw new Error('mode must be local or secured');
   if (!Array.isArray(record.claims)) throw new Error('claims must be an array');
@@ -23,7 +31,7 @@ function parseRunResult(value: unknown, knownSteps: Set<string>, declaredClaims:
     const status: QACaseRunResult['claims'][number]['status'] = claim.status;
     return { claimId: claim.claimId, kind: claim.kind as QACaseClaimKind, status };
   });
-  return { schema: 'kb.qa-case-run/v1', runId: record.runId, mode: record.mode, claims };
+  return { schema: QA_CASE_RUN_SCHEMA, runId: record.runId, mode: record.mode, claims };
 }
 
 export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({

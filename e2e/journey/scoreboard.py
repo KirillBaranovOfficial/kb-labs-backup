@@ -11,11 +11,11 @@ from typing import Iterable
 from invocations import print_report_text, write_report_json, write_report_text
 import jsonl
 from journey_dependencies import Dependency
+from scoreboard_contract import RELEASE_GATING_MODES
 
 CASE_STEP = re.compile(r"^\|\s*((?:S|PC)-\d+\.\d+)\s*\|", re.MULTILINE)
 CLAIM_TAG = re.compile(r"@(S|PC)-(\d+\.\d+)")
 MODES = ("local", "secured")
-RELEASE_GATING_MODES = ("local",)
 FAILURE_MAX_LENGTH = 180
 
 
@@ -127,7 +127,7 @@ def load_evidence(directory: Path, modes: Iterable[str]) -> dict[str, dict[str, 
             continue
         if not isinstance(data, dict):
             continue
-        if data.get("case_run", {}).get("partial") is True:
+        if data.get("case_run", {}).get("selection"):
             continue
         if path.name.startswith("studio-playwright-"):
             mode = "secured" if "secured" in path.stem else "local"
@@ -200,8 +200,8 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
             except (OSError, UnicodeError, json.JSONDecodeError):
                 continue
             if (not isinstance(data, dict)
-                    or data.get("schema") == "kb.journey-case-scoreboard/v1"
-                    or data.get("case_run", {}).get("partial") is True):
+                    or data.get("schema") == "kb.journey-case-scoreboard/v2"
+                    or data.get("case_run", {}).get("selection")):
                 continue
             file_mode = data.get("case_run", {}).get("mode")
             steps = data.get("steps", [])
@@ -408,8 +408,7 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
             except (OSError, UnicodeError, json.JSONDecodeError):
                 continue
             case_run = data.get("case_run", {}) if isinstance(data, dict) else {}
-            if case_run.get("partial") is True:
-                partial_selections.extend(case_run.get("selection", []))
+            partial_selections.extend(case_run.get("selection", []))
     if partial_selections:
         evidence = {mode: defaultdict(list) for mode in modes}
     rows = []
@@ -437,10 +436,9 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
                      and any(mode in case["modes"] for mode in gated_modes)]
     mode_reports = {mode: _blocking_report(directory, cases, mode, evidence) for mode in modes}
     result = {
-        "schema": "kb.journey-case-scoreboard/v1",
+        "schema": "kb.journey-case-scoreboard/v2",
         "modes": modes,
         "releaseGate": {"modes": list(RELEASE_GATING_MODES), "gating": bool(gated_modes)},
-        "partial": bool(partial_selections),
         "selection": sorted(set(partial_selections)),
         "observedModes": observed_modes,
         "releaseCases": {"fullyGreen": sum(
@@ -518,7 +516,7 @@ def render_markdown(scoreboard: dict) -> str:
     gate_status = (f"Release 1 gate modes: {gate_modes}." if scoreboard["releaseGate"]["gating"]
                    else f"Release 1 gate modes: {gate_modes}; this scoreboard is non-gating.")
     lines = [f"# Product case scoreboard ({modes})", "", gate_status,
-             (f"**Partial run**; selection: {', '.join(scoreboard['selection'])}." if scoreboard.get("partial") else "Full run.")]
+             (f"**Partial run**; selection: {', '.join(scoreboard['selection'])}." if scoreboard["selection"] else "Full run.")]
     for mode, report in scoreboard.get("modeReports", {}).items():
         lines.extend(["", *_render_mode_report(mode, report)])
     lines.extend(["", f"Release cases: **{release['fullyGreen']} / {release['total']}** fully green.",
@@ -597,7 +595,7 @@ def render_delta(previous_dir: Path, current_dir: Path) -> str:
             continue
         previous = json.loads(previous_path.read_text(encoding="utf-8"))
         current = json.loads(current_path.read_text(encoding="utf-8"))
-        if previous.get("partial") or current.get("partial"):
+        if previous.get("selection") or current.get("selection"):
             selection = sorted(set(previous.get("selection", [])) | set(current.get("selection", [])))
             lines.extend(["", f"{mode}: delta omitted because a scoreboard is partial (selection: {', '.join(selection)})."])
             continue

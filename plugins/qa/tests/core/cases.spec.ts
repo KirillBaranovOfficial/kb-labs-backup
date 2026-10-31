@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { QACase, QACaseClaim, QACaseRunResult } from '@kb-labs/qa/contracts';
+import { QA_CASE_RUN_SCHEMA, type QACase, type QACaseClaim, type QACaseRunResult } from '@kb-labs/qa/contracts';
 import { computeQACaseCoverage, parseQACatalog, RELEASE_CASE_CLAIM_BASELINE, scanQACaseClaims, validateReleaseCaseClaims } from '../../src/core/index.js';
 
 const temporaryDirectories: string[] = [];
@@ -25,7 +25,7 @@ function parsedCase(directory: string, id = 'S-010', document = caseDocument(id)
 }
 
 function run(mode: QACaseRunResult['mode'], claimId: string, status: 'PASS' | 'FAIL', kind: QACaseRunResult['claims'][number]['kind'] = 'journey'): QACaseRunResult {
-  return { schema: 'kb.qa-case-run/v1', runId: `${mode}-${status}`, mode, claims: [{ claimId, kind, status }] };
+  return { schema: QA_CASE_RUN_SCHEMA, runId: `${mode}-${status}`, mode, claims: [{ claimId, kind, status }] };
 }
 
 describe('QA case catalog diagnostics', () => {

@@ -1107,6 +1107,7 @@ raise SystemExit(1)
                             requires=("flow:project registration", "step:project registered"))
         self.assertEqual(result.status, "PASS")
 
+    # case: S-262.7
     def test_journey_result_case_run_loads_through_qa_cases_coverage_consumer(self):
         root = Path(__file__).resolve().parents[2]
         node = shutil.which("node")
@@ -1135,6 +1136,7 @@ raise SystemExit(1)
 
             journey_result = journey.result()
             self.assertEqual(journey_result.status, "FAIL")
+            self.assertEqual(journey_result.case_run["schema"], "kb.qa-case-run/v2")
             steps_by_name = {step.name: step for step in journey.steps}
             self.assertEqual(steps_by_name["provenance check"].status, "PASS")
             self.assertEqual(steps_by_name["install check"].status, "FAIL")

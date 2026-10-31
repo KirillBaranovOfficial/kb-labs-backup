@@ -1015,6 +1015,17 @@ def restart_shared_host(graph: FlowGraph, launcher: str, env: dict[str, str], st
     return restarted_url
 
 
+def run_workflow_with_host_boundary(graph: FlowGraph, *, env: dict[str, str], launcher: str,
+                                    action: Callable[[], object]) -> object:
+    """Re-establish the shared-host prerequisite after workflow cases mutate its lifecycle."""
+    try:
+        return action()
+    finally:
+        probe_platform_state(graph, env, launcher, mutator_group="workflow",
+                             mutator_step="workflow case host boundary",
+                             include_installed=False, include_version=False)
+
+
 def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     receipt = PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json"
     hidden_receipt = receipt.with_name("receipt.journey-hidden.json")
@@ -2233,11 +2244,14 @@ def _main(*, update_variant_runner=None):
                            + [f"S-143.{step}" for step in range(1, 5)])
         outer_graph.flow(
             "workflow execution journey", "workflow", "workflow",
-            lambda: run_workflow_journey(
-                workflow_journey,
-                env=service_env,
-                project=PROJECT,
-                restart_host=restart_for_workflow_history,
+            lambda: run_workflow_with_host_boundary(
+                outer_graph, env=env, launcher=launcher,
+                action=lambda: run_workflow_journey(
+                    workflow_journey,
+                    env=service_env,
+                    project=PROJECT,
+                    restart_host=restart_for_workflow_history,
+                ),
             ),
             cases=workflow_claims, record_empty_success=False,
             runners=("service-local:explore", "service-secured:explore"),

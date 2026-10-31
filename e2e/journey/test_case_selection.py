@@ -295,7 +295,9 @@ class CaseJourneySelectionTests(unittest.TestCase):
             unclaimed = journey.step("unclaimed helper", "auth", lambda: self.fail("helper must not run"))
             self.assertEqual(unclaimed.status, "SKIPPED")
             self.assertEqual(journey.result().case_run["claims"], [])
-            self.assertTrue(journey.result().case_run["partial"])
+            case_run = journey.result().case_run
+            self.assertNotIn("partial", case_run)
+            self.assertEqual(case_run["selection"], ["S-042"])
 
 if __name__ == "__main__":
     unittest.main()
