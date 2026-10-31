@@ -317,6 +317,36 @@ func TestChildEnvironmentClearsAmbientHomePlatformInputsAndGoFlags(t *testing.T)
 	}
 }
 
+func TestInstallationSubprocessHelpersUseSanitizedEnvironment(t *testing.T) {
+	inst := newInstallation(t)
+	for key, value := range map[string]string{
+		"KB_PLATFORM_ROOT": "/ambient/root", "KB_NET_OFFSET": "900", "KB_TEST_SECRET": "ambient-secret", "GOFLAGS": "-mod=vendor",
+	} {
+		t.Setenv(key, value)
+	}
+	t.Setenv("HOME", "/ambient/home")
+	t.Setenv("KB_HOME", "/ambient/kb-home")
+	result := inst.runArgv([]string{"env"}, "KB_TEST_INPUT=fixture-value")
+	if result.code != 0 {
+		t.Fatalf("inspect installation helper environment: code=%d output=%s", result.code, result.output)
+	}
+	values := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(result.output), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	if values["HOME"] != inst.home || values["KB_HOME"] != inst.kbHome || values["KB_TEST_INPUT"] != "fixture-value" {
+		t.Fatalf("fixture child environment = %#v; want fixture HOME/KB_HOME and explicit test input", values)
+	}
+	for _, key := range []string{"KB_PLATFORM_ROOT", "KB_NET_OFFSET", "KB_TEST_SECRET", "GOFLAGS"} {
+		if _, exists := values[key]; exists {
+			t.Errorf("installation helper child inherited %s", key)
+		}
+	}
+}
+
 var (
 	buildOnce                sync.Once
 	buildDir                 string
@@ -468,7 +498,7 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 
 func (i installation) runAt(root string, args ...string) (map[string]any, int, string) {
 	command := exec.Command(i.launcher, append(args, "--platform-root", root)...)
-	command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": i.home, "KB_HOME": i.kbHome})
+	command.Env = i.childEnvironment()
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
@@ -520,8 +550,7 @@ func (i installation) runArgv(argv []string, extraEnv ...string) commandResult {
 		program = i.launcher
 	}
 	command := exec.Command(program, argv[1:]...)
-	command.Env = append(os.Environ(), "KB_HOME="+i.kbHome, "PATH="+filepath.Dir(i.launcher)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	command.Env = append(command.Env, extraEnv...)
+	command.Env = i.childEnvironment(extraEnv...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
@@ -536,6 +565,28 @@ func (i installation) runArgv(argv []string, extraEnv ...string) commandResult {
 		payload = data
 	}
 	return commandResult{payload: payload, code: code, output: output}
+}
+
+func (i installation) childEnvironment(extraEnv ...string) []string {
+	home := i.home
+	if home == "" {
+		home = i.t.TempDir()
+	}
+	kbHome := i.kbHome
+	if kbHome == "" {
+		kbHome = i.t.TempDir()
+	}
+	overrides := map[string]string{
+		"HOME": home, "KB_HOME": kbHome,
+		"PATH": filepath.Dir(i.launcher) + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}
+	for _, entry := range extraEnv {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key != "" {
+			overrides[key] = value
+		}
+	}
+	return childEnvironment(os.Environ(), overrides)
 }
 
 func waitHostExit(pid int, timeout time.Duration) bool {
@@ -766,8 +817,9 @@ func TestIndependentPlatformRootsOwnTheirHostLifecycle(t *testing.T) {
 
 func runForRoot(t *testing.T, inst installation, root, operation string) map[string]any {
 	t.Helper()
+	inst.t = t
 	command := exec.Command(inst.launcher, operation, "--platform-root", root, "--json")
-	command.Env = append(os.Environ(), "KB_HOME="+inst.kbHome)
+	command.Env = inst.childEnvironment()
 	output, err := command.CombinedOutput()
 	code := 0
 	if exit, ok := err.(*exec.ExitError); ok {
@@ -920,7 +972,7 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 		t.Fatalf("printed stop command does not preserve root: %#v, %v", commands, err)
 	}
 	command := exec.Command("/bin/sh", "-c", commandText+" --json")
-	command.Env = append(os.Environ(), "KB_HOME="+kbHome, "PATH="+filepath.Dir(launcher)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	command.Env = a.childEnvironment()
 	stopped, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("execute printed stop command: %v\n%s", err, stopped)
@@ -1349,7 +1401,7 @@ func TestStartPrintsHumanTextWithoutJSONFlag(t *testing.T) {
 func TestForegroundStartRunsTheHostDirectly(t *testing.T) {
 	inst := newInstallation(t)
 	command := exec.Command(inst.launcher, "start", "--foreground", "--json", "--platform-root", inst.root)
-	command.Env = append(os.Environ(), "KB_HOME="+inst.kbHome)
+	command.Env = inst.childEnvironment()
 	startTestProcessGroup(t, command)
 	waited := make(chan error, 1)
 	go func() { waited <- command.Wait() }()

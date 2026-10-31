@@ -378,7 +378,18 @@ func TestHandoffCrashBoundariesKeepCompleteActiveAndRecoveryRoots(t *testing.T) 
 }
 
 func TestUpdateActivationFailuresAfterLinkSwitchRestorePriorVersionAndMetadata(t *testing.T) {
-	points := []HandoffPoint{HandoffBeforeActiveRootSync, HandoffBeforeUpdateRecoveryWrite, HandoffBeforeVersionRetention}
+	points := CrashPoints()
+	start := -1
+	for index, point := range points {
+		if point == HandoffBeforeActiveRootSync {
+			start = index
+			break
+		}
+	}
+	if start < 0 || start >= len(points) {
+		t.Fatalf("post-switch activation handoffs are missing from CrashPoints(): %v", points)
+	}
+	points = points[start:]
 	for _, point := range points {
 		t.Run(string(point), func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "platform")
@@ -432,6 +443,63 @@ func TestUpdateActivationFailuresAfterLinkSwitchRestorePriorVersionAndMetadata(t
 				t.Fatalf("failed activation left finalized target %q: %v", target, err)
 			}
 		})
+	}
+}
+
+func TestCrashPointsEnumeratesEveryProducedHandoff(t *testing.T) {
+	layout, err := New(filepath.Join(t.TempDir(), "platform"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed []HandoffPoint
+	record := func(point HandoffPoint) error {
+		observed = append(observed, point)
+		return nil
+	}
+	stage, err := layout.stageInitial(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, stage, "1.0.0", "enumeration-initial")
+	if _, err := layout.activateInitial(stage, "1.0.0", "enumeration-initial", record); err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.RecordHealthy(); err != nil {
+		t.Fatal(err)
+	}
+	stage, err = layout.stage(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, stage, "2.0.0", "enumeration-update")
+	if _, err := layout.activate(stage, "2.0.0", "enumeration-update", "", &UpdateMetadata{SnapshotID: "enumeration"}, record); err != nil {
+		t.Fatal(err)
+	}
+	if points := CrashPoints(); !reflect.DeepEqual(points, observed) {
+		t.Fatalf("CrashPoints() = %v, observed handoff producers = %v", points, observed)
+	}
+}
+
+func TestUpdateActiveLinkSwitchIOFailureRestoresPriorVersion(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	layout, v1 := initialLayout(t, root, "1.0.0")
+	stage := stageVersion(t, layout, "2.0.0")
+	_, err := layout.activate(stage, "2.0.0", "plan-2", "", nil, func(point HandoffPoint) error {
+		if point == HandoffLinkPrepared {
+			return os.Remove(filepath.Join(layout.InstallerStateDir(), "current-next"))
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "switch active version") {
+		t.Fatalf("activation error = %v, want actual active-link rename failure", err)
+	}
+	active, err := layout.Active()
+	if err != nil || active != v1 {
+		t.Fatalf("active version = %q, %v; want %q after actual link switch I/O failure", active, err, v1)
+	}
+	installed, err := receipt.Read(active)
+	if err != nil || installed.ID != "receipt-1.0.0" {
+		t.Fatalf("restored receipt = %#v, %v", installed, err)
 	}
 }
 
@@ -1288,7 +1356,7 @@ func TestPreActivationUpdateHandoffsLeaveSharedStateAndRunningVersionUntouched(t
 				stage, err = layout.Stage()
 				if err == nil {
 					writeReceipt(t, stage, "2.0.0", "receipt-2.0.0")
-					_, err = layout.activate(stage, "2.0.0", "plan-2.0.0", active, nil, func(current HandoffPoint) error {
+					_, err = layout.activate(stage, "2.0.0", "plan-2.0.0", active, &UpdateMetadata{SnapshotID: "crash-test"}, func(current HandoffPoint) error {
 						if current == point {
 							return interrupt
 						}
@@ -1423,7 +1491,7 @@ func interruptAtPoint(t *testing.T, point HandoffPoint) Layout {
 		t.Fatal(err)
 	}
 	writeReceipt(t, stage, "2.0.0", "receipt-update")
-	_, err = layout.activate(stage, "2.0.0", "update-plan", "", nil, func(current HandoffPoint) error {
+	_, err = layout.activate(stage, "2.0.0", "update-plan", "", &UpdateMetadata{SnapshotID: "crash-test"}, func(current HandoffPoint) error {
 		if current == point {
 			return crash
 		}
