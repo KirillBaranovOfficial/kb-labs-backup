@@ -240,7 +240,9 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     expect(isAlive(busyPid)).toBe(true);
 
     busy.release();
-    await waitFor(() => !isAlive(busyPid), "the released runtime to stop");
+    await waitFor(() => {
+      return !isAlive(busyPid) && subject.status().runtimes.length === 0;
+    }, "the released runtime PID to exit and leave manager status");
     expect(subject.status().runtimes).toEqual([]);
   });
 
