@@ -126,6 +126,35 @@ describe('StateDaemon durability', () => {
     expect(server).toBeDefined();
   });
 
+  // case: S-280.9
+  it('stops at the verified byte prefix before invalid UTF-8 and reports it through the daemon', async () => {
+    const root = await makeRoot();
+    const port = 9885;
+    const records: Array<{ message: string; meta?: Record<string, unknown> }> = [];
+    await start(port, root);
+    expect((await setValue(port, 'verified-prefix', 'kept', 60_000)).status).toBe(204);
+    expect((await setValue(port, 'after-corruption', 'not recovered', 60_000)).status).toBe(204);
+    await activeServers.pop()?.stop();
+
+    const journal = path.join(root, 'state-broker', 'journal.jsonl');
+    const original = await readFile(journal);
+    const verifiedPrefixLength = original.indexOf(0x0a) + 1;
+    const corrupted = Buffer.from(original);
+    const corruptValueOffset = corrupted.indexOf(Buffer.from('not recovered'), verifiedPrefixLength);
+    expect(corruptValueOffset).toBeGreaterThan(verifiedPrefixLength);
+    corrupted[corruptValueOffset + 4] = 0xff;
+    await writeFile(journal, corrupted);
+
+    await start(port, root, makeLogger(records));
+    const ready = await fetch(`http://127.0.0.1:${port}/ready`);
+    expect(ready.status).toBe(200);
+    await expect(ready.json()).resolves.toMatchObject({ ready: true, status: 'ready' });
+    expect((await getValue(port, 'verified-prefix')).status).toBe(200);
+    expect((await getValue(port, 'after-corruption')).status).toBe(404);
+    expect(await readFile(journal)).toEqual(original.subarray(0, verifiedPrefixLength));
+    expect(records.some((record) => record.meta?.code === 'KB_STATE_BROKER_PERSISTENCE_CORRUPT')).toBe(true);
+  });
+
   // case: S-280.7
   it('keeps only the verified prefix before a partial crash tail and reports it through the daemon', async () => {
     const root = await makeRoot();
