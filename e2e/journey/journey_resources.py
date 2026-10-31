@@ -306,13 +306,15 @@ def runner_toolchain_stage_text(dockerfile: Path | None = None) -> str:
 
 def runner_toolchain_image(*, dockerfile: Path | None = None,
                            package_manifest_input: Path | None = None,
-                           studio_manifest_input: Path | None = None) -> str:
+                           studio_manifest_input: Path | None = None,
+                           node_policy_input: Path | None = None) -> str:
     """Derive the tagged toolchain image reference from its exact build inputs.
 
     The tag hashes the toolchain stage of Dockerfile.runner, the source
-    Playwright declaration, and the root packageManager declaration used by
-    Corepack. A changed input yields a new tag that the harness builds, while
-    per-run runner-stage changes reuse the existing image.
+    Playwright declaration, the root packageManager declaration used by
+    Corepack, and the generated Node base image policy. A changed input yields
+    a new tag that the harness builds, while per-run runner-stage changes
+    reuse the existing image.
     """
     stage = runner_toolchain_stage_text(dockerfile)
     studio_manifest = studio_manifest_input or workspace_resource(*STUDIO_PACKAGE_MANIFEST.split("/"))
@@ -330,13 +332,29 @@ def runner_toolchain_image(*, dockerfile: Path | None = None,
         raise FileNotFoundError(f"The journey runner toolchain needs its workspace package.json at {package_manifest}.") from error
     if not isinstance(package_manager, str) or not package_manager.startswith("pnpm@"):
         raise ValueError(f"The journey runner toolchain requires a pnpm packageManager declaration in {package_manifest}.")
-    digest = hashlib.sha256(f"{stage}\n{playwright_version}\n{package_manager}".encode("utf-8")).hexdigest()[:16]
+    node_policy = node_policy_input or workspace_resource(
+        "tools", "clikit", "toolchain", "node_policy_gen.json")
+    try:
+        generated_node_policy = json.loads(node_policy.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"The journey runner toolchain needs generated Node policy at {node_policy}.") from error
+    node_base_image = generated_node_policy.get("nodeBaseImage")
+    node_base_image_argument = generated_node_policy.get("nodeBaseImageArgument")
+    if not isinstance(node_base_image, str) or not node_base_image:
+        raise ValueError(f"The generated Node policy at {node_policy} requires nodeBaseImage.")
+    if not isinstance(node_base_image_argument, str) or not node_base_image_argument:
+        raise ValueError(f"The generated Node policy at {node_policy} requires nodeBaseImageArgument.")
+    digest = hashlib.sha256(
+        f"{stage}\n{playwright_version}\n{package_manager}\n"
+        f"{node_base_image}\n{node_base_image_argument}".encode("utf-8")
+    ).hexdigest()[:16]
     return f"{TOOLCHAIN_IMAGE_REPOSITORY}:{digest}"
 
 
 def runner_toolchain_contract(*, dockerfile: Path | None = None,
                               package_manifest_input: Path | None = None,
-                              studio_manifest_input: Path | None = None) -> dict[str, str]:
+                              studio_manifest_input: Path | None = None,
+                              node_policy_input: Path | None = None) -> dict[str, str]:
     """Return the Dockerfile input and derived image used by the runner stage."""
     return {
         "dockerfile": TOOLCHAIN_DOCKERFILE,
@@ -345,7 +363,8 @@ def runner_toolchain_contract(*, dockerfile: Path | None = None,
         "imageArgument": TOOLCHAIN_IMAGE_BUILD_ARGUMENT,
         "imageReference": runner_toolchain_image(dockerfile=dockerfile,
                                                   package_manifest_input=package_manifest_input,
-                                                  studio_manifest_input=studio_manifest_input),
+                                                  studio_manifest_input=studio_manifest_input,
+                                                  node_policy_input=node_policy_input),
     }
 
 
