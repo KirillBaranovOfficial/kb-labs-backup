@@ -726,7 +726,6 @@ func versionedReceipt(t *testing.T, version string, port int, hostArgs ...string
 	return contracts.InstallReceipt{ID: "receipt-" + version, InstallationID: "installation-stable", Plan: plan}
 }
 
-// case: S-023.6
 func TestUpdateReceiptPreservesTheResolvedPlanRootSpelling(t *testing.T) {
 	inst := newInstallation(t)
 	plan := updatePlan(t, inst.root, freeLoopbackPort(t))
@@ -2064,6 +2063,80 @@ func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 	shimInfoAfter, err := os.Lstat(shim.Target(activeRoot))
 	if err != nil || !os.SameFile(shimInfoBefore, shimInfoAfter) {
 		t.Fatalf("shim target identity changed: %v", err)
+	}
+}
+
+func TestUpdatePreparationFailureLeavesPreviousVersionActive(t *testing.T) {
+	inst := newInstallation(t)
+	if _, code, output := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start fixture host: %d %s", code, output)
+	}
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptBefore, err := os.ReadFile(receipt.Path(layout.PlatformRoot()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
+	hostState, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processIdentityBefore, err := os.ReadFile(hostState.HostPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentBefore, err := os.Readlink(layout.PlatformRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	launcherState := t.TempDir()
+	if err := os.Mkdir(filepath.Join(launcherState, "gateway-roots.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan := updatePlan(t, inst.root, freeLoopbackPort(t))
+	_, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: inst.launcher}, inst.root, plan,
+		hostState, host.State{Dir: launcherState}, &runtime.Dependencies{Artifacts: &recordingInstaller{}})
+	if failure == nil {
+		t.Fatal("update unexpectedly succeeded despite an unwriteable Gateway registry")
+	}
+	if got, err := os.ReadFile(receipt.Path(layout.PlatformRoot())); err != nil || string(got) != string(receiptBefore) {
+		t.Fatalf("failed update changed active receipt: %v", err)
+	}
+	if got, err := os.Readlink(layout.PlatformRoot()); err != nil || got != currentBefore {
+		t.Fatalf("failed update changed current link to %q: %v", got, err)
+	}
+	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
+		t.Fatalf("failed update changed shared state: before=%#v after=%#v", stateBefore, after)
+	}
+	processIdentityAfter, err := os.ReadFile(hostState.HostPID())
+	if err != nil || string(processIdentityAfter) != string(processIdentityBefore) {
+		t.Fatalf("failed update changed the still-running N host identity: %v", err)
+	}
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusCtx, cancelStatus := context.WithTimeout(context.Background(), 5*time.Second)
+	status, err := runner.Status(statusCtx)
+	cancelStatus()
+	if err != nil || status.State != "running" || !status.Healthy {
+		t.Fatalf("failed update left N host status %#v, %v; want running and healthy", status, err)
+	}
+	activeAfter, err := layout.Active()
+	if err != nil || activeAfter != activeRoot {
+		t.Fatalf("failed update left active root %q, want N root %q: %v", activeAfter, activeRoot, err)
+	}
+	versions, err := os.ReadDir(layout.VersionsDir())
+	if err != nil || len(versions) != 1 || versions[0].Name() != filepath.Base(activeRoot) {
+		t.Fatalf("failed update left versions %#v, %v; want only N %q", versions, err, filepath.Base(activeRoot))
 	}
 }
 

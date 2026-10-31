@@ -268,6 +268,9 @@ func childEnvironment(base []string, overrides map[string]string) []string {
 	env := make([]string, 0, len(base)+len(overrides))
 	for _, entry := range base {
 		key, _, _ := strings.Cut(entry, "=")
+		if key == "HOME" || key == "GOFLAGS" || strings.HasPrefix(key, "KB_") {
+			continue
+		}
 		if _, overridden := overrides[key]; overridden {
 			continue
 		}
@@ -279,6 +282,39 @@ func childEnvironment(base []string, overrides map[string]string) []string {
 		}
 	}
 	return env
+}
+
+func TestChildEnvironmentClearsAmbientHomePlatformInputsAndGoFlags(t *testing.T) {
+	home := t.TempDir()
+	kbHome := t.TempDir()
+	envPath, err := exec.LookPath("env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(envPath)
+	command.Env = childEnvironment([]string{
+		"HOME=/ambient/home", "KB_HOME=/ambient/kb", "KB_PLATFORM_ROOT=/ambient/root",
+		"KB_NET_OFFSET=900", "KB_SECRET_SENTINEL=secret", "GOFLAGS=-mod=vendor", "PATH=" + os.Getenv("PATH"),
+	}, map[string]string{"HOME": home, "KB_HOME": kbHome})
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("read isolated child environment: %v", err)
+	}
+	values := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	if values["HOME"] != home || values["KB_HOME"] != kbHome {
+		t.Fatalf("child HOME/KB_HOME = %q/%q, want fixture paths %q/%q", values["HOME"], values["KB_HOME"], home, kbHome)
+	}
+	for _, key := range []string{"KB_PLATFORM_ROOT", "KB_NET_OFFSET", "KB_SECRET_SENTINEL", "GOFLAGS"} {
+		if _, exists := values[key]; exists {
+			t.Errorf("child environment retained %s", key)
+		}
+	}
 }
 
 var (
@@ -367,9 +403,9 @@ func TestMain(m *testing.M) {
 }
 
 type installation struct {
-	launcher, root, kbHome, state string
-	port                          int
-	t                             *testing.T
+	launcher, root, home, kbHome, state string
+	port                                int
+	t                                   *testing.T
 }
 
 func newInstallation(t *testing.T, hostArgs ...string) installation {
@@ -395,11 +431,12 @@ func newInstallationWithRoot(t *testing.T, launcher, fakehost, root, kbHome stri
 		t.Fatal(err)
 	}
 	t.Setenv(host.KBHomeEnv, kbHome)
+	home := t.TempDir()
 	state, err := host.StateHome()
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
+	inst := installation{launcher: launcher, root: root, home: home, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	return inst
 }
 
@@ -414,12 +451,13 @@ func newEmptyInstallation(t *testing.T) installation {
 	listener.Close()
 	root := t.TempDir()
 	kbHome := t.TempDir()
+	home := t.TempDir()
 	t.Setenv(host.KBHomeEnv, kbHome)
 	state, err := host.StateHome()
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
+	inst := installation{launcher: launcher, root: root, home: home, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	registerTestHostProcessTreeCleanup(t, root)
 	return inst
 }
@@ -430,7 +468,7 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 
 func (i installation) runAt(root string, args ...string) (map[string]any, int, string) {
 	command := exec.Command(i.launcher, append(args, "--platform-root", root)...)
-	command.Env = append(os.Environ(), "KB_HOME="+i.kbHome)
+	command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": i.home, "KB_HOME": i.kbHome})
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
