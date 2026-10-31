@@ -285,6 +285,11 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 		return nil
 	}
 
+	if totalErrors == 0 {
+		o.Warn(fmt.Sprintf("0 error(s), %d warning(s) across %d packages", totalWarnings, packagesWithFindings))
+		return nil
+	}
+
 	o.Err(fmt.Sprintf("%d error(s), %d warning(s) across %d packages", totalErrors, totalWarnings, packagesWithFindings))
 	return diag.New("KB_DEVKIT_STANDARDS_VIOLATIONS", "Workspace standards violations were found.",
 		diag.WithHint("Review the findings, correct them, then rerun `kb-devkit check`."))
