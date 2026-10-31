@@ -1,6 +1,7 @@
-import { open, mkdir, readFile, rename } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { link, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { InMemoryStateBroker, type StateBrokerSnapshotEntry } from './in-memory.js';
+import { InMemoryStateBroker } from './in-memory.js';
 
 type JournalRecord =
   | { version: 1; operation: 'set'; key: string; value: unknown; expiresAt: number }
@@ -13,19 +14,30 @@ const COMPACT_AFTER_RECORDS = 1_000;
 /** StateBroker backend that syncs every resolved mutation to a local journal. */
 export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   private readonly journalPath: string;
+  private readonly lockPath: string;
+  private readonly ownerToken: string;
   private writeQueue: Promise<void> = Promise.resolve();
   private journalRecords = 0;
   private corrupted = false;
+  private lockOwned = false;
 
   private constructor(dataRoot: string, cleanupIntervalMs: number) {
     super(cleanupIntervalMs);
     this.journalPath = path.join(dataRoot, 'state-broker', 'journal.jsonl');
+    this.lockPath = `${this.journalPath}.lock`;
+    this.ownerToken = randomUUID();
   }
 
   static async open(dataRoot: string, cleanupIntervalMs = 30_000): Promise<AppendOnlyJournalStateBroker> {
     const broker = new AppendOnlyJournalStateBroker(dataRoot, cleanupIntervalMs);
-    await mkdir(path.dirname(broker.journalPath), { recursive: true });
-    await broker.replay();
+    try {
+      await mkdir(path.dirname(broker.journalPath), { recursive: true });
+      await broker.acquireWriterLock();
+      await broker.replay();
+    } catch (error) {
+      await broker.stop();
+      throw error;
+    }
     return broker;
   }
 
@@ -76,8 +88,79 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
     try {
       await this.writeQueue;
     } finally {
-      await super.stop();
+      try {
+        await super.stop();
+      } finally {
+        await this.releaseWriterLock();
+      }
     }
+  }
+
+  private async acquireWriterLock(): Promise<void> {
+    const owner = JSON.stringify({ pid: process.pid, token: this.ownerToken });
+    const ownerPath = `${this.lockPath}.${process.pid}.${this.ownerToken}.owner`;
+    const ownerHandle = await open(ownerPath, 'wx', 0o600);
+    try {
+      await ownerHandle.writeFile(owner, 'utf8');
+      await ownerHandle.sync();
+    } finally {
+      await ownerHandle.close();
+    }
+    try {
+      for (;;) {
+        try {
+          await link(ownerPath, this.lockPath);
+          this.lockOwned = true;
+          return;
+        } catch (error) {
+          if (!isAlreadyExists(error)) throw error;
+        }
+
+        const existing = await this.readWriterLock();
+        if (existing === null) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          continue;
+        }
+        if (existing.pid === process.pid) {
+          throw new Error(`StateBroker journal already has a writer in process ${process.pid}.`);
+        }
+        if (!isProcessAlive(existing.pid)) {
+          await rm(this.lockPath, { force: true });
+          continue;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } finally {
+      await rm(ownerPath, { force: true });
+    }
+  }
+
+  private async readWriterLock(): Promise<{ pid: number; token: string } | null> {
+    let content: string;
+    try {
+      content = await readFile(this.lockPath, 'utf8');
+    } catch (error) {
+      if (isMissingPath(error)) return null;
+      throw error;
+    }
+    const value: unknown = JSON.parse(content);
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new Error(`StateBroker journal writer lock at ${this.lockPath} is malformed.`);
+    }
+    const record = value as Record<string, unknown>;
+    if (!Number.isSafeInteger(record.pid) || (record.pid as number) <= 0 || typeof record.token !== 'string') {
+      throw new Error(`StateBroker journal writer lock at ${this.lockPath} is malformed.`);
+    }
+    return { pid: record.pid as number, token: record.token };
+  }
+
+  private async releaseWriterLock(): Promise<void> {
+    if (!this.lockOwned) return;
+    const existing = await this.readWriterLock();
+    if (existing?.pid === process.pid && existing.token === this.ownerToken) {
+      await rm(this.lockPath, { force: true });
+    }
+    this.lockOwned = false;
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -156,7 +239,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
 
   private async compactIfNeeded(): Promise<void> {
     if (this.journalRecords < COMPACT_AFTER_RECORDS) return;
-    const entries: StateBrokerSnapshotEntry[] = this.snapshotEntries();
+    const entries = this.snapshotEntries();
     const temporaryPath = `${this.journalPath}.${process.pid}.${Date.now()}.tmp`;
     const handle = await open(temporaryPath, 'w');
     try {
@@ -199,4 +282,19 @@ function isJournalRecord(value: unknown): value is JournalRecord {
 
 function isMissingPath(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'EEXIST';
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false;
+    if (error instanceof Error && 'code' in error && error.code === 'EPERM') return true;
+    throw error;
+  }
 }

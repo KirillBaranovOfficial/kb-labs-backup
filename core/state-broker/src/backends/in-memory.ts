@@ -11,12 +11,6 @@ interface CacheEntry {
   namespace: string;
 }
 
-export interface StateBrokerSnapshotEntry {
-  key: string;
-  value: unknown;
-  expiresAt: number;
-}
-
 export class InMemoryStateBroker implements StateBroker {
   private store = new Map<string, CacheEntry>();
   private cleanupInterval: NodeJS.Timeout;
@@ -183,7 +177,7 @@ export class InMemoryStateBroker implements StateBroker {
     return true;
   }
 
-  protected snapshotEntries(): StateBrokerSnapshotEntry[] {
+  protected snapshotEntries(): Array<{ key: string; value: unknown; expiresAt: number }> {
     const now = Date.now();
     return [...this.store].flatMap(([key, entry]) => entry.expiresAt < now
       ? []

@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import { AppendOnlyJournalStateBroker, InMemoryStateBroker } from "@kb-labs/core-state-broker";
+import { InMemoryStateBroker } from "@kb-labs/core-state-broker";
+import { AppendOnlyJournalStateBroker } from "../../../../core/state-broker/src/backends/append-only-journal.js";
 import {
   createErrorEnvelope,
   createContextLogger,
@@ -24,7 +25,6 @@ import { randomUUID } from "node:crypto";
 export interface StateDaemonConfig {
   port?: number;
   host?: string;
-  platformDataRoot?: string;
   logger?: ILogger;
 }
 
@@ -37,7 +37,7 @@ function createFallbackLogger(): IContextLogger {
   });
 }
 
-export class StateDaemonServer {
+class StateDaemonRuntime {
   private broker: InMemoryStateBroker = new InMemoryStateBroker();
   private readonly observability = new HttpObservabilityCollector({
     serviceId: "state-daemon",
@@ -48,7 +48,10 @@ export class StateDaemonServer {
   private readonly logger: IContextLogger;
   private server: FastifyInstance | null = null;
 
-  constructor(private readonly config: StateDaemonConfig = {}) {
+  constructor(
+    private readonly config: StateDaemonConfig = {},
+    private readonly platformDataRoot?: string,
+  ) {
     this.logger = createContextLogger(config.logger ?? createFallbackLogger(), {
       applicationId: "kb-labs",
       serviceId: "state-daemon",
@@ -66,9 +69,9 @@ export class StateDaemonServer {
     }
     const host = this.config.host ?? "localhost";
 
-    if (this.config.platformDataRoot) {
+    if (this.platformDataRoot) {
       await this.broker.stop();
-      const broker = await AppendOnlyJournalStateBroker.open(this.config.platformDataRoot);
+      const broker = await AppendOnlyJournalStateBroker.open(this.platformDataRoot);
       this.broker = broker;
       if (broker.journalWasCorrupt) {
         const diagnostic = createErrorEnvelope("KB_STATE_BROKER_PERSISTENCE_CORRUPT");
@@ -309,6 +312,34 @@ export class StateDaemonServer {
       return null;
     });
   }
+}
+
+export class StateDaemonServer {
+  private readonly runtime: StateDaemonRuntime;
+
+  constructor(config: StateDaemonConfig = {}) {
+    this.runtime = new StateDaemonRuntime(config);
+  }
+
+  async start(): Promise<void> {
+    await this.runtime.start();
+  }
+
+  async stop(): Promise<void> {
+    await this.runtime.stop();
+  }
+}
+
+/** Internal host composition entry point; omitted from the package root. */
+export function createDurableStateDaemon(
+  config: StateDaemonConfig,
+  platformDataRoot: string,
+): Pick<StateDaemonServer, "start" | "stop"> {
+  const runtime = new StateDaemonRuntime(config, platformDataRoot);
+  return {
+    start: () => runtime.start(),
+    stop: () => runtime.stop(),
+  };
 }
 
 function mapBrokerHealthStatus(
