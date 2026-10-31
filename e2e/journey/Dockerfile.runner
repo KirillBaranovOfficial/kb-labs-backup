@@ -14,7 +14,7 @@ RUN go build -trimpath -o /out/kb-create-release-index ./v2/cmd/kb-create-releas
 # inputs, and the runner stage below starts FROM that tagged image so per-run
 # build-cache trimming cannot evict the toolchain. Its inputs are declared in
 # journey_resources.TOOLCHAIN_STAGE_INPUTS and hashed into the image tag.
-FROM node:24-bookworm AS toolchain
+FROM ${KB_JOURNEY_TOOLCHAIN_IMAGE} AS toolchain
 
 COPY package.json /tmp/workspace-package.json
 RUN apt-get update -qq && apt-get install -y -qq ca-certificates curl git jq python3 procps iproute2 lsof \

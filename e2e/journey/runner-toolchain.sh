@@ -9,23 +9,33 @@
 # journey entry (e2e/journey/run.sh).
 
 journey_toolchain_ensure() {
-  local root="$1" contract toolchain_image toolchain_label image_argument
+  local root="$1" policy_file contract toolchain_image toolchain_label image_argument node_base_image
+  policy_file="$root/tools/clikit/toolchain/node_policy_gen.json"
   if ! contract="$(python3 "$root/e2e/journey/journey_resources.py" --toolchain-contract)"; then
     return 1
   fi
   toolchain_image="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["imageReference"])' <<< "$contract")"
   toolchain_label="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["imageLabel"])' <<< "$contract")"
   image_argument="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["imageArgument"])' <<< "$contract")"
-  if [[ -z "$toolchain_image" || -z "$toolchain_label" || -z "$image_argument" ]]; then
+  if ! node_base_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["nodeBaseImage"])' "$policy_file")"; then
+    printf 'Journey runner toolchain needs generated Node policy %q. Next: (cd %q/tools/clikit && go generate ./toolchain)\n' \
+      "$policy_file" "$root" >&2
+    return 1
+  fi
+  if [[ -z "$toolchain_image" || -z "$toolchain_label" || -z "$image_argument" || -z "$node_base_image" ]]; then
     echo "Journey runner toolchain derivation returned an incomplete contract. Next: python3 e2e/journey/journey_resources.py --toolchain-contract" >&2
     return 1
   fi
+  local -a build_command=(docker build --target toolchain -t "$toolchain_image"
+    --label "${toolchain_label}=${toolchain_image#*:}"
+    --build-arg "$image_argument=$node_base_image"
+    -f e2e/journey/Dockerfile.runner .)
   if [[ -z "$(docker images -q "$toolchain_image")" ]]; then
-    if ! (cd "$root" && docker build --target toolchain \
-        -t "$toolchain_image" \
-        --label "${toolchain_label}=${toolchain_image#*:}" \
-        -f e2e/journey/Dockerfile.runner .); then
-      echo "Journey runner toolchain image $toolchain_image could not be built. Next: docker build --target toolchain -t $toolchain_image -f e2e/journey/Dockerfile.runner ." >&2
+    if ! (cd "$root" && "${build_command[@]}"); then
+      printf 'Journey runner toolchain image %s could not be built with %s=%s. Next: (cd %q &&' \
+        "$toolchain_image" "$image_argument" "$node_base_image" "$root" >&2
+      printf ' %q' "${build_command[@]}" >&2
+      printf ')\n' >&2
       return 1
     fi
     echo "==> journey runner toolchain $toolchain_image built"

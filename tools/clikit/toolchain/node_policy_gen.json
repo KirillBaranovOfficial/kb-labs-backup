@@ -1,0 +1,4 @@
+{
+  "requiredMajor": 24,
+  "nodeBaseImage": "node:24-bookworm"
+}
