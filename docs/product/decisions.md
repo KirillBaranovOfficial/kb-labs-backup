@@ -6,7 +6,7 @@
 
 SQLite vector search orders equal cosine similarity scores by stable record ID
 ascending. This makes the returned order deterministic across database query
-plans and reopenings. Case: S-280.4.
+plans and reopenings. Case: S-281.4.
 
 ### Stock embeddings and vector storage are local-install defaults
 
