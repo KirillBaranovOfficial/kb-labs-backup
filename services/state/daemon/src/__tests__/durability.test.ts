@@ -251,6 +251,8 @@ describe('StateBroker durability', () => {
     const liveLockPath = path.join(liveRoot, 'state-broker', 'journal.jsonl.lock');
     const reclaimDirectory = path.join(reclaimRoot, 'state-broker');
     const lockPath = path.join(reclaimDirectory, 'journal.jsonl.lock');
+    const reclaimPath = `${lockPath}.reclaim`;
+    const rereadFifoPath = path.join(reclaimDirectory, 'journal.jsonl.lock.reread');
     const moduleUrl = new URL('../backends/append-only-journal.ts', import.meta.url).href;
     const vitestPath = createRequire(import.meta.url).resolve('vitest');
     const vitePath = createRequire(vitestPath).resolve('vite');
@@ -325,7 +327,23 @@ describe('StateBroker durability', () => {
       if (!stalePid) throw new Error('could not start stale lock owner process');
       await once(staleProcess, 'exit');
       await fifoWriter.writeFile(JSON.stringify({ pid: stalePid, token: 'stale-owner' }), 'utf8');
-      await rename(liveLockPath, lockPath);
+      await rename(lockPath, rereadFifoPath);
+      execFileSync('mkfifo', [lockPath]);
+      await fifoWriter.close();
+      fifoWriter = undefined;
+
+      const gateDeadline = Date.now() + 10_000;
+      while (Date.now() < gateDeadline) {
+        try {
+          await stat(reclaimPath);
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      await expect(stat(reclaimPath)).resolves.toBeDefined();
+
       const directoryBefore = await stat(reclaimDirectory);
       let resolveDirectoryChange: (() => void) | undefined;
       const directoryChanged = new Promise<void>((resolve) => { resolveDirectoryChange = resolve; });
@@ -333,8 +351,13 @@ describe('StateBroker durability', () => {
         if (current.ctimeMs !== previous.ctimeMs || current.mtimeMs !== previous.mtimeMs) resolveDirectoryChange?.();
       });
       watchingDirectory = true;
+
+      fifoWriter = await open(lockPath, 'w');
+      await fifoWriter.writeFile(JSON.stringify(liveRecord), 'utf8');
       await fifoWriter.close();
       fifoWriter = undefined;
+      await rename(liveLockPath, lockPath);
+
       await Promise.race([
         directoryChanged,
         new Promise<never>((_resolve, reject) => {
