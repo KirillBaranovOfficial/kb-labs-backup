@@ -8,6 +8,7 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+import { getDiscoveryInputPaths } from '@kb-labs/core-discovery';
 import { promises as fsPromises } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -21,10 +22,10 @@ const SNAPSHOT_DIR = ['cache'] as const;
 const SNAPSHOT_FILE = 'registry.json';
 const SNAPSHOT_BACKUP = 'registry.prev.json';
 const DEFAULT_TTL_MS = 60_000;
-const MARKETPLACE_LOCK_PATH = ['.kb', 'marketplace.lock'] as const;
 
 export interface SnapshotManagerOptions {
   root: string;
+  discoveryRoots?: readonly string[];
   ttlMs?: number;
   platformVersion: string;
   cache?: ICache;
@@ -44,11 +45,13 @@ export class SnapshotManager {
   private readonly cacheKey?: string;
   private readonly persistSnapshot: boolean;
   private readonly root: string;
+  private readonly discoveryRoots: readonly string[];
   private lastChecksum: string | null = null;
   private persistLock: Promise<void> = Promise.resolve();
 
   constructor(opts: SnapshotManagerOptions) {
     this.root = resolve(opts.root);
+    this.discoveryRoots = [...new Set((opts.discoveryRoots ?? [this.root]).map(root => resolve(root)))];
     const stateOptions = { root: opts.kbHome };
     this.snapshotPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_FILE], stateOptions);
     this.backupPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_BACKUP], stateOptions);
@@ -164,28 +167,26 @@ export class SnapshotManager {
 
   private markStaleness(snapshot: RegistrySnapshot): RegistrySnapshot {
     const expired = snapshot.expiresAt ? Date.now() > Date.parse(snapshot.expiresAt) : false;
-    const lockChanged = this.isLockNewerThanSnapshot(snapshot);
+    const discoveryInputsChanged = this.isDiscoveryInputNewerThanSnapshot(snapshot);
     const manifestChanged = this.isAnyManifestNewerThanSnapshot(snapshot);
-    const stale = expired || lockChanged || manifestChanged;
+    const stale = expired || discoveryInputsChanged || manifestChanged;
     if (snapshot.stale === stale) {return snapshot;}
     return { ...snapshot, stale, partial: snapshot.partial || stale };
   }
 
-  private isLockNewerThanSnapshot(snapshot: RegistrySnapshot): boolean {
-    try {
-      const lockPath = join(this.root, ...MARKETPLACE_LOCK_PATH);
-      const lockMtime = statSync(lockPath).mtimeMs;
-      const snapshotTs = snapshot.ts ?? Date.parse(snapshot.generatedAt);
-      return lockMtime > snapshotTs;
-    } catch {
-      return false;
-    }
+  private isDiscoveryInputNewerThanSnapshot(snapshot: RegistrySnapshot): boolean {
+    const snapshotTs = snapshot.ts ?? Date.parse(snapshot.generatedAt);
+    if (!Number.isFinite(snapshotTs)) {return true;}
+
+    return getDiscoveryInputPaths(this.discoveryRoots).some((inputPath) =>
+      existsSync(inputPath) && statSync(inputPath).mtimeMs > snapshotTs,
+    );
   }
 
   /**
    * Detect a rebuilt plugin whose manifest artifact changed on disk after the
    * snapshot was written. Installing/removing a plugin bumps marketplace.lock
-   * (covered by isLockNewerThanSnapshot), but rebuilding an *already-installed*
+   * (covered by discovery input invalidation), but rebuilding an *already-installed*
    * plugin (e.g. fixing handler paths in its manifest and re-running the build)
    * leaves the lock untouched — so without this check a stale registry.json
    * keeps serving the old handler paths until it is manually deleted (#23).

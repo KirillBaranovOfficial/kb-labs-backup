@@ -74,6 +74,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
 
     this.snapshotMgr = new SnapshotManager({
       root: this.root,
+      discoveryRoots: [this.root, ...(opts.platformRoot ? [opts.platformRoot] : [])],
       ttlMs: opts.cache?.ttlMs,
       platformVersion: opts.platformVersion ?? PLATFORM_VERSION,
       cache: opts.cache?.adapter,

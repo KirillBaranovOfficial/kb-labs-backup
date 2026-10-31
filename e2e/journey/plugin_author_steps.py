@@ -171,6 +171,14 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     def cli(args: list[str], *, step_id: str | None = None) -> CompletedProcess[str]:
         command = [str(kb_path), *args]
+        if args[0] in {"commit", "review"}:
+            route = args[:next((index for index, token in enumerate(args) if token.startswith("-")), len(args))]
+            help_command = [str(kb_path), *route, "--help"]
+            with invocation_context():
+                declared = run_with_runner(command_runner, help_command, cwd=project, env=env, timeout=120)
+            if declared.returncode != 0:
+                detail = " ".join(((declared.stderr or "") + " " + (declared.stdout or "")).split())
+                raise RuntimeError(f"journey command {' '.join(route)!r} is absent from the live CLI registry: {detail or 'no output'}")
         context = invocation_context(step_id=step_id) if step_id else invocation_context()
         with context:
             return run_with_runner(command_runner, command, cwd=project, env=env, timeout=180)
