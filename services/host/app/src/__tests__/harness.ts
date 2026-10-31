@@ -92,6 +92,11 @@ async function writeProject(
 ): Promise<string> {
   const projectRoot = await mkdtemp(join(tmpdir(), "kb-host-test-"));
   await mkdir(join(projectRoot, ".kb"), { recursive: true });
+  await mkdir(join(projectRoot, ".kb", "v2"), { recursive: true });
+  await mkdir(join(projectRoot, ".kb", "data"), { recursive: true });
+  const layoutPath = join(projectRoot, ".kb", "v2", "platform-layout.json");
+  const layoutSource = join(process.cwd(), "../../../tools/kb-create/v2/contracts/platform-layout.json");
+  await writeFile(layoutPath, await readFile(layoutSource, "utf8"));
   const releaseDefaultsPath = join(projectRoot, "release-defaults.json");
   execFileSync(process.execPath, [
     join(process.cwd(), "../../../tools/release/generate-platform-image-default.mjs"),

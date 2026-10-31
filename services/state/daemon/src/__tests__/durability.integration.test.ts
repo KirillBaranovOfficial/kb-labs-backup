@@ -1,11 +1,11 @@
-import { appendFile, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ILogger } from '@kb-labs/core-platform';
-import { StateDaemonServer } from '../server.js';
+import { createDurableStateDaemon } from '../server.js';
 
-const activeServers: StateDaemonServer[] = [];
+const activeServers: Array<{ stop(): Promise<void> }> = [];
 const temporaryRoots: string[] = [];
 
 afterEach(async () => {
@@ -32,8 +32,8 @@ async function makeRoot(): Promise<string> {
   return root;
 }
 
-async function start(port: number, platformDataRoot: string, logger?: ILogger): Promise<StateDaemonServer> {
-  const server = new StateDaemonServer({ port, host: '127.0.0.1', platformDataRoot, logger });
+async function start(port: number, platformDataRoot: string, logger?: ILogger): Promise<{ stop(): Promise<void> }> {
+  const server = createDurableStateDaemon({ port, host: '127.0.0.1', logger }, platformDataRoot);
   await server.start();
   activeServers.push(server);
   return server;
@@ -82,20 +82,26 @@ describe('StateDaemon durability', () => {
     expect((await getValue(port, 'default-ttl')).status).toBe(200);
   });
 
-  it('keeps the verified prefix, reports the catalogue code, and starts on a partial journal', async () => {
+  it('keeps only the prefix before a malformed complete record and reports the catalogue code', async () => {
     const root = await makeRoot();
     const port = 9880;
     const records: Array<{ message: string; meta?: Record<string, unknown> }> = [];
     await start(port, root, makeLogger(records));
     expect((await setValue(port, 'verified-prefix', 'kept', 60_000)).status).toBe(204);
+    expect((await setValue(port, 'after-corruption', 'not recovered', 60_000)).status).toBe(204);
     await activeServers.pop()?.stop();
 
-    await appendFile(path.join(root, 'state-broker', 'journal.jsonl'), '{"partial":', 'utf8');
+    const journal = path.join(root, 'state-broker', 'journal.jsonl');
+    const validRecords = await readFile(journal, 'utf8');
+    const lines = validRecords.trimEnd().split('\n');
+    await writeFile(journal, `${lines[0]}\n{"version":1,"operation":\n${lines[1]}\n`, 'utf8');
     const server = await start(port, root, makeLogger(records));
     const ready = await fetch(`http://127.0.0.1:${port}/ready`);
     expect(ready.status).toBe(200);
     await expect(ready.json()).resolves.toMatchObject({ ready: true, status: 'ready' });
     expect((await getValue(port, 'verified-prefix')).status).toBe(200);
+    expect((await getValue(port, 'after-corruption')).status).toBe(404);
+    expect((await readFile(journal, 'utf8')).trimEnd().split('\n')).toHaveLength(1);
     expect(records.some((record) => record.meta?.code === 'KB_STATE_BROKER_PERSISTENCE_CORRUPT')).toBe(true);
     expect(server).toBeDefined();
   });
