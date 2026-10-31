@@ -95,6 +95,25 @@ class RunnerToolchainTagTests(unittest.TestCase):
                          package_manifest_input=package_manifest)
         self.assertNotEqual(changed, baseline)
 
+    def test_generated_node_base_image_change_invalidates_the_toolchain_image_tag(self):
+        from journey_resources import runner_toolchain_image as derive
+        policy = self.studio_manifest.parent / "node-policy.json"
+        policy.write_text(json.dumps({"nodeBaseImage": "node:24-bookworm",
+                                      "nodeBaseImageArgument": "KB_JOURNEY_NODE_BASE_IMAGE"}),
+                          encoding="utf-8")
+        baseline = derive(dockerfile=RUNNER_DOCKERFILE,
+                          studio_manifest_input=self.studio_manifest,
+                          package_manifest_input=self.package_manifest,
+                          node_policy_input=policy)
+        policy.write_text(json.dumps({"nodeBaseImage": "node:26-bookworm",
+                                      "nodeBaseImageArgument": "KB_JOURNEY_NODE_BASE_IMAGE"}),
+                          encoding="utf-8")
+        changed = derive(dockerfile=RUNNER_DOCKERFILE,
+                         studio_manifest_input=self.studio_manifest,
+                         package_manifest_input=self.package_manifest,
+                         node_policy_input=policy)
+        self.assertNotEqual(changed, baseline)
+
     def test_toolchain_stage_text_is_extracted_from_the_real_dockerfile(self):
         from journey_resources import runner_toolchain_stage_text
         stage = runner_toolchain_stage_text()
@@ -202,11 +221,9 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
 
         probe = """
 const { execFileSync } = require('node:child_process');
-const path = require('node:path');
 const version = process.argv[1];
 if (!process.env.COREPACK_HOME) throw new Error('COREPACK_HOME is missing');
-const script = path.join(process.env.COREPACK_HOME, 'v1', 'pnpm', version, 'bin', 'pnpm.cjs');
-const actual = execFileSync(process.execPath, [script, '--version'], { encoding: 'utf8' }).trim();
+const actual = execFileSync('corepack', ['pnpm', '--version'], { encoding: 'utf8' }).trim();
 if (actual !== version) throw new Error(`pnpm version ${actual} does not match ${version}`);
 process.stdout.write(actual);
 """

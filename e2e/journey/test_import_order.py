@@ -130,12 +130,13 @@ class JourneyImportOrderTests(unittest.TestCase):
 
     def test_runner_marketplace_fixture_starts_from_its_bundled_workspace_closure(self):
         from journey_resources import stage_marketplace_sync_fixture, workspace_resource
+        from marketplace_sync_fixture import marketplace_sync_fixture_command
 
         stage_marketplace_sync_fixture()
         bundle = workspace_resource(".journey", "runner-inputs", "marketplace-sync-server.mjs")
         with tempfile.TemporaryDirectory(prefix="journey-marketplace-runner-root-") as temporary:
             process = subprocess.Popen(
-                ["node", str(bundle), temporary],
+                marketplace_sync_fixture_command(temporary, fixture_path=bundle),
                 cwd=REPOSITORY_ROOT,
                 text=True,
                 stdout=subprocess.PIPE,
@@ -151,6 +152,14 @@ class JourneyImportOrderTests(unittest.TestCase):
                 self.assertTrue(json.loads(stdout.splitlines()[0])["url"].startswith("http://127.0.0.1:"))
             else:
                 self.fail(f"bundled Marketplace fixture exited before serving: {stdout}\n{stderr}")
+
+    def test_marketplace_fixture_command_enables_secure_global_crypto(self):
+        from marketplace_sync_fixture import marketplace_sync_fixture_command
+
+        command = marketplace_sync_fixture_command(Path("/tmp/marketplace-root"),
+                                                   fixture_path=Path("/tmp/fixture.mjs"))
+        self.assertEqual(command, ["node", "--experimental-global-webcrypto",
+                                   "/tmp/fixture.mjs", "/tmp/marketplace-root"])
 
     def test_every_journey_module_imports_first_in_a_fresh_interpreter(self):
         env = os.environ.copy()
