@@ -359,6 +359,44 @@ exec "$REAL_TAR" "$@"
         self.assertEqual(full_result.returncode, 0, full_result.stderr + full_result.stdout)
         self.assertIn("- Result: PASS", (self.root / "out/shared/summary.md").read_text())
 
+    # case: S-262.8
+    def test_summary_rejects_mixed_commit_identities_at_finalization(self):
+        import json
+        producer = self.root / "producer"
+        local = self.root / "local-artifact"
+        secured = self.root / "secured-artifact"
+        # Reuse a successful, fully produced fixture batch before changing only its commit identities.
+        self._run()
+        for mode, directory in (("shared", producer), ("local", local), ("secured", secured)):
+            (directory / mode).mkdir(parents=True)
+            shutil.copytree(self.root / f"out/{mode}", directory / mode, dirs_exist_ok=True)
+        run = json.loads((producer / "shared/run.json").read_text())
+        run["commit"] = "sha-a"
+        (producer / "shared/run.json").write_text(json.dumps(run))
+        for mode, directory, commit in (("shared", producer, "sha-a"),
+                                        ("local", local, "sha-b"),
+                                        ("secured", secured, "sha-c")):
+            metadata_path = directory / mode / "batch-metadata.json"
+            metadata = json.loads(metadata_path.read_text())
+            metadata["commit"] = commit
+            metadata_path.write_text(json.dumps(metadata))
+
+        result = subprocess.run(
+            [sys.executable, str(self.root / "e2e/journey/batch_summary.py"),
+             str(self.root / "mixed-summary"), str(producer), str(local), str(secured)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("commit", result.stderr)
+        summary_path = self.root / "mixed-summary/shared/summary.md"
+        if summary_path.exists():
+            self.assertNotIn("- Result: PASS", summary_path.read_text())
+            self.assertIn("- Result: FAIL", summary_path.read_text())
+        for mode in ("shared", "local", "secured"):
+            metadata_path = self.root / f"mixed-summary/{mode}/batch-metadata.json"
+            if metadata_path.exists():
+                self.assertEqual(json.loads(metadata_path.read_text())["result"], "FAIL")
+
     # case: S-262.1
     def test_shared_preflight_failure_fails_batch_even_when_product_lanes_do_not_run(self):
         result = self._run(fail_build=True)
@@ -669,17 +707,22 @@ exec "$REAL_TAR" "$@"
         self.assertIn("pull_request", spec["on"])
         self.assertIn("baseline", spec["on"]["workflow_dispatch"]["inputs"])
         self.assertIn("recorded in batch metadata", spec["on"]["workflow_dispatch"]["inputs"]["baseline"]["description"])
-        self.assertIn("cases", spec["on"]["workflow_dispatch"]["inputs"])
-        self.assertIn("partial batch", spec["on"]["workflow_dispatch"]["inputs"]["cases"]["description"])
+        self.assertNotIn("cases", spec["on"]["workflow_dispatch"]["inputs"])
+        self.assertEqual(spec["jobs"]["producer"]["outputs"]["cases_b64"], "${{ steps.selection.outputs.cases_b64 }}")
+        self.assertEqual(spec["jobs"]["local"]["env"]["BATCH_CASES_B64"], "${{ needs.producer.outputs.cases_b64 }}")
+        self.assertEqual(spec["jobs"]["secured"]["env"]["BATCH_CASES_B64"], "${{ needs.producer.outputs.cases_b64 }}")
         for mode in ("local", "secured"):
             command = next(step["run"] for step in spec["jobs"][mode]["steps"]
                            if step.get("name") == f"Run {mode} journey stage")
-            self.assertIn('--cases "$BATCH_CASES"', command)
+            self.assertIn('base64 --decode', command)
+            self.assertIn(f'--cases "$BATCH_CASES"', command)
         self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
         self.assertEqual(spec["concurrency"]["group"], "journey-batch")
         jobs = spec["jobs"]
         self.assertEqual(set(jobs), {"producer", "local", "secured", "summary"})
         producer_steps = jobs["producer"]["steps"]
+        selection_step = next(step for step in producer_steps if step.get("id") == "selection")
+        self.assertIn('GITHUB_REF_NAME##*/cases/', selection_step["run"])
         producer_entry = next(step for step in producer_steps if "batch.sh" in step.get("run", ""))
         self.assertEqual(producer_entry["run"], 'e2e/journey/batch.sh prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"')
         self.assertEqual(jobs["producer"]["timeout-minutes"], 60)
@@ -696,7 +739,7 @@ exec "$REAL_TAR" "$@"
                                 and step.get("with", {}).get("name") == "journey-build-candidate"
                                 for step in steps))
             run = next(step for step in steps if "batch.sh" in step.get("run", ""))
-            self.assertEqual(run["run"], f'e2e/journey/batch.sh mode {mode} "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$BATCH_CASES"')
+            self.assertIn(f'e2e/journey/batch.sh mode {mode} "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$BATCH_CASES"', run["run"])
             upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
             self.assertEqual(upload["with"]["name"], f"journey-{mode}")
         shared_upload = next(step for step in jobs["summary"]["steps"]

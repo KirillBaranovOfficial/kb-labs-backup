@@ -7,7 +7,7 @@ const pass = { schemaVersion: 1, sha, profile: 'stream', status: 'pass', jobs: [
 const candidatePass = { ...pass, profile: 'candidate', internalToolResults: { status: 'pass', jobs: [] } };
 const run = (overrides = {}) => { const head_branch = overrides.head_branch ?? 'verify/stream/20261025T120000Z-' + sha; return { id: 17, event: 'push', head_branch, head_sha: sha, path: '.github/workflows/remote-verify.yml', display_title: `Remote agent verification (stream) for ${head_branch}`, status: 'completed', conclusion: 'success', ...overrides }; };
 
-function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteRef = async () => {}, resolveRef = async () => sha, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '' } = {}) {
+function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteRef = async () => {}, resolveRef = async () => sha, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '', failureArtifacts = async () => [] } = {}) {
   let time = 0;
   const calls = { pushes: [], deletes: [], lists: 0, gets: 0, ghTimes: [], remoteTimes: [], artifacts: 0 };
   const recordGh = () => { calls.ghTimes.push(time); calls.remoteTimes.push(time); };
@@ -19,6 +19,7 @@ function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteR
     downloadVerdict: async (...args) => { recordGh(); calls.artifacts += 1; return downloadVerdict(...args); },
     failureJobs: async (...args) => { recordGh(); return failureJobs(...args); },
     failureLogs: async (...args) => { recordGh(); return failureLogs(...args); },
+    failureArtifacts: async (...args) => { recordGh(); return failureArtifacts(...args); },
   };
   const git = {
     headSha: async () => sha,
@@ -206,5 +207,20 @@ test('a failed run fetches its artifact once and spaces both diagnostics calls',
   assert.equal(h.calls.artifacts, 1);
   assert.deepEqual(verdict.jobs[0].failures, ['test example']);
   assert.equal(verdict.jobs[0].logTail, 'bounded failure log');
+  assert.deepEqual(verdict.failureEvidence.jobs, [{ name: 'unit', log: 'bounded failure log' }]);
   assertMinimumRemoteSpacing(h.calls.remoteTimes);
+});
+
+test('a nonpassing verdict retains job logs and structured artifacts even when a job is continue-on-error', async () => {
+  const failed = { ...pass, status: 'fail', jobs: [{ name: 'internal-tool', status: 'fail', failures: ['Run tool suite'], logTail: '' }] };
+  const h = harness({
+    downloadVerdict: async () => failed,
+    failureJobs: async () => ({ jobs: [{ id: 42, name: 'internal-tool', conclusion: 'failure', steps: [{ name: 'Run tool suite', conclusion: 'failure' }] }] }),
+    failureLogs: async (_repo, _runId, jobId) => { assert.equal(jobId, 42); return 'failed tool log'; },
+    failureArtifacts: async () => [{ name: 'remote-result-internal-tool-1/result.json', content: '{"findings":[]}' }],
+  });
+  const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'fail');
+  assert.deepEqual(verdict.failureEvidence.jobs, [{ name: 'internal-tool', log: 'failed tool log' }]);
+  assert.deepEqual(verdict.failureEvidence.structuredArtifacts, [{ name: 'remote-result-internal-tool-1/result.json', content: '{"findings":[]}' }]);
 });
