@@ -1,6 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { unwatchFile, watchFile } from 'node:fs';
+import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import { tmpdir } from 'node:os';
@@ -228,6 +229,112 @@ describe('StateBroker durability', () => {
       await Promise.all([stopChild(first.child), stopChild(second?.child)]);
       first.lines.close();
       second?.lines.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // case: S-280.5
+  it('preserves a live replacement lock while a stale reclaimer is reading the old lock inode', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-reclaim-race-'));
+    const liveRoot = path.join(root, 'live');
+    const reclaimRoot = path.join(root, 'reclaim');
+    const liveLockPath = path.join(liveRoot, 'state-broker', 'journal.jsonl.lock');
+    const reclaimDirectory = path.join(reclaimRoot, 'state-broker');
+    const lockPath = path.join(reclaimDirectory, 'journal.jsonl.lock');
+    const moduleUrl = new URL('../backends/append-only-journal.ts', import.meta.url).href;
+    const vitestPath = createRequire(import.meta.url).resolve('vitest');
+    const vitePath = createRequire(vitestPath).resolve('vite');
+    const tsxLoader = createRequire(vitePath).resolve('tsx/esm');
+    const childCode = `
+      import { AppendOnlyJournalStateBroker } from ${JSON.stringify(moduleUrl)};
+      process.stdout.write('attempting-open\\n');
+      const broker = await AppendOnlyJournalStateBroker.open(process.env.JOURNAL_ROOT);
+      process.stdout.write('locked\\n');
+      if (process.env.JOURNAL_HOLD === '1') await new Promise((resolve) => process.stdin.once('data', resolve));
+      await broker.stop();
+      process.stdout.write('stopped\\n');
+    `;
+    const startChild = (dataRoot: string, hold: boolean) => {
+      const child = spawn(process.execPath, ['--import', tsxLoader, '--input-type=module', '-e', childCode], {
+        env: { ...process.env, JOURNAL_ROOT: dataRoot, JOURNAL_HOLD: hold ? '1' : '0' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const stdout = child.stdout;
+      const stdin = child.stdin;
+      const stderr = child.stderr;
+      if (!stdout || !stdin || !stderr) throw new Error('journal lock worker has no piped stdio');
+      const lines = createInterface({ input: stdout });
+      const seen = new Set<string>();
+      const waiters = new Map<string, Array<{ resolve(): void; reject(error: Error): void }>>();
+      const stderrChunks: Buffer[] = [];
+      stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+      lines.on('line', (value) => {
+        seen.add(value);
+        for (const waiter of waiters.get(value) ?? []) waiter.resolve();
+        waiters.delete(value);
+      });
+      child.on('exit', (code, signal) => {
+        if (code === 0) return;
+        const failure = new Error(`journal worker exited (${code ?? signal}): ${Buffer.concat(stderrChunks).toString('utf8')}`);
+        for (const waiting of waiters.values()) for (const waiter of waiting) waiter.reject(failure);
+        waiters.clear();
+      });
+      const waitForLine = (line: string) => {
+        if (seen.has(line)) return Promise.resolve();
+        return new Promise<void>((resolve, reject) => {
+          const waiting = waiters.get(line) ?? [];
+          waiting.push({ resolve, reject });
+          waiters.set(line, waiting);
+          child.once('error', reject);
+        });
+      };
+      return { child, stdin, lines, waitForLine };
+    };
+
+    const live = startChild(liveRoot, true);
+    let reclaimer: ReturnType<typeof startChild> | undefined;
+    let fifoWriter: Awaited<ReturnType<typeof open>> | undefined;
+    let watchingDirectory = false;
+    try {
+      await live.waitForLine('locked');
+      const liveRecord = JSON.parse(await readFile(liveLockPath, 'utf8')) as { pid: number; token: string };
+      await mkdir(reclaimDirectory, { recursive: true });
+      execFileSync('mkfifo', [lockPath]);
+
+      reclaimer = startChild(reclaimRoot, false);
+      await reclaimer.waitForLine('attempting-open');
+      fifoWriter = await open(lockPath, 'w');
+      const staleProcess = spawn(process.execPath, ['-e', 'process.exit(0)']);
+      const stalePid = staleProcess.pid;
+      if (!stalePid) throw new Error('could not start stale lock owner process');
+      await once(staleProcess, 'exit');
+      await fifoWriter.writeFile(JSON.stringify({ pid: stalePid, token: 'stale-owner' }), 'utf8');
+      await rename(liveLockPath, lockPath);
+      const directoryBefore = await stat(reclaimDirectory);
+      const observed = new Promise<void>((resolve) => {
+        watchFile(reclaimDirectory, { interval: 1, persistent: false }, (current, previous) => {
+          if (current.ctimeMs !== previous.ctimeMs || current.mtimeMs !== previous.mtimeMs) resolve();
+        });
+        watchingDirectory = true;
+      });
+      await fifoWriter.close();
+      fifoWriter = undefined;
+      await observed;
+      const directoryAfter = await stat(reclaimDirectory);
+      expect(directoryAfter.mtimeMs).not.toBe(directoryBefore.mtimeMs);
+      expect(JSON.parse(await readFile(lockPath, 'utf8'))).toEqual(liveRecord);
+    } finally {
+      if (watchingDirectory) unwatchFile(reclaimDirectory);
+      await fifoWriter?.close();
+      live.stdin.write('release\n');
+      const stopChild = async (child: ChildProcess | undefined) => {
+        if (!child || child.exitCode !== null || child.signalCode !== null) return;
+        child.kill();
+        await once(child, 'exit');
+      };
+      await Promise.all([stopChild(live.child), stopChild(reclaimer?.child)]);
+      live.lines.close();
+      reclaimer?.lines.close();
       await rm(root, { recursive: true, force: true });
     }
   });
