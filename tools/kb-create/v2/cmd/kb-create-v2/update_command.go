@@ -166,7 +166,6 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The installation lifecycle state path could not be resolved.", "Pass the install root used by this installation, then rerun `kb-create update`.", err)
 	}
-	plan.Request.PlatformRoot = platformRoot
 	result, failure := runUpdateCommand(ctx, input, installRoot, plan, lifecycleState, resolved.State, commandDeps.Runtime)
 	if failure != nil {
 		return updateCommandResult{}, failure
@@ -274,6 +273,7 @@ func requireUpdateSecrets(active contracts.InstallReceipt, plan contracts.Resolv
 // runUpdateCommand stages and verifies a complete version root before the
 // stable platform path is atomically switched to it.
 func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot string, plan contracts.ResolvedInstallPlan, state, launcherState host.State, runtimeOverrides *runtime.Dependencies) (updateCommandResult, *diag.Diag) {
+	requestRoot := plan.Request.PlatformRoot
 	layout, err := versionroot.ForPlatformPath(installRoot)
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The install root cannot use the required atomic layout.", "Run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"` on Linux or macOS.", err)
@@ -375,7 +375,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	if err != nil {
 		return updateCommandResult{}, applyDossier(stage, correlationID, transcript.Path(), plan, redactions, err)
 	}
-	updated.Plan.Request.PlatformRoot = root
+	updated.Plan.Request.PlatformRoot = requestRoot
 	if err := receipt.Write(stage, updated); err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update receipt could not be finalized", "inspect the staged operation log, then rerun `kb-create update`", err)
 	}
