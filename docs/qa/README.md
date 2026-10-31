@@ -101,7 +101,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-205](scenarios/S-205-architecture-viewer.md) | Studio — browse and share an architecture package | solo-developer | P1 | planned | false | [local, secured] | [studio, api] | — |
 | [S-278](scenarios/S-278-cli-terminal-color-policy.md) | CLI — terminal color follows terminal capability and overrides | developer | P2 | planned | false | [local] | [cli] | — |
 | [S-279](scenarios/S-279-host-shutdown-waits-for-runtime-descendants.md) | Host shutdown waits for project runtime descendants | solo-developer | P1 | planned | false | [local] | [cli] | — |
-| [S-280](scenarios/S-280-sqlite-vector-input-contract.md) | SQLite vector storage rejects invalid dimensions and values | plugin-author | P1 | planned | false | [local] | [api] | — |
+| [S-281](scenarios/S-281-sqlite-vector-input-contract.md) | SQLite vector storage rejects invalid dimensions and values | plugin-author | P1 | planned | false | [local] | [api] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.
