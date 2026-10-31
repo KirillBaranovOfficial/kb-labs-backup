@@ -377,6 +377,64 @@ func TestHandoffCrashBoundariesKeepCompleteActiveAndRecoveryRoots(t *testing.T) 
 	}
 }
 
+func TestUpdateActivationFailuresAfterLinkSwitchRestorePriorVersionAndMetadata(t *testing.T) {
+	points := []HandoffPoint{HandoffBeforeActiveRootSync, HandoffBeforeUpdateRecoveryWrite, HandoffBeforeVersionRetention}
+	for _, point := range points {
+		t.Run(string(point), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			layout, v1 := initialLayout(t, root, "1.0.0")
+			if err := layout.RecordHealthy(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(v1, "transaction-marker"), []byte("version-one"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			treeBefore := snapshotVersionrootTree(t, v1)
+			if err := layout.writeUpdateMetadata(UpdateMetadata{SnapshotID: "prior-snapshot", LogPath: "prior.log"}); err != nil {
+				t.Fatal(err)
+			}
+			metadataBefore, err := os.ReadFile(layout.updateMetadataPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			stage := stageVersion(t, layout, "2.0.0")
+			target := filepath.Join(layout.VersionsDir(), versionKey("2.0.0", "plan-2"))
+			injected := errors.New("injected post-switch activation failure")
+			_, err = layout.activate(stage, "2.0.0", "plan-2", "", &UpdateMetadata{SnapshotID: "new-snapshot"}, func(current HandoffPoint) error {
+				if current == point {
+					return injected
+				}
+				return nil
+			})
+			if !errors.Is(err, injected) {
+				t.Fatalf("activation error = %v, want injected failure", err)
+			}
+			active, err := layout.Active()
+			if err != nil || active != v1 {
+				t.Fatalf("active version = %q, %v; want %q", active, err, v1)
+			}
+			installed, err := receipt.Read(active)
+			if err != nil || installed.ID != "receipt-1.0.0" {
+				t.Fatalf("restored receipt = %#v, %v", installed, err)
+			}
+			marker, err := os.ReadFile(filepath.Join(v1, "transaction-marker"))
+			if err != nil || string(marker) != "version-one" {
+				t.Fatalf("prior version tree marker = %q, %v", marker, err)
+			}
+			if treeAfter := snapshotVersionrootTree(t, v1); !equalVersionrootSnapshots(treeAfter, treeBefore) {
+				t.Fatalf("prior version tree changed during failed activation: before=%v after=%v", treeBefore, treeAfter)
+			}
+			metadataAfter, err := os.ReadFile(layout.updateMetadataPath())
+			if err != nil || !bytes.Equal(metadataAfter, metadataBefore) {
+				t.Fatalf("recovery metadata changed: before=%q after=%q error=%v", metadataBefore, metadataAfter, err)
+			}
+			if _, err := os.Lstat(target); !os.IsNotExist(err) {
+				t.Fatalf("failed activation left finalized target %q: %v", target, err)
+			}
+		})
+	}
+}
+
 // case: S-223.1
 func TestInitialHandoffLeavesOnlyCompleteInstallTreesAtEachBoundary(t *testing.T) {
 	points := []HandoffPoint{HandoffInitialMetadataWritten, HandoffInitialTargetFinalized, HandoffInitialLinkPrepared, HandoffInitialLinkSwitched}
