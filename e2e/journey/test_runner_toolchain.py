@@ -224,8 +224,8 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
             expected = contract["imageReference"]
             env = self._compose_environment(root, command, {contract["imageArgument"]: expected})
             compose = subprocess.run(
-                [*command, "-f", "e2e/docker-compose.yml", "-f",
-                 "e2e/journey/docker-compose.yml", "config", "--format", "json"],
+                ["/bin/bash", "-c",
+                 'source e2e/compose-owner.sh; journey_compose_init "$PWD"; journey_compose config --format json'],
                 cwd=REPOSITORY_ROOT, env=env,
                 text=True, capture_output=True, check=False,
             )
@@ -239,8 +239,8 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
         with temporary_directory(prefix="journey-toolchain-compose-") as temporary:
             env = self._compose_environment(Path(temporary), command, {})
             compose = subprocess.run(
-                [*command, "-f", "e2e/docker-compose.yml", "-f",
-                 "e2e/journey/docker-compose.yml", "config", "--format", "json"],
+                ["/bin/bash", "-c",
+                 'source e2e/compose-owner.sh; journey_compose_init "$PWD"; journey_compose config --format json'],
                 cwd=REPOSITORY_ROOT, env=env,
                 text=True, capture_output=True, check=False,
             )
@@ -254,7 +254,6 @@ class RunnerToolchainImageContractTests(unittest.TestCase):
             root / "home", root / "bin",
             required_tools=(command[0],),
             overrides={
-                "KB_JOURNEY_WORKSPACE_SOURCE": str(REPOSITORY_ROOT),
                 "KB_JOURNEY_GIT_REVISION": "test-revision",
                 "KB_JOURNEY_RUNNER_UID": str(os.getuid()),
                 "KB_JOURNEY_RUNNER_GID": str(os.getgid()),

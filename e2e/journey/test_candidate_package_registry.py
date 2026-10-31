@@ -132,12 +132,12 @@ class CandidatePackageRegistryTests(unittest.TestCase):
             env = isolated_environment(
                 root / "home", bin_dir, required_tools=("bash", "cat"),
                 overrides={"FAKE_DOCKER_CALLS": str(calls_path), "FAKE_CLEAR_SCRIPT": str(clear_path),
-                           "FAKE_GO_ARGS": str(go_args), "KB_JOURNEY_WORKSPACE_SOURCE": str(workspace)},
+                           "FAKE_GO_ARGS": str(go_args)},
             )
             result = subprocess.run(
                 ["bash", "-c",
                  'source e2e/compose-owner.sh; source e2e/journey/candidate-services.sh; '
-                 'journey_compose_init "$KB_JOURNEY_WORKSPACE_SOURCE"; '
+                 'journey_compose_init "$PWD"; '
                  'runtime_root="$(journey_install_candidate_runtime index.json packages root)"; '
                  'printf "RUNTIME_ROOT=%s\\n" "$runtime_root"; journey_stop_registry',
                  "journey-candidate-runtime-test"],

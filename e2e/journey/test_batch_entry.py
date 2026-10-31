@@ -665,13 +665,22 @@ exec "$REAL_TAR" "$@"
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(REPO / "e2e/compose-owner.sh", self.root / "e2e/compose-owner.sh")
         shutil.copy2(REPO / "e2e/journey/candidate-services.sh", self.root / "e2e/journey/candidate-services.sh")
-        env = {**self.env, "FAIL_OUTPUT_CHECK": "1"}
+        compose_source = self.root / "compose-workspace-source.txt"
+        self._script(self.bin / "docker", '''#!/bin/sh
+if [ "$1 $2" = "compose version" ]; then
+  printf '%s' "${KB_JOURNEY_WORKSPACE_SOURCE:-}" > "$COMPOSE_SOURCE"
+  exit 0
+fi
+exit 1
+''')
+        env = {**self.env, "FAIL_OUTPUT_CHECK": "1", "COMPOSE_SOURCE": str(compose_source)}
         result = subprocess.run(
             ["bash", str(self.root / "e2e/journey/prepare-candidate.sh")],
             cwd=self.root, env=env, text=True, capture_output=True, check=False,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("preflight fixture failed", result.stdout)
+        self.assertEqual(compose_source.read_text(), str(self.root))
         self.assertFalse((self.root / "e2e/packages").exists())
 
 
