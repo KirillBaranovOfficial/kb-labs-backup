@@ -186,6 +186,37 @@ class RunnerToolchainTagTests(unittest.TestCase):
 
 
 class RunnerToolchainImageContractTests(unittest.TestCase):
+    def test_toolchain_image_exposes_pinned_pnpm_from_shared_cache_to_non_root(self):
+        policy = json.loads((REPOSITORY_ROOT / "tools/clikit/toolchain/node_policy_gen.json").read_text())
+        package = json.loads((REPOSITORY_ROOT / "package.json").read_text())
+        pnpm_version = package["packageManager"].removeprefix("pnpm@")
+        image = runner_toolchain_image()
+        contract = runner_toolchain_contract()
+        build = subprocess.run([
+            "docker", "build", "--target", "toolchain", "-t", image,
+            "--build-arg", f"{contract['imageArgument']}={policy['nodeBaseImage']}",
+            "--build-arg", f"{policy['nodeBaseImageArgument']}={policy['nodeBaseImage']}",
+            "-f", "e2e/journey/Dockerfile.runner", ".",
+        ], cwd=REPOSITORY_ROOT, text=True, capture_output=True, check=False)
+        self.assertEqual(build.returncode, 0, build.stderr or build.stdout)
+
+        probe = """
+const { execFileSync } = require('node:child_process');
+const path = require('node:path');
+const version = process.argv[1];
+if (!process.env.COREPACK_HOME) throw new Error('COREPACK_HOME is missing');
+const script = path.join(process.env.COREPACK_HOME, 'v1', 'pnpm', version, 'bin', 'pnpm.cjs');
+const actual = execFileSync(process.execPath, [script, '--version'], { encoding: 'utf8' }).trim();
+if (actual !== version) throw new Error(`pnpm version ${actual} does not match ${version}`);
+process.stdout.write(actual);
+"""
+        runtime = subprocess.run([
+            "docker", "run", "--rm", "--network=none", "--user", "65534:65534",
+            "--entrypoint", "node", image, "-e", probe, pnpm_version,
+        ], text=True, capture_output=True, check=False)
+        self.assertEqual(runtime.returncode, 0, runtime.stderr or runtime.stdout)
+        self.assertEqual(runtime.stdout.strip(), pnpm_version)
+
     def test_toolchain_stage_copies_exactly_the_declared_toolchain_inputs(self):
         from journey_resources import TOOLCHAIN_STAGE_INPUTS, runner_toolchain_stage_text
         handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix="-dockerfile",
