@@ -3,8 +3,12 @@
 These rules describe product properties that must remain true across commands,
 services, plugins, and release workflows. `Enforcement` names the checks and
 cases that currently provide evidence. `Gap` records the mechanical rail still
-needed where enforcement is partial or in debt. Rule 12's documentation check
-keeps these entries complete and their linked paths valid.
+needed where enforcement is partial or in debt. The documentation check
+validates this structure and that linked paths exist inside the repository; it
+does not prove that cited checks catch the listed violations. Reviewers must
+verify each enforcement claim against the check implementation and its tests.
+Every partial or debt entry names its concrete owning package, module, or file
+in `Owner`.
 
 ## INV-01 — Internal tools never ship
 
@@ -12,9 +16,13 @@ keeps these entries complete and their linked paths valid.
 
 **Why:** Internal tooling changes must not silently alter the user's installed platform, while every shipped artifact must still be built and gated.
 
-**Enforcement:** `release-build-graph` and `release-boundary`; [check-release-build-graph.mjs](../../scripts/checks/check-release-build-graph.mjs#L31), [release-boundary.go](../../tools/kb-devkit/internal/checks/release_boundary.go#L16), case S-277.1–S-277.3.
+**Enforcement:** `release-build-graph` verifies selected packages and build targets, while `release-boundary` prevents gating packages from depending on internal tools; neither rejects an internal-tool package selected directly for release. [check-release-build-graph.mjs](../../scripts/checks/check-release-build-graph.mjs#L31), [release-boundary.go](../../tools/kb-devkit/internal/checks/release_boundary.go#L16), case S-277.1–S-277.3.
 
-**Status:** enforced
+**Gap:** The release selection can still contain an internal-tool package without this check rejecting it.
+
+**Owner:** [tools/kb-devkit/internal/checks/release_boundary.go](../../tools/kb-devkit/internal/checks/release_boundary.go)
+
+**Status:** partial
 
 ## INV-02 — Plugins and adapters use public platform boundaries
 
@@ -24,7 +32,9 @@ keeps these entries complete and their linked paths valid.
 
 **Enforcement:** `plugin-boundaries` is a workspace devkit custom check for plugin package membership, plugin imports/dependencies on `@kb-labs/sdk`, and platform imports/dependencies on plugin packages; [check-plugin-boundaries.mjs](../../scripts/checks/check-plugin-boundaries.mjs#L17), [devkit.yaml](../../devkit.yaml#L1100), case S-264.4. The plugin ESLint preset restricts plugin imports from platform internals; [plugin.js](../../infra/devkit/eslint/plugin.js#L41). `check-adapter-manifest` validates adapter category membership and discovery, not import direction; [check-adapter-manifest.mjs](../../scripts/checks/check-adapter-manifest.mjs#L75). Workspace dependency direction is documented in [AGENTS.md](../../AGENTS.md#L6), while internal package dependencies use `workspace:*`. No current ESLint import rule or devkit check covers adapter-to-platform imports or platform-to-adapter package dependencies. Runtime loads configured adapters through its declared dynamic loading mechanism.
 
-**Gap:** Extend a workspace devkit custom check to parse adapter and platform/core package manifests plus source imports: adapters may use only the public adapter contract surface, and platform/core packages may not declare or statically import adapter packages. Keep configured dynamic adapter loading as the declared runtime loading mechanism. This belongs in the devkit custom boundary check because it must validate both package dependency manifests and parsed imports across workspace categories; an ESLint import rule alone cannot enforce manifest dependencies.
+**Gap:** Extend a workspace devkit custom check to parse adapter and platform/core package manifests plus source imports: adapters may use only the public adapter contract surface, and platform/core packages may not declare or statically import adapter packages. Keep configured dynamic adapter loading as the declared runtime loading mechanism; validate manifests and parsed imports across workspace categories.
+
+**Owner:** [scripts/checks/check-plugin-boundaries.mjs](../../scripts/checks/check-plugin-boundaries.mjs)
 
 **Status:** partial
 
@@ -38,6 +48,8 @@ keeps these entries complete and their linked paths valid.
 
 **Gap:** A workspace-wide runtime rail must reject every successful-looking command or run result with zero executed work and require a catalogued cause and next command.
 
+**Owner:** [tools/kb-runner](../../tools/kb-runner)
+
 **Status:** partial
 
 ## INV-04 — Every fact has one owner
@@ -49,6 +61,8 @@ keeps these entries complete and their linked paths valid.
 **Enforcement:** `node-engine-policy`, `check-ports`, `color-policy-generated`, `error-code-catalog`; [check-node-engine-policy.mjs](../../scripts/checks/check-node-engine-policy.mjs#L43), [check-ports.mjs](../../scripts/checks/check-ports.mjs#L1), [generate-color-policy.mjs](../../tools/clikit/ui/generate-color-policy.mjs#L5), [devkit.yaml](../../devkit.yaml#L887).
 
 **Gap:** A devkit custom check should identify duplicated policy facts across the workspace and require consumers to read the owner or generated output protected by `--check`.
+
+**Owner:** [scripts/checks/check-ports.mjs](../../scripts/checks/check-ports.mjs)
 
 **Status:** partial
 
@@ -62,6 +76,8 @@ keeps these entries complete and their linked paths valid.
 
 **Gap:** Runtime validation and install-root integration tests should prove every install, update, rollback, and recovery write resolves under the selected root, unless a separately requested destination owns it.
 
+**Owner:** [tools/kb-create/v2/marketplace/install.go](../../tools/kb-create/v2/marketplace/install.go)
+
 **Status:** partial
 
 ## INV-06 — Published versions are immutable
@@ -70,7 +86,7 @@ keeps these entries complete and their linked paths valid.
 
 **Why:** Version and integrity together identify artifact bytes; replacing bytes in place breaks reproducible installs and safe updates.
 
-**Enforcement:** Marketplace immutable-version checks and catalogued `KB_RELEASE_VERSION_CONFLICT`; [decisions.md](./decisions.md#L303), [catalog_gen.go](../../tools/clikit/diag/catalog_gen.go#L142), cases S-026.5 and S-220.6–S-220.9.
+**Enforcement:** Marketplace rejects a changed registry integrity for an already pinned version with catalogued `KB_MARKETPLACE_VERSION_IMMUTABLE`; [server.ts](../../services/marketplace/api/src/server.ts#L192), [packages.spec.ts](../../services/marketplace/api/src/routes/packages.spec.ts#L372), cases S-026.5 and S-220.6–S-220.9. The registry publisher also rejects replacing an existing version; [registry-service.ts](../../services/marketplace-registry/core/src/registry-service.ts#L118), [registry-service.test.ts](../../services/marketplace-registry/core/src/__tests__/registry-service.test.ts#L112).
 
 **Status:** enforced
 
@@ -84,6 +100,8 @@ keeps these entries complete and their linked paths valid.
 
 **Gap:** A devkit/runtime boundary check and shared authorization integration tests should derive all registered CLI, Gateway, and MCP entry points and prove they enforce the platform auth contract without plugin-owned auth declarations.
 
+**Owner:** [core/platform/src](../../core/platform/src)
+
 **Status:** partial
 
 ## INV-08 — Secrets never leave protected state
@@ -95,6 +113,8 @@ keeps these entries complete and their linked paths valid.
 **Enforcement:** cases S-028.5, S-051.5, S-193.1, S-193.3, S-222.11–S-222.13, S-270.5; [S-028-workflow-real-work.md](../qa/scenarios/S-028-workflow-real-work.md#L32), [S-270-platform-plugin-workflow-logs.md](../qa/scenarios/S-270-platform-plugin-workflow-logs.md#L26).
 
 **Gap:** Shared logger, CLI renderer, URL builder, and report serializers need one platform redaction boundary with tests that inject sentinel secrets and prove absence from persisted and emitted outputs.
+
+**Owner:** [core/platform/src](../../core/platform/src)
 
 **Status:** partial
 
@@ -108,6 +128,8 @@ keeps these entries complete and their linked paths valid.
 
 **Gap:** A devkit custom check should connect changed user-facing package paths to changed or explicitly claimed product cases and tests, without inferring behavior from source text.
 
+**Owner:** [scripts/checks/check-test-pyramid.mjs](../../scripts/checks/check-test-pyramid.mjs)
+
 **Status:** partial
 
 ## INV-10 — Green results cannot be weakened
@@ -119,6 +141,8 @@ keeps these entries complete and their linked paths valid.
 **Enforcement:** `devkit.yaml` has named check gates and `check-test-pyramid`; [devkit.yaml](../../devkit.yaml#L813), [check-test-pyramid.mjs](../../scripts/checks/check-test-pyramid.mjs#L41). Current package task templates still include `--passWithNoTests` at `devkit.yaml:704,732`.
 
 **Gap:** Devkit package-task validation should reject `--passWithNoTests`, skipped or weakened assertions, and exceptions that replace derived rules; the package task template entries in [devkit.yaml](../../devkit.yaml#L704) still include `--passWithNoTests`.
+
+**Owner:** [devkit.yaml](../../devkit.yaml)
 
 **Status:** debt
 
@@ -132,6 +156,8 @@ keeps these entries complete and their linked paths valid.
 
 **Gap:** Runtime integration tests should invoke a registry-derived fixture through each supported plane and prove that all report and use the same resolved execution mode.
 
+**Owner:** [core/plugin-execution-factory](../../core/plugin-execution-factory)
+
 **Status:** partial
 
 ## INV-12 — Mechanically check mechanical rules
@@ -143,5 +169,7 @@ keeps these entries complete and their linked paths valid.
 **Enforcement:** The workspace has `kb-devkit check` custom checks; [devkit.yaml](../../devkit.yaml#L813), and this document's `product-invariants-document` check validates each rule's Enforcement entry and linked repository paths; [check-product-invariants.mjs](../../scripts/checks/check-product-invariants.mjs). The shared Node ESLint template is [infra/devkit/eslint.config.js](../../infra/devkit/eslint.config.js#L14).
 
 **Gap:** Each partial or debt rule above names the missing mechanical check and its proper owner; the platform team should move each enforceable rule into devkit, lint, runtime validation, a generator, or a release gate as appropriate.
+
+**Owner:** [scripts/checks/check-product-invariants.mjs](../../scripts/checks/check-product-invariants.mjs)
 
 **Status:** partial
