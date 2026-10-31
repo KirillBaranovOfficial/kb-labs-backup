@@ -394,15 +394,6 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 			"the verified update receipt could not be read back before activation",
 			"inspect the staged operation log, then rerun `kb-create update`", err)
 	}
-	if updated.Plan.Host != nil {
-		origin, originErr := gateway.OriginFromHealthURL(updated.Verification.HostHealthURL)
-		if originErr != nil {
-			return updateCommandResult{}, contracts.HostSpecDiagnostic("the updated Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"` after checking the receipt", originErr.Error(), originErr)
-		}
-		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: installRoot}).Register(root, origin); err != nil {
-			return updateCommandResult{}, asDiag(err)
-		}
-	}
 	logRelative, err := filepath.Rel(installRoot, transcript.Path())
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the update operation log is outside the installation container", "inspect the staged update and rerun `kb-create update`", err)
@@ -423,8 +414,21 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	if err != nil {
 		return updateCommandResult{}, asDiag(err)
 	}
-	_, err = layout.ActivateUpdate(stage, updated.Plan.ServiceGraph.PlatformVersion, updated.Plan.PlanHash, runningRoot,
-		versionroot.UpdateMetadata{SnapshotID: snapshot.ID, LogPath: logRelative})
+	activate := func() error {
+		_, activateErr := layout.ActivateUpdate(stage, updated.Plan.ServiceGraph.PlatformVersion, updated.Plan.PlanHash, runningRoot,
+			versionroot.UpdateMetadata{SnapshotID: snapshot.ID, LogPath: logRelative})
+		return activateErr
+	}
+	if updated.Plan.Host != nil {
+		origin, originErr := gateway.OriginFromHealthURL(updated.Verification.HostHealthURL)
+		if originErr != nil {
+			return updateCommandResult{}, contracts.HostSpecDiagnostic("the updated Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"` after checking the receipt", originErr.Error(), originErr)
+		}
+		registry := gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: installRoot}
+		err = registry.RegisterForTransaction(root, origin, activate)
+	} else {
+		err = activate()
+	}
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update could not be atomically activated", updateActivationRetryHint(input), err)
 	}

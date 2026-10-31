@@ -866,7 +866,8 @@ func CrashPoints() []HandoffPoint {
 		HandoffInitialStageCreated, HandoffInitialStagePrepared, HandoffInitialMetadataWritten,
 		HandoffInitialTargetFinalized, HandoffInitialLinkPrepared, HandoffInitialLinkSwitched,
 		HandoffUpdateStageCreated, HandoffUpdateReceiptSeeded, HandoffMetadataWritten,
-		HandoffTargetFinalized, HandoffLinkPrepared, HandoffLinkSwitched,
+		HandoffTargetFinalized, HandoffLinkPrepared, HandoffBeforeActiveRootSync,
+		HandoffLinkSwitched, HandoffBeforeUpdateRecoveryWrite, HandoffBeforeVersionRetention,
 	}
 }
 

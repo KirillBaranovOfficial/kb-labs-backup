@@ -320,6 +320,64 @@ func (r Registry) Register(platformRoot, gatewayURL string) error {
 	return r.write(roots)
 }
 
+// RegisterForTransaction publishes a root registration only for the duration of
+// a caller-owned commit. If the commit fails, the exact prior registry bytes (or
+// prior absence) are restored before the error is returned.
+func (r Registry) RegisterForTransaction(platformRoot, gatewayURL string, commit func() error) error {
+	if commit == nil {
+		return fmt.Errorf("Gateway registration transaction requires a commit operation")
+	}
+	previous, err := os.ReadFile(r.Path)
+	previousExists := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return r.unavailable(err)
+	}
+	if err := r.Register(platformRoot, gatewayURL); err != nil {
+		return err
+	}
+	if err := commit(); err != nil {
+		if restoreErr := r.restoreBytes(previous, previousExists); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restore Gateway registry after failed update commit: %w", restoreErr))
+		}
+		return err
+	}
+	return nil
+}
+
+func (r Registry) restoreBytes(data []byte, existed bool) error {
+	if !existed {
+		if err := os.Remove(r.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(r.Path), 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(r.Path), ".gateway-roots-restore-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, r.Path)
+}
+
 func (r Registry) Remove(platformRoot string) error {
 	r.OperationRoot = platformRoot
 	installationID, err := validatedInstallationID(platformRoot)
