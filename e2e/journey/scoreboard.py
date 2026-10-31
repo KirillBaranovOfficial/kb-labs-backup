@@ -11,11 +11,11 @@ from typing import Iterable
 from invocations import print_report_text, write_report_json, write_report_text
 import jsonl
 from journey_dependencies import Dependency
+from scoreboard_contract import RELEASE_GATING_MODES
 
 CASE_STEP = re.compile(r"^\|\s*((?:S|PC)-\d+\.\d+)\s*\|", re.MULTILINE)
 CLAIM_TAG = re.compile(r"@(S|PC)-(\d+\.\d+)")
 MODES = ("local", "secured")
-RELEASE_GATING_MODES = ("local",)
 FAILURE_MAX_LENGTH = 180
 
 

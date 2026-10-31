@@ -10,6 +10,8 @@ import shlex
 import sys
 from typing import Any
 
+from scoreboard_contract import release_gate_modes
+
 
 STAGES = ("reset", "build", "unit", "candidate", "local", "secured", "total")
 
@@ -49,7 +51,7 @@ def _read_scoreboard(directory: Path) -> dict[str, Any]:
 
 
 def mode_is_gating(directory: Path, mode: str) -> bool:
-    return mode in _read_scoreboard(directory)["releaseGate"]["modes"]
+    return mode in release_gate_modes(_read_scoreboard(directory))
 
 
 def _write_metadata(path: Path, value: dict[str, Any]) -> None:
@@ -216,13 +218,10 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
         return 1
 
     verify_candidate_archive(shared_dir / "batch-metadata.json", shared_dir / "build-candidate.tar")
-    release_gates = {}
-    for mode, board in scoreboards.items():
-        release_gate = board.get("releaseGate")
-        modes = release_gate.get("modes") if isinstance(release_gate, dict) else None
-        if not isinstance(modes, list) or any(not isinstance(mode_name, str) for mode_name in modes):
-            raise ValueError(f"scoreboard releaseGate is invalid: {output / mode / 'case-scoreboard.json'}")
-        release_gates[mode] = modes
+    release_gates = {
+        mode: release_gate_modes(board)
+        for mode, board in scoreboards.items()
+    }
     if release_gates["local"] != release_gates["secured"]:
         raise ValueError("local and secured scoreboards publish different releaseGate modes")
     gate_modes = release_gates["local"]
@@ -295,11 +294,20 @@ def main(argv: list[str]) -> int:
             print(f"journey mode metadata could not be written: {error}; next: rerun e2e/journey/batch.sh mode {argv[4]}",
                   file=sys.stderr)
             return 1
-    if len(argv) == 4 and argv[1] == "mode-gating":
+    if len(argv) == 7 and argv[1] == "mode-gating":
+        mode_dir = Path(argv[2])
+        mode = argv[3]
+        producer = Path(argv[4])
+        output = Path(argv[5])
+        selected_cases = argv[6]
         try:
-            return 0 if mode_is_gating(Path(argv[2]), argv[3]) else 1
+            return 0 if mode_is_gating(mode_dir, mode) else 1
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
-            print(f"journey mode gate could not be read: {error}; next: rerun e2e/journey/batch.sh mode {argv[3]}",
+            command = ["e2e/journey/batch.sh", "mode", mode, str(producer), str(output)]
+            if selected_cases:
+                command.extend(("--cases", selected_cases))
+            next_command = shlex.join(command)
+            print(f"journey mode gate could not be read: {error}; next: {next_command}",
                   file=sys.stderr)
             return 2
     if len(argv) != 5:

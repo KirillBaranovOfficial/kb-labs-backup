@@ -207,7 +207,7 @@ run_mode() {
   if [ "$rc" -ne 0 ]; then
     printf '\n- Failed stage: `%s`\n- Stage log: `%s/batch.log`\n' "$mode" "$mode/batch.log" >> "$mode_dir/batch.log"
     gate_rc=0
-    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-gating "$mode_dir" "$mode" || gate_rc=$?
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-gating "$mode_dir" "$mode" "$producer" "$out" "$selected_cases" || gate_rc=$?
     if [ "$gate_rc" -eq 1 ]; then
       printf 'Result: FAIL (non-gating for Release 1)\n' >> "$mode_dir/batch.log"
       return 0
