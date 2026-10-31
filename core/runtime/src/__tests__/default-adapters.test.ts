@@ -84,8 +84,8 @@ function discovered(packageName: string, fields: Pick<AdapterManifest, 'implemen
     pkgRoot: `/platform/node_modules/${packageName}`,
     createAdapter: () => ({}),
     module: { manifest },
-    entrypointManifests: Object.fromEntries(Object.values(manifest.defaultFor ?? {})
-      .map((entrypoint) => [entrypoint.join('/'), manifest])),
+    entrypointManifests: Object.fromEntries([['', manifest], ...Object.values(manifest.defaultFor ?? {})
+      .map((entrypoint) => [entrypoint.join('/'), manifest])]),
   };
 }
 
@@ -115,8 +115,8 @@ describe('resolveDiscoveredAdapterDefaults', () => {
         pkgRoot: path.join(workspaceRoot, 'node_modules', packageName),
         createAdapter: () => ({}),
         module: { manifest },
-        entrypointManifests: Object.fromEntries(Object.values(manifest.defaultFor ?? {})
-          .map((entrypoint) => [entrypoint.join('/'), manifest])),
+        entrypointManifests: Object.fromEntries([['', manifest], ...Object.values(manifest.defaultFor ?? {})
+          .map((entrypoint) => [entrypoint.join('/'), manifest])]),
       });
     }
 
