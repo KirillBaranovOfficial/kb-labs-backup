@@ -726,6 +726,25 @@ func versionedReceipt(t *testing.T, version string, port int, hostArgs ...string
 	return contracts.InstallReceipt{ID: "receipt-" + version, InstallationID: "installation-stable", Plan: plan}
 }
 
+// case: S-023.6
+func TestUpdateReceiptPreservesTheResolvedPlanRootSpelling(t *testing.T) {
+	inst := newInstallation(t)
+	plan := updatePlan(t, inst.root, freeLoopbackPort(t))
+	wantRoot := plan.Request.PlatformRoot
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: inst.launcher}, inst.root, plan,
+		state, host.State{Dir: inst.state}, &runtime.Dependencies{Artifacts: &recordingInstaller{}})
+	if failure != nil {
+		t.Fatalf("update: code=%s message=%s details=%v", failure.Code, failure.Message, failure.Meta)
+	}
+	if got := result.Receipt.Plan.Request.PlatformRoot; got != wantRoot {
+		t.Fatalf("update receipt plan root = %q, want resolved request root %q", got, wantRoot)
+	}
+}
+
 // update runs the update command's orchestration and returns its JSON and status.
 func (i installation) update(t *testing.T, plan contracts.ResolvedInstallPlan, installer *recordingInstaller) (map[string]any, int, string) {
 	t.Helper()
@@ -1911,6 +1930,7 @@ func assertContainerParent(t *testing.T, parent string) {
 	}
 }
 
+// case: S-023.12
 func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 	inst := newInstallation(t)
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
@@ -2016,6 +2036,10 @@ func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 	currentLinkAfter, err := os.Readlink(layout.PlatformRoot())
 	if err != nil || currentLinkAfter != currentLinkBefore {
 		t.Fatalf("current link changed before update activation: %q %v", currentLinkAfter, err)
+	}
+	versionRoots, err := os.ReadDir(layout.VersionsDir())
+	if err != nil || len(versionRoots) != 1 || versionRoots[0].Name() != filepath.Base(activeBefore) {
+		t.Fatalf("failed staged update left version roots %#v, %v; want only active version %q", versionRoots, err, filepath.Base(activeBefore))
 	}
 	activeTreeAfter, err := treeDigest(activeAfter)
 	if err != nil || activeTreeAfter != activeTreeBefore {
