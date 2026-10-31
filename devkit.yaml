@@ -864,6 +864,11 @@ custom_checks:
     on: [check]
     scope: workspace
 
+  - name: product-invariants-document
+    run: node scripts/checks/check-product-invariants.mjs
+    on: [check]
+    scope: workspace
+
   - name: catalog-package-roles
     run: node scripts/checks/check-catalog-package-roles.mjs
     on: [check]

@@ -2,6 +2,8 @@
 
 This log records the product decisions behind the case catalog (`docs/qa/scenarios/`). Cases state *what* the product does. This log records *why* a boundary sits where it does, so a later change of mind can be made deliberately, starting with a new entry and a case change.
 
+The current cross-cutting product invariants and their enforcement status are listed in [invariants.md](./invariants.md).
+
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
 ## 2026-10-29
