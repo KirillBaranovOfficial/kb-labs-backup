@@ -50,6 +50,7 @@ class StateDaemonRuntime {
   });
   private readonly logger: IContextLogger;
   private server: FastifyInstance | null = null;
+  private acceptingRequests = true;
 
   constructor(
     private readonly config: StateDaemonConfig = {},
@@ -91,6 +92,10 @@ class StateDaemonRuntime {
     });
 
     server.addHook("onRequest", async (request, reply) => {
+      if (!this.acceptingRequests) {
+        reply.code(503).send();
+        return;
+      }
       const requestId =
         (request.headers["x-request-id"] as string | undefined) || randomUUID();
       const traceId =
@@ -153,11 +158,12 @@ class StateDaemonRuntime {
   }
 
   async stop(): Promise<void> {
-    await this.broker.stop();
     if (this.server) {
+      this.acceptingRequests = false;
       await this.server.close();
       this.server = null;
     }
+    await this.broker.stop();
   }
 
   private getBrokerHealth() {

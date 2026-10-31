@@ -258,14 +258,6 @@ write has no process-crash loss window. A write still in progress when a process
 crashes may be absent; a host or power failure can also lose the latest write
 if the filesystem or storage device does not honor `fsync`.
 
-When the host selects `@kb-labs/adapters-state-broker` as the cache adapter,
-the serialized event records written by `@kb-labs/adapters-eventbus-cache` are
-StateBroker cache values and are included in this journal. Their lifetime is
-bounded by the StateBroker key TTL (five minutes when the caller omits a TTL).
-The EventBus subscriber cursor and its in-memory deduplication set are not
-journaled. Event delivery remains polling-based and at-least-once; StateBroker
-durability does not add replay or exactly-once delivery guarantees.
-
 ## Error Handling
 
 ### Graceful Degradation
