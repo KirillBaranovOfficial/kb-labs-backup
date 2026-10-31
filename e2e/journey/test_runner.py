@@ -46,6 +46,30 @@ class WorkflowHostStateBoundaryTests(unittest.TestCase):
         self.assertEqual(outcome, "PASS")
         self.assertEqual(later_group_ran, [True])
 
+    # case: S-262.9
+    def test_unhealthy_host_reprobe_keeps_dependent_flow_blocked(self):
+        journey = Journey("local", "workflow-boundary-unhealthy-test")
+        graph = FlowGraph(journey, {"studio": ("host-running",)})
+        graph.invalidate_state("host-running", group="workflow", step="restart",
+                               evidence="workflow restart failed")
+
+        def fail_workflow():
+            raise RuntimeError("workflow assertion failed")
+
+        with patch.object(runner, "host_running_probe", return_value="gateway is unhealthy") as probe:
+            with self.assertRaisesRegex(RuntimeError, "workflow assertion failed"):
+                runner.run_workflow_with_host_boundary(
+                    graph, env={}, launcher="kb-create", action=fail_workflow)
+        probe.assert_called_once()
+
+        self.assertIs(graph.states["host-running"]["passed"], False)
+        later_group_ran = []
+        outcome = graph.flow("dependent studio group", "studio", "studio",
+                             lambda: later_group_ran.append(True))
+        self.assertEqual(outcome, "BLOCKED")
+        self.assertEqual(later_group_ran, [])
+        self.assertIn("gateway is unhealthy", graph.state_failure("host-running"))
+
 
 class MarketplaceInstallFlagTests(unittest.TestCase):
     def test_default_lane_passes_npm_mirror_without_registry_credentials(self):

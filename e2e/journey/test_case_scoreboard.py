@@ -444,14 +444,13 @@ class CaseScoreboardTests(unittest.TestCase):
             "steps": [],
         })
         self.write_json("service-local.json", {
-            "case_run": {"mode": "local", "partial": True, "selection": ["S-001.1"],
+            "case_run": {"mode": "local", "selection": ["S-001.1"],
                          "claims": [{"claimId": "S-001.1", "status": "PASS"},
                                     {"claimId": "S-001.2", "status": "PASS"}]},
             "steps": [],
         })
         scoreboard = build_scoreboard(self.reports, self.catalog, ["local"])
         case = next(item for item in scoreboard["cases"] if item["id"] == "S-001")
-        self.assertTrue(scoreboard["partial"])
         self.assertEqual(scoreboard["selection"], ["S-001.1"])
         self.assertEqual(case["status"], "Unclaimed")
         self.assertIn("Partial run", render_markdown(scoreboard))
@@ -459,19 +458,18 @@ class CaseScoreboardTests(unittest.TestCase):
     def test_split_partial_journey_records_keep_selection_without_claiming_missing_rows(self):
         selection = ["S-001.1", "S-001.2"]
         self.write_json("installer-case-local-agent-explore-default.json", {
-            "case_run": {"mode": "local", "partial": True, "selection": selection,
+            "case_run": {"mode": "local", "selection": selection,
                          "claims": [{"claimId": "S-001.1", "status": "PASS"}]},
             "steps": [],
         })
         self.write_json("service-local.json", {
-            "case_run": {"mode": "local", "partial": True, "selection": selection,
+            "case_run": {"mode": "local", "selection": selection,
                          "claims": [{"claimId": "S-001.2", "status": "PASS"}]},
             "steps": [],
         })
 
         scoreboard = build_scoreboard(self.reports, self.catalog, ["local"])
         case = next(item for item in scoreboard["cases"] if item["id"] == "S-001")
-        self.assertTrue(scoreboard["partial"])
         self.assertEqual(scoreboard["selection"], selection)
         self.assertEqual(case["status"], "Unclaimed")
         self.assertEqual(case["claimedCount"], 0)
@@ -500,8 +498,8 @@ class CaseScoreboardTests(unittest.TestCase):
         before, after = self.root / "before-partial", self.root / "after-full"
         before.mkdir()
         after.mkdir()
-        for directory, partial in ((before, True), (after, False)):
-            data = {"observedModes": ["local"], "partial": partial, "selection": ["S-001"],
+        for directory, selection in ((before, ["S-001"]), (after, [])):
+            data = {"observedModes": ["local"], "selection": selection,
                     "releaseCases": {"fullyGreen": 0, "total": 1},
                     "activeCases": {"fullyGreen": 0, "total": 2}, "plannedCount": 1,
                     "historicalCount": 1, "cases": []}

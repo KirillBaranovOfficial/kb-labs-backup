@@ -337,27 +337,61 @@ exec "$REAL_TAR" "$@"
     # case: S-262.8
     def test_partial_scoreboards_cannot_produce_a_passing_batch_verdict(self):
         import json
-        for fixture in self.scoreboard_fixtures.values():
+        for mode, fixture in self.scoreboard_fixtures.items():
             scoreboard = json.loads(fixture.read_text())
-            scoreboard["partial"] = True
-            scoreboard["selection"] = ["S-023.1", "S-024.1"]
-            scoreboard["releaseGate"] = {"modes": []}
+            scoreboard["selection"] = ["S-023.1", "S-024.1"] if mode == "local" else []
+            scoreboard["releaseGate"] = {"modes": "gate-path-must-not-be-read"}
             fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
 
         result = self._run()
         self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
         summary = (self.root / "out/shared/summary.md").read_text()
         self.assertIn("- Result: PARTIAL", summary)
-        self.assertIn("S-023.1, S-024.1", summary)
+        self.assertIn("## Stage durations", summary)
+        self.assertIn("local=[S-023.1, S-024.1]; secured=[]", summary)
 
         for fixture in self.scoreboard_fixtures.values():
             scoreboard = json.loads(fixture.read_text())
-            scoreboard["partial"] = False
             scoreboard["selection"] = []
+            scoreboard["releaseGate"] = {"modes": []}
             fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
         full_result = self._run()
         self.assertEqual(full_result.returncode, 0, full_result.stderr + full_result.stdout)
         self.assertIn("- Result: PASS", (self.root / "out/shared/summary.md").read_text())
+
+    # case: S-262.8
+    def test_scoreboard_contract_does_not_duplicate_partiality(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            self.assertNotIn("partial", scoreboard)
+
+    # case: S-262.1
+    def test_replaced_candidate_archive_cannot_reach_mode_or_summary_pass(self):
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        producer = self.root / "out/.artifact-local/shared/build-candidate.tar"
+        if not producer.is_file():
+            producer = self.root / "out/shared/build-candidate.tar"
+        producer.write_bytes(b"substituted candidate archive")
+
+        mode_result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(self.root / "out"), str(self.root / "tampered-local")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(mode_result.returncode, 0, mode_result.stderr + mode_result.stdout)
+        self.assertIn("candidate archive digest", mode_result.stderr)
+        self.assertIn(f"next: e2e/journey/batch.sh prepare {self.root / 'out'}", mode_result.stderr)
+        summary_result = subprocess.run(
+            [sys.executable, str(self.root / "e2e/journey/batch_summary.py"),
+             str(self.root / "summary"), str(self.root / "out"),
+             str(self.root / "out/.artifact-local"), str(self.root / "out/.artifact-secured")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(summary_result.returncode, 0, summary_result.stderr + summary_result.stdout)
+        self.assertIn(f"next: e2e/journey/batch.sh prepare {self.root / 'out'}", summary_result.stderr)
+        self.assertNotIn("- Result: PASS", (self.root / "summary/shared/summary.md").read_text())
 
     # case: S-262.8
     def test_summary_rejects_mixed_commit_identities_at_finalization(self):

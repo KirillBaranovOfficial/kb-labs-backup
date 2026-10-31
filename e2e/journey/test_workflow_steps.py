@@ -499,7 +499,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             report = Path(directory) / "service-local.json"
             report.write_text(json.dumps({
                 "steps": [],
-                "case_run": {"schema": "kb.qa-case-run/v1", "runId": "base", "mode": "local",
+                "case_run": {"schema": "kb.qa-case-run/v2", "runId": "base", "mode": "local",
                              "claims": [{"claimId": "S-001.1", "kind": "journey", "status": "PASS"}]},
             }))
             merged = workflow_steps.merge_workflow_result(report, result.__dict__)
