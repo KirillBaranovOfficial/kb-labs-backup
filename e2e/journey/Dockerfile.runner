@@ -52,6 +52,7 @@ COPY .journey/runner-inputs/project-service-path.js /opt/kb-journey/core/plugin-
 COPY docs/qa/scenarios /opt/kb-journey/docs/qa/scenarios
 COPY e2e/platform/fixtures/installer-cases /opt/kb-journey/e2e/platform/fixtures/installer-cases
 COPY .journey/runner-inputs/marketplace-sync-server.mjs /opt/kb-journey/e2e/platform/fixtures/marketplace-sync-server.mjs
+COPY .journey/runner-inputs/static/logo.svg /opt/kb-journey/e2e/platform/fixtures/static/logo.svg
 COPY e2e/platform/journey-update-packages.mjs /opt/kb-journey/e2e/platform/journey-update-packages.mjs
 COPY tools/kb-create/package.json /opt/kb-journey/node_modules/kb-create/package.json
 COPY tools/kb-create/scripts/package-provenance.mjs /opt/kb-journey/node_modules/kb-create/scripts/package-provenance.mjs

@@ -7,7 +7,7 @@ import shlex
 import shutil
 import sys
 from pathlib import Path, PurePosixPath
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from journey_values import journey_value
 
@@ -33,6 +33,7 @@ CONFIG_JSONC_RESOURCE = RunnerImageResource(
     "/opt/kb-journey/core/config/dist/jsonc-edit.mjs",
 )
 MARKETPLACE_SYNC_BUNDLE = ".journey/runner-inputs/marketplace-sync-server.mjs"
+MARKETPLACE_SYNC_LOGO = ".journey/runner-inputs/static/logo.svg"
 
 TOOLCHAIN_STAGE_NAME = "toolchain"
 TOOLCHAIN_IMAGE_REPOSITORY = "kb-journey-runner-toolchain"
@@ -65,6 +66,8 @@ RUNNER_IMAGE_RESOURCES = (
                         "/opt/kb-journey/e2e/platform/fixtures/installer-cases"),
     RunnerImageResource(MARKETPLACE_SYNC_BUNDLE,
                         "/opt/kb-journey/e2e/platform/fixtures/marketplace-sync-server.mjs"),
+    RunnerImageResource(MARKETPLACE_SYNC_LOGO,
+                        "/opt/kb-journey/e2e/platform/fixtures/static/logo.svg"),
     RunnerImageResource("e2e/platform/journey-update-packages.mjs",
                         "/opt/kb-journey/e2e/platform/journey-update-packages.mjs"),
     RunnerImageResource("tools/kb-create/package.json",
@@ -162,6 +165,7 @@ def stage_runner_image_inputs() -> tuple[Path, ...]:
         workspace_resource(".journey", "runner-inputs", "studio-specs")))
     staged_paths.append(stage_config_jsonc_parser())
     staged_paths.append(stage_marketplace_sync_fixture())
+    staged_paths.append(workspace_resource(*PurePosixPath(MARKETPLACE_SYNC_LOGO).parts))
     for resource in RUNNER_IMAGE_RESOURCES:
         if resource.stage_source is None:
             continue
@@ -203,14 +207,47 @@ def stage_marketplace_sync_fixture() -> Path:
     source = workspace_resource("e2e", "platform", "fixtures", "marketplace-sync-server.mjs")
     destination = workspace_resource(*PurePosixPath(MARKETPLACE_SYNC_BUNDLE).parts)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    logo_source = _marketplace_sync_logo_source(run_harness_command)
+    logo_destination = workspace_resource(*PurePosixPath(MARKETPLACE_SYNC_LOGO).parts)
+    logo_destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(logo_source, logo_destination)
     result = run_harness_command([
         str(_esbuild_binary()), str(source), "--bundle", "--platform=node", "--format=esm",
-        "--define:window=globalThis", f"--outfile={destination}",
+        "--define:__dirname=import.meta.dirname",
+        '--banner:js=import { createRequire as __createRequire } from "node:module"; '
+        "const require = __createRequire(import.meta.url);",
+        f"--outfile={destination}",
     ])
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise RuntimeError(f"Marketplace sync fixture staging failed: {detail}")
     return destination
+
+
+def _marketplace_sync_logo_source(
+    run_harness_command: Callable[[list[str]], subprocess.CompletedProcess[str]],
+) -> Path:
+    """Resolve the logo file used by the bundled Fastify Swagger UI plugin."""
+    package_manifest = workspace_resource("services", "marketplace", "api", "package.json")
+    script = (
+        'const path = require("node:path"); '
+        'const { createRequire } = require("node:module"); '
+        'const appRequire = createRequire(path.resolve(process.argv[1])); '
+        'const fastifyRequire = createRequire(appRequire.resolve("fastify")); '
+        'process.stdout.write(path.join('
+        'path.dirname(fastifyRequire.resolve("@fastify/swagger-ui")), '
+        '"static", "logo.svg"));'
+    )
+    result = run_harness_command(["node", "-e", script, str(package_manifest)])
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"Marketplace sync fixture asset resolution failed: {detail}")
+    logo = Path(result.stdout.strip())
+    if not logo.is_file():
+        raise FileNotFoundError(
+            f"Marketplace sync fixture requires the Fastify Swagger UI logo at {logo}."
+        )
+    return logo
 
 
 def _esbuild_binary() -> Path:
