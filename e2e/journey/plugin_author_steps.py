@@ -11,6 +11,7 @@ from marketplace_sync_fixture import (
 )
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -33,6 +34,7 @@ from invocations import (
 
 PLUGIN_NAME = "demo"
 PLUGIN_DIR = Path(".kb/plugins/demo")
+_PLUGIN_ROUTE_CACHE: dict[tuple[str, str], frozenset[tuple[str, ...]]] = {}
 ENTRY_DIR = PLUGIN_DIR
 CORE_SOURCE = PLUGIN_DIR / "src/core/hello.ts"
 ORIGINAL_GREETING = "Hello, ${who} from demo!"
@@ -189,6 +191,72 @@ def _validate_plugin_route_help(route: list[str], result: CompletedProcess[str])
     )
 
 
+def preflight_installed_plugin_command(
+    args: list[str],
+    project: Path,
+    env: dict[str, str],
+    command_runner: Callable[..., CompletedProcess[str]],
+    kb_path: Path,
+) -> None:
+    """Check a plugin route against declarations in the enabled installed packages."""
+    workspace_root = env.get("KB_JOURNEY_WORKSPACE_ROOT")
+    lock_path = project / ".kb" / "marketplace.lock"
+    if not workspace_root or not lock_path.is_file() or not args:
+        return
+
+    lock_digest = hashlib.sha256(lock_path.read_bytes()).hexdigest()
+    cache_key = (str(lock_path.resolve()), lock_digest)
+    declared_routes = _PLUGIN_ROUTE_CACHE.get(cache_key)
+
+    if declared_routes is None:
+        script = """
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const workspace = process.env.KB_JOURNEY_WORKSPACE_ROOT;
+const { createExtensionStore } = await import(pathToFileURL(path.join(workspace, 'core/extension-store/dist/index.js')).href);
+const lock = JSON.parse(await readFile(process.argv[1], 'utf8'));
+const store = createExtensionStore({ env: process.env });
+const routes = new Set();
+for (const [id, pin] of Object.entries(lock.plugins ?? {})) {
+  if (!pin || pin.enabled === false || !pin.version || !pin.integrity) continue;
+  const name = pin.package ?? id;
+  const installed = await store.lookup({ name, version: pin.version, expectedIntegrity: pin.integrity });
+  if (!installed?.entry.manifest) throw new Error(`enabled plugin ${id} has no installed manifest`);
+  for (const declaration of installed.entry.manifest.cli?.groupMeta ?? []) routes.add(declaration.path);
+  for (const declaration of installed.entry.manifest.cli?.commands ?? []) routes.add(declaration.path);
+}
+process.stdout.write(JSON.stringify([...routes]));
+"""
+        result = run_with_runner(
+            command_runner,
+            ["node", "--input-type=module", "-e", script, str(lock_path)],
+            cwd=Path(workspace_root),
+            env=env,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            detail = " ".join((result.stdout + result.stderr).split())
+            raise RuntimeError(f"could not read enabled plugin command declarations: {detail or 'no output'}")
+
+        declared_routes = frozenset(tuple(route.split()) for route in json.loads(result.stdout))
+        _PLUGIN_ROUTE_CACHE.clear()
+        _PLUGIN_ROUTE_CACHE[cache_key] = declared_routes
+
+    group_roots = {route[0] for route in declared_routes if route}
+    if args[0] not in group_roots:
+        return
+
+    route_tokens = args[:next((index for index, token in enumerate(args) if token.startswith("-")), len(args))]
+    matches = [route for route in declared_routes if len(route) <= len(route_tokens)
+               and tuple(route_tokens[:len(route)]) == route]
+    route = list(max(matches, key=len)) if matches else route_tokens
+    help_command = [str(kb_path), *route, "--help", "--json"]
+    with invocation_context():
+        route_result = run_with_runner(command_runner, help_command, cwd=project, env=env, timeout=120)
+    _validate_plugin_route_help(route, route_result)
+
+
 def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, registry: str,
                           command_runner: Callable[..., CompletedProcess[str]],
                           env: dict[str, str]) -> None:
@@ -199,12 +267,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     def cli(args: list[str], *, step_id: str | None = None) -> CompletedProcess[str]:
         command = [str(kb_path), *args]
-        if args[0] in {"commit", "review"}:
-            route = args[:next((index for index, token in enumerate(args) if token.startswith("-")), len(args))]
-            help_command = [str(kb_path), *route, "--help", "--json"]
-            with invocation_context():
-                declared = run_with_runner(command_runner, help_command, cwd=project, env=env, timeout=120)
-            _validate_plugin_route_help(route, declared)
+        preflight_installed_plugin_command(args, project, env, command_runner, kb_path)
         context = invocation_context(step_id=step_id) if step_id else invocation_context()
         with context:
             return run_with_runner(command_runner, command, cwd=project, env=env, timeout=180)

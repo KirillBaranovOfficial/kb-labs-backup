@@ -133,6 +133,25 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({ projectRoot }));
   });
 
+  it("resolves an unknown command in a registered project before building its command catalog", async () => {
+    const cwd = await isolateEnvironment();
+    const projectRoot = path.join(cwd, "registered-project");
+    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(projectRoot));
+    mocks.resolveProjectConfig.mockResolvedValue(mockConfig(projectRoot, 'required'));
+    mockInitialization();
+
+    await executeCli(["commit", "--help"], {
+      cwd,
+      registerBuiltinCommands: () => {},
+    });
+
+    expect(mocks.resolveProjectConfig).toHaveBeenCalledExactlyOnceWith(cwd, undefined);
+    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ projectRoot, projectScope: 'required' }),
+      { skipAdapterInitialization: false },
+    );
+  });
+
   it("provides the installed Gateway address to built-in command registration", async () => {
     const cwd = await isolateEnvironment();
     const gatewayUrl = "http://127.0.0.1:4820";
@@ -257,11 +276,16 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     const platformConfig = mockConfig(projectRoot);
     const registerBuiltinCommands = vi.fn();
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
+    mocks.resolveProjectConfig.mockResolvedValue(mockConfig(projectRoot, 'required'));
     mockInitialization();
 
     await executeCli(["commit", "plan", "show"], { cwd, registerBuiltinCommands });
 
-    expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
+    expect(mocks.resolveProjectConfig).toHaveBeenCalledExactlyOnceWith(cwd, undefined);
+    expect(mocks.initializePlatform).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot, projectScope: 'required' }),
+      { skipAdapterInitialization: false },
+    );
     expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({
       platformRoot: cwd,
       projectRoot,
