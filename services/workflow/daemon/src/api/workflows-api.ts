@@ -5,8 +5,8 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ILogger } from '@kb-labs/core-platform';
-import type { WorkflowRerunRequest, WorkflowRestartRequest, WorkflowRunRequest } from '@kb-labs/workflow-contracts';
-import type { WorkflowEngine, WorkflowService } from '@kb-labs/workflow-engine';
+import type { WorkflowRerunRequest, WorkflowRestartRequest, WorkflowRun, WorkflowRunRequest } from '@kb-labs/workflow-contracts';
+import type { WorkflowEngine, WorkflowEvent, WorkflowService } from '@kb-labs/workflow-engine';
 import type { OperationObserver } from '@kb-labs/shared-http';
 import type { WorkflowHostService } from '../host/workflow-host-service.js';
 import { fail, ok } from './response.js';
@@ -298,8 +298,26 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     const { runId: rawId } = request.params;
     const runId = await hostService.resolveRunId(rawId) ?? rawId;
 
-    const run = await observability.observeOperation('workflow.run.events', () => engine.getRun(runId));
+    let snapshotSent = false;
+    const pendingEvents: WorkflowEvent[] = [];
+    let onLiveEvent: (event: WorkflowEvent) => void = () => {};
+    const dispatchEvent = (event: WorkflowEvent) => {
+      if (snapshotSent) {
+        onLiveEvent(event);
+      } else {
+        pendingEvents.push(event);
+      }
+    };
+    const unsubscribe = engine.subscribeToRunEvents(runId, (event) => dispatchEvent(event));
+    let run: WorkflowRun | null;
+    try {
+      run = await observability.observeOperation('workflow.run.events', () => engine.getRun(runId));
+    } catch (error) {
+      unsubscribe();
+      throw error;
+    }
     if (!run) {
+      unsubscribe();
       return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${runId} was not found.`, undefined, { runId });
     }
 
@@ -341,6 +359,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     // Clients subscribing after completion still see the terminal event,
     // not just the snapshot (makes the stream contract consistent).
     if (TERMINAL_STATUSES.includes(run.status)) {
+      unsubscribe();
       const terminalType =
         run.status === 'success' ? 'run.finished' :
         run.status === 'failed' ? 'run.failed' : 'run.cancelled';
@@ -349,7 +368,6 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       return;
     }
 
-    // Subscribe to live events
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
     const resetIdle = () => {
@@ -364,13 +382,13 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       raw.write(': keep-alive\n\n');
     }, KEEP_ALIVE_MS);
 
-    const unsubscribe = engine.subscribeToRunEvents(runId, (event) => {
+    onLiveEvent = (event) => {
       sendEvent(event.type, event.payload);
       resetIdle();
       if (TERMINAL_EVENTS.includes(event.type)) {
         cleanup();
       }
-    });
+    };
 
     const cleanup = () => {
       unsubscribe();
@@ -381,6 +399,12 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
 
     resetIdle();
     request.raw.on('close', cleanup);
+    snapshotSent = true;
+    for (const event of pendingEvents) {
+      dispatchEvent(event);
+      if (raw.writableEnded) {break;}
+    }
+    pendingEvents.length = 0;
   });
 
   logger.info('[workflows-api] Workflows API endpoints registered');

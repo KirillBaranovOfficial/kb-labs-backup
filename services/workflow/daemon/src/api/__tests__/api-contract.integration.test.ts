@@ -35,6 +35,7 @@ function createHostServiceMock() {
         }],
       }],
     })),
+    resolveRunId: vi.fn(async () => null),
     cancelRun: vi.fn(async () => {}),
     listWorkflowRuns: vi.fn(async () => ({ runs: [], total: 0 })),
     getRunLogs: vi.fn(async () => [
@@ -59,7 +60,7 @@ function createEngineMock() {
         }],
       }],
     })),
-    subscribeToRunEvents: vi.fn(() => () => {}),
+    subscribeToRunEvents: vi.fn((_runId: string, _handler: (event: { type: string; runId: string; payload?: unknown }) => void) => () => {}),
     resolveApproval: vi.fn(async () => {}),
   };
 }
@@ -245,6 +246,36 @@ describe('Workflow API Contract Integration', () => {
   // ── Runs ─────────────────────────────────────────────────────────────
 
   describe('Runs', () => {
+    // case: S-027.2
+    it('GET /api/v1/runs/:runId/events keeps transitions published while reading the initial snapshot', async () => {
+      const listeners: Array<(event: { type: string; runId: string; payload?: unknown }) => void> = [];
+      engine.subscribeToRunEvents.mockImplementation((_runId, listener) => {
+        listeners.push(listener);
+        return () => {};
+      });
+      engine.getRun.mockImplementation(async () => {
+        listeners[0]?.({ type: 'step.started', runId: 'r1', payload: { stepId: 'step-1' } });
+        return { id: 'r1', status: 'running', jobs: [] };
+      });
+
+      const address = await app.listen({ port: 0, host: '127.0.0.1' });
+      try {
+        const response = await fetch(`${address}/api/v1/runs/r1/events`);
+        if (response.status !== 200) {
+          throw new Error(`SSE route returned ${response.status}: ${await response.text()}`);
+        }
+        listeners[0]?.({ type: 'run.finished', runId: 'r1', payload: { status: 'success' } });
+        const body = await response.text();
+
+        expect(body).toContain('event: run.snapshot');
+        expect(body).toContain('event: step.started');
+        expect(body).toContain('event: run.finished');
+        expect(body.indexOf('event: run.snapshot')).toBeLessThan(body.indexOf('event: step.started'));
+      } finally {
+        await app.close();
+      }
+    });
+
     it('GET /api/v1/runs — lists all runs', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/runs' });
       expect(res.statusCode).toBe(200);

@@ -1516,6 +1516,46 @@ export class WorkflowEngine {
       }
     }
 
+    // Create a new run identity before rebuilding its nested job and step IDs.
+    const newRunId = randomUUID()
+    const newNow = new Date().toISOString()
+
+    // A replay is a new run with new identities. Keep completed work before a
+    // restart point, and make every job with queued work executable again.
+    const replayJobs = restoredRun.jobs.map((job) => {
+      const jobId = `${newRunId}:${job.jobName}`
+      const steps = job.steps.map((step) => {
+        const completed = step.status === 'success' || step.status === 'skipped'
+        return {
+          ...step,
+          id: `${jobId}:${step.index}`,
+          runId: newRunId,
+          jobId,
+          queuedAt: completed ? step.queuedAt : newNow,
+          startedAt: completed ? step.startedAt : undefined,
+          finishedAt: completed ? step.finishedAt : undefined,
+          durationMs: completed ? step.durationMs : undefined,
+          attempt: 0,
+          outputs: completed ? step.outputs : undefined,
+          error: completed ? step.error : undefined,
+        }
+      })
+      const completed = steps.every((step) => step.status === 'success' || step.status === 'skipped')
+      return {
+        ...job,
+        id: jobId,
+        runId: newRunId,
+        status: completed ? 'success' as const : 'queued' as const,
+        queuedAt: newNow,
+        startedAt: completed ? job.startedAt : undefined,
+        finishedAt: completed ? job.finishedAt : undefined,
+        durationMs: completed ? job.durationMs : undefined,
+        attempt: 0,
+        error: completed ? job.error : undefined,
+        steps,
+      }
+    })
+
     // Reconstruct job.blocked and job.pendingDependencies based on the reset
     // step state. In a completed run all jobs have blocked=false, so without
     // this step scheduleRun would enqueue all jobs simultaneously, ignoring
@@ -1523,7 +1563,7 @@ export class WorkflowEngine {
     const isJobComplete = (job: JobRun): boolean =>
       job.steps.every(s => s.status === 'success' || s.status === 'skipped')
 
-    for (const job of restoredRun.jobs) {
+    for (const job of replayJobs) {
       if (!job.needs || job.needs.length === 0) {
         job.blocked = false
         job.pendingDependencies = []
@@ -1540,11 +1580,10 @@ export class WorkflowEngine {
     // Create a new run ID so the original run's history is preserved.
     // Overwriting the same ID would destroy history and corrupt state if the
     // original run's worker is still live (race condition).
-    const newRunId = randomUUID()
-    const newNow = new Date().toISOString()
     const newRun: WorkflowRun = {
       ...restoredRun,
       id: newRunId,
+      jobs: replayJobs,
       status: 'queued',
       createdAt: newNow,
       queuedAt: newNow,

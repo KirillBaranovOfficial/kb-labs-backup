@@ -709,6 +709,45 @@ describe('WorkflowEngine', () => {
       }
     });
 
+    // case: S-143.3
+    it('REPLAY-10: failed jobs are reset and replay identities belong to the new run', async () => {
+      const sourceRun = await engine.createRun({
+        spec: snapshotSpec,
+        trigger: { type: 'manual' },
+        metadata: { workflowId: 'snapshot-test' },
+      });
+      const sourceJob = sourceRun.jobs[0]!;
+      expect(await engine.nextJob()).toMatchObject({ runId: sourceRun.id, jobId: sourceJob.id });
+      await engine.markJobStarted(sourceRun.id, sourceJob.id);
+      await engine.markStepStarted(sourceRun.id, sourceJob.id, sourceJob.steps[0]!.id);
+      await engine.markStepCompleted(sourceRun.id, sourceJob.id, sourceJob.steps[0]!.id);
+      await engine.markStepStarted(sourceRun.id, sourceJob.id, sourceJob.steps[1]!.id);
+      await engine.markStepFailed(sourceRun.id, sourceJob.id, sourceJob.steps[1]!.id, new Error('step failed'));
+      await engine.markJobFailed(sourceRun.id, sourceJob.id, new Error('step failed'), undefined, false);
+      const failedRun = (await engine.getRun(sourceRun.id))!;
+
+      const replayed = await engine.replayRun(sourceRun.id, {
+        fromStepId: failedRun.jobs[0]!.steps[1]!.id,
+      });
+
+      expect(replayed).not.toBeNull();
+      const replayJob = replayed!.jobs[0]!;
+      expect(replayJob.status).toBe('queued');
+      expect(replayJob.id).toBe(`${replayed!.id}:main`);
+      expect(replayJob.runId).toBe(replayed!.id);
+      expect(replayJob.steps.map((step) => step.status)).toEqual(['success', 'queued', 'queued']);
+      expect(replayJob.steps.every((step) => step.runId === replayed!.id && step.jobId === replayJob.id)).toBe(true);
+
+      const entry = await engine.nextJob();
+      expect(entry).toMatchObject({ runId: replayed!.id, jobId: replayJob.id });
+      await engine.markJobStarted(replayed!.id, replayJob.id);
+      await engine.markStepStarted(replayed!.id, replayJob.id, replayJob.steps[1]!.id);
+      await engine.markStepFailed(replayed!.id, replayJob.id, replayJob.steps[1]!.id, new Error('step failed again'));
+      await engine.markJobFailed(replayed!.id, replayJob.id, new Error('step failed again'), undefined, false);
+
+      expect((await engine.getRun(replayed!.id))?.status).toBe('failed');
+    });
+
     it('REPLAY-08: fromStepId in job-a resets steps in subsequent jobs to queued (not success)', async () => {
       // Multi-job spec: job-a has step-a, job-b depends on job-a and has step-b
       const multiJobSpec: WorkflowSpec = {
